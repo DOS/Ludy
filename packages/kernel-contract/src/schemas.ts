@@ -641,10 +641,17 @@ export const zInboxDetail = zInboxItem.extend({
 export const zStatementSummary = z.object({
   state: z.enum(['staged', 'imported', 'rejected']),
   bankAccount: z.string(),
+  // The account number the file names, masked (#2191): all but its last four digits are hidden, so an approver can tell
+  // which account the file says it is for without the Inbox spelling the number out. Null for a statement read before.
+  accountMask: z.string().nullable().default(null),
   filename: z.string(),
   lines: z.number().int().nonnegative(),
+  // Lines a member's import stores: the new ones, those flagged to look at, and conflicts.
   newLines: z.number().int().nonnegative(),
   duplicateLines: z.number().int().nonnegative(),
+  // Of those, lines whose bank reference the account already holds with another date or amount (#2191): stored flagged,
+  // never taken for a duplicate.
+  conflictLines: z.number().int().nonnegative().default(0),
   from: zLocalDate.nullable(),
   to: zLocalDate.nullable(),
   totalIn: zMoney,
@@ -666,7 +673,16 @@ export const zFileStatus = z.object({
   // The bank statement of a staged, imported or dismissed file (#2142), null for any other file.
   // decidedBy: who imported or skipped it and when, from the audit row of the decision (null while it waits, or when the
   // row is not visible to the reader); name is null for a person who is no longer a member.
-  statement: zStatementSummary.extend({ decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable() }).nullable(),
+  // origin (#2191): how the file reached the org, for the member who decides it: by email (the org's inbound address,
+  // which anyone who knows it may write to), or uploaded by a member (name null once they are no longer a member).
+  // entity: the legal entity the lines would go to, with its name as it is now (null when the reader cannot see it).
+  statement: zStatementSummary
+    .extend({
+      decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable(),
+      origin: z.object({ channel: z.enum(['email', 'upload']), by: z.string().nullable() }),
+      entity: z.object({ id: zId, name: z.string() }).nullable(),
+    })
+    .nullable(),
   proposalId: zId.nullable(),
   // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
   // apart (DESIGN.md principle 2). Null when the file has no proposal.

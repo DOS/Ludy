@@ -228,7 +228,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport } from './bank-statement.ts';
+import { zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1489,6 +1489,10 @@ export const contract = {
     // STATEMENT_MAPPING_CHANGED (409) when its account is no longer mapped to the same bank account.
     statementConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zBankImportResult),
     statementReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    // The staged statement's lines as they stand against the account now (#2191), conflicts first: each line with its
+    // reference, and for a conflict the line the account already holds under that reference. Owners, admins, members;
+    // STATEMENT_NOT_STAGED (409) once it was decided or read again.
+    statementLines: oc.input(z.object({ fileId: zId })).output(zStatementLines),
     lines: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankLines),
     // The báo Có or báo Nợ a line makes and the party it is probably about (#326, stage 2a), for the voucher form; the
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and

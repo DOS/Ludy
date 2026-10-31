@@ -48,7 +48,7 @@ function thisMonth(): string {
   return `${parts.find((p) => p.type === 'year')?.value}-${parts.find((p) => p.type === 'month')?.value}`;
 }
 
-const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning' };
+const STATUS_VARIANT: Record<BankLineStatus, 'success' | 'secondary' | 'warning'> = { new: 'success', duplicate: 'secondary', ambiguous: 'warning', conflict: 'warning' };
 
 function StatementImport({ bankAccount, onImported }: { bankAccount: string; onImported: (result: BankImportResult, to: string | null) => void }) {
   const t = useTranslations('bank');
@@ -106,7 +106,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
   };
 
   const data = preview.data;
-  const toStore = data ? data.counts.new + data.counts.ambiguous : 0;
+  const toStore = data ? data.counts.new + data.counts.ambiguous + data.counts.conflict : 0;
 
   return (
     <Card className="mb-6 block space-y-4 p-4">
@@ -147,6 +147,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                 {data.order === 'newest_first' && ` ${t('newestFirst')}`}
               </p>
               {data.counts.ambiguous > 0 && <Notice>{t('ambiguousNote')}</Notice>}
+              {data.counts.conflict > 0 && <Notice>{t('conflictNote')}</Notice>}
               {data.breaks.length > 0 && (
                 <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                   <AlertDescription className="text-warning">
@@ -168,7 +169,10 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                       <TableCell className={NUM}>{row.balance ? f.money(row.balance) : ''}</TableCell>
                       <TableCell className="px-4 py-3">
                         {row.status ? (
-                          <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
+                          <>
+                            <Badge variant={STATUS_VARIANT[row.status]}>{t(`status.${row.status}`)}</Badge>
+                            {row.clash && <p className="mt-1 text-xs text-subtle-foreground">{t('clash', { date: f.date(row.clash.date), amount: f.money(row.clash.amount) })}</p>}
+                          </>
                         ) : (
                           <span className="text-destructive">{row.errors.map((e: BankRowError) => t(`errors.${e}`)).join(', ')}</span>
                         )}
@@ -185,7 +189,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
             </div>
           )}
           {imported.error && <ErrorText>{errorMessage(imported.error)}</ErrorText>}
-          {imported.data && <Notice>{t('imported', { ...imported.data.counts, stored: imported.data.counts.new + imported.data.counts.ambiguous })}</Notice>}
+          {imported.data && <Notice>{t('imported', { ...imported.data.counts, stored: imported.data.counts.new + imported.data.counts.ambiguous + imported.data.counts.conflict })}</Notice>}
         </div>
       )}
     </Card>

@@ -31,7 +31,7 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { Decimal } from '@crove/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import { bankLineStates } from './bank-match.ts';
-import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredFacts } from './domain/bank-statement.ts';
+import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -60,7 +60,7 @@ async function storedAround(
   ctx: QueryContext,
   legalEntityId: string,
   bankAccountCode: string,
-  lines: ReadonlyArray<{ date: string }>,
+  lines: ReadonlyArray<{ date: string; reference: string | null }>,
   keys: ReadonlyArray<string | null>,
 ): Promise<{ stored: StoredFacts; chain: Chain }> {
   const dates = lines.map((l) => l.date).sort();
@@ -78,6 +78,27 @@ async function storedAround(
           .where('bank_account', '=', bankAccountCode)
           .where('dedupe_key', 'in', batchKeys)
           .execute();
+  // The lines the account holds under the batch's references, with the key or without (a line stored as a conflict has
+  // none), so a reference that comes again with another date or amount is a conflict, never a silent duplicate (#2191).
+  const batchRefs = [...new Set(lines.flatMap((l) => (l.reference ? [l.reference] : [])))];
+  const refRows =
+    batchRefs.length === 0
+      ? []
+      : await ctx.trx
+          .selectFrom('crove_finance.bank_line')
+          .select(['bank_ref', 'value_date', 'amount'])
+          .where('org_id', '=', ctx.orgId)
+          .where('legal_entity_id', '=', legalEntityId)
+          .where('bank_account', '=', bankAccountCode)
+          .where('bank_ref', 'in', batchRefs)
+          .orderBy('import_id')
+          .orderBy('position')
+          .execute();
+  const refs = new Map<string, StoredDateAmount[]>();
+  for (const r of refRows) {
+    if (r.bank_ref === null) continue;
+    refs.set(r.bank_ref, [...(refs.get(r.bank_ref) ?? []), { date: r.value_date, amount: new Decimal(r.amount).toFixed() }]);
+  }
   let within: Array<StoredChainLine> = [];
   let before: StoredChainLine | null = null;
   if (from && to) {
@@ -108,7 +129,7 @@ async function storedAround(
   }
   const dateAmounts = new Set(within.map((l) => `${l.date}|${new Decimal(l.amount).toFixed()}`));
   return {
-    stored: { keys: new Set(storedKeys.map((k) => k.dedupe_key as string)), dateAmounts },
+    stored: { keys: new Set(storedKeys.map((k) => k.dedupe_key as string)), dateAmounts, refs },
     chain: {
       before: before && { ...before, amount: new Decimal(before.amount).toFixed(), balance: before.balance === null ? null : new Decimal(before.balance).toFixed() },
       within: within.map((l) => ({ ...l, amount: new Decimal(l.amount).toFixed(), balance: l.balance === null ? null : new Decimal(l.balance).toFixed() })),
@@ -213,12 +234,13 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     'finance.bank_account',
     importId,
     'bank.statement_imported',
-    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous} dòng mới, ${preview.counts.duplicate} dòng đã có`,
+    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous + preview.counts.conflict} dòng mới, ${preview.counts.duplicate} dòng đã có${preview.counts.conflict > 0 ? `, ${preview.counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
     // An import with no new line stores no bank_line to take the entity from (#1728).
     { legalEntityId },
   );
-  // Lines that need a look: the owners and admins are told (#671, finance.notification.dispatch).
-  if (preview.counts.ambiguous > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: preview.counts.ambiguous });
+  // Lines that need a look (a conflict is one too, #2191): the owners and admins are told (#671, finance.notification.dispatch).
+  const toLookAt = preview.counts.ambiguous + preview.counts.conflict;
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
   return result;
 }
 
@@ -255,22 +277,24 @@ export async function ingestFeedLines(ctx: CommandContext, input: BankFeedIngest
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, toStore);
   // A batch the account already has stores nothing; its importId then names no line, as an import of a known file.
   // The feed's lines were checked whole above, so none is invalid.
-  const counts = { new: 0, duplicate: 0, ambiguous: 0, invalid: 0 };
+  const counts = { new: 0, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 };
   for (const status of statuses) counts[status]++;
   const dates = read.lines.map((l) => l.date);
   ctx.audit({ bankAccount: input.bankAccount, importId, source: input.source, from: dates[0], to: dates.at(-1), ...counts, breaks: breaks.length });
   // Only a pull that stored lines shows on the account's timeline (the import shows every file a person brought).
-  if (counts.new + counts.ambiguous > 0) {
+  const storedCount = counts.new + counts.ambiguous + counts.conflict;
+  if (storedCount > 0) {
     await ctx.activity(
       'finance.bank_account',
       importId,
       'bank.feed_received',
-      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${counts.new + counts.ambiguous} dòng mới, ${counts.duplicate} dòng đã có`,
+      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${storedCount} dòng mới, ${counts.duplicate} dòng đã có${counts.conflict > 0 ? `, ${counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
       { legalEntityId },
     );
   }
-  // Lines that need a look: the owners and admins are told, as for an import (#671).
-  if (counts.ambiguous > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: counts.ambiguous });
+  // Lines that need a look (a conflict is one too, #2191): the owners and admins are told, as for an import (#671).
+  const toLookAt = counts.ambiguous + counts.conflict;
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
   return { importId, counts, breaks };
 }
 

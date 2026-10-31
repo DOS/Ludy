@@ -46,11 +46,17 @@ export const BANK_ROW_ERRORS = [
 ] as const;
 export type BankRowError = (typeof BANK_ROW_ERRORS)[number];
 
-// new: stored by the import. duplicate: the account already has this line (same reference, or same date, amount,
-// balance and occurrence), or the file repeats it. ambiguous: no reference and no balance, and an earlier import has a
-// line of the same date and amount; stored, flagged for a person to decide.
-export const BANK_LINE_STATUSES = ['new', 'duplicate', 'ambiguous'] as const;
+// new: stored by the import. duplicate: the account already has this line (same reference, date and amount, or same
+// date, amount, balance and occurrence), or the file repeats it. ambiguous: no reference and no balance, and an earlier
+// import has a line of the same date and amount; stored, flagged for a person to decide. conflict (#2191): the line's
+// reference is one the account (or the file) already has, but with another date or amount, so it is not the same
+// transaction twice and is never dropped as a duplicate: stored without a key and flagged, as an ambiguous line is.
+export const BANK_LINE_STATUSES = ['new', 'duplicate', 'ambiguous', 'conflict'] as const;
 export type BankLineStatus = (typeof BANK_LINE_STATUSES)[number];
+
+// The line a conflicting one clashes with: the date and signed amount the account already holds under its reference.
+export const zBankLineClash = z.object({ date: zLocalDate, amount: zMoney });
+export type BankLineClash = z.infer<typeof zBankLineClash>;
 
 export const zBankImportPreview = z.object({
   bankAccount: z.string(),
@@ -67,6 +73,8 @@ export const zBankImportPreview = z.object({
       reference: z.string().nullable(),
       // Null for a row with errors.
       status: z.enum(BANK_LINE_STATUSES).nullable(),
+      // For a conflict: the line already there under the same reference (the first, when the account holds several).
+      clash: zBankLineClash.nullable(),
       errors: z.array(z.enum(BANK_ROW_ERRORS)),
     }),
   ),
@@ -74,6 +82,7 @@ export const zBankImportPreview = z.object({
     new: z.number().int().nonnegative(),
     duplicate: z.number().int().nonnegative(),
     ambiguous: z.number().int().nonnegative(),
+    conflict: z.number().int().nonnegative(),
     invalid: z.number().int().nonnegative(),
   }),
   // Where the account's running balance would not follow from the lines once these are stored: the line's balance
@@ -86,6 +95,16 @@ export const zBankImportPreview = z.object({
   ok: z.boolean(),
 });
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
+
+// The lines of a staged statement (#2191), as they stand against the account now: what the member who decides sees before
+// importing. Conflicts come first, then the file's order; at most STATEMENT_LINES_SHOWN lines come back, `total` being all.
+export const STATEMENT_LINES_SHOWN = 300;
+export const zStatementLines = z.object({
+  lines: zBankImportPreview.shape.rows,
+  total: z.number().int().nonnegative(),
+  conflicts: z.number().int().nonnegative(),
+});
+export type StatementLines = z.infer<typeof zStatementLines>;
 
 export const zBankImportResult = z.object({
   importId: zId,

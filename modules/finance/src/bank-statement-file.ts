@@ -13,12 +13,15 @@
 //   (kernel.extraction.record) as done (staged, with the rows) or failed (the exception).
 // - finance.bank.statement_confirm (owners, admins, members; R1) stores the staged lines once through the import's own path
 //   (the same checks, keys and account lock) and marks the read imported, in one transaction; finance.bank.statement_reject
-//   skips it, dropping the rows. Both run on the staged run only, locked, so two members cannot both decide it.
+//   skips it, storing nothing. Both run on the staged run only, locked, so two members cannot both decide it.
+// - finance.bank.statement_lines (#2191): the staged lines as they stand against the account now, so the member who decides
+//   sees each line, its reference, and the ones whose reference the account already holds with another date or amount
+//   (conflicts: stored flagged when imported, never silently dropped as duplicates).
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
 import type { MemberRole } from '@crove/db';
-import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, STATEMENT_LINES_SHOWN, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow, type StatementLines } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { Decimal } from '@crove/l10n-vn';
 import { importStatement, previewStatement } from './bank.ts';
@@ -72,6 +75,9 @@ async function mappedPlace(ctx: QueryContext, accountNumber: string): Promise<Pl
   return place ? { kind: 'one', bankAccount: place.bank_account, legalEntityId: place.legal_entity_id } : { kind: 'none' };
 }
 
+// The account number with all but its last four digits hidden (#2191): enough to tell which account a file says it is for.
+export const maskAccountNumber = (digits: string): string => `${'*'.repeat(Math.min(digits.length - 4, 8))}${digits.slice(-4)}`;
+
 // Refusals the file can be told about; anything else is a fault and the job is retried.
 const REFUSED_CODES: ReadonlySet<string> = new Set(['NOT_A_BANK_ACCOUNT', 'ACCOUNT_INACTIVE']);
 
@@ -106,12 +112,14 @@ export const bankStatementStage = defineQuery({
         summary: {
           state: 'staged',
           accountNumber: input.accountNumber,
+          accountMask: maskAccountNumber(input.accountNumber),
           bankAccount: place.bankAccount,
           legalEntityId: place.legalEntityId,
           filename: input.filename,
           lines: preview.rows.length,
-          newLines: preview.counts.new + preview.counts.ambiguous,
+          newLines: preview.counts.new + preview.counts.ambiguous + preview.counts.conflict,
           duplicateLines: preview.counts.duplicate,
+          conflictLines: preview.counts.conflict,
           from: preview.from,
           to: preview.to,
           totalIn: totalIn.toFixed(),
@@ -125,18 +133,23 @@ export const bankStatementStage = defineQuery({
   },
 });
 
-// The newest run of a file, locked: the run a member decides. Null when the file has no run, or its newest run is not a
-// staged statement (decided already, read again, or no statement at all).
-async function stagedRun(ctx: QueryContext, fileId: string): Promise<{ summary: StagedSummary; rows: BankStatementRow[] } | null> {
-  const run = await ctx.trx
+// The newest run of a file: the run a member decides. Null when the file has no run, or its newest run is not a staged
+// statement (decided already, read again, or no statement at all). `lock`: the run is locked for the decision, after
+// the file row, which is the order a re-read and a record take them in (kernel.extraction), so a decision and a re-read
+// of the same file never wait on each other in a circle.
+async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: StagedSummary; rows: BankStatementRow[] } | null> {
+  if (lock) {
+    await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', fileId).forUpdate().executeTakeFirst();
+  }
+  let query = ctx.trx
     .selectFrom('crove_kernel.extraction')
     .select(['result', 'status'])
     .where('org_id', '=', ctx.orgId)
     .where('file_id', '=', fileId)
     .orderBy('version', 'desc')
-    .limit(1)
-    .forUpdate()
-    .executeTakeFirst();
+    .limit(1);
+  if (lock) query = query.forUpdate();
+  const run = await query.executeTakeFirst();
   if (!run || run.status !== 'done') return null;
   const parsed = zStagedResult.safeParse(run.result);
   if (!parsed.success || parsed.data.summary.state !== 'staged' || !parsed.data.rows) return null;
@@ -160,7 +173,7 @@ export const bankStatementConfirm = defineCommand({
   handler: async (ctx, input): Promise<BankImportResult> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhập được sao kê');
     await lockStatement(ctx, input.fileId);
-    const staged = await stagedRun(ctx, input.fileId);
+    const staged = await stagedRun(ctx, input.fileId, true);
     if (!staged) throw notStaged();
     // The mapping is looked at again: an owner may have removed or moved it since the file was read, and the lines go to
     // the account it names now, never to one the file's sender or an old reading chose.
@@ -190,11 +203,33 @@ export const bankStatementReject = defineCommand({
   handler: async (ctx, input): Promise<{ fileId: string }> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới bỏ qua được sao kê');
     await lockStatement(ctx, input.fileId);
-    if (!(await stagedRun(ctx, input.fileId))) throw notStaged();
-    // Nothing was stored: the rows are dropped with the read, and every dedupe key stays free.
+    if (!(await stagedRun(ctx, input.fileId, true))) throw notStaged();
+    // Nothing was stored in the account, and every dedupe key stays free. The rows themselves stay in the finished run's
+    // result, which nothing may change (extraction_guard) and no tenant role may delete, until the org is purged: they
+    // are bounded (STAGED_STATEMENT_MAX_BYTES) and read by no screen once the statement is skipped. Dropping them after a
+    // retention period needs a purge function in a migration; the rule proposed in #2191 is in its PR.
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'rejected' });
     ctx.audit({ fileId: input.fileId });
     return { fileId: input.fileId };
+  },
+});
+
+export const bankStatementLines = defineQuery({
+  name: 'finance.bank.statement_lines',
+  input: z.strictObject({ fileId: zId }),
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<StatementLines> => {
+    const staged = await stagedRun(ctx, input.fileId, false);
+    if (!staged) throw notStaged();
+    // Against the account as it is now, not as it was when the file was read: a line another source stored since shows.
+    const preview = await previewStatement(
+      ctx,
+      { bankAccount: staged.summary.bankAccount, filename: staged.summary.filename, rows: staged.rows, legalEntityId: staged.summary.legalEntityId },
+      staged.summary.legalEntityId,
+    );
+    const conflicts = preview.rows.filter((r) => r.status === 'conflict');
+    const others = preview.rows.filter((r) => r.status !== 'conflict');
+    return { lines: [...conflicts, ...others].slice(0, STATEMENT_LINES_SHOWN), total: preview.rows.length, conflicts: conflicts.length };
   },
 });
 
@@ -243,17 +278,22 @@ function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'stag
   }
 }
 
-// The statement's rows as the module takes them: the same amount text the browser import sends.
-export function statementFileRows(rows: ReadonlyArray<{ rowNo: number; date: string; description: string; reference: string; moneyIn: { kind: string; value: string } | null; moneyOut: { kind: string; value: string } | null; balance: { kind: string; value: string } | null }>): BankStatementRow[] {
-  return rows.map((r) => ({
-    rowNo: r.rowNo,
-    date: r.date,
-    description: r.description,
-    moneyIn: statementAmountText(r.moneyIn ?? undefined).slice(0, 50),
-    moneyOut: statementAmountText(r.moneyOut ?? undefined).slice(0, 50),
-    balance: statementAmountText(r.balance ?? undefined).slice(0, 50),
-    reference: r.reference,
-  }));
+const AMOUNT_TEXT_MAX = 50;
+
+// The statement's rows as the module takes them: the same amount text the browser import sends. An amount text longer
+// than the module takes (#2191) is refused with its row, never cut: a cut text could read as another, smaller number.
+export function statementFileRows(
+  rows: ReadonlyArray<{ rowNo: number; date: string; description: string; reference: string; moneyIn: { kind: string; value: string } | null; moneyOut: { kind: string; value: string } | null; balance: { kind: string; value: string } | null }>,
+): BankStatementRow[] | { tooLongRow: number } {
+  const out: BankStatementRow[] = [];
+  for (const r of rows) {
+    const moneyIn = statementAmountText(r.moneyIn ?? undefined);
+    const moneyOut = statementAmountText(r.moneyOut ?? undefined);
+    const balance = statementAmountText(r.balance ?? undefined);
+    if (moneyIn.length > AMOUNT_TEXT_MAX || moneyOut.length > AMOUNT_TEXT_MAX || balance.length > AMOUNT_TEXT_MAX) return { tooLongRow: r.rowNo };
+    out.push({ rowNo: r.rowNo, date: r.date, description: r.description, moneyIn, moneyOut, balance, reference: r.reference });
+  }
+  return out;
 }
 
 // Fails the pending re-read `version` of a bank statement with the reason, for a job that kept failing (#2142): the run
@@ -331,6 +371,10 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
     return { handled: true };
   }
   const rows = statementFileRows(statement.rows);
+  if ('tooLongRow' in rows) {
+    await record('failed', { error: `Dòng ${rows.tooLongRow} của tệp có số tiền quá dài (tối đa ${AMOUNT_TEXT_MAX} ký tự); hãy kiểm tra lại tệp` });
+    return { handled: true };
+  }
   // A read-only question: nothing is stored whatever happens to this job.
   const outcome = await deps.runtime.query<StatementStageOutcome>(
     'finance.bank.statement_stage',

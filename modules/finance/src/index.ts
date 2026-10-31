@@ -15,7 +15,7 @@ import { portalListImport, portalListReconcile, portalListRecord, portalListRemo
 import { portalSyncCommands, portalSyncQueries } from './portal-sync.ts';
 import { bankImport, bankIngest, bankLines, bankPreview } from './bank.ts';
 import { bankFeedCommands, bankFeedQueries } from './bank-feed.ts';
-import { bankStatementConfirm, bankStatementReject, bankStatementStage } from './bank-statement-file.ts';
+import { bankStatementConfirm, bankStatementLines, bankStatementReject, bankStatementStage } from './bank-statement-file.ts';
 import { bankLineVoucher, bankOpenLines, bankSuggestions } from './bank-match.ts';
 import { periodLock, periodLockStateQuery, periodUnlock } from './period-lock.ts';
 import { bookEntitiesList } from './legal-entity.ts';
@@ -143,6 +143,7 @@ export const financeQueries = [
   ...fixedAssetQueries,
   ...bankFeedQueries,
   bankStatementStage,
+  bankStatementLines,
   ...statementsHtkkQueries,
   fileForExtraction,
   purchaseLookup,

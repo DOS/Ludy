@@ -1894,6 +1894,9 @@ export function createRpcHandler(
       preview: os.bank.preview.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.preview', input, { actor, orgId })),
       ),
+      statementLines: os.bank.statementLines.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.statement_lines', input, { actor, orgId })),
+      ),
       statementConfirm: os.bank.statementConfirm.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

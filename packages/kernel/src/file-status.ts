@@ -22,9 +22,40 @@ export type StoredArchiveEntry = z.infer<typeof zStoredArchiveEntry>;
 
 // The summary a bank statement read from a file keeps in its run's result (#2142), read defensively; the run's rows and
 // the account number that named its account (the finance module's) stay out of what the Inbox is told.
-function statementOf(value: unknown, decisions: ReadonlyMap<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>, fileId: string): FileStatus['statement'] {
+type Statement = NonNullable<FileStatus['statement']>;
+interface StatementContext {
+  decisions: ReadonlyMap<string, NonNullable<Statement['decidedBy']>>;
+  // The legal entity names the reader sees, by id, and the names of the members who uploaded files, by user id.
+  entities: ReadonlyMap<string, string>;
+  uploaders: ReadonlyMap<string, string>;
+}
+const NO_CONTEXT: StatementContext = { decisions: new Map(), entities: new Map(), uploaders: new Map() };
+
+function statementOf(
+  value: unknown,
+  file: { id: string; source: string; createdBy: string | null; legalEntityId: string | null },
+  known: StatementContext,
+): Statement | null {
   const parsed = zStatementSummary.safeParse(value);
-  return parsed.success ? { ...parsed.data, decidedBy: parsed.data.state === 'staged' ? null : (decisions.get(fileId) ?? null) } : null;
+  if (!parsed.success) return null;
+  const entityName = file.legalEntityId ? known.entities.get(file.legalEntityId) : undefined;
+  return {
+    ...parsed.data,
+    decidedBy: parsed.data.state === 'staged' ? null : (known.decisions.get(file.id) ?? null),
+    // A file's source is upload or email here: images and spreadsheets for other uses never carry a statement.
+    origin: file.source === 'email' ? { channel: 'email', by: null } : { channel: 'upload', by: file.createdBy ? (known.uploaders.get(file.createdBy) ?? null) : null },
+    entity: file.legalEntityId && entityName !== undefined ? { id: file.legalEntityId, name: entityName } : null,
+  };
+}
+
+// The names of the members with these user ids, for members of the org alone (member_profiles); a person who is gone has none.
+async function memberNames(ctx: QueryContext, userIds: readonly string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  if (userIds.length === 0) return names;
+  const { rows } = await sql<{ user_id: string; email: string; display_name: string | null }>`
+    SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${[...userIds]}::uuid[])`.execute(ctx.trx);
+  for (const p of rows) names.set(p.user_id, p.display_name ?? p.email);
+  return names;
 }
 
 // Who decided each statement (imported or skipped) and when, from the audit row of the decision (#2142), newest first per
@@ -44,13 +75,7 @@ async function statementDecisions(ctx: QueryContext, fileIds: readonly string[])
     .orderBy('occurred_at', 'desc')
     .orderBy('id', 'desc')
     .execute();
-  const users = [...new Set(rows.flatMap((r) => (r.actor_id ? [r.actor_id] : [])))];
-  const names = new Map<string, string>();
-  if (users.length > 0) {
-    const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
-      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
-    for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
-  }
+  const names = await memberNames(ctx, [...new Set(rows.flatMap((r) => (r.actor_id ? [r.actor_id] : [])))]);
   for (const r of rows) {
     if (!r.target_id || out.has(r.target_id)) continue;
     out.set(r.target_id, { name: r.actor_id ? (names.get(r.actor_id) ?? null) : null, at: new Date(r.occurred_at).toISOString() });
@@ -86,6 +111,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             'x.version',
             'x.method',
             'x.created_at as run_at',
+            'x.legal_entity_id as run_entity_id',
             // Only the size of an opened archive's entry list, from its own column (#432): neither the list nor an
             // invoice's result is loaded here.
             sql<number | null>`CASE WHEN x.method = 'archive' AND x.status = 'done' THEN x.entry_count END`.as('entry_count'),
@@ -121,6 +147,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'f.filename',
       'f.content_type',
       'f.created_at',
+      'f.source',
+      'f.created_by',
+      'e.run_entity_id',
       'e.status as extraction_status',
       'e.error',
       'e.version',
@@ -153,14 +182,26 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     rows.flatMap((r) => (r.proposal_id && r.proposal_status === 'executed' ? [r.proposal_id] : [])),
   );
   const editor = ctx.actor.type === 'user' && ctx.role !== null && EDITOR_ROLES.includes(ctx.role);
+  const asStatement = (r: (typeof rows)[number]) => ({ id: r.id, source: r.source, createdBy: r.created_by, legalEntityId: r.run_entity_id });
+  const statementRows = rows.filter((r) => statementOf(r.statement, asStatement(r), NO_CONTEXT) !== null);
   // The statements read from files that were decided: who decided each, from its audit row (#2142).
   const decisions = await statementDecisions(
     ctx,
-    rows.flatMap((r) => {
-      const state = statementOf(r.statement, new Map(), r.id)?.state;
+    statementRows.flatMap((r) => {
+      const state = statementOf(r.statement, asStatement(r), NO_CONTEXT)?.state;
       return state === 'imported' || state === 'rejected' ? [r.id] : [];
     }),
   );
+  // Where each statement came from and which entity it is for (#2191): the uploaders' names, and the names of the entities
+  // the reader sees (an entity hidden from the reader reads as none).
+  const uploaders = await memberNames(ctx, [...new Set(statementRows.flatMap((r) => (r.source === 'upload' && r.created_by ? [r.created_by] : [])))]);
+  const entityIds = [...new Set(statementRows.flatMap((r) => (r.run_entity_id ? [r.run_entity_id] : [])))];
+  const entities = new Map<string, string>();
+  if (entityIds.length > 0) {
+    const found = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute();
+    for (const e of found) entities.set(e.id, e.name);
+  }
+  const known: StatementContext = { decisions, entities, uploaders };
   return rows.map((r) => {
     const archive = isArchiveType(r.content_type);
     const waiting = !r.extraction_status && r.waiting;
@@ -172,7 +213,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const lastRunFailed = r.extraction_status === 'failed' || (r.extraction_status === 'pending' && !r.in_flight);
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
-    const statement = statementOf(r.statement, decisions, r.id);
+    const statement = statementOf(r.statement, asStatement(r), known);
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight

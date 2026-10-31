@@ -250,4 +250,12 @@ describe('statementFileRows', () => {
       { rowNo: 3, date: '02/09/2026', description: 'b', reference: '', moneyIn: '', moneyOut: '1.5', balance: '?' },
     ]);
   });
+
+  it('refuses an amount text longer than the module takes, with its row, instead of cutting it (#2191)', () => {
+    const long = '1'.repeat(51);
+    expect(statementFileRows([{ rowNo: 4, date: '01/09/2026', description: 'a', reference: 'r', moneyIn: { kind: 'number', value: long }, moneyOut: null, balance: null }])).toEqual({ tooLongRow: 4 });
+    // Exactly the limit goes through whole.
+    const exact = statementFileRows([{ rowNo: 4, date: '01/09/2026', description: 'a', reference: 'r', moneyIn: { kind: 'number', value: '1'.repeat(50) }, moneyOut: null, balance: null }]);
+    expect(Array.isArray(exact) && exact[0]?.moneyIn).toBe('1'.repeat(50));
+  });
 });
