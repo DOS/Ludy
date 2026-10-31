@@ -1050,6 +1050,12 @@ describe('export slots', () => {
     expect(exports.inUse).toBe(2);
     expect((await journal('a')).status).toBe(503);
     expect((await journal('b')).status).toBe(503);
+    // Every export route is behind the same slots, not only the journal.
+    for (const path of ['/api/export/ledger.xlsx', '/api/export/vat.xlsx', '/api/export/misa/sales.xlsx', '/api/export/statements-htkk.xml']) {
+      const refused = await app.request(path, { headers: { authorization: 'Bearer b', [ORG_HEADER]: 'acme' } });
+      expect(refused.status, path).toBe(503);
+      expect(await refused.json(), path).toMatchObject({ code: 'EXPORT_BUSY' });
+    }
 
     open();
     for (const done of await Promise.all([first, second])) {

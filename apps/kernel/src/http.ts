@@ -195,7 +195,7 @@ export interface HttpDeps {
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
   // Exports of the books (GET /api/export/*) building at once in this process (#2121). Default: EXPORT_CONCURRENCY, and
-  // half of that for one user.
+  // two of them for one user.
   exports?: ConcurrencyLimiter;
   // Channel connections (ADR-0025): the broker that seals tokens, and whether the sandbox channel is on. Unset: no
   // channel can be connected through the API.
@@ -1449,9 +1449,10 @@ export function createHttpApp(deps: HttpDeps) {
       return id ? { legalEntityId: id } : {};
     };
     // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
-    // full limiter refuses at once (nothing queues up in memory), and the app asks again after Retry-After. The slot
+    // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
+    // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
     // is held until the handler is done, the audit row included.
-    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY });
+    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
     app.use('/api/export/*', async (c, next) => {
       const release = exportSlots.tryAcquire(c.get('user').userId);
       if (!release) {

@@ -191,6 +191,7 @@ function partySheet(workbook: StreamedWorkbook, name: string, title: string, led
 export function buildLedgerWorkbook(book: LedgerBook, orgName: string, brand = 'Ludy'): Promise<Uint8Array> {
   return streamWorkbook(async (workbook) => {
     workbook.creator = brand;
+    workbook.lastModifiedBy = brand;
     workbook.title = `Sổ sách ${book.period.period} ${orgName}`;
     const range = `kỳ ${book.period.period} (${book.period.from} đến ${book.period.to})`;
     trialBalanceSheet(workbook, book, range);

@@ -5678,6 +5678,7 @@ export const vi = {
       UNSUPPORTED_TYPE: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP hoặc ZIP',
       NO_FILE: 'Chưa chọn tệp hoặc tệp rỗng',
       UPLOAD_BUSY: 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây',
+      EXPORT_BUSY: 'Đang có nhiều lượt xuất sổ sách; hãy thử lại sau vài giây',
       UPLOAD_EXPIRED: 'Lượt tải lên đã hết hạn; hãy tải lại tệp',
       UPLOAD_MISSING: 'Chưa nhận được tệp cho lượt tải lên này',
       UPLOAD_USED: 'Lượt tải lên này đã được dùng',

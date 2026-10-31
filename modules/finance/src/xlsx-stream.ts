@@ -26,6 +26,8 @@ export async function streamWorkbook(build: (workbook: StreamedWorkbook) => Prom
     sink.once('end', resolve);
     sink.once('error', reject);
   });
+  // A sink error while the builder runs is raised by `await finished` below, or by the builder's own throw; never unhandled.
+  finished.catch(() => undefined);
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: sink, useStyles: true, useSharedStrings: false });
   try {
     await build(workbook);

@@ -94,6 +94,7 @@ export function buildJournalWorkbook(entries: JournalEntryView[], orgName: strin
 
 async function writeJournal(workbook: StreamedWorkbook, entries: JournalEntryView[], orgName: string, brand: string): Promise<void> {
   workbook.creator = brand;
+  workbook.lastModifiedBy = brand;
   const sheet = workbook.addWorksheet('Bút toán', { views: [{ state: 'frozen', ySplit: 1 }] });
   sheet.columns = [
     { header: 'Ngày hạch toán', key: 'entryDate', width: 14 },

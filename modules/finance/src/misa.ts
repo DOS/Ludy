@@ -615,6 +615,7 @@ export function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: readon
 
 async function writeMisa<Row>(workbook: StreamedWorkbook, template: MisaTemplate<Row>, rows: readonly Row[], brand: string): Promise<void> {
   workbook.creator = brand;
+  workbook.lastModifiedBy = brand;
   const sheet = workbook.addWorksheet(template.sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
   // Column widths come before the first row: a streamed row is written as soon as it is committed.
   template.columns.forEach((c, i) => {
