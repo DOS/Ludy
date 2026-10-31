@@ -12,7 +12,7 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { ErrorText, RowsSkeleton, Spinner } from '../components/ui.tsx';
+import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -103,8 +103,7 @@ function RuleRow({ rule, canManage }: { rule: CategorizationRule; canManage: boo
       {confirming && (
         <div className="mt-2 flex flex-wrap items-center gap-2" role="alert">
           <span className="text-sm text-foreground">{t('confirmRemove')}</span>
-          <Button variant="destructive" size="sm" disabled={remove.isPending} onClick={() => remove.mutate({ id: rule.id })}>
-            {remove.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={remove.isPending} variant="destructive" size="sm" onClick={() => remove.mutate({ id: rule.id })}>
             {t('confirm')}
           </Button>
           <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => setConfirming(false)}>

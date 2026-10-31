@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { BookingFeedCard } from '../components/booking-feed.tsx';
 import { BookingSuggestCard } from '../components/booking-suggest.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { visitorTimeZone } from '../lib/booking.ts';
@@ -41,8 +41,7 @@ function Actions({ booking, slug, zone }: { booking: BookingItem; slug: string; 
       <div className="space-y-2">
         <p className="text-sm text-foreground">{t('cancelConfirm')}</p>
         <div className="flex gap-2">
-          <Button size="sm" variant="destructive" disabled={cancel.isPending} onClick={() => cancel.mutate({ bookingId: booking.id })}>
-            {cancel.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={cancel.isPending} size="sm" variant="destructive" onClick={() => cancel.mutate({ bookingId: booking.id })}>
             {t('cancelYes')}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setMode('none')}>

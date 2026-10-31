@@ -147,8 +147,7 @@ function ArchiveRow({ archive }: { archive: YearArchive }) {
           <Button variant="ghost" size="sm" onClick={() => setOpen(!open)} aria-expanded={open}>
             {open ? t('hideParts') : t('showParts')}
           </Button>
-          <Button variant="outline" size="sm" disabled={verify.isPending} onClick={() => verify.mutate()}>
-            {verify.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={verify.isPending} variant="outline" size="sm" onClick={() => verify.mutate()}>
             {t('verify')}
           </Button>
         </div>

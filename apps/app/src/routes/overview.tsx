@@ -158,8 +158,7 @@ function DueRow({ due, severalEntities, chosen }: { due: TaxDueView; severalEnti
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
         {markFor && (
-          <Button size="sm" variant="outline" onClick={() => done.mutate()} disabled={done.isPending}>
-            {done.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={done.isPending} size="sm" variant="outline" onClick={() => done.mutate()}>
             {severalEntities ? tt('markDoneFor', { entity: markName }) : tt('markDone')}
           </Button>
         )}

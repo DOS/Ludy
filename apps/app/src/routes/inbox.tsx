@@ -418,8 +418,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button size="lg" onClick={() => inputRef.current?.click()} disabled={intake.uploading}>
-              {intake.uploading ? <Spinner className="text-current" /> : null}
+            <Button loading={intake.uploading} size="lg" onClick={() => inputRef.current?.click()}>
               {t('upload')}
             </Button>
           </div>
@@ -629,8 +628,7 @@ export function InboxPage() {
                   {t('bulk.clear')}
                 </Button>
               )}
-              <Button size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
-                {sending ? <Spinner className="text-current" /> : null}
+              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
                 {sending && bulk
                   ? t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })
                   : t('bulk.approve', { count: chosen.length })}

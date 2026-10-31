@@ -14,7 +14,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, FieldError, fieldControl, focusFirstInvalid, ListSkeleton, PageHeader, Spinner, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import {
   EVERY_ENTITY,
@@ -128,8 +128,9 @@ export function StopAi() {
       </label>
       <div className="flex gap-2">
         <Button
+          loading={stop.isPending}
           variant="destructive"
-          disabled={stop.isPending}
+
           onClick={() =>
             stop.mutate(
               { scope: 'org', target: '*', ...(reason.trim() ? { reason: reason.trim() } : {}), idempotencyKey: key },
@@ -143,7 +144,6 @@ export function StopAi() {
             )
           }
         >
-          {stop.isPending ? <Spinner /> : null}
           {t('stopConfirm')}
         </Button>
         <Button variant="ghost" disabled={stop.isPending} onClick={() => setOpen(false)}>
@@ -285,11 +285,11 @@ function PositionScope({ position, entities, manage }: { position: Position; ent
           <LeScopePicker label={t('leScope')} entities={entities} value={editing} onChange={setEditing} disabled={update.isPending || locked} />
           <div className="flex flex-wrap gap-2">
             <Button
+              loading={update.isPending}
               size="sm"
               disabled={update.isPending || locked || !scopeReady(editing)}
               onClick={() => update.mutate({ id: position.id, leScope: editing, idempotencyKey: crypto.randomUUID() })}
             >
-              {update.isPending ? <Spinner /> : null}
               {t('save')}
             </Button>
             <Button
@@ -384,8 +384,7 @@ function AssignHolder({ position, members, agents }: { position: Position; membe
         <div className="mt-2 space-y-2 rounded-lg border border-warning/30 bg-warning/10 p-2 text-xs" role="alertdialog" aria-label={t('assignConfirmTitle')}>
           <p className="text-foreground">{pending === '' ? t('assignConfirmVacate', { title: position.title }) : t('assignConfirm', { title: position.title, holder: labelOf(pending) })}</p>
           <div className="flex gap-2">
-            <Button size="sm" disabled={assign.isPending} onClick={() => send(pending)}>
-              {assign.isPending ? <Spinner /> : null}
+            <Button loading={assign.isPending} size="sm" onClick={() => send(pending)}>
               {t('assignConfirmButton')}
             </Button>
             <Button size="sm" variant="ghost" disabled={assign.isPending} onClick={() => setPending(null)}>
@@ -527,8 +526,7 @@ function AddPosition({ positions, entities, entitiesReady }: { positions: Positi
           </div>
         )}
         <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-5">
-          <Button type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
-            {create.isPending ? <Spinner /> : null}
+          <Button loading={create.isPending} type="submit" disabled={create.isPending || locked || !entitiesReady || (entities.length > 1 && !scopeReady(leScope))}>
             {t('addPosition')}
           </Button>
           {create.error && !locked && <span className="text-xs text-destructive">{errorMessage(create.error)}</span>}
@@ -851,8 +849,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
           {t('hardStop')}
         </label>
         <div className="flex flex-wrap items-center gap-2 sm:col-span-2 lg:col-span-5">
-          <Button type="submit" disabled={set.isPending || locked}>
-            {set.isPending ? <Spinner /> : null}
+          <Button loading={set.isPending} type="submit" disabled={set.isPending || locked}>
             {t('setBudget')}
           </Button>
           {set.error && !locked && <span className="text-xs text-destructive">{errorMessage(set.error)}</span>}

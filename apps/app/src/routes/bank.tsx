@@ -178,8 +178,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                 })}
               </DataTable>
               {data.rows.length > PREVIEW_ROWS && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - PREVIEW_ROWS })}</p>}
-              <Button size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
-                {imported.isPending ? <Spinner className="text-current" /> : null}
+              <Button loading={imported.isPending} size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
                 {t('import', { count: toStore })}
               </Button>
               {!data.ok && <p className="text-sm text-destructive">{t('fixRows')}</p>}

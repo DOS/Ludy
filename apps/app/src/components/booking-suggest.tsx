@@ -11,7 +11,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
-import { ErrorText, Spinner } from './ui.tsx';
+import { ErrorText } from './ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { dayLabel, timeIn } from '../lib/booking.ts';
@@ -101,8 +101,7 @@ export function BookingSuggestCard({ slug }: { slug: string }) {
           </NativeSelect>
           <Textarea rows={3} maxLength={4000} placeholder={t('messagePlaceholder')} aria-label={t('message')} value={message} onChange={(e) => setMessage(e.target.value)} />
           <div className="flex gap-2">
-            <Button size="sm" type="submit" disabled={!chosen || suggest.isPending}>
-              {suggest.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={suggest.isPending} size="sm" type="submit" disabled={!chosen || suggest.isPending}>
               {t('submit')}
             </Button>
             <Button size="sm" type="button" variant="ghost" onClick={() => setOpen(false)}>

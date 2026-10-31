@@ -10,7 +10,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { periodParts } from '../lib/clients.ts';
@@ -317,8 +317,7 @@ function FiledReturn({
             {filed ? t('edit') : t('mark')}
           </Button>
           {filed && (
-            <Button size="sm" variant="ghost" disabled={withdraw.isPending} onClick={() => withdraw.mutate({ period, legalEntityId })}>
-              {withdraw.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={withdraw.isPending} size="sm" variant="ghost" onClick={() => withdraw.mutate({ period, legalEntityId })}>
               {t('withdraw')}
             </Button>
           )}
@@ -342,8 +341,7 @@ function FiledReturn({
           </div>
           {!valid && <ErrorText>{t('invalid')}</ErrorText>}
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" type="submit" disabled={!valid || save.isPending}>
-              {save.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={save.isPending} size="sm" type="submit" disabled={!valid || save.isPending}>
               {t('save')}
             </Button>
             <Button size="sm" type="button" variant="ghost" onClick={() => setForm(null)}>
@@ -421,16 +419,15 @@ export function VatPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
+              loading={exportXml.isPending}
               size="lg"
               variant="outline"
               onClick={() => exportXml.mutate()}
               disabled={exportXml.isPending || !data || !taxCode || wrongKind || carried === null}
               title={org.data && !taxCode ? t('exportXmlNeedsTaxCode') : wrongKind ? wrongKindText : undefined}>
-              {exportXml.isPending ? <Spinner className="text-current" /> : null}
               {t('exportXml')}
             </Button>
-            <Button size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-              {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
               {t('export')}
             </Button>
           </div>

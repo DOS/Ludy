@@ -12,7 +12,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, ErrorText, fieldErrorId, fieldHintId, Notice, PageHeader, PageSkeleton, Spinner } from '../components/ui.tsx';
+import { DataTable, ErrorText, fieldErrorId, fieldHintId, Notice, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { buildTemplate, canImportOpeningBalance, sheetToRows, type SheetProblem } from '../lib/opening-balance.ts';
@@ -242,8 +242,7 @@ function OpeningBalanceForm() {
                     <Alert>
                       <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
                         <span>{t('ready', { lines: data.lines })}</span>
-                        <Button onClick={sendPost} disabled={post.isPending}>
-                          {post.isPending ? <Spinner className="text-current" /> : null}
+                        <Button loading={post.isPending} onClick={sendPost}>
                           {t('post')}
                         </Button>
                       </AlertDescription>

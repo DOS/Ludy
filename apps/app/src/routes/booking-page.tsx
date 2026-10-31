@@ -231,8 +231,7 @@ function Manage({ path, token, zone }: { path: string; token: string; zone: stri
       <div className="space-y-2">
         <p className="text-sm text-foreground">{t('manage.cancelConfirm')}</p>
         <div className="flex gap-2">
-          <Button type="button" variant="destructive" disabled={ask.isPending} onClick={() => ask.mutate({ action: 'cancel' })}>
-            {ask.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={ask.isPending} type="button" variant="destructive" onClick={() => ask.mutate({ action: 'cancel' })}>
             {t('manage.cancelYes')}
           </Button>
           <Button type="button" variant="ghost" onClick={() => setMode('view')}>
@@ -467,8 +466,7 @@ function Book({ path, zone }: { path: string; zone: string }) {
             </div>
             {siteKey && <TurnstileWidget siteKey={siteKey} round={round} onToken={setCheck} />}
             <div className="flex gap-2">
-              <Button type="submit" disabled={request.isPending || Boolean(siteKey && !check)}>
-                {request.isPending ? <Spinner className="text-current" /> : null}
+              <Button loading={request.isPending} type="submit" disabled={request.isPending || Boolean(siteKey && !check)}>
                 {t('book')}
               </Button>
               <Button type="button" variant="ghost" onClick={() => setSlot(null)}>

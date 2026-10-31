@@ -551,7 +551,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const reextractButton =
     item.canReextract && fileId ? (
       <ConfirmDialog
-        render={<Button variant="outline" size="lg" />}
+        render={<Button loading={reextract.isPending} variant="outline" size="lg" />}
         disabled={busy}
         title={t('rereadTitle')}
         description={
@@ -560,7 +560,6 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         confirm={t('reread')}
         onConfirm={() => reextract.mutate({ fileId, idempotencyKey: crypto.randomUUID() })}
       >
-        {reextract.isPending ? <Spinner className="text-current" /> : null}
         {t('reread')}
       </ConfirmDialog>
     ) : null;
@@ -621,8 +620,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                 {reject.error && <ErrorText>{errorMessage(reject.error)}</ErrorText>}
                 <DialogFooter>
                   <DialogClose render={<Button type="button" variant="outline" />}>{root('common.cancel')}</DialogClose>
-                  <Button type="submit" variant="destructive" disabled={reject.isPending}>
-                    {reject.isPending ? <Spinner className="text-current" /> : null}
+                  <Button loading={reject.isPending} type="submit" variant="destructive">
                     {t('reject')}
                   </Button>
                 </DialogFooter>
@@ -632,6 +630,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         )}
         {item.canEdit && dirty && (
           <Button
+            loading={edit.isPending}
             variant="outline"
             size="lg"
             disabled={busy}
@@ -644,31 +643,26 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
               })
             }
           >
-            {edit.isPending ? <Spinner className="text-current" /> : null}
             {t('saveEdit')}
           </Button>
         )}
         {item.canApprove && reversal && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveReversal')}
           </Button>
         )}
         {item.canApprove && voucher && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveVoucher')}
           </Button>
         )}
         {item.canApprove && journalVoucher && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approveJournalVoucher')}
           </Button>
         )}
         {item.canApprove && !plain && (
-          <Button size="lg" disabled={!approveReady} onClick={submitApproval}>
-            {approve.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approve')}
           </Button>
         )}
@@ -679,14 +673,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         {reextractButton}
         {item.canResubmit && (
           <ConfirmDialog
-            render={<Button size="lg" />}
+            render={<Button loading={resubmit.isPending} size="lg" />}
             disabled={busy}
             title={t('resubmitTitle')}
             description={t('resubmitDescription')}
             confirm={t('resubmit')}
             onConfirm={() => resubmit.mutate({ id, idempotencyKey: crypto.randomUUID() })}
           >
-            {resubmit.isPending ? <Spinner className="text-current" /> : null}
             {t('resubmit')}
           </ConfirmDialog>
         )}

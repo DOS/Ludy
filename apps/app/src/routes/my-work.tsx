@@ -21,7 +21,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { DateInput } from '../components/date-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
-import { Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
+import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, clientForOrg, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
@@ -130,8 +130,7 @@ function HandOverDialog({ todo, disabled, onDone }: { todo: Todo; disabled: bool
           {handOver.error && <ErrorText>{errorMessage(handOver.error)}</ErrorText>}
           <DialogFooter>
             <DialogClose render={<Button type="button" variant="outline" />}>{common('cancel')}</DialogClose>
-            <Button type="submit" disabled={!positionId || !title.trim() || handOver.isPending}>
-              {handOver.isPending ? <Spinner /> : null}
+            <Button loading={handOver.isPending} type="submit" disabled={!positionId || !title.trim() || handOver.isPending}>
               {t('handOverConfirm')}
             </Button>
           </DialogFooter>
@@ -327,8 +326,7 @@ function TodoEditor({ todo, onClose }: { todo: Todo; onClose: () => void }) {
           </span>
         </label>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="submit" disabled={save.isPending || !title.trim()}>
-            {save.isPending ? <Spinner /> : null}
+          <Button loading={save.isPending} type="submit" disabled={save.isPending || !title.trim()}>
             {t('save')}
           </Button>
           <Button type="button" variant="outline" onClick={onClose}>

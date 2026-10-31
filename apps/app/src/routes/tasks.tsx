@@ -12,7 +12,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton, Spinner } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, socialPostOf, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -77,8 +77,7 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
         <Input maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
       </label>
       <div className="flex items-center gap-2 md:col-span-4">
-        <Button type="submit" disabled={create.isPending}>
-          {create.isPending ? <Spinner /> : null}
+        <Button loading={create.isPending} type="submit">
           {t('create')}
         </Button>
         {create.error && <span className="text-xs text-destructive">{errorMessage(create.error)}</span>}

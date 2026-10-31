@@ -391,8 +391,7 @@ export function NotesPage() {
     },
   });
   const newButton = writer ? (
-    <Button onClick={() => create.mutate()} disabled={create.isPending}>
-      {create.isPending && <Spinner className="text-current" />}
+    <Button loading={create.isPending} onClick={() => create.mutate()}>
       {t('new')}
     </Button>
   ) : undefined;
@@ -437,12 +436,10 @@ export function NotesPage() {
   const actions =
     role !== undefined ? (
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={exportMine.isPending} onClick={() => void download('md').catch(() => undefined)}>
-          {exportMine.isPending && exportMine.variables === 'md' && <Spinner className="text-current" />}
+        <Button loading={exportMine.isPending && exportMine.variables === 'md'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('md').catch(() => undefined)}>
           {t('export.markdown')}
         </Button>
-        <Button variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
-          {exportMine.isPending && exportMine.variables === 'json' && <Spinner className="text-current" />}
+        <Button loading={exportMine.isPending && exportMine.variables === 'json'} variant="outline" disabled={exportMine.isPending} onClick={() => void download('json').catch(() => undefined)}>
           {t('export.json')}
         </Button>
         {newButton}

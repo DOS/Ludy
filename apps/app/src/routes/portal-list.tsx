@@ -10,7 +10,7 @@ import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { CardSkeleton, DataTable, Empty, ErrorText, ListSkeleton, PageHeader, Spinner } from '../components/ui.tsx';
+import { CardSkeleton, DataTable, Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { PortalSyncPanel } from '../components/portal-sync.tsx';
 import { getConfig } from '../lib/auth.ts';
 import { canSyncFromPortal } from '../lib/portal-sync.ts';
@@ -167,13 +167,13 @@ function MissingInvoiceRequest({ period, missing, editor, canManage, slug }: { p
         <div className="mt-3 flex flex-wrap items-end gap-3">
           {missing > 0 && contact && (
             <Button
+              loading={send.isPending}
               onClick={() => {
                 send.reset();
                 send.mutate({ period, legalEntityId: entity.legalEntityId });
               }}
               disabled={send.isPending || !entity.ready}
             >
-              {send.isPending ? <Spinner className="text-current" /> : null}
               {t('send')}
             </Button>
           )}
@@ -310,8 +310,7 @@ export function PortalListPage() {
                 </Button>
               )}
               <input ref={input} type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" aria-label={t('upload')} onChange={(e) => choose(e.target.files?.[0])} />
-              <Button size="lg" onClick={() => input.current?.click()} disabled={importList.isPending || !entity.ready}>
-                {importList.isPending ? <Spinner className="text-current" /> : null}
+              <Button loading={importList.isPending} size="lg" onClick={() => input.current?.click()} disabled={importList.isPending || !entity.ready}>
                 {t('upload')}
               </Button>
             </>

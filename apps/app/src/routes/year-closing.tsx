@@ -7,7 +7,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { ErrorText, Spinner } from '../components/ui.tsx';
+import { ErrorText } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { localToday } from '../lib/reversal.ts';
 
@@ -65,8 +65,7 @@ export function YearClosingFormCard({ slug, onClose }: { slug: string; onClose: 
         </label>
         {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={request.isPending || !entity.ready}>
-            {request.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={request.isPending} type="submit" disabled={request.isPending || !entity.ready}>
             {t('submit')}
           </Button>
           <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>

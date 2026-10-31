@@ -15,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/t
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { PeriodLockPanel } from '../components/period-lock.tsx';
 import { YearArchivePanel } from '../components/year-archive.tsx';
-import { DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, Notice, PageHeader, TOTAL_RULE, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, getCurrentOrg, orpc } from '../lib/api.ts';
 import { exportQuery } from '../lib/legal-entity-choice.ts';
@@ -328,8 +328,7 @@ function HtkkStatements({ year }: { year: number }) {
           <h2 className="text-sm font-semibold">{t('htkkTitle', { year: String(year) })}</h2>
           <p className="mt-1 max-w-3xl text-xs text-subtle-foreground">{t('htkkIntro')}</p>
         </div>
-        <Button variant="outline" onClick={() => exportXml.mutate()} disabled={exportXml.isPending || check.isPending}>
-          {exportXml.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={exportXml.isPending} variant="outline" onClick={() => exportXml.mutate()} disabled={exportXml.isPending || check.isPending}>
           {t('htkkExport')}
         </Button>
       </div>
@@ -388,8 +387,7 @@ function Statements({ period }: { period: string }) {
         <Alert className="max-w-3xl flex-1 border-warning/30 bg-warning/10 text-warning" role="note">
           {t('statementsDraft')}
         </Alert>
-        <Button variant="outline" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending}>
-          {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={exportXlsx.isPending} variant="outline" onClick={() => exportXlsx.mutate()}>
           {t('statementsExport')}
         </Button>
       </div>
@@ -484,8 +482,7 @@ export function LedgerPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          <Button size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
-            {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || !data}>
             {t('export')}
           </Button>
         }

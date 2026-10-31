@@ -23,7 +23,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, fieldHintId, focusFirstInvalid, PageHeader, Spinner, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, fieldHintId, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { exportQuery } from '../lib/legal-entity-choice.ts';
@@ -410,8 +410,7 @@ export function VoucherFormCard({ slug, onClose, fromLine }: { slug: string; onC
         {formLevel && <ErrorText>{formLevel}</ErrorText>}
         {request.error && <ErrorText>{refusedProblem ? t(`problems.${refusedProblem}`) : errorMessage(request.error)}</ErrorText>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={request.isPending}>
-            {request.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={request.isPending} type="submit">
             {t('form.submit')}
           </Button>
           <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>
@@ -476,12 +475,10 @@ export function VouchersPage() {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button size="lg" variant="outline" onClick={() => exportMisa.mutate('receipts')} disabled={exportMisa.isPending}>
-              {exportMisa.isPending && exportMisa.variables === 'receipts' ? <Spinner className="text-current" /> : null}
+            <Button loading={exportMisa.isPending && exportMisa.variables === 'receipts'} size="lg" variant="outline" onClick={() => exportMisa.mutate('receipts')} disabled={exportMisa.isPending}>
               {t('exportReceipts')}
             </Button>
-            <Button size="lg" variant="outline" onClick={() => exportMisa.mutate('payments')} disabled={exportMisa.isPending}>
-              {exportMisa.isPending && exportMisa.variables === 'payments' ? <Spinner className="text-current" /> : null}
+            <Button loading={exportMisa.isPending && exportMisa.variables === 'payments'} size="lg" variant="outline" onClick={() => exportMisa.mutate('payments')} disabled={exportMisa.isPending}>
               {t('exportPayments')}
             </Button>
             {allowed && !entering && (
