@@ -256,8 +256,9 @@ export const en: Dictionary = {
         title: 'Tasks',
         sub: 'Work for people and agents, with a due date and an owner.',
         items: [
-          { title: 'Get the authority code for the Tân Hồng slip', amount: '', sub: 'Assigned to the accounting agent, due 20/10/2026', tone: 'accent', chip: 'Agent working', note: '' },
-          { title: 'Close October', amount: '', sub: 'Assigned to Chị Lan, due 05/11/2026', tone: 'neutral', chip: 'Open', note: '' },
+          { title: 'Reconcile payables with Bao Bì Phú Thịnh', amount: '', sub: 'Assigned to the accounting agent, due 20/10/2026', tone: 'accent', chip: 'Agent working', note: '' },
+          { title: 'Add the authority code to the HTX Tân Hồng voucher', amount: '', sub: 'Assigned to Chị Lan, due 21/10/2026', tone: 'neutral', chip: 'Open', note: '' },
+          { title: 'Photograph the ST25 rice for the post', amount: '', sub: 'Assigned to Anh Minh, due 18/10/2026', tone: 'neutral', chip: 'Open', note: '' },
         ],
       },
       social: {
@@ -300,7 +301,7 @@ export const en: Dictionary = {
   },
   owner: {
     title: 'You do not need to be an accountant',
-    lead: 'Snap or forward an invoice from your phone. Ludy checks every number and drafts the entry. You review it and tap approve; your accountant gets a complete Excel file.',
+    lead: 'Upload a photo of an invoice, or forward the invoice email, straight from your phone. Ludy checks every number and drafts the entry. You review it and tap approve; your accountant gets a complete Excel file.',
     points: [
       'Reads XML e-invoices, PDFs and photos',
       'Nothing reaches the books until you approve',
@@ -311,7 +312,7 @@ export const en: Dictionary = {
       time: '14:21',
       app: 'AI Inbox',
       org: 'Gạo Sạch Mekong',
-      steps: ['Photo', 'Checks', 'Approve'],
+      steps: ['Upload photo', 'Checks', 'Approve'],
       cardTitle: 'Proposed entry',
       cardSub: 'Bao Bì Phú Thịnh, 14/10/2026',
       edit: 'Edit',
@@ -445,7 +446,7 @@ export const en: Dictionary = {
     },
     social: {
       name: 'Social',
-      body: 'Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA, Google Business and more. Each channel has its own approval steps, and photos and videos live in one shared library.',
+      body: 'Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more. Each channel has its own approval steps, and photos and videos live in one shared library. For the large platforms, whoever installs Ludy sets up the app of that platform first.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
         { name: 'Social agent', initials: '', agent: true },
