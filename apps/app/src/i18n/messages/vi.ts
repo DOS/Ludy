@@ -5963,6 +5963,7 @@ export const vi = {
         confirm: 'Xác nhận lịch hẹn',
         get: 'Xem một lịch hẹn',
         list: 'Xem danh sách lịch hẹn',
+        live_target: 'Xem giờ cần kiểm tra trên lịch ngoài của người chủ trì trước khi quyết định lịch hẹn',
         mail_data: 'Lấy thông tin cho thư về lịch hẹn',
         manage: 'Thực hiện yêu cầu đổi hoặc hủy lịch hẹn của khách',
         move: 'Dời lịch hẹn',
@@ -6188,7 +6189,9 @@ export const vi = {
         list: 'Xem nhật ký hoạt động',
       },
       calendar: {
+        busy_add: 'Thêm giờ bận vừa đọc trực tiếp từ lịch ngoài',
         busy_replace: 'Cập nhật giờ bận từ lịch ngoài',
+        connections_of: 'Xem lịch ngoài đã kết nối của các thành viên',
         connect: 'Kết nối lịch ngoài',
         connection_state: 'Xem trạng thái lịch ngoài đã kết nối',
         connections: 'Xem các lịch ngoài của tôi',

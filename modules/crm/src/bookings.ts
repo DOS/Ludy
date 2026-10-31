@@ -70,12 +70,12 @@ async function partyFor(ctx: CommandContext, name: string, email: string, phone:
 }
 
 type EventType = Awaited<ReturnType<typeof eventTypeOf>>;
-const eventTypeOf = (ctx: CommandContext, id: string) =>
+const eventTypeOf = (ctx: Pick<CommandContext, 'trx' | 'orgId'>, id: string) =>
   ctx.trx.selectFrom('crove_crm.event_type').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', id).executeTakeFirstOrThrow();
 
 // The type's hosts who may still be booked (members who keep a calendar), lead first: the lead alone for a single
 // type. None when the type is archived.
-async function hostsOf(ctx: CommandContext, type: EventType): Promise<string[]> {
+async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventType): Promise<string[]> {
   if (!type.active) return [];
   const ids = type.assignment === 'single' ? [type.host_user_id] : [type.host_user_id, ...type.co_host_user_ids];
   const members = await ctx.trx
@@ -401,7 +401,7 @@ const changeable = (ctx: CommandContext, b: NonNullable<Awaited<ReturnType<typeo
 
 // The calendar events a booking holds and whose calendars they are on: its own event first, then a collective
 // booking's holds. None before the worker confirmed it.
-async function eventsOf(ctx: CommandContext, booking: { calendar_event_id: string | null; hold_event_ids: string[] }): Promise<Omit<Held, 'hours'>[]> {
+async function eventsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, booking: { calendar_event_id: string | null; hold_event_ids: string[] }): Promise<Omit<Held, 'hours'>[]> {
   if (booking.calendar_event_id === null) return [];
   const ids = [booking.calendar_event_id, ...booking.hold_event_ids];
   const events = await ctx.trx.selectFrom('crove_kernel.calendar_event').select(['id', 'user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
@@ -741,6 +741,29 @@ export const bookingGet = defineQuery({
   },
 });
 
-export const bookingQueries = [bookingList, bookingGet];
+// What the worker checks at the hosts' connected calendars before it decides a booking (#2139): the hosts whose calendars
+// the decision depends on, and the window the slot needs free (the slot with the type's buffers). For a pending booking
+// the type's hosts who may still host it; for a visitor's ask to move a held booking, the hosts it holds. Null when there
+// is nothing to decide (decided already, a cancel, an ask that is no longer the booking's last).
+export const bookingLiveTarget = defineQuery({
+  name: 'crm.booking.live_target',
+  input: z.strictObject({ bookingId: zId, requestId: zId.optional() }),
+  access: 'system',
+  handler: async (ctx, input): Promise<{ hostUserIds: string[]; from: string; to: string } | null> => {
+    const booking = await ctx.trx.selectFrom('crove_crm.booking').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', input.bookingId).executeTakeFirst();
+    if (!booking) return null;
+    const type = await eventTypeOf(ctx, booking.event_type_id);
+    const window = (start: number, end: number) => ({ from: new Date(start - type.buffer_before_min * 60_000).toISOString(), to: new Date(end + type.buffer_after_min * 60_000).toISOString() });
+    if (input.requestId === undefined) {
+      if (booking.status !== 'pending') return null;
+      return { hostUserIds: await hostsOf(ctx, type), ...window(new Date(booking.starts_at).getTime(), new Date(booking.ends_at).getTime()) };
+    }
+    if (booking.manage_request_id !== input.requestId || booking.manage_outcome !== null || booking.manage_action !== 'move' || booking.manage_starts_at === null) return null;
+    const start = new Date(booking.manage_starts_at).getTime();
+    const held = await eventsOf(ctx, booking);
+    return { hostUserIds: [...new Set(held.map((h) => h.userId))], ...window(start, start + type.duration_min * 60_000) };
+  },
+});
+export const bookingQueries = [bookingList, bookingGet, bookingLiveTarget];
 
 export const bookingCommands = [bookingConfirm, bookingMailData, bookingManage, bookingRemind, bookingCancel, bookingMove];

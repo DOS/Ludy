@@ -2,15 +2,15 @@
 // booking, and the worker's crm.booking.confirm holds the host's time, links a party and confirms it, or refuses it.
 // 200 confirmations of one slot at once end with exactly one booking. Set CROVE_TEST_ADMIN_URL to a superuser URL;
 // each run makes its own database.
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType, type PersonalDataErasure, type PersonalDataResult } from '@crove/kernel-contract';
-import { Runtime } from '@crove/kernel-runtime';
+import { calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType, type PersonalDataErasure, type PersonalDataResult } from '@crove/kernel-contract';
+import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { bookingManageAsk, bookingManageView, bookingRequest, bookingStatus, bookingView } from '../src/booking-page.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -318,6 +318,52 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     await expect(bookingManageAsk(app, o.slug, 'tu-van', { manage: second, action: 'move' })).rejects.toMatchObject({ code: 'VALIDATION' });
   });
 
+  it('names the hosts and the window to check live at their calendars (#2139), and a busy block added from that check makes the decision refuse the slot', async () => {
+    const o = await org();
+    const day = bookableDay();
+    // The host's connected Google calendar, its token sealed as the app stores it.
+    const account = `${randomUUID().slice(0, 8)}@gmail.test`;
+    const sealed = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]).seal(JSON.stringify({ accessToken: 'a', refreshToken: 'r' }), calendarBinding(o.orgId, 'google', account));
+    const connected = await app.execute<{ connectionId: string }>(
+      'kernel.calendar.connect',
+      { provider: 'google', externalAccount: account, displayName: account, scopes: ['https://www.googleapis.com/auth/calendar.freebusy'], expiresAt: new Date(Date.now() + 3_600_000).toISOString(), credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      { actor: asUser(o.host), orgId: o.orgId },
+    );
+    const target = (input: { bookingId: string; requestId?: string }) => worker.query<{ hostUserIds: string[]; from: string; to: string } | null>('crm.booking.live_target', input, { actor: SYSTEM, orgId: o.orgId });
+    await bookingRequest(app, o.slug, 'tu-van', visitor(at(day, 540)));
+    const first = (await o.bookings())[0]?.id as string;
+    // A pending booking: the type's hosts and its slot.
+    expect(await target({ bookingId: first })).toEqual({ hostUserIds: [o.host], from: at(day, 540), to: at(day, 570) });
+    expect(await worker.query('kernel.calendar.connections_of', { userIds: [o.host] }, { actor: SYSTEM, orgId: o.orgId })).toEqual([
+      expect.objectContaining({ connectionId: connected.connectionId, userId: o.host, provider: 'google' }),
+    ]);
+    // The live read found the slot busy: the interval joins the stored blocks (once), and the decision refuses it as taken.
+    const busy = [{ start: at(day, 540), end: at(day, 570) }];
+    const add = () => worker.execute('kernel.calendar.busy_add', { connectionId: connected.connectionId, busy }, { actor: SYSTEM, orgId: o.orgId });
+    expect(await add()).toMatchObject({ added: 1 });
+    expect(await add()).toMatchObject({ added: 0 });
+    expect(await o.confirm(first)).toMatchObject({ status: 'refused', refusal: 'taken' });
+    expect(await target({ bookingId: first })).toBeNull();
+    // Another slot is not touched: it confirms, and a confirmed booking has nothing left to check.
+    await bookingRequest(app, o.slug, 'tu-van', visitor(at(day, 720)));
+    const second = (await o.bookings())[1]?.id as string;
+    expect(await o.confirm(second)).toMatchObject({ status: 'confirmed' });
+    expect(await target({ bookingId: second })).toBeNull();
+    // A visitor's ask to move it: the hosts it holds and the new slot, until that ask is answered; a cancel asks nothing.
+    const token = (await worker.execute<{ token: string }>('crm.booking.mail_data', { bookingId: second, revision: 0 }, { actor: SYSTEM, orgId: o.orgId })).token;
+    const move = await bookingManageAsk(app, o.slug, 'tu-van', { manage: token, action: 'move', startsAt: at(day, 900) });
+    const requestId = move?.requestId as string;
+    expect(await target({ bookingId: second, requestId })).toEqual({ hostUserIds: [o.host], from: at(day, 900), to: at(day, 930) });
+    expect(await target({ bookingId: second, requestId: randomUUID() })).toBeNull();
+    await worker.execute('crm.booking.manage', { bookingId: second, requestId }, { actor: SYSTEM, orgId: o.orgId });
+    expect(await target({ bookingId: second, requestId })).toBeNull();
+    const cancel = await bookingManageAsk(app, o.slug, 'tu-van', { manage: (await worker.execute<{ token: string }>('crm.booking.mail_data', { bookingId: second, revision: 1 }, { actor: SYSTEM, orgId: o.orgId })).token, action: 'cancel' });
+    expect(await target({ bookingId: second, requestId: cancel?.requestId as string })).toBeNull();
+    // Only the system reads or adds these.
+    await expect(app.query('crm.booking.live_target', { bookingId: first }, { actor: asUser(o.host), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(app.execute('kernel.calendar.busy_add', { connectionId: connected.connectionId, busy }, { actor: asUser(o.host), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(app.query('kernel.calendar.connections_of', { userIds: [o.host] }, { actor: asUser(o.host), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+  });
   it('takes no cancel or move once the booking has started (#1319)', async () => {
     const o = await org();
     const day = bookableDay();

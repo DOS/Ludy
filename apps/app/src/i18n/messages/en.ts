@@ -5963,6 +5963,7 @@ export const en = {
         confirm: 'Confirm a booking',
         get: 'Read a booking',
         list: 'List bookings',
+        live_target: "Read the time to check at the hosts' outside calendars before a booking is decided",
         mail_data: 'Read the details of a booking mail',
         manage: "Carry out a visitor's change or cancellation of a booking",
         move: 'Move a booking',
@@ -6188,7 +6189,9 @@ export const en = {
         list: 'Read the audit log',
       },
       calendar: {
+        busy_add: 'Add busy times just read live from an outside calendar',
         busy_replace: 'Update busy times from an outside calendar',
+        connections_of: 'List the outside calendars connected by members',
         connect: 'Connect an outside calendar',
         connection_state: 'Read the state of a connected outside calendar',
         connections: 'List my outside calendars',

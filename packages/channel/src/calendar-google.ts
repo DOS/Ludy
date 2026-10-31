@@ -68,7 +68,8 @@ export interface CalendarAdapter {
   // Throws ConnectorError for a provider answer; never puts a token or the code in the error.
   exchange(input: ExchangeInput): Promise<CalendarAccount>;
   refresh(secret: string): Promise<CalendarRefreshResult>;
-  busy(secret: string, from: Date, to: Date): Promise<CalendarBusyResult>;
+  // timeoutMs: how long the one call may take (30 seconds when not given); the live check of a slot asks for a short one.
+  busy(secret: string, from: Date, to: Date, timeoutMs?: number): Promise<CalendarBusyResult>;
   // Takes the grant away at the provider (a disconnect): the whole grant, not only this token. A grant the provider no
   // longer knows counts as revoked. failed: the provider did not answer well; the worker tries again later.
   // revoked=false names why nothing was revoked (the secret holds no token).
@@ -162,10 +163,10 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
     return json as TokenAnswer;
   }
 
-  private async call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, token: string, json?: unknown): Promise<Record<string, unknown>> {
+  private async call(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, token: string, json?: unknown, timeoutMs = 30_000): Promise<Record<string, unknown>> {
     const headers: Record<string, string> = { authorization: `Bearer ${token}`, accept: 'application/json' };
     if (json !== undefined) headers['content-type'] = 'application/json; charset=UTF-8';
-    const response = await this.fetch(url, { method, headers, signal: AbortSignal.timeout(30_000), ...(json === undefined ? {} : { body: JSON.stringify(json) }) });
+    const response = await this.fetch(url, { method, headers, signal: AbortSignal.timeout(timeoutMs), ...(json === undefined ? {} : { body: JSON.stringify(json) }) });
     const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!response.ok) throw new GoogleCalendarError(response.status, body);
     return body ?? {};
@@ -274,7 +275,7 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
     }
   }
 
-  async busy(secret: string, from: Date, to: Date): Promise<CalendarBusyResult> {
+  async busy(secret: string, from: Date, to: Date, timeoutMs?: number): Promise<CalendarBusyResult> {
     const s = googleCalendarSecretOf(secret);
     if (!s) return { refused: 'NO_ACCESS_TOKEN' };
     let body: Record<string, unknown>;
@@ -283,7 +284,7 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
         timeMin: from.toISOString(),
         timeMax: to.toISOString(),
         items: [{ id: 'primary' }],
-      });
+      }, timeoutMs);
     } catch (error) {
       if (error instanceof GoogleCalendarError) return error.status === 401 ? { refused: 'invalid_token' } : { failed: error.reason ?? String(error.status) };
       return { failed: 'NETWORK' };

@@ -370,6 +370,29 @@ export function cutOut(busy: ReadonlyArray<BusyPiece>, cuts: ReadonlyArray<BusyP
   return rest;
 }
 
+type TrxContext = { trx: CommandContext['trx']; orgId: string };
+
+// The time of every booking written to the connection's calendar and unchanged since (state written, its hash the
+// booking's own now) that ends after `from`: the provider's busy answer holds their copies, which the bookings already cover.
+async function writtenCopyCuts(ctx: TrxContext, connectionId: string, from: number): Promise<BusyPiece[]> {
+  const copies = await ctx.trx
+    .selectFrom('crove_kernel.calendar_event_link as l')
+    .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
+    .select(['l.synced_hash', 'e.starts_at', 'e.ends_at', 'e.title'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.connection_id', '=', connectionId)
+    .where('l.state', '=', 'written')
+    .where('e.status', '=', 'active')
+    .where('e.ends_at', '>', new Date(from))
+    .execute();
+  const cuts: BusyPiece[] = [];
+  for (const c of copies) {
+    const s = new Date(c.starts_at);
+    const e = new Date(c.ends_at);
+    if (c.synced_hash === writeBackHash(s, e, c.title)) cuts.push({ start: s.getTime(), end: e.getTime() });
+  }
+  return cuts;
+}
 // The sync's answer: the connection's busy blocks over [from, to) become exactly these intervals. Blocks that are
 // not in the answer go, new ones come in, the rest stay; one transaction, so slot computation never sees half a sync.
 export const calendarBusyReplace = defineCommand({
@@ -401,22 +424,7 @@ export const calendarBusyReplace = defineCommand({
     // calendar event already covers that time, and its copy must not stand in the way of moving the booking (nor of the
     // booking next to it), so the time of every written, unchanged booking is cut out of the answer. A genuine event that
     // overlaps a booking keeps the part outside it; the part under it is covered by the booking until the next sweep.
-    const copies = await ctx.trx
-      .selectFrom('crove_kernel.calendar_event_link as l')
-      .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
-      .select(['l.synced_hash', 'e.starts_at', 'e.ends_at', 'e.title'])
-      .where('l.org_id', '=', ctx.orgId)
-      .where('l.connection_id', '=', input.connectionId)
-      .where('l.state', '=', 'written')
-      .where('e.status', '=', 'active')
-      .where('e.ends_at', '>', new Date(from))
-      .execute();
-    const cuts: BusyPiece[] = [];
-    for (const c of copies) {
-      const s = new Date(c.starts_at);
-      const e = new Date(c.ends_at);
-      if (c.synced_hash === writeBackHash(s, e, c.title)) cuts.push({ start: s.getTime(), end: e.getTime() });
-    }
+    const cuts = await writtenCopyCuts(ctx, input.connectionId, from);
     const answered = input.busy.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
     const wanted = new Map(busyPieces(cuts.length > 0 ? cutOut(answered, cuts) : answered, from, to).map((p) => [pieceKey(p), p]));
     const existing = await ctx.trx
@@ -464,6 +472,89 @@ export const calendarBusyReplace = defineCommand({
   },
 });
 
+// A live read of a slot at the provider found it busy (#2139): the intervals it saw are added to the connection's stored
+// blocks, under the keys the sync uses, so slot computation takes them away at once and the next sync reconciles them. Never
+// removes a block. The time of a written booking is cut out first, like in the sync's answer.
+export const calendarBusyAdd = defineCommand({
+  name: 'kernel.calendar.busy_add',
+  input: z.strictObject({
+    connectionId: zId,
+    busy: z.array(z.strictObject({ start: zInstant, end: zInstant })).min(1).max(100),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.calendar_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const conn = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select(['status', 'provider', 'user_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!conn) throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
+    if (conn.status !== 'active') return { connectionId: input.connectionId, added: 0 };
+    const answered = input.busy.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
+    const from = Math.min(...answered.map((b) => b.start));
+    const to = Math.max(...answered.map((b) => b.end));
+    const cuts = await writtenCopyCuts(ctx, input.connectionId, from);
+    const wanted = busyPieces(cuts.length > 0 ? cutOut(answered, cuts) : answered, from, to);
+    if (wanted.length === 0) return { connectionId: input.connectionId, added: 0 };
+    const existing = await ctx.trx
+      .selectFrom('crove_kernel.calendar_event')
+      .select('external_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('source_id', '=', input.connectionId)
+      .where('ends_at', '>', new Date(from))
+      .execute();
+    const have = new Set(existing.map((e) => e.external_id));
+    const fresh = wanted.filter((p) => !have.has(pieceKey(p)));
+    if (fresh.length > 0) {
+      await ctx.trx
+        .insertInto('crove_kernel.calendar_event')
+        .values(
+          fresh.map((p) => ({
+            org_id: ctx.orgId,
+            user_id: conn.user_id,
+            starts_at: new Date(p.start),
+            ends_at: new Date(p.end),
+            time_zone: 'UTC',
+            title: null,
+            kind: conn.provider,
+            source_id: input.connectionId,
+            external_id: pieceKey(p),
+            created_by: conn.user_id,
+            created_at: ctx.now,
+          })),
+        )
+        .execute();
+    }
+    // Counts only: never the intervals.
+    ctx.audit({ connection_id: input.connectionId, provider: conn.provider, added: fresh.length });
+    return { connectionId: input.connectionId, added: fresh.length };
+  },
+});
+
+// The active connections of these members, for the live check of a slot before a booking is decided (#2139): the worker's,
+// as the system. Only what the check needs; the credential is read separately.
+export const calendarConnectionsOf = defineQuery({
+  name: 'kernel.calendar.connections_of',
+  input: z.strictObject({ userIds: z.array(zId).min(1).max(20) }),
+  access: 'system',
+  handler: async (ctx, input): Promise<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null }>> => {
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select(['id', 'user_id', 'provider', 'expires_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('status', '=', 'active')
+      .where('user_id', 'in', input.userIds)
+      .orderBy('id')
+      .execute();
+    return rows.map((r) => ({ connectionId: r.id, userId: r.user_id, provider: r.provider, expiresAt: r.expires_at === null ? null : new Date(r.expires_at).toISOString() }));
+  },
+});
 export interface SealedCalendarCredential {
   provider: string;
   externalAccount: string;
@@ -820,5 +911,5 @@ export const calendarWriteBackConnections = defineQuery({
     return rows.map((r) => r.id);
   },
 });
-export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace];
-export const calendarConnectionQueries = [calendarCredential, calendarConnectionState, calendarConnections, calendarWriteBackPlan, calendarWriteBackConnections];
+export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace, calendarBusyAdd];
+export const calendarConnectionQueries = [calendarCredential, calendarConnectionState, calendarConnections, calendarWriteBackPlan, calendarWriteBackConnections, calendarConnectionsOf];
