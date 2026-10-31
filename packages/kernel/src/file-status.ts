@@ -22,9 +22,40 @@ export type StoredArchiveEntry = z.infer<typeof zStoredArchiveEntry>;
 
 // The summary a bank statement read from a file keeps in its run's result (#2142), read defensively; the run's rows and
 // the account number that named its account (the finance module's) stay out of what the Inbox is told.
-function statementOf(value: unknown): FileStatus['statement'] {
+function statementOf(value: unknown, decisions: ReadonlyMap<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>, fileId: string): FileStatus['statement'] {
   const parsed = zStatementSummary.safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? { ...parsed.data, decidedBy: parsed.data.state === 'staged' ? null : (decisions.get(fileId) ?? null) } : null;
+}
+
+// Who decided each statement (imported or skipped) and when, from the audit row of the decision (#2142), newest first per
+// file; a person's name only while they are a member (member_profiles answers for members of the org alone). A decision
+// whose audit row the reader cannot see, or whose actor is gone, shows no name.
+async function statementDecisions(ctx: QueryContext, fileIds: readonly string[]): Promise<Map<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>> {
+  const out = new Map<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>();
+  if (fileIds.length === 0) return out;
+  const rows = await ctx.trx
+    .selectFrom('crove_kernel.audit_event')
+    .select(['target_id', 'actor_id', 'occurred_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('command', '=', 'kernel.extraction.statement_state')
+    .where('outcome', '=', 'ok')
+    .where('target_type', '=', 'kernel.file')
+    .where('target_id', 'in', [...fileIds])
+    .orderBy('occurred_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  const users = [...new Set(rows.flatMap((r) => (r.actor_id ? [r.actor_id] : [])))];
+  const names = new Map<string, string>();
+  if (users.length > 0) {
+    const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
+      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+    for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
+  }
+  for (const r of rows) {
+    if (!r.target_id || out.has(r.target_id)) continue;
+    out.set(r.target_id, { name: r.actor_id ? (names.get(r.actor_id) ?? null) : null, at: new Date(r.occurred_at).toISOString() });
+  }
+  return out;
 }
 
 const STATEMENT_STATUS = { staged: 'staged', imported: 'imported', rejected: 'dismissed' } as const;
@@ -119,6 +150,14 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     rows.flatMap((r) => (r.proposal_id && r.proposal_status === 'executed' ? [r.proposal_id] : [])),
   );
   const editor = ctx.actor.type === 'user' && ctx.role !== null && EDITOR_ROLES.includes(ctx.role);
+  // The statements read from files that were decided: who decided each, from its audit row (#2142).
+  const decisions = await statementDecisions(
+    ctx,
+    rows.flatMap((r) => {
+      const state = statementOf(r.statement, new Map(), r.id)?.state;
+      return state === 'imported' || state === 'rejected' ? [r.id] : [];
+    }),
+  );
   return rows.map((r) => {
     const archive = isArchiveType(r.content_type);
     const waiting = !r.extraction_status && r.waiting;
@@ -130,7 +169,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const lastRunFailed = r.extraction_status === 'failed' || (r.extraction_status === 'pending' && !r.in_flight);
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
-    const statement = statementOf(r.statement);
+    const statement = statementOf(r.statement, decisions, r.id);
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight

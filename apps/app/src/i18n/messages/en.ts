@@ -1987,6 +1987,8 @@ export const en = {
       imported: '{count, number} new lines imported',
       skipped: 'Statement skipped; no line was stored',
       needsMember: 'Only owners, admins and members can import a statement.',
+      decidedBy: '{state, select, imported {Imported by} other {Skipped by}} {name} at {when}',
+      formerMember: 'someone who is no longer a member',
     },
     fileStatus: {
       processing: 'Reading',
@@ -5665,6 +5667,8 @@ export const en = {
       NOT_A_BANK_ACCOUNT: 'This is not a bank account (112) of the organization.',
       BANK_IMPORT_INVALID: 'Some lines of the statement could not be read. Check them before importing.',
       STATEMENT_NOT_STAGED: 'This statement was already dealt with or was read again; reload the list.',
+      STATEMENT_IMPORTED: 'This statement was already imported, so it cannot be read again.',
+      STATEMENT_TOO_LARGE: 'The statement holds too much data to wait for import; split it into files by month.',
       STATEMENT_MAPPING_CHANGED: "The statement's account number is no longer mapped to this bank account; check Settings, then read the file again.",
       BANK_FEED_NOT_FOUND: 'This bank feed connection was not found.',
       BANK_FEED_INACTIVE: 'This bank feed connection no longer works; connect it again.',

@@ -18,7 +18,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
 import type { MemberRole } from '@crove/db';
-import { BANK_IMPORT_MAX_ROWS, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { Decimal } from '@crove/l10n-vn';
 import { importStatement, previewStatement } from './bank.ts';
@@ -84,6 +84,8 @@ export const bankStatementStage = defineQuery({
     const place = await mappedPlace(ctx, input.accountNumber);
     if (place.kind === 'none') return { outcome: 'unmapped', accountNumber: input.accountNumber };
     if (place.kind === 'ambiguous') return { outcome: 'ambiguous', accountNumber: input.accountNumber };
+    // The rows are kept with the file's read until a member decides: a bounded amount, refused with the reason past it.
+    if (JSON.stringify(input.rows).length > STAGED_STATEMENT_MAX_BYTES) return { outcome: 'refused', code: 'STATEMENT_TOO_LARGE', message: TOO_BIG, rows: [] };
     try {
       const preview = await previewStatement(ctx, { bankAccount: place.bankAccount, filename: input.filename, rows: input.rows, legalEntityId: place.legalEntityId }, place.legalEntityId);
       if (!preview.ok) {
@@ -139,6 +141,11 @@ async function stagedRun(ctx: QueryContext, fileId: string): Promise<{ summary: 
   return { summary: parsed.data.summary, rows: parsed.data.rows };
 }
 
+// One decision at a time per file: a second member waits here until the first has committed, and then finds the file's
+// newest run changed (a decided statement is no longer staged). Without it both would read the same staged run.
+const lockStatement = (ctx: QueryContext, fileId: string) =>
+  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.bank.statement:${ctx.orgId}:${fileId}`}, 0))`.execute(ctx.trx);
+
 const notStaged = () => new DomainError('STATEMENT_NOT_STAGED', 409, 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
 
 export const bankStatementConfirm = defineCommand({
@@ -150,6 +157,7 @@ export const bankStatementConfirm = defineCommand({
   access: IMPORTERS,
   handler: async (ctx, input): Promise<BankImportResult> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhập được sao kê');
+    await lockStatement(ctx, input.fileId);
     const staged = await stagedRun(ctx, input.fileId);
     if (!staged) throw notStaged();
     // The mapping is looked at again: an owner may have removed or moved it since the file was read, and the lines go to
@@ -179,6 +187,7 @@ export const bankStatementReject = defineCommand({
   access: IMPORTERS,
   handler: async (ctx, input): Promise<{ fileId: string }> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới bỏ qua được sao kê');
+    await lockStatement(ctx, input.fileId);
     if (!(await stagedRun(ctx, input.fileId))) throw notStaged();
     // Nothing was stored: the rows are dropped with the read, and every dedupe key stays free.
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'rejected' });
@@ -210,6 +219,7 @@ const vnNumber = (n: number) => n.toLocaleString('vi-VN');
 // What a file that is no statement says in the Inbox, and what the exceptions say: the reason and what to do.
 export const NOT_A_STATEMENT = 'Không nhận ra sao kê ngân hàng: cần dòng tiêu đề có cột ngày và số tiền, và dòng "Số tài khoản" phía trên bảng';
 const TOO_LARGE = 'Tệp sao kê quá lớn (tối đa 10 MB); hãy chia thành nhiều tệp nhỏ hơn';
+const TOO_BIG = 'Sao kê có quá nhiều dữ liệu để chờ nhập (tối đa 4 MB nội dung các dòng); hãy chia thành nhiều tệp theo tháng';
 const TOO_MANY = `Sao kê có hơn ${vnNumber(EXTRACT_LIMITS.maxStatementRows)} dòng; hãy chia thành nhiều tệp theo tháng`;
 
 export function unmappedMessage(accountNumber: string | null): string {
@@ -263,7 +273,7 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
   // the caller's own checks never run, as they never did for a file already read.
   if (version === undefined ? file.hasExtraction : !file.due) return { handled: true };
   const asCsv = file.content_type === CSV;
-  const record = (status: 'done' | 'failed', fields: { error: string | null; result?: unknown; summary?: string }) =>
+  const record = (status: 'done' | 'failed', fields: { error: string | null; result?: unknown; summary?: string; legalEntityId?: string }) =>
     deps.runtime.execute(
       'kernel.extraction.record',
       {
@@ -276,6 +286,7 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
         error: fields.error,
         proposal: null,
         statement: true,
+        ...(fields.legalEntityId ? { legalEntityId: fields.legalEntityId } : {}),
         ...(fields.summary ? { summary: fields.summary } : {}),
       },
       { actor, orgId },
@@ -322,6 +333,8 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
   await record('done', {
     error: null,
     result: { kind: 'bank_statement', summary, rows },
+    // The run belongs to the entity the account is mapped to: only members who see it see the statement's account and totals.
+    legalEntityId: summary.legalEntityId,
     summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới`,
   });
   return { handled: true };

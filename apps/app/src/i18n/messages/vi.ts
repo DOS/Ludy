@@ -1985,6 +1985,8 @@ export const vi = {
       imported: '{count, number} dòng mới đã được nhập',
       skipped: 'Đã bỏ qua sao kê; không có dòng nào được lưu',
       needsMember: 'Chỉ chủ sở hữu, quản trị viên và thành viên nhập được sao kê.',
+      decidedBy: '{state, select, imported {Nhập bởi} other {Bỏ qua bởi}} {name} lúc {when}',
+      formerMember: 'một người không còn là thành viên',
     },
     fileStatus: {
       processing: 'Đang đọc',
@@ -5665,6 +5667,8 @@ export const vi = {
       NOT_A_BANK_ACCOUNT: 'Tài khoản này không phải tài khoản tiền gửi ngân hàng (112) của tổ chức',
       BANK_IMPORT_INVALID: 'Sao kê có dòng không đọc được; hãy xem lại trước khi nhập',
       STATEMENT_NOT_STAGED: 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách',
+      STATEMENT_IMPORTED: 'Sao kê này đã được nhập nên không đọc lại được',
+      STATEMENT_TOO_LARGE: 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng',
       STATEMENT_MAPPING_CHANGED: 'Số tài khoản của sao kê không còn liên kết với tài khoản ngân hàng này; hãy kiểm tra Cài đặt rồi đọc lại tệp',
       BANK_FEED_NOT_FOUND: 'Không tìm thấy kết nối nguồn giao dịch ngân hàng',
       BANK_FEED_INACTIVE: 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại',

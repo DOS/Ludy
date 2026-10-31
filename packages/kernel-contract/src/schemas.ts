@@ -664,7 +664,9 @@ export const zFileStatus = z.object({
   // The newest run's error, when that run failed.
   error: z.string().nullable(),
   // The bank statement of a staged, imported or dismissed file (#2142), null for any other file.
-  statement: zStatementSummary.nullable(),
+  // decidedBy: who imported or skipped it and when, from the audit row of the decision (null while it waits, or when the
+  // row is not visible to the reader); name is null for a person who is no longer a member.
+  statement: zStatementSummary.extend({ decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable() }).nullable(),
   proposalId: zId.nullable(),
   // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
   // apart (DESIGN.md principle 2). Null when the file has no proposal.

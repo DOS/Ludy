@@ -262,6 +262,8 @@ export const KERNEL_ERROR_CODES = [
   // A statement read from a file waits for a member (#2142).
   'STATEMENT_NOT_STAGED',
   'STATEMENT_MAPPING_CHANGED',
+  'STATEMENT_IMPORTED',
+  'STATEMENT_TOO_LARGE',
   // Bank feeds (ADR-0039, #2044).
   'BANK_FEED_NOT_FOUND',
   'BANK_FEED_INACTIVE',

@@ -8,7 +8,7 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zCheck, zId } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
@@ -158,6 +158,20 @@ async function lockFile(ctx: CommandContext, fileId: string, statement = false) 
   return file;
 }
 
+// Whether the file's newest run is a bank statement a member imported (#2142).
+async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const run = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('result')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .orderBy('version', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  const result = run?.result as { kind?: unknown; summary?: { state?: unknown } } | null | undefined;
+  return result?.kind === 'bank_statement' && result.summary?.state === 'imported';
+}
+
 // Whether a read of the file was a bank statement's (#2142): an .xlsx stored as a ZIP that the worker read as a statement
 // records a run of method 'unsupported' (an archive records 'archive'), and may be read again, for instance once the
 // account it names is mapped.
@@ -219,6 +233,9 @@ export const reextractFile = defineCommand({
     }
     const latest = await latestExtraction(ctx, input.fileId);
     if (!latest) throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lần đầu; hãy chờ kết quả');
+    // A bank statement already imported is read no more (#2142): its lines are stored, and a second reading could only
+    // stage them again, perhaps into another account.
+    if (await statementImported(ctx, input.fileId)) throw new DomainError('STATEMENT_IMPORTED', 409, 'Sao kê này đã được nhập nên không đọc lại được');
     if (latest.inFlight) {
       throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lại; hãy chờ kết quả', { version: latest.version });
     }
@@ -360,6 +377,9 @@ export const recordExtraction = defineCommand({
     summary: z.string().max(500).optional(),
     // The run is of a bank statement (#2142), which may be an .xlsx stored as a ZIP: with no proposal, method 'unsupported'.
     statement: z.boolean().optional(),
+    // The legal entity a staged statement's run belongs to (#2142): the one its account is mapped to, so only members who
+    // see that entity see the statement's account, lines and totals. A statement run only; the first run of a file.
+    legalEntityId: zId.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -369,6 +389,10 @@ export const recordExtraction = defineCommand({
     // A run of a bank statement (#2142) has no proposal and the method 'unsupported'; only such a run may name a ZIP.
     if (original.statement === true && (original.proposal !== null || original.method !== 'unsupported')) {
       throw new DomainError('INVALID', 422, 'Lần đọc sao kê không có đề xuất');
+    }
+    // The rows a staged statement keeps in the run's result are bounded (#2142): the staging checks it, and so does this.
+    if (original.statement === true && JSON.stringify(original.result ?? null).length > STAGED_STATEMENT_MAX_BYTES + 64 * 1024) {
+      throw new DomainError('STATEMENT_TOO_LARGE', 422, 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng');
     }
     const file = await lockFile(ctx, original.fileId, original.statement === true);
     const input = await withDuplicateGuard(ctx, original);
@@ -395,7 +419,7 @@ export const recordExtraction = defineCommand({
         .executeTakeFirst();
       if (existing) return { extractionId: existing.id, proposalId: null, duplicate: true };
       // The entity the upload named (#1764), else the uploader's own.
-      const entity = file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
+      const entity = (original.statement === true ? original.legalEntityId : undefined) ?? file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
       run = await ctx.trx
         .insertInto('crove_kernel.extraction')
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
@@ -514,9 +538,12 @@ export const recordExtraction = defineCommand({
 });
 
 // A staged bank statement (#2142) is decided: imported (the finance module stored its lines in this same transaction) or
-// rejected (skipped, nothing stored). The run keeps its summary with the new state and drops its rows, so the file shows
-// what became of it and the rows are no longer held. Run by finance.bank.statement_confirm and .statement_reject, as the
-// member who decided; only a staged statement run can be decided, once.
+// rejected (skipped, nothing stored). A finished run never changes (extraction_guard), so the decision is a NEW run of the
+// file, with the staged summary in its new state and no rows: it is the file's newest run, the one the Inbox shows and the
+// one a second decision finds, so a statement is decided once; its requester is the member who decided (the database
+// takes it from the sealed context) and its audit row says so too. The staged run keeps its rows, like any run keeps its
+// result. Run by finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes
+// a lock on the file first, so two members cannot both decide it.
 export const statementState = defineCommand({
   name: 'kernel.extraction.statement_state',
   input: z.object({
@@ -536,7 +563,7 @@ export const statementState = defineCommand({
     await lockFile(ctx, input.fileId, true);
     const run = await ctx.trx
       .selectFrom('crove_kernel.extraction')
-      .select(['id', 'status', 'result'])
+      .select(['id', 'status', 'result', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId)
       .orderBy('version', 'desc')
@@ -555,10 +582,17 @@ export const statementState = defineCommand({
       ...(input.importId !== undefined ? { importId: input.importId } : {}),
     };
     await ctx.trx
-      .updateTable('crove_kernel.extraction')
-      .set({ result: JSON.stringify({ kind: 'bank_statement', summary }) })
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', run.id)
+      .insertInto('crove_kernel.extraction')
+      .values({
+        org_id: ctx.orgId,
+        file_id: input.fileId,
+        ...(run.legal_entity_id ? { legal_entity_id: run.legal_entity_id } : {}),
+        method: 'unsupported',
+        status: 'done',
+        result: JSON.stringify({ kind: 'bank_statement', summary }),
+        checks: '[]',
+        completed_at: ctx.now,
+      })
       .execute();
     ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
     await ctx.activity(
