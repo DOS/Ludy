@@ -123,6 +123,10 @@ The owner learns about an outage before the partner calls (M1-9, issue #309): pr
 - Checked by `pilot:check`: `ALERT_WEBHOOK_URL` is set and https, `PROBER_HEARTBEAT_URL` is https when set, and the prober accepts its settings (a Telegram webhook needs `ALERT_TELEGRAM_CHAT_ID`). The pass line says whether `COMPOSE_PROFILES` starts the prober.
 - `MANUAL`: the outside uptime check exists and the test alert (`pnpm alert:test`) reached the phone; without `prober` in `COMPOSE_PROFILES`, that a cron job runs the prober; without `PROBER_HEARTBEAT_URL`, that the owner accepts that nothing pages when the prober itself stops; with `ARCHIVE_STORE=s3`, no `S3_ACCESS_KEY_ID` and `PROBER_ARCHIVE_S3_DEFAULT_CHAIN=true`, that the prober's role only reads the archive bucket (the worker is on the same default chain, so on one host the prober runs under the worker's role, which writes), or that it has a read-only `PROBER_ARCHIVE_S3_*` key pair of its own instead.
 
+## 6b. Logs name their request, and the slow queries can be read (#2175)
+
+`LOG_FORMAT=json` makes every log line of the API, the worker and the prober one JSON object, with the request id (the `x-request-id` answer header), the org and, for a job, its id and queue; `pnpm pilot:check` lists it as a manual item on a public URL until it is set. With `pg_stat_statements` loaded, the slowest queries are one query away. How to find one request's lines, a job's lines and the slowest queries: [observability.md](observability.md).
+
 ## 7. Safe defaults: separate API and worker, finance only, a cost cap that counts
 
 The outside review of 2026-10-29 found that the default deployment ran the API and the worker in one process, on the worker's all-org database login and every secret, with every module on, Social's public routes included. The pilot runs the layout of [deploy.md](deploy.md) ("The pilot layout", `tools/deploy/compose.pilot.yml`, #2118) instead. These are checked by `pilot:check` on a public `PUBLIC_URL` only (a loopback or unset `PUBLIC_URL` is a local run, and section 1 already fails it):

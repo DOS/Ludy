@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -92,6 +93,7 @@ import {
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
+import { logEvent, runWithLogContext } from './log.ts';
 import { publicAuthUrl, type Config } from './config.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
@@ -412,6 +414,28 @@ export function createHttpApp(deps: HttpDeps) {
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
+  // A request id per request (#2175): in every log line the request makes (JSON logs), and in the `x-request-id` answer
+  // header, so a report ("the upload failed at 10:42") can be matched to its lines. Always generated here: an id a caller
+  // sent is never trusted or logged. The access line carries the method, the matched route pattern (never the path, which
+  // can hold a token), the status and the time, and nothing of the request's headers, cookies, query or body; it is printed
+  // only with LOG_FORMAT=json, and not for the health probes that run every few seconds.
+  app.use('*', async (c, next) => {
+    const requestId = randomUUID();
+    const started = Date.now();
+    await runWithLogContext({ requestId }, async () => {
+      try {
+        await next();
+      } finally {
+        const status = c.res.status;
+        // Hono copies a finished response whose headers are fixed, so this reaches every answer.
+        c.header('x-request-id', requestId);
+        const route = c.req.routePath;
+        if (route !== '/healthz' && route !== '/readyz') {
+          logEvent(status >= 500 ? 'error' : 'info', 'request', { method: c.req.method, route, status, durationMs: Date.now() - started });
+        }
+      }
+    });
+  });
   app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-origin' }));
 
   app.get('/healthz', (c) => c.json({ ok: true }));

@@ -6,6 +6,11 @@ name: crove
 services:
   db:
     image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+    # pg_stat_statements (#2175): the slowest queries, normalized (a SELECT or UPDATE keeps no value, only $1, $2), from
+    # `CREATE EXTENSION IF NOT EXISTS pg_stat_statements` once per database; docs/runbooks/observability.md. Needs this
+    # preload and a restart to load. track_utility=off: a utility statement is kept as written, and `migrate` sets the
+    # role passwords with ALTER ROLE ... PASSWORD '<literal>', which would sit in the view and its stats file.
+    command: ['postgres', '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'pg_stat_statements.track_utility=off']
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-postgres-password}
@@ -241,6 +246,10 @@ services:
       S3_PRESIGNED_URLS: ${S3_PRESIGNED_URLS:-true}
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-}
       UPLOAD_COMPLETE_CONCURRENCY: ${UPLOAD_COMPLETE_CONCURRENCY:-4}
+      # JSON log lines with the request id and org id (#2175), and the database pool sizes of the API and the worker.
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      WORKER_DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-10}
       EXPORT_CONCURRENCY: ${EXPORT_CONCURRENCY:-4}
       UPLOAD_BEGIN_LIMIT_PER_MINUTE: ${UPLOAD_BEGIN_LIMIT_PER_MINUTE:-20}
       # Every PDF, XML and MIME parse happens in crove-extract (External-tenant gate T12).
@@ -349,6 +358,8 @@ services:
     environment:
       PROBER_DATABASE_URL: postgres://crove_prober:${CROVE_PROBER_DB_PASSWORD:-local-prober-password}@db:5432/postgres
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      # JSON log lines, as for the API and the worker (#2175).
+      LOG_FORMAT: ${LOG_FORMAT:-text}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
       ALERT_INSTANCE: ${ALERT_INSTANCE:-}
       ALERT_WEBHOOK_FORMAT: ${ALERT_WEBHOOK_FORMAT:-auto}

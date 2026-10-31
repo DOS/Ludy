@@ -28,6 +28,7 @@
 import { randomBytes } from 'node:crypto';
 import { applyAuthGrants, installDdlWatch, migrate, setRolePasswords } from '@crove/db/migrate';
 import { liveAuthUrl, loadConfig, type Config } from './config.ts';
+import { installJsonLogs, parseLogFormat } from './log.ts';
 import { createKernel, defaultAdapters, type ServerRole } from './kernel.ts';
 import { describeMailer } from './mail.ts';
 import { runPilotCheck } from './pilot-check.ts';
@@ -72,6 +73,11 @@ async function runAuthGrants(config: Config) {
 async function main() {
   const role = (process.argv[2] ?? 'all') as Role;
   if (!ROLES.includes(role)) throw new Error(`unknown role ${role}`);
+  // JSON log lines for the long-running roles and the prober (#2175); the CLI roles print for a person (keys, reports), so
+  // they stay as they are. Read from the environment here because the prober reads its own settings, not loadConfig().
+  if (role === 'api' || role === 'worker' || role === 'all' || role === 'prober') {
+    if (parseLogFormat(process.env['LOG_FORMAT']) === 'json') installJsonLogs({ role });
+  }
   // The prober needs only its own settings (no auth, storage or AI configuration), so it reads them itself.
   if (role === 'prober') process.exit(await runProber(process.argv.slice(3)));
   if (role === 'usage-report') process.exit(await runUsageReport(process.argv.slice(3)));

@@ -380,8 +380,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     billing: adapters.billing ?? selfHostBilling,
   };
 
-  function buildRuntime(connectionString: string, applicationName: string) {
-    const pool = createPool({ connectionString, applicationName, max: 10, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true' });
+  function buildRuntime(connectionString: string, applicationName: string, max: number) {
+    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
@@ -445,7 +445,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
 
     try {
       if (api) {
-        const { pool, db, runtime } = buildRuntime(config.DATABASE_URL, 'crove-api');
+        const { pool, db, runtime } = buildRuntime(config.DATABASE_URL, 'crove-api', config.DATABASE_POOL_MAX);
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'denied');
@@ -508,7 +508,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
         // The instance the heartbeat names is in every system audit row this worker writes (#1951), cut to what fits in
         // the connections' application_name, so both name it alike.
         const instance = hostname().slice(0, 50);
-        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance));
+        const { pool, db, runtime } = buildRuntime(workerUrl, workerApplicationName(instance), config.WORKER_DATABASE_POOL_MAX);
         stops.push(() => pool.end());
         await assertRlsEnforced(pool);
         await assertSystemContextAccess(pool, 'granted');
@@ -561,7 +561,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     // System commands need system context, which only the worker's login role may enter (External-tenant gate T5).
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for exports-rebind; run it in the worker container');
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-restore');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
@@ -576,7 +576,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function setUserStatus(disabled: boolean, argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error(`WORKER_DATABASE_URL is required for ${disabled ? 'user-disable' : 'user-enable'}; run it in the worker container`);
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator', config.WORKER_DATABASE_POOL_MAX);
     try {
       await assertRlsEnforced(pool);
       await assertSystemContextAccess(pool, 'granted');
@@ -592,7 +592,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function purgeOrg(argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for org-purge; run it in the worker container');
-    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator');
+    const { pool, runtime } = buildRuntime(workerUrl, 'crove-operator', config.WORKER_DATABASE_POOL_MAX);
     runtime.register({ commands: [orgPurgeCommand({ store: resolved.storage })] });
     try {
       await assertRlsEnforced(pool);
@@ -609,7 +609,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   async function restoreReport(argv: readonly string[]): Promise<number> {
     const workerUrl = config.WORKER_DATABASE_URL;
     if (!workerUrl) throw new Error('WORKER_DATABASE_URL is required for restore-report; run it in the worker container');
-    const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-restore');
+    const { pool, db, runtime } = buildRuntime(workerUrl, 'crove-restore', config.WORKER_DATABASE_POOL_MAX);
     runtime.register({ commands: [numberReseedCommand()] });
     try {
       await assertRlsEnforced(pool);
