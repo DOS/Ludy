@@ -368,6 +368,31 @@ describe('write-back in the sweep', () => {
     ]);
   });
 
+  it('records a held-back failure before the next event\'s own failure, in plan order', async () => {
+    const e3 = { ...upsert, eventId: 'e3', externalId: 'ext3ext3ext3' };
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, e3] });
+    const a = adapter({ writeEvent: async (_secret, event) => (event.externalId === 'ext1ext1ext1' ? { failed: 'backendError', transient: true } : { failed: 'invalidArgument' }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(records(calls)).toEqual([
+      { eventId: 'e1', state: 'error', hash: 'sha256:aaa', error: 'backendError' },
+      { eventId: 'e3', state: 'error', hash: 'sha256:aaa', error: 'invalidArgument' },
+    ]);
+  });
+
+  it('drops a held-back failure when the connection is switched off before the next event (nothing is counted)', async () => {
+    const live = { ...on };
+    const e3 = { ...upsert, eventId: 'e3', externalId: 'ext3ext3ext3' };
+    const { runtime, calls } = fakeRuntime(live, seal(SECRET), { actions: [upsert, e3] });
+    const a = adapter({
+      writeEvent: async () => {
+        Object.assign(live, { writeBack: false });
+        return { failed: 'backendError', transient: true };
+      },
+    });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(records(calls)).toEqual([]);
+  });
+
   it('leaves a lone failure of the last event unrecorded: nothing shows it is that event\'s own', async () => {
     const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert] });
     const a = adapter({ writeEvent: async () => ({ failed: 'backendError', transient: true }) });
@@ -417,6 +442,19 @@ describe('write-back in the sweep', () => {
       { eventId: 'e3', state: 'written', hash: 'sha256:aaa', error: undefined },
       { eventId: 'e2', state: 'removed', hash: 'deleted', error: undefined },
     ]);
+  });
+
+  it('does not stop on forbidden answers a success breaks up', async () => {
+    const ids = ['e1', 'e3', 'e4', 'e5'];
+    const actions = ids.map((eventId) => ({ ...upsert, eventId, externalId: `ext${eventId}${eventId}${eventId}` }));
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions });
+    // forbidden, ok, forbidden, forbidden: never three in a row.
+    const answers: Array<{ scope: true } | { ok: true }> = [{ scope: true }, { ok: true }, { scope: true }, { scope: true }];
+    let n = 0;
+    const a = adapter({ writeEvent: async () => answers[n++] as { scope: true } | { ok: true } });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(n).toBe(4);
+    expect(records(calls).map((r) => r.state)).toEqual(['error', 'written', 'error', 'error']);
   });
 
   it('stops writing after three forbidden answers in a row: the member took the permission away, and the busy read goes on', async () => {
