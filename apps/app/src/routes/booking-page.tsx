@@ -465,6 +465,7 @@ function Book({ path, zone }: { path: string; zone: string }) {
               <Textarea id="booking-note" rows={3} maxLength={1000} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
             </div>
             {siteKey && <TurnstileWidget siteKey={siteKey} round={round} onToken={setCheck} />}
+            <p className="text-xs text-muted-foreground">{t('calendarNotice')}</p>
             <div className="flex gap-2">
               <Button loading={request.isPending} type="submit" disabled={request.isPending || Boolean(siteKey && !check)}>
                 {t('book')}

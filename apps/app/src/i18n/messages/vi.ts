@@ -541,6 +541,7 @@ export const vi = {
     email: 'Email',
     phone: 'Số điện thoại (không bắt buộc)',
     note: 'Ghi chú (không bắt buộc)',
+    calendarNotice: 'Họ tên của bạn và giờ hẹn có thể được gửi tới nhà cung cấp lịch của người tiếp bạn (ví dụ Google Calendar) để ghi lịch hẹn này vào lịch của họ.',
     book: 'Đặt lịch',
     back: 'Chọn giờ khác',
     waiting: 'Đang giữ chỗ cho bạn...',

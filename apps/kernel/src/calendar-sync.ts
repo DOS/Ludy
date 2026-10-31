@@ -307,7 +307,17 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
     a.kind === 'delete' || a.summary === null || a.startsAt === null || a.endsAt === null
       ? b.adapter.removeEvent(secret, a.externalId)
       : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt });
+  const record = (a: WriteBackAction, state: 'written' | 'removed' | 'error', error: string) =>
+    b.runtime.execute(
+      'kernel.calendar.link.record',
+      { connectionId: b.connectionId, eventId: a.eventId, externalId: a.externalId, state, syncedHash: a.hash, ...(state === 'error' ? { error: error.slice(0, 100) || 'failed' } : {}) },
+      b.options,
+    );
   let first = true;
+  // Answers of "the permission is missing" in a row.
+  let forbiddenRun = 0;
+  // An outage-like failure of the previous event, not recorded until the next one answers.
+  let unsettled: { action: WriteBackAction; error: string } | null = null;
   for (const a of plan.actions) {
     // The plan is a few moments old after the first call: a member who switched write-back off, or disconnected, in the
     // meantime has no more of their bookings sent.
@@ -326,22 +336,36 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
         return typeof stopped === 'string' ? { outcome: 'retry', reason: result.refused } : stopped;
       }
     }
-    // The grant lacks the events permission (the member unticked it): nothing more can be written until they connect again.
-    // (The busy read that follows clears a connection's failure note, so none is written; the next sweep tries again.)
-    if ('scope' in result) return null;
-    // An outage or a limit says nothing about this event and would hit every one behind it: no record, no attempt counted,
-    // and the rest of the batch (each call may wait 30 seconds, and the sweep holds one lock) is left for the next sweep.
-    if ('failed' in result && result.transient) return null;
+    // An outage or a limit says nothing about this event and would hit every one behind it, so it is not recorded yet: the
+    // next event tells. If that one fails the same way it is an outage: nothing is recorded and the rest is left for the
+    // next sweep (each call may wait 30 seconds, and the sweep holds one lock). If it gets an answer, the first failure
+    // was about its own event: it is recorded as an error then, counted toward the link's six attempts, so one event
+    // that never works gives up instead of being tried on every sweep (#2163).
+    if ('failed' in result && result.transient === true) {
+      if (unsettled) return null;
+      unsettled = { action: a, error: result.failed };
+      continue;
+    }
+    if (unsettled) {
+      await record(unsettled.action, 'error', unsettled.error);
+      unsettled = null;
+    }
+    // "Forbidden" while the stored grant carries the events permission (the plan checked it): it is about this event, or the
+    // member took the permission away at Google. Nothing is recorded: a count would burn the links' six attempts during a
+    // lost permission and, since reconnecting does not reset them, keep them from writing once it is back. The batch goes on,
+    // so one event never keeps the ones behind it from running; three in a row mean the permission is gone: stop.
+    if ('scope' in result) {
+      forbiddenRun += 1;
+      if (forbiddenRun >= 3) return null;
+      continue;
+    }
+    forbiddenRun = 0;
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone
     // until its booking changes.
-    const recorded = written ? (a.kind === 'delete' || 'gone' in result ? 'removed' : 'written') : 'error';
-    await b.runtime.execute(
-      'kernel.calendar.link.record',
-      { connectionId: b.connectionId, eventId: a.eventId, externalId: a.externalId, state: recorded, syncedHash: a.hash, ...(recorded === 'error' ? { error: String('failed' in result ? result.failed : 'failed').slice(0, 100) || 'failed' } : {}) },
-      b.options,
-    );
+    await record(a, written ? (a.kind === 'delete' || 'gone' in result ? 'removed' : 'written') : 'error', 'failed' in result ? result.failed : 'failed');
   }
+  // A failure with nothing after it to compare with (the last event of the plan) is left unrecorded and tried again.
   return null;
 }
 
