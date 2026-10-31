@@ -161,7 +161,7 @@ export function Modules({ dict }: { dict: Dictionary }) {
               <span className="text-sm font-semibold">{finance.sales.title}</span>
               <span className="text-xs text-subtle">{finance.sales.sub}</span>
             </figcaption>
-            <ol className="mt-3 grid grid-cols-5 gap-1.5 sm:grid-cols-10" aria-label={finance.sales.summary}>
+            <ol className="mt-3 grid grid-cols-4 gap-1.5 sm:grid-cols-10" aria-label={finance.sales.summary}>
               {Array.from({ length: finance.sales.last - finance.sales.first + 1 }, (_, k) => {
                 const n = finance.sales.first + k;
                 const gap = finance.sales.gaps.includes(n);
