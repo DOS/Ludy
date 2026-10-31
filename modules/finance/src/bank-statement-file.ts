@@ -272,7 +272,7 @@ const TOO_MANY = `Sao kê có hơn ${vnNumber(EXTRACT_LIMITS.maxStatementRows)} 
 export function unmappedMessage(accountNumber: string | null): string {
   return accountNumber === null
     ? 'Không tìm thấy số tài khoản trong sao kê (dòng "Số tài khoản" phía trên bảng); hãy nhập sao kê ở màn Ngân hàng và chọn tài khoản'
-    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; hãy ghi số tài khoản vào tài khoản ngân hàng ở Cài đặt, mục Số tài khoản ngân hàng (hoặc liên kết nguồn giao dịch ngân hàng), rồi bấm Đọc lại ở tệp này`;
+    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; nếu đây đúng là số tài khoản của tổ chức, hãy ghi số vào tài khoản ngân hàng ở Cài đặt, mục Số tài khoản ngân hàng (hoặc liên kết nguồn giao dịch ngân hàng), rồi bấm Đọc lại ở tệp này; thư gửi đến không chứng minh người gửi là ai`;
 }
 
 function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'staged' }>): string {

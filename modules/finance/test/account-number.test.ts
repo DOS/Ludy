@@ -24,7 +24,9 @@ describe('maskAccountNumber', () => {
   it('hides all but the last four digits, and always most of a short number', () => {
     expect(maskAccountNumber('19880001234')).toBe('*******1234');
     expect(maskAccountNumber('0123456789')).toBe('******6789');
-    expect(maskAccountNumber('123456')).toBe('**3456');
+    expect(maskAccountNumber('123456')).toBe('****56');
+    expect(maskAccountNumber('1234567')).toBe('*****67');
+    expect(maskAccountNumber('12345678')).toBe('*****678');
     expect(maskAccountNumber('00110000000012345678')).toBe('********5678');
     expect(maskAccountNumber('0123456789')).not.toContain('0123');
   });

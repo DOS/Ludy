@@ -111,6 +111,8 @@ export function BankAccountNumbersCard({ canManage }: { canManage: boolean }) {
   const clear = useMutation(orpc.bankAccountNumbers.clear.mutationOptions({ onSuccess: () => refresh() }));
   // Recording a number is the owners' and admins'; nobody else is told anything about it.
   if (!canManage) return null;
+  // With several legal entities the same bank account code may carry numbers in each: the row says which entity.
+  const entityNames = new Map((entities.data ?? []).map((e) => [e.id, e.name] as const));
   const loading = numbers.isLoading || chart.isLoading || entities.isLoading;
   const failure = numbers.error ?? chart.error ?? entities.error;
   return (
@@ -131,6 +133,7 @@ export function BankAccountNumbersCard({ canManage }: { canManage: boolean }) {
                 <li key={n.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                   <p className="text-foreground">
                     <span className="font-mono">{n.accountNumber}</span> <span className="text-subtle-foreground">{t('on', { account: n.bankAccount })}</span>
+                    {entityNames.size > 1 && <span className="text-subtle-foreground"> · {entityNames.get(n.legalEntityId) ?? ''}</span>}
                   </p>
                   <Button
                     loading={clear.isPending && clear.variables?.id === n.id}

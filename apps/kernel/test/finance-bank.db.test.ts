@@ -1175,6 +1175,18 @@ suite('bank statement import (#326)', () => {
         }
       });
 
+      it('refuses to map a bank feed account whose number is recorded on another bank account, and maps it to the same one', async () => {
+        expect((await setNumber('1121', '7770001111')).status).toBe(200);
+        await admin((c) =>
+          c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '7770001111', 'TK đã ghi số']),
+        );
+        // The feed account's digits are the recorded number: they may not put it on another bank account.
+        expect(await feed('map', owner, { connectionId, externalAccountId: '7770001111', bankAccount: '1121.VCB', idempotencyKey: randomUUID() })).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
+        expect((await feed('map', owner, { connectionId, externalAccountId: '7770001111', bankAccount: '1121', idempotencyKey: randomUUID() })).status).toBe(200);
+        // Both name the same place: the statement still stages.
+        expect(await stageFor('7770001111')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121' } });
+      });
+
       it('answers ambiguous for a number a bank feed and a recording put on two different bank accounts, and stages nothing', async () => {
         // The set command refuses this; raw rows (a mapping made after the number, say) are what the statement path guards against.
         await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));

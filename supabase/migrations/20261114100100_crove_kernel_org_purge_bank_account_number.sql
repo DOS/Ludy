@@ -3,8 +3,8 @@
 -- untouched.
 --
 -- crove_finance.bank_account_number (20261114100000) records the number of a bank account so a statement file matches it.
--- It names no person and nothing the books keep, so it goes with the org's other working rows, as the bank feed accounts
--- do. Otherwise this is the body of 20261111090000 (the newest), with its signature, owner, grants and every list and
+-- It names no person (but the user id of who recorded it) and nothing the books keep, so it goes with the org's other
+-- working rows, as the bank feed accounts do. Otherwise this is the body of 20261111090000 (the newest), with its signature, owner, grants and every list and
 -- step it had.
 SET LOCAL lock_timeout = '2s';
 

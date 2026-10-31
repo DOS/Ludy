@@ -10,9 +10,10 @@ export function accountNumberDigits(raw: string): string | null {
   return /^\d{6,20}$/.test(digits) ? digits : null;
 }
 
-// The number with all but its last four digits hidden: enough to tell which account is meant, never the number itself.
-// Four digits, or fewer for a short number, so most of it is always hidden.
+// The number with all but its last digits hidden: enough to tell which account is meant, never the number itself. The
+// last four digits, or fewer for a short number (never more than half of it less one, at least two), so most of it is
+// always hidden.
 export function maskAccountNumber(digits: string): string {
-  const shown = Math.min(4, digits.length - 2);
+  const shown = Math.max(2, Math.min(4, Math.floor(digits.length / 2) - 1));
   return `${'*'.repeat(Math.min(digits.length - shown, 8))}${digits.slice(-shown)}`;
 }
