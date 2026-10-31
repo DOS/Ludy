@@ -136,7 +136,12 @@ function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>
     const urls = deps.store?.fetchUrls;
     if (!urls) return null;
     const file = await mediaFile(fileId);
-    return urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType });
+    // Reading the file back to check it can fail (a store outage, the 100 MB cap, bytes that are not the approved ones):
+    // the adapter takes any throw as "no URL" and says so on the post, so the cause is named here, in the log only.
+    return urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType }).catch((error: unknown) => {
+      console.warn(`[social-publish] no signed media URL for file ${fileId.slice(0, 8)}: ${error instanceof Error ? error.name : typeof error}`);
+      throw error;
+    });
   };
 }
 

@@ -801,6 +801,45 @@ describe('platform fetch URLs (#2192), signed offline', () => {
     await expect(huge.store.fetchUrls?.presign({ key, generation: null, sha256 }, file)).rejects.toBeInstanceOf(BlobTooLargeError);
   });
 
+  it('signs for the endpoint a platform reaches, which is the public one when it differs', async () => {
+    const store = S3BlobStore.connect({ ...r2, versioning: 'required', endpoint: 'http://minio:9000', publicEndpoint: 'https://files.example.test' });
+    const url = new URL((await store.fetchUrls?.presign({ key, generation: 's3:3HL4kqtJlcpXroDTDmJ+rmSpXd3dIbrHY', sha256 }, file)) ?? '');
+    expect(url.origin).toBe('https://files.example.test');
+    const same = S3BlobStore.connect({ ...r2, versioning: 'required' });
+    expect(new URL((await same.fetchUrls?.presign({ key, generation: 's3:v1', sha256 }, file)) ?? '').origin).toBe('https://acc0unt.r2.cloudflarestorage.com');
+  });
+
+  it('gives the read a deadline as an abort signal, and fails on a store error without signing', async () => {
+    let seen: AbortSignal | undefined;
+    const client = {
+      send: async (_command: Command, options?: { abortSignal?: AbortSignal }) => {
+        seen = options?.abortSignal;
+        return { Body: body(bytes), ContentLength: bytes.byteLength };
+      },
+    } as unknown as S3Sender;
+    const store = new S3BlobStore(client, 'crove-files', { versioning: 'off', fetchSigner: signer() });
+    await store.fetchUrls?.presign({ key, generation: null, sha256 }, file);
+    expect(seen).toBeInstanceOf(AbortSignal);
+    expect(seen?.aborted).toBe(false);
+    // A 5xx is neither a missing file nor an integrity failure: it surfaces as it is, and nothing is signed.
+    const outage = fakeStore(() => {
+      throw s3Error('ServiceUnavailable', 503);
+    }, { versioning: 'off', fetchSigner: signer() });
+    await expect(outage.store.fetchUrls?.presign({ key, generation: null, sha256 }, file)).rejects.toMatchObject({ name: 'ServiceUnavailable' });
+  });
+
+  it('cancels the stream when the read is cut short, by the cap or the deadline', async () => {
+    let cancelled = 0;
+    const chunk = new Uint8Array(1024 * 1024);
+    const endless = {
+      transformToWebStream: () => new ReadableStream<Uint8Array>({ pull: (c) => c.enqueue(chunk), cancel: () => void (cancelled += 1) }),
+      transformToByteArray: async () => chunk,
+    };
+    const { store } = fakeStore(() => ({ Body: endless }), { versioning: 'off', fetchSigner: signer() });
+    await expect(store.fetchUrls?.presign({ key, generation: null, sha256 }, file)).rejects.toBeInstanceOf(BlobTooLargeError);
+    expect(cancelled).toBe(1);
+  }, 60_000);
+
   it('refuses a stream that outgrows the cap while it is read', async () => {
     const big = new Uint8Array(1024 * 1024);
     const endless = {
@@ -813,7 +852,8 @@ describe('platform fetch URLs (#2192), signed offline', () => {
 
   it('signs org files only, before any request', async () => {
     const { store, sent } = fakeStore(() => ({ Body: body(bytes) }), { versioning: 'off', fetchSigner: signer() });
-    for (const other of [newStagingKey(), `export/${orgId}/${sha256}`, `inbound/${'a'.repeat(32)}`, `archive/2026/${sha256}`, '../org/x', 'org/x']) {
+    // Keys that are valid storage keys of other prefixes, so it is the org/ rule that refuses them, and malformed ones.
+    for (const other of [newStagingKey(), `export/${orgId}/${sha256}`, `inbound/${sha256}`, `archive/${orgId}/2026/${sha256}`, '../org/x', 'org/x']) {
       await expect(store.fetchUrls?.presign({ key: other, generation: `content:${sha256}`, sha256 }, file)).rejects.toThrow();
     }
     expect(sent).toHaveLength(0);

@@ -84,8 +84,10 @@ const CONFLICT_RETRIES = 3;
 // ListObjectsV2 returns at most 1000 keys per page; the sweep deletes this many keys at a time.
 const LIST_PAGE = 1000;
 const SWEEP_DELETES_IN_FLIGHT = 10;
-// The most a platform fetch URL checks by sha256 before signing (a Social video is the largest file).
-const FETCH_VERIFY_MAX_BYTES = 512 * 1024 * 1024;
+// The most a platform fetch URL checks by sha256 before signing: a Social video is the largest file (100 MB), and the
+// read has to end well inside a publish call's default timeout (60 s), so a slow or stalled store ends it, not the job.
+const FETCH_VERIFY_MAX_BYTES = 100 * 1024 * 1024;
+const FETCH_VERIFY_TIMEOUT_MS = 45_000;
 
 function isGoogle(endpoint: string | undefined): boolean {
   return Boolean(endpoint) && new URL(endpoint as string).hostname === GOOGLE_HOST;
@@ -642,9 +644,11 @@ export class S3BlobStore implements BlobStore {
 
   // The sha256 of the object now under the key, streamed so it is never held whole, refusing one over maxBytes.
   private async digestCurrent(key: string, maxBytes: number): Promise<{ sha256: string; versionId: string | undefined }> {
+    // One deadline for the request and the whole stream: past it the request is aborted, so nothing keeps reading.
+    const signal = AbortSignal.timeout(FETCH_VERIFY_TIMEOUT_MS);
     let out;
     try {
-      out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal });
     } catch (error) {
       if (isMissingObject(error)) throw new BlobNotFoundError(key);
       if (httpStatus(error) === 403) throw new BlobStoreAccessError(this.bucket, key, error);
@@ -659,15 +663,18 @@ export class S3BlobStore implements BlobStore {
     const hash = createHash('sha256');
     let size = 0;
     const reader = stream.getReader();
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxBytes) {
-        await reader.cancel().catch(() => undefined);
-        throw new BlobTooLargeError(key, maxBytes);
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > maxBytes) throw new BlobTooLargeError(key, maxBytes);
+        hash.update(value);
       }
-      hash.update(value);
+    } catch (error) {
+      await reader.cancel().catch(() => undefined);
+      throw error;
     }
     return { sha256: hash.digest('hex'), versionId: out.VersionId };
   }
