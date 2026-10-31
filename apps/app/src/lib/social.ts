@@ -117,10 +117,14 @@ export function takesTitle(provider: string, settings: Readonly<Record<string, u
 }
 
 // The issues a draft would have at submit, checked as it is typed (the server checks again).
-// Whether this deployment keeps files where no public link reaches them (local disk); unknown before the config loads.
+// Whether this deployment keeps files where no public link reaches them (local disk, or a store that cannot sign one for
+// a platform); unknown before the config loads.
 function uploadsDirect(): boolean {
   try {
-    return getConfig().uploads === 'direct';
+    const config = getConfig();
+    // What the server says it can sign for a platform, when it says; an older server says nothing, and direct uploads then
+    // mean local disk, as they always did.
+    return config.platformMediaUrls === undefined ? config.uploads === 'direct' : !config.platformMediaUrls;
   } catch {
     return false;
   }

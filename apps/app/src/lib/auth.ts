@@ -14,6 +14,9 @@ export interface PublicConfig {
   modules: string[];
   // presigned: files go to the bucket through a staging upload (plan §7.6); direct: through the kernel.
   uploads?: 'presigned' | 'direct';
+  // The server can hand a platform a short-lived URL to fetch a post's images from, even with direct uploads (#2192);
+  // older servers send none.
+  platformMediaUrls?: boolean;
   // The kernel serves /api/stream (issue #69); without it the screens poll.
   stream?: boolean;
   // The feedback and support link (SUPPORT_URL, issue #310): https: or mailto:, null when the deployment has none.

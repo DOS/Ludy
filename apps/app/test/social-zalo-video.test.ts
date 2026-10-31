@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 
-const config = vi.hoisted(() => ({ uploads: 'presigned' as 'presigned' | 'direct' }));
+const config = vi.hoisted(() => ({ uploads: 'presigned' as 'presigned' | 'direct', platformMediaUrls: undefined as boolean | undefined }));
 vi.mock('../src/lib/auth.ts', () => ({ getConfig: () => config }));
 
 const { draftIssues } = await import('../src/lib/social.ts');
@@ -28,6 +28,26 @@ describe('a video on a Zalo OA channel', () => {
     expect(draft([clip({ sizeBytes: 50 * MB + 1 })])).toEqual(['VIDEO_TOO_LARGE']);
     config.uploads = 'direct';
     expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+  });
+
+  // #2192: direct uploads with a store that signs a read for the platform (R2) are not local disk.
+  it('goes on direct uploads when the server can sign a URL for the platform, and is held back on a server that says no or nothing', () => {
+    config.uploads = 'direct';
+    config.platformMediaUrls = true;
+    expect(draft([clip()])).toEqual([]);
+    config.platformMediaUrls = false;
+    expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+    config.platformMediaUrls = undefined;
+    expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+    // What the server says wins over how uploads go: presigned browser transfers to an http MinIO sign nothing a platform
+    // can fetch, and a server that can sign does so whatever the uploads.
+    config.uploads = 'presigned';
+    config.platformMediaUrls = false;
+    expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+    config.platformMediaUrls = true;
+    expect(draft([clip()])).toEqual([]);
+    config.platformMediaUrls = undefined;
+    expect(draft([clip()])).toEqual([]);
   });
 
   it('says the cover and size rules in Vietnamese and in English', () => {

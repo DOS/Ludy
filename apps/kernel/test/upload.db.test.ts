@@ -298,7 +298,7 @@ suite.each(backends)('staged uploads on PostgreSQL and $name (issue #109)', (bac
 
   it('tells the app to upload through presigned forms', async () => {
     const response = await app.request('/api/config');
-    expect(await response.json()).toMatchObject({ uploads: 'presigned' });
+    expect(await response.json()).toMatchObject({ uploads: 'presigned', platformMediaUrls: expect.any(Boolean) });
   });
 
   it('turns a staged upload into a file only through the server-side hash, and deletes the staging object', async () => {

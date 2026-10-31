@@ -10,7 +10,7 @@ import { BlueskyPublisher, FacebookPagePublisher, SandboxPublisher, TelegramPubl
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
+import { BlobIntegrityError, CredentialVault, Runtime, parseVaultKey, type BlobStore } from '@crove/kernel-runtime';
 import { captureKey, runCommentJob, runGateJob, runPinJob, runPlaylistJob, runPublishJob, runThreadJob, METRICS_INTERVAL_SECONDS, socialCommands, socialQueries, STORY_EXPIRED_KEY, STORY_FINAL_KEY, storyCapture, sweepMetrics, type BeginResult, type MetricsRow, type PostView } from '@crove/mod-social';
 import { shortLinkTarget } from '../src/short-link.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -1561,6 +1561,8 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
 
     const read: Record<string, string> = {};
+    const urls: Record<string, string | null> = {};
+    const signed: { key: string; generation: string | null; sha256: string }[] = [];
     const platform = new FakePlatform();
     const publish = platform.publish.bind(platform);
     platform.publish = async (input) => {
@@ -1569,14 +1571,100 @@ suite('social publishing on PostgreSQL (S4)', () => {
           (b) => (Buffer.from(b).equals(Buffer.from(f.bytes)) ? 'read' : 'other'),
           () => 'refused',
         );
+        // The URL a platform that fetches media is given (#2192): only for this variant's own files.
+        urls[f.fileId] = await input.mediaUrl(f.fileId).catch(() => 'refused');
       }
       return publish(input);
     };
-    const store = { get: async (key: string) => stored.get(key) as Uint8Array } as unknown as BlobStore;
+    // A store with a platform fetch signer and no browser transfers (Cloudflare R2): the URL comes from fetchUrls.
+    const store = {
+      get: async (key: string) => stored.get(key) as Uint8Array,
+      fetchUrls: { presign: async (ref: { key: string; generation: string | null; sha256: string }) => (signed.push(ref), `https://files.example.test/${ref.sha256}`) },
+    } as unknown as BlobStore;
     const outcome = await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, store, callTimeoutMs: 2_000 }, o.orgId, v?.id as string, 'sandbox');
     expect(outcome).toEqual({ action: 'call', status: 'published' });
     expect(platform.posts[0]?.settings).toEqual({ cover: { fileId: cover.fileId } });
     expect(read).toEqual({ [video.fileId]: 'read', [cover.fileId]: 'read', [stray.fileId]: 'refused' });
+    expect(signed).toHaveLength(2);
+    expect(urls[video.fileId]).toMatch(/^https:\/\/files\.example\.test\/[0-9a-f]{64}$/);
+    expect(urls[cover.fileId]).toMatch(/^https:\/\/files\.example\.test\/[0-9a-f]{64}$/);
+    expect(urls[stray.fileId]).toBe('refused');
+  });
+
+  // #2192: a platform that fetches media by URL gets one only after the store has been read and the bytes checked; a store
+  // that is only having a bad moment is a new attempt, a file that cannot be signed for is a failure for good.
+  it('retries a post whose media URL failed for a store outage, and fails one whose file cannot be signed for', async () => {
+    const o = await org();
+    const stored = new Map<string, Uint8Array>();
+    const { connectionId } = await connect(o, `acct-${randomUUID().slice(0, 8)}`);
+    const due = async () => {
+      const bytes = new Uint8Array(Buffer.from(`anh-${randomUUID()}`));
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      const fileId = randomUUID();
+      await admin((c) =>
+        c.query(
+          `INSERT INTO crove_kernel.file (org_id, id, sha256, storage_key, generation, filename, content_type, size_bytes, source)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [o.orgId, fileId, sha, `org/${o.orgId}/${sha}`, `content:${sha}`, 'anh.png', 'image/png', bytes.byteLength, 'social'],
+        ),
+      );
+      stored.set(`org/${o.orgId}/${sha}`, bytes);
+      const { postId } = await exec<{ postId: string }>(o, 'social.post.create', { body: 'Bài có ảnh', media: [{ fileId }], channels: [{ connectionId, settings: {} }] });
+      await exec(o, 'social.post.submit', { postId });
+      const post = await get(o, postId);
+      await exec(o, 'social.variant.decide', { postId, decision: 'approved', variants: post.variants.map((x) => ({ variantId: x.id, revision: x.revision, contentHash: x.contentHash })) });
+      await exec(o, 'social.variant.schedule', { postId, at: new Date(Date.now() + 3_600_000).toISOString() });
+      await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
+      return { postId, id: post.variants[0]?.id as string, fileId };
+    };
+    // The adapters' own rule: no URL, nothing posted, MEDIA_URL_UNAVAILABLE.
+    const platform = new FakePlatform();
+    const publish = platform.publish.bind(platform);
+    platform.publish = async (input) => {
+      const url = await input.mediaUrl(input.content.media[0]?.fileId as string).catch(() => null);
+      return url ? publish(input) : { kind: 'rejected', error: 'bad_request', code: 'MEDIA_URL_UNAVAILABLE' };
+    };
+    const runWith = (id: string, presign: (ref: unknown, file: unknown, signal?: AbortSignal) => Promise<string>) => {
+      const store = { get: async (key: string) => stored.get(key) as Uint8Array, fetchUrls: { presign } } as unknown as BlobStore;
+      return runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, store, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox');
+    };
+
+    const outage = await due();
+    const refusedBy = (name: string) => Object.assign(new Error(name), { name });
+    expect(await runWith(outage.id, async () => Promise.reject(refusedBy('ServiceUnavailable')))).toEqual({ action: 'call', status: 'scheduled' });
+    const retried = await variant(o, outage.postId);
+    expect([retried.status, retried.attempt, retried.error?.kind, retried.error?.code]).toEqual(['scheduled', 2, 'transient', 'MEDIA_URL_UNAVAILABLE']);
+    expect(platform.posts).toHaveLength(0);
+
+    // Half the call's time (1 s of 2 s here) is all the checking of files may take: a read that is still going then is cut
+    // short with the signal it was given, and the post is a new attempt instead of a timeout of the whole call.
+    const slow = await due();
+    const hang = (_ref: unknown, _file: unknown, signal?: AbortSignal) => new Promise<string>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason as Error)));
+    const started = Date.now();
+    expect(await runWith(slow.id, hang)).toEqual({ action: 'call', status: 'scheduled' });
+    expect(Date.now() - started).toBeLessThan(1_900);
+    const late = await variant(o, slow.postId);
+    expect([late.status, late.attempt, late.error?.kind, late.error?.code]).toEqual(['scheduled', 2, 'transient', 'MEDIA_URL_UNAVAILABLE']);
+
+    // Only the time spent checking files counts against that half, not what the adapter does before it asks for a URL (a
+    // video's upload and processing): a URL asked for after 1.2 s of other work is still signed.
+    const lateAsk = await due();
+    const lateBird = new FakePlatform();
+    const lateBirdPublish = lateBird.publish.bind(lateBird);
+    lateBird.publish = async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      const url = await input.mediaUrl(input.content.media[0]?.fileId as string).catch(() => null);
+      return url ? lateBirdPublish(input) : { kind: 'rejected', error: 'bad_request', code: 'MEDIA_URL_UNAVAILABLE' };
+    };
+    const lateStore = { get: async (key: string) => stored.get(key) as Uint8Array, fetchUrls: { presign: async () => 'https://files.example.test/late' } } as unknown as BlobStore;
+    expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: lateBird }, store: lateStore, callTimeoutMs: 2_000 }, o.orgId, lateAsk.id, 'sandbox')).toEqual({ action: 'call', status: 'published' });
+    expect(lateBird.posts).toHaveLength(1);
+
+    const swapped = await due();
+    expect(await runWith(swapped.id, async () => Promise.reject(new BlobIntegrityError({ key: 'org/x/y', generation: null, sha256: 'z' })))).toEqual({ action: 'call', status: 'failed' });
+    const failed = await variant(o, swapped.postId);
+    expect([failed.status, failed.error?.kind, failed.error?.code]).toEqual(['failed', 'bad_request', 'MEDIA_URL_UNAVAILABLE']);
+    expect(platform.posts).toHaveLength(0);
   });
 
   it('asks one platform about two variants at a time at most, and totals every published channel in SQL (#397)', async () => {
