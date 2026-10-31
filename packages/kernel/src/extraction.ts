@@ -336,6 +336,8 @@ export const recordExtraction = defineCommand({
     // or did not answer, the parser sandbox was down) after every retry, which the operator must see; `document`
     // (the default) when the document could not be read. A code in kernel.file.read_failed, which the prober counts.
     failure: z.enum(['service', 'document']).optional(),
+    // What a done run with no proposal says in the file's history (#2142), for example how many bank lines a statement brought.
+    note: z.string().max(500).optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -412,6 +414,12 @@ export const recordExtraction = defineCommand({
     const withReaders = (authors: ActorRef[]) => readers.reduce(addAuthor, authors);
 
     if (!input.proposal) {
+      // A run that is done with no proposal read a file into something else than an invoice (a bank statement into bank
+      // lines, #2142): its own account of it, not a failure.
+      if (input.status === 'done') {
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.note ?? 'Đã đọc tệp');
+        return { extractionId: run.id, proposalId: null, duplicate: false };
+      }
       await ctx.activity('kernel.file', input.fileId, 'extraction.failed', input.error ?? 'Không đọc được chứng từ');
       // Whoever is waiting for this reading is told (#671, kernel.notification.dispatch).
       if (input.status === 'failed') await ctx.emit('kernel.file.read_failed', { fileId: input.fileId, version: run.version, reason: input.failure ?? 'document' });

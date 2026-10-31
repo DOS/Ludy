@@ -641,9 +641,12 @@ export const zFileStatus = z.object({
   contentType: z.string(),
   // expanded: a ZIP archive whose entries were filed as documents of their own (#314). waiting: kept unread because
   // the org used its daily extraction limit (#675); it is read once the org is back under it.
-  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded']),
+  // imported: a bank statement read into bank lines of a mapped account (#2142); there is no proposal to decide.
+  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded', 'imported']),
   // The newest run's error, when that run failed.
   error: z.string().nullable(),
+  // What an imported bank statement brought in (#2142), null for any other file.
+  statement: z.object({ bankAccount: z.string(), newLines: z.number().int().nonnegative(), duplicateLines: z.number().int().nonnegative() }).nullable(),
   proposalId: zId.nullable(),
   // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
   // apart (DESIGN.md principle 2). Null when the file has no proposal.

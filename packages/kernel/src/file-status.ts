@@ -20,6 +20,14 @@ export const zStoredArchiveEntry = z.object({
 });
 export type StoredArchiveEntry = z.infer<typeof zStoredArchiveEntry>;
 
+const zStatementSummary = z.object({ bankAccount: z.string(), newLines: z.number().int().nonnegative(), duplicateLines: z.number().int().nonnegative() });
+
+// The summary kernel.extraction.record keeps in the result of a statement read into bank lines (#2142), read defensively.
+function importedStatement(value: unknown): FileStatus['statement'] {
+  const parsed = zStatementSummary.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
 export interface FileStatusRow {
   status: FileStatus;
   // How many entries an opened archive has; null for any other file, and for an archive not opened (yet, or at all).
@@ -48,6 +56,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             // Only the size of an opened archive's entry list, from its own column (#432): neither the list nor an
             // invoice's result is loaded here.
             sql<number | null>`CASE WHEN x.method = 'archive' AND x.status = 'done' THEN x.entry_count END`.as('entry_count'),
+            // What a bank statement read into bank lines recorded as its result (#2142): only the small summary of a run of
+            // method 'unsupported' (the guard keeps an invoice's result from being read for every file).
+            sql<unknown>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'bank_statement' THEN x.result -> 'summary' END`.as('statement'),
             sql<boolean>`x.status = 'pending' AND x.created_at > pg_catalog.now() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int)`.as(
               'in_flight',
             ),
@@ -82,6 +93,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'e.version',
       'e.method',
       'e.entry_count',
+      'e.statement',
       'e.in_flight',
       'e.run_at',
       'p.id as proposal_id',
@@ -117,6 +129,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const lastRunFailed = r.extraction_status === 'failed' || (r.extraction_status === 'pending' && !r.in_flight);
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
+    const statement = importedStatement(r.statement);
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight
@@ -125,11 +138,13 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           ? r.extraction_status === 'done'
             ? 'expanded'
             : 'failed'
-          : r.proposal_id && !failedSinceDecision
-            ? r.duplicate_of
-              ? 'duplicate'
-              : 'proposed'
-            : 'failed';
+          : statement
+            ? 'imported'
+            : r.proposal_id && !failedSinceDecision
+              ? r.duplicate_of
+                ? 'duplicate'
+                : 'proposed'
+              : 'failed';
     return {
       status: {
         id: r.id,
@@ -143,6 +158,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             : r.extraction_status === 'pending' && !r.in_flight
               ? STALE_RUN_ERROR
               : null,
+        statement,
         proposalId: r.proposal_id,
         proposalStatus: r.proposal_status ?? null,
         voided: isVoided,
@@ -151,6 +167,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
         canReextract:
           editor &&
           !archive &&
+          // A statement is stored once: reading it again would only find its lines already there.
+          !statement &&
           Boolean(r.extraction_status) &&
           !r.in_flight &&
           (r.proposal_status !== 'executed' || isVoided) &&
