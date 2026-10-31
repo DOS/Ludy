@@ -28,8 +28,10 @@ interface StatementContext {
   // The legal entity names the reader sees, by id, and the names of the members who uploaded files, by user id.
   entities: ReadonlyMap<string, string>;
   uploaders: ReadonlyMap<string, string>;
+  // The sender address of the mail each emailed file came in, by file id (#2196), for a reader who may read mails.
+  senders: ReadonlyMap<string, string>;
 }
-const NO_CONTEXT: StatementContext = { decisions: new Map(), entities: new Map(), uploaders: new Map() };
+const NO_CONTEXT: StatementContext = { decisions: new Map(), entities: new Map(), uploaders: new Map(), senders: new Map() };
 
 function statementOf(
   value: unknown,
@@ -43,7 +45,10 @@ function statementOf(
     ...parsed.data,
     decidedBy: parsed.data.state === 'staged' ? null : (known.decisions.get(file.id) ?? null),
     // A file's source is upload or email here: images and spreadsheets for other uses never carry a statement.
-    origin: file.source === 'email' ? { channel: 'email', by: null } : { channel: 'upload', by: file.createdBy ? (known.uploaders.get(file.createdBy) ?? null) : null },
+    origin:
+      file.source === 'email'
+        ? { channel: 'email', by: null, from: known.senders.get(file.id) ?? null }
+        : { channel: 'upload', by: file.createdBy ? (known.uploaders.get(file.createdBy) ?? null) : null, from: null },
     entity: file.legalEntityId && entityName !== undefined ? { id: file.legalEntityId, name: entityName } : null,
   };
 }
@@ -79,6 +84,33 @@ async function statementDecisions(ctx: QueryContext, fileIds: readonly string[])
   for (const r of rows) {
     if (!r.target_id || out.has(r.target_id)) continue;
     out.set(r.target_id, { name: r.actor_id ? (names.get(r.actor_id) ?? null) : null, at: new Date(r.occurred_at).toISOString() });
+  }
+  return out;
+}
+
+// The caller's context sees every legal entity (the wildcard in enter_context's le_scope); fetched once per statement.
+export const seesEveryEntity = sql<boolean>`coalesce('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]), false)`;
+// Who may read a forwarded mail and its sender, as kernel.inbound.recent: those who write posts, and only in a context
+// that sees every legal entity, as a mail has no entity.
+const MAIL_READER_ROLES: readonly string[] = ['owner', 'admin', 'member'];
+
+// The sender address of the mail each file came in (#2196), by file id. Nothing for a reader who may not read mails (a
+// viewer, a member limited to some legal entities, an agent), for a mail whose address was erased, and for a file with no
+// mail: the card then says the sender is unknown.
+async function senderAddresses(ctx: QueryContext, files: ReadonlyArray<{ fileId: string; messageId: string }>): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (files.length === 0 || ctx.actor.type !== 'user' || ctx.role === null || !MAIL_READER_ROLES.includes(ctx.role)) return out;
+  const messages = await ctx.trx
+    .selectFrom('crove_kernel.inbound_message')
+    .select(['id', 'from_address'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', 'in', [...new Set(files.map((f) => f.messageId))])
+    .where(seesEveryEntity)
+    .execute();
+  const address = new Map(messages.flatMap((m) => (m.from_address ? [[m.id, m.from_address] as const] : [])));
+  for (const f of files) {
+    const from = address.get(f.messageId);
+    if (from) out.set(f.fileId, from);
   }
   return out;
 }
@@ -149,6 +181,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'f.created_at',
       'f.source',
       'f.created_by',
+      'f.inbound_message_id',
       'e.run_entity_id',
       'e.status as extraction_status',
       'e.error',
@@ -201,7 +234,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const found = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('id', 'in', entityIds).execute();
     for (const e of found) entities.set(e.id, e.name);
   }
-  const known: StatementContext = { decisions, entities, uploaders };
+  const known: StatementContext = { decisions, entities, uploaders, senders: await senderAddresses(ctx, statementRows.flatMap((r) => (r.source === 'email' && r.inbound_message_id ? [{ fileId: r.id, messageId: r.inbound_message_id }] : []))) };
   return rows.map((r) => {
     const archive = isArchiveType(r.content_type);
     const waiting = !r.extraction_status && r.waiting;

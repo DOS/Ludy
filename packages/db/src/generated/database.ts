@@ -889,6 +889,7 @@ export interface KernelFileTable {
   hold_attempts: Generated<number>;
   hold_error: string | null;
   upload_entity_id: string | null;
+  inbound_message_id: string | null;
 }
 
 /** crove_kernel.file_upload */

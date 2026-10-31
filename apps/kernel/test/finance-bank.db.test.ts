@@ -1088,6 +1088,71 @@ suite('bank statement import (#326)', () => {
       expect(await status(again)).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 1 } });
     });
 
+    // #2196: a statement forwarded by email names the mail it came in, so the card can show its sender.
+    const receiveStatementMail = async (from: string | null) => {
+      const bytes = new TextEncoder().encode(`PK-sao-ke-mail-${randomUUID()}`);
+      const sha256 = sha256Hex(bytes);
+      const received = await worker.execute<{ duplicate: boolean; fileIds: string[] }>(
+        'kernel.inbound.receive',
+        {
+          messageId: `<${randomUUID()}@ngan-hang.test>`,
+          from,
+          subject: 'Sao kê tháng 9',
+          files: [{ filename: 'sao-ke.xlsx', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), source: 'email' }],
+        },
+        { actor: { type: 'system', component: 'inbound' }, orgId },
+      );
+      const fileId = received.fileIds[0] as string;
+      const rows = rowsOf(`MAIL-${randomUUID().slice(0, 8)}`);
+      const outcome = await stage(rows);
+      if (outcome.outcome !== 'staged') throw new Error(`not staged: ${outcome.outcome}`);
+      await recordRead(fileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+      return fileId;
+    };
+    const originAs = async (who: Account, fileId: string) =>
+      ((await rpc('files/recent', await tokenFor(who), {})).body as Array<{ id: string; statement: { origin: { channel: string; by: string | null; from: string | null } } | null }>).find((f) => f.id === fileId)?.statement?.origin;
+
+    it('shows the sender of a statement that came by email to members who read mails, and to nobody else', async () => {
+      const fileId = await receiveStatementMail('ketoan@ngan-hang.example');
+      // The receive path linked the file to its mail.
+      const link = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM crove_kernel.file f JOIN crove_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [fileId])).rows);
+      expect(link).toEqual([{ from_address: 'ketoan@ngan-hang.example' }]);
+      expect(await originAs(owner, fileId)).toEqual({ channel: 'email', by: null, from: 'ketoan@ngan-hang.example' });
+      expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: 'ketoan@ngan-hang.example' });
+      // A viewer reads no mails, so no sender.
+      expect(await originAs(viewer, fileId)).toEqual({ channel: 'email', by: null, from: null });
+      // Nor does a member limited to one legal entity (a mail has none).
+      const entityId = await defaultEntity();
+      await admin((c) => c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [orgId, member.userId, entityId, owner.userId]));
+      try {
+        expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: null });
+      } finally {
+        await admin((c) => c.query(`DELETE FROM crove_kernel.role_assignment WHERE org_id = $1 AND user_id = $2`, [orgId, member.userId]));
+      }
+      // An address erased with its mail (personal-data erasure) is no longer shown; the card says the sender is unknown.
+      await admin((c) => c.query(`UPDATE crove_kernel.inbound_message m SET from_address = NULL FROM crove_kernel.file f WHERE f.id = $1 AND m.org_id = f.org_id AND m.id = f.inbound_message_id`, [fileId]));
+      expect(await originAs(member, fileId)).toEqual({ channel: 'email', by: null, from: null });
+    });
+
+    it('lets a member name no mail for an upload, and the receive path only for a file that is an email attachment', async () => {
+      const bytes = new TextEncoder().encode(`PK-forged-${randomUUID()}`);
+      const sha256 = sha256Hex(bytes);
+      const mail = await admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.inbound_message WHERE org_id = $1 LIMIT 1`, [orgId])).rows[0]?.id as string);
+      const file = { filename: 'sao-ke.zip', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), inboundMessageId: mail };
+      // A member's upload cannot claim a mail of the org as its source.
+      await expect(api.execute('kernel.file.ingest', { ...file, source: 'upload' }, { actor: ownerActor(), orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(api.execute('kernel.file.ingest', { ...file, source: 'email' }, { actor: ownerActor(), orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      // The receive path takes no link from its caller: the attachment is linked to the message it records, whatever the
+      // input names.
+      const received = await worker.execute<{ fileIds: string[] }>(
+        'kernel.inbound.receive',
+        { messageId: `<${randomUUID()}@ngan-hang.test>`, from: 'a@b.example', subject: null, files: [{ ...file, source: 'email', inboundMessageId: mail }] },
+        { actor: { type: 'system', component: 'inbound' }, orgId },
+      );
+      const linked = await admin(async (c) => (await c.query<{ from_address: string }>(`SELECT m.from_address FROM crove_kernel.file f JOIN crove_kernel.inbound_message m ON m.org_id = f.org_id AND m.id = f.inbound_message_id WHERE f.id = $1`, [received.fileIds[0]])).rows);
+      expect(linked).toEqual([{ from_address: 'a@b.example' }]);
+    });
+
     it('tells the member a statement came by email, and who uploaded one that did not', async () => {
       // An email attachment is stored by the worker with no uploader (a file never changes, so it is stored so from the start).
       const rows = rowsOf('EMAIL');
