@@ -1977,16 +1977,17 @@ export const en = {
       duplicate: 'Duplicate invoice',
       failed: 'Could not read',
       expanded: 'ZIP opened',
+      imported: 'Statement imported',
       // A posted file whose entry was reversed (#2032).
       voided: 'Voided (entry reversed)',
     },
-    formatsZip: 'Or a ZIP of up to 500 files (40 MB unpacked), as the tax portal exports them',
+    formatsZip: 'Or a ZIP of up to 500 files (40 MB unpacked), as the tax portal exports them. A bank statement as XLSX or CSV becomes the statement lines of the account mapped in Settings',
     intake: {
       tooMany: 'At most {max, number} files at once. Put the rest in a ZIP file.',
-      unsupported: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files are accepted.',
+      unsupported: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files, or a bank statement as XLSX or CSV, are accepted.',
       progress: '{settled, number} of {total, number} files done',
       done: '{total, plural, one {# file received} other {# files received}}',
-      counts: '{proposed, number} proposals · {duplicate, number} duplicates · {failed, number} failed',
+      counts: '{proposed, number} proposals · {imported, number} statements · {duplicate, number} duplicates · {failed, number} failed',
       close: 'Close',
       alreadyReceived: 'Already received earlier',
       expandedCount: '{count, plural, one {ZIP: # file} other {ZIP: # files}}',
@@ -2000,6 +2001,7 @@ export const en = {
         duplicate: 'Duplicate',
         failed: 'Could not read',
         expanded: 'ZIP opened',
+        imported: 'Statement imported',
         rejected: 'Skipped',
       },
       reasons: {
@@ -6022,6 +6024,7 @@ export const en = {
         lines: 'List bank statement lines',
         open_lines: 'List unmatched bank statement lines',
         preview: 'Preview a bank statement',
+        statement_file: 'Import a bank statement from a file sent by email or dropped in the Inbox',
         suggestions: 'Read bank matching suggestions',
       },
       bank_feed: {

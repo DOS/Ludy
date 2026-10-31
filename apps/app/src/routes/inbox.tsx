@@ -429,7 +429,7 @@ export function InboxPage() {
         type="file"
         multiple
         hidden
-        accept=".xml,.pdf,.zip,application/zip,image/jpeg,image/png,image/webp"
+        accept=".xml,.pdf,.zip,.xlsx,.csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,image/jpeg,image/png,image/webp"
         onChange={(e) => {
           const chosen = [...(e.target.files ?? [])];
           if (chosen.length) intake.start(chosen);

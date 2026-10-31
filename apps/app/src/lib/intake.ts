@@ -13,7 +13,8 @@ export const INTAKE_CONCURRENCY = 3;
 export const INTAKE_POLL_MS = 2000;
 
 const MAX_BYTES = 25 * 1024 * 1024;
-const EXTENSIONS = ['xml', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'zip'];
+// xlsx and csv: a bank statement (#2142); the server tells it from any other workbook or text by its content.
+const EXTENSIONS = ['xml', 'pdf', 'jpg', 'jpeg', 'png', 'webp', 'zip', 'xlsx', 'csv'];
 
 export type IntakeState =
   | 'queued'
@@ -26,6 +27,8 @@ export type IntakeState =
   | 'proposed'
   | 'duplicate'
   | 'failed'
+  // A bank statement read into bank lines (#2142).
+  | 'imported'
   // An archive opened into its entries.
   | 'expanded'
   // An entry of an archive that was not filed; reason says why.
@@ -117,7 +120,7 @@ export function applyBatch(items: readonly IntakeItem[], batch: readonly BatchFi
   });
 }
 
-const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'duplicate', 'failed', 'rejected']);
+const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'imported', 'duplicate', 'failed', 'rejected']);
 
 // The documents of the batch: an opened archive counts as the entries it held, anything else as itself.
 export function leaves(items: readonly IntakeItem[]): IntakeItem[] {
@@ -128,6 +131,7 @@ export interface IntakeSummary {
   total: number;
   settled: number;
   proposed: number;
+  imported: number;
   duplicate: number;
   failed: number;
 }
@@ -139,6 +143,7 @@ export function summarize(items: readonly IntakeItem[]): IntakeSummary {
     total: all.length,
     settled: all.filter((item) => SETTLED.has(item.state)).length,
     proposed: count(['proposed']),
+    imported: count(['imported']),
     duplicate: count(['duplicate']),
     failed: count(['failed', 'upload_failed', 'rejected']),
   };

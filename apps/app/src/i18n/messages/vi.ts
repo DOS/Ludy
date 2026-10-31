@@ -1975,16 +1975,17 @@ export const vi = {
       duplicate: 'Trùng hóa đơn',
       failed: 'Không đọc được',
       expanded: 'Đã mở ZIP',
+      imported: 'Đã nhập sao kê',
       // A posted file whose entry was reversed (#2032).
       voided: 'Đã hủy (đảo bút toán)',
     },
-    formatsZip: 'Hoặc một tệp ZIP tối đa 500 tệp (40 MB khi giải nén), như cổng thuế xuất ra',
+    formatsZip: 'Hoặc một tệp ZIP tối đa 500 tệp (40 MB khi giải nén), như cổng thuế xuất ra. Sao kê ngân hàng dạng XLSX hoặc CSV được nhập thành dòng sao kê của tài khoản đã liên kết trong Cài đặt',
     intake: {
       tooMany: 'Tối đa {max, number} tệp mỗi lần. Hãy nén phần còn lại thành tệp ZIP.',
-      unsupported: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP hoặc ZIP',
+      unsupported: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP, ZIP, hoặc sao kê ngân hàng dạng XLSX, CSV',
       progress: 'Đã xong {settled, number}/{total, number} tệp',
       done: 'Đã nhận {total, number} tệp',
-      counts: '{proposed, number} đề xuất · {duplicate, number} trùng · {failed, number} lỗi',
+      counts: '{proposed, number} đề xuất · {imported, number} sao kê · {duplicate, number} trùng · {failed, number} lỗi',
       close: 'Đóng',
       alreadyReceived: 'Tệp này đã nhận trước đó',
       expandedCount: 'ZIP: {count, number} tệp',
@@ -1998,6 +1999,7 @@ export const vi = {
         duplicate: 'Trùng',
         failed: 'Không đọc được',
         expanded: 'Đã mở ZIP',
+        imported: 'Đã nhập sao kê',
         rejected: 'Bỏ qua',
       },
       reasons: {
@@ -6022,6 +6024,7 @@ export const vi = {
         lines: 'Xem các dòng sao kê',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
         preview: 'Xem trước sao kê ngân hàng',
+        statement_file: 'Nhập sao kê ngân hàng từ tệp gửi qua thư hoặc tải vào Hộp thư đến',
         suggestions: 'Xem gợi ý đối chiếu sao kê',
       },
       bank_feed: {

@@ -224,7 +224,7 @@ export function IntakePanel({ intake }: { intake: Intake }) {
               {done ? t('done', { total: summary.total }) : t('progress', { settled: summary.settled, total: summary.total })}
             </p>
             <p className="text-xs text-subtle-foreground">
-              {t('counts', { proposed: summary.proposed, duplicate: summary.duplicate, failed: summary.failed })}
+              {t('counts', { proposed: summary.proposed, imported: summary.imported, duplicate: summary.duplicate, failed: summary.failed })}
             </p>
             {done && (
               <Button variant="outline" size="sm" className="ml-auto" onClick={intake.clear}>

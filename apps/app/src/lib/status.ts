@@ -33,6 +33,8 @@ export const FILE_STATE_VARIANT = {
   duplicate: 'warning',
   failed: 'destructive',
   expanded: 'success',
+  // A bank statement read into bank lines (#2142).
+  imported: 'success',
   rejected: 'destructive',
 } as const satisfies Record<string, ChipVariant>;
 export type FileState = keyof typeof FILE_STATE_VARIANT;
