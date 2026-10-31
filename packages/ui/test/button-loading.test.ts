@@ -15,8 +15,8 @@ const tag = (markup: string, marker: string) => [...markup.matchAll(/<[a-z]+ [^>
 // The accessible name: the text of what a screen reader reaches, so nothing inside an aria-hidden element.
 const nameOf = (markup: string) =>
   markup
-    .replace(/<svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>/g, '')
-    .replace(/<[^>]+>/g, '')
+    .split(/<svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>|<[^>]+>/g)
+    .join('')
     .trim();
 
 describe('Button loading', () => {
