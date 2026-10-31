@@ -374,7 +374,7 @@ type TrxContext = { trx: CommandContext['trx']; orgId: string };
 
 // The time of every booking written to the connection's calendar and unchanged since (state written, its hash the
 // booking's own now) that ends after `from`: the provider's busy answer holds their copies, which the bookings already cover.
-async function writtenCopyCuts(ctx: TrxContext, connectionId: string, from: number): Promise<BusyPiece[]> {
+async function writtenCopyCuts(ctx: TrxContext, connectionId: string, from: number, to?: number): Promise<BusyPiece[]> {
   const copies = await ctx.trx
     .selectFrom('crove_kernel.calendar_event_link as l')
     .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
@@ -384,6 +384,7 @@ async function writtenCopyCuts(ctx: TrxContext, connectionId: string, from: numb
     .where('l.state', '=', 'written')
     .where('e.status', '=', 'active')
     .where('e.ends_at', '>', new Date(from))
+    .$if(to !== undefined, (q) => q.where('e.starts_at', '<', new Date(to as number)))
     .execute();
   const cuts: BusyPiece[] = [];
   for (const c of copies) {
@@ -402,6 +403,9 @@ export const calendarBusyReplace = defineCommand({
     from: zInstant,
     to: zInstant,
     busy: z.array(z.strictObject({ start: zInstant, end: zInstant })).max(MAX_BUSY),
+    // When the sync began reading the provider: a block added after that (a live check of a slot, #2139) is newer than the
+    // answer and is kept; the next sync, which reads later, settles it.
+    readStartedAt: zInstant.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -429,13 +433,16 @@ export const calendarBusyReplace = defineCommand({
     const wanted = new Map(busyPieces(cuts.length > 0 ? cutOut(answered, cuts) : answered, from, to).map((p) => [pieceKey(p), p]));
     const existing = await ctx.trx
       .selectFrom('crove_kernel.calendar_event')
-      .select(['id', 'external_id'])
+      .select(['id', 'external_id', 'created_at'])
       .where('org_id', '=', ctx.orgId)
       .where('source_id', '=', input.connectionId)
       .where('ends_at', '>', new Date(from))
       .execute();
     const have = new Set(existing.map((e) => e.external_id));
-    const stale = existing.filter((e) => e.external_id === null || !wanted.has(e.external_id)).map((e) => e.id);
+    const readStarted = input.readStartedAt === undefined ? null : Date.parse(input.readStartedAt);
+    const stale = existing
+      .filter((e) => (e.external_id === null || !wanted.has(e.external_id)) && (readStarted === null || new Date(e.created_at).getTime() <= readStarted))
+      .map((e) => e.id);
     if (stale.length > 0) await ctx.trx.deleteFrom('crove_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('id', 'in', stale).execute();
     // Blocks that ended before the window are history nobody reads: they go with the sync that moved past them.
     await ctx.trx.deleteFrom('crove_kernel.calendar_event').where('org_id', '=', ctx.orgId).where('source_id', '=', input.connectionId).where('ends_at', '<=', new Date(from)).execute();
@@ -499,8 +506,22 @@ export const calendarBusyAdd = defineCommand({
     const answered = input.busy.map((b) => ({ start: Date.parse(b.start), end: Date.parse(b.end) }));
     const from = Math.min(...answered.map((b) => b.start));
     const to = Math.max(...answered.map((b) => b.end));
-    const cuts = await writtenCopyCuts(ctx, input.connectionId, from);
-    const wanted = busyPieces(cuts.length > 0 ? cutOut(answered, cuts) : answered, from, to);
+    // The copy of a booking that was cancelled or moved and whose event the write-back has not deleted or moved yet is still at
+    // the provider: an interval that is exactly such a copy (same times and title as its link recorded) is not a busy time.
+    const copies = await ctx.trx
+      .selectFrom('crove_kernel.calendar_event_link as l')
+      .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
+      .select(['l.synced_hash', 'e.title'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.connection_id', '=', input.connectionId)
+      .where('l.state', '=', 'written')
+      .orderBy('l.updated_at', 'desc')
+      .limit(500)
+      .execute();
+    const seen = copies.length === 0 ? answered : answered.filter((b) => !copies.some((c) => writeBackHash(new Date(b.start), new Date(b.end), c.title) === c.synced_hash));
+    if (seen.length === 0) return { connectionId: input.connectionId, added: 0 };
+    const cuts = await writtenCopyCuts(ctx, input.connectionId, from, to);
+    const wanted = busyPieces(cuts.length > 0 ? cutOut(seen, cuts) : seen, from, to);
     if (wanted.length === 0) return { connectionId: input.connectionId, added: 0 };
     const existing = await ctx.trx
       .selectFrom('crove_kernel.calendar_event')
@@ -508,6 +529,7 @@ export const calendarBusyAdd = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('source_id', '=', input.connectionId)
       .where('ends_at', '>', new Date(from))
+      .where('starts_at', '<', new Date(to))
       .execute();
     const have = new Set(existing.map((e) => e.external_id));
     const fresh = wanted.filter((p) => !have.has(pieceKey(p)));
@@ -543,18 +565,19 @@ export const calendarConnectionsOf = defineQuery({
   name: 'kernel.calendar.connections_of',
   input: z.strictObject({ userIds: z.array(zId).min(1).max(20) }),
   access: 'system',
-  handler: async (ctx, input): Promise<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null }>> => {
+  handler: async (ctx, input): Promise<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null; updatedAt: string }>> => {
     const rows = await ctx.trx
       .selectFrom('crove_kernel.calendar_connection')
-      .select(['id', 'user_id', 'provider', 'expires_at'])
+      .select(['id', 'user_id', 'provider', 'expires_at', 'updated_at'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'active')
       .where('user_id', 'in', input.userIds)
       .orderBy('id')
       .execute();
-    return rows.map((r) => ({ connectionId: r.id, userId: r.user_id, provider: r.provider, expiresAt: r.expires_at === null ? null : new Date(r.expires_at).toISOString() }));
+    return rows.map((r) => ({ connectionId: r.id, userId: r.user_id, provider: r.provider, expiresAt: r.expires_at === null ? null : new Date(r.expires_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString() }));
   },
 });
+
 export interface SealedCalendarCredential {
   provider: string;
   externalAccount: string;

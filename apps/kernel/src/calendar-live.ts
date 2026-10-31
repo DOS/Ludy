@@ -93,7 +93,7 @@ export async function runLiveCheck(deps: LiveCheckDeps, job: LiveCheckJob): Prom
     options,
   );
   if (!target || target.hostUserIds.length === 0) return none;
-  const connections = await deps.runtime.query<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null }>>(
+  const connections = await deps.runtime.query<Array<{ connectionId: string; userId: string; provider: string; expiresAt: string | null; updatedAt: string }>>(
     'kernel.calendar.connections_of',
     { userIds: target.hostUserIds.slice(0, MAX_HOSTS) },
     options,
@@ -110,6 +110,10 @@ export async function runLiveCheck(deps: LiveCheckDeps, job: LiveCheckJob): Prom
       const at = now().getTime();
       if (!budget.take(`conn:${c.connectionId}`, LIVE_CONNECTION_PER_MINUTE, at) || !budget.take(`org:${job.orgId}`, LIVE_ORG_PER_MINUTE, at)) return 'limited';
       const sealed = await deps.runtime.query<SealedCalendarCredential>('kernel.calendar.credential', { connectionId: c.connectionId }, options);
+      // The credential is also handed out for a connection on its way out (its revoke needs it): a member who disconnected, or
+      // connected again, since the list was read has this check leave the provider alone, like the sync does.
+      const again = await deps.runtime.query<{ status: string; updatedAt: string } | null>('kernel.calendar.connection_state', { connectionId: c.connectionId }, options);
+      if (!again || again.status !== 'active' || again.updatedAt !== c.updatedAt) return 'skipped';
       const secret = deps.broker.open({ keyId: sealed.keyId, envelope: Buffer.from(sealed.envelope, 'base64') }, calendarBinding(job.orgId, sealed.provider as CalendarProvider, sealed.externalAccount));
       const answer = await within(adapter.busy(secret, from, to, timeoutMs), timeoutMs);
       // A timeout, a refused token or a failing provider: the stored blocks decide.

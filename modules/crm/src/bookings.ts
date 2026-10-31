@@ -759,6 +759,8 @@ export const bookingLiveTarget = defineQuery({
       return { hostUserIds: await hostsOf(ctx, type), ...window(new Date(booking.starts_at).getTime(), new Date(booking.ends_at).getTime()) };
     }
     if (booking.manage_request_id !== input.requestId || booking.manage_outcome !== null || booking.manage_action !== 'move' || booking.manage_starts_at === null) return null;
+    // Only a booking that can still be moved: confirmed and not started (manage answers any other ask without a slot to check).
+    if (booking.status !== 'confirmed' || new Date(booking.starts_at).getTime() <= Date.now()) return null;
     const start = new Date(booking.manage_starts_at).getTime();
     const held = await eventsOf(ctx, booking);
     return { hostUserIds: [...new Set(held.map((h) => h.userId))], ...window(start, start + type.duration_min * 60_000) };

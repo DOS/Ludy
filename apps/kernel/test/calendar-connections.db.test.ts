@@ -672,6 +672,54 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     expect(await stored()).toEqual([]);
   });
 
+  it('adds a live-read busy interval once, takes nothing of an inactive connection or another org\'s, and leaves out the stale copy of a cancelled or moved booking (#2139)', async () => {
+    const o = await org();
+    const elsewhere = await org();
+    const day = nextWorkday();
+    const c = await connectWriter(o, o.member);
+    await o.exec(o.member, 'kernel.calendar.write_back.set', { connectionId: c.connectionId, enabled: true });
+    const add = (intervals: Array<{ start: string; end: string }>, org = o, id = c.connectionId) => org.sys<{ added: number }>('kernel.calendar.busy_add', { connectionId: id, busy: intervals });
+    const stored = async () => (await admin((cl) => cl.query<{ starts_at: Date }>('SELECT starts_at FROM crove_kernel.calendar_event WHERE source_id = $1 ORDER BY starts_at', [c.connectionId]))).rows.map((r) => r.starts_at.toISOString());
+    // A booking written to the provider, then cancelled (its link says written until the write-back deletes the event) and one
+    // moved by the host (the copy is still at the old time): neither copy is a busy time.
+    const cancelled = await bookingEvent(o, o.member, day, 540, 570);
+    const moved = await bookingEvent(o, o.member, day, 600, 630);
+    for (const a of await plan(o, c.connectionId)) await record(o, c.connectionId, a, 'written');
+    await admin((cl) => cl.query("UPDATE crove_kernel.calendar_event SET status = 'cancelled', cancelled_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, cancelled]));
+    await admin((cl) => cl.query('UPDATE crove_kernel.calendar_event SET starts_at = $3, ends_at = $4 WHERE org_id = $1 AND id = $2', [o.orgId, moved, at(day, 720), at(day, 750)]));
+    expect(await add([busy(day, 540, 570)])).toMatchObject({ added: 0 });
+    expect(await add([busy(day, 600, 630)])).toMatchObject({ added: 0 });
+    expect(await stored()).toEqual([]);
+    // A real event at another time is added, once.
+    expect(await add([busy(day, 900, 960)])).toMatchObject({ added: 1 });
+    expect(await add([busy(day, 900, 960)])).toMatchObject({ added: 0 });
+    expect(await stored()).toEqual([at(day, 900)]);
+    // Another org's connection is not found; an expired or disconnecting one takes nothing.
+    await expect(add([busy(day, 1000, 1030)], elsewhere)).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+    for (const status of ['expired', 'disconnecting']) {
+      await admin((cl) => cl.query('UPDATE crove_kernel.calendar_connection SET status = $3 WHERE org_id = $1 AND id = $2', [o.orgId, c.connectionId, status]));
+      expect(await add([busy(day, 1000, 1030)]), status).toMatchObject({ added: 0 });
+    }
+    expect(await stored()).toEqual([at(day, 900)]);
+  });
+
+  it('keeps a block a live check added after the sync began reading, and drops it for a sync that read after (#2139)', async () => {
+    const o = await org();
+    const day = nextWorkday();
+    const c = await connect(o, o.member);
+    const window = { from: at(day, 0), to: new Date(Date.parse(at(day, 0)) + 60 * DAY).toISOString() };
+    const blocks = async () => (await admin((cl) => cl.query('SELECT 1 FROM crove_kernel.calendar_event WHERE source_id = $1', [c.connectionId]))).rowCount;
+    await o.sys('kernel.calendar.busy_add', { connectionId: c.connectionId, busy: [busy(day, 540, 570)] });
+    // The sync read the provider a minute ago, before the block was added: its answer is older, the block stays.
+    expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [], readStartedAt: new Date(Date.now() - 60_000).toISOString() })).toMatchObject({ removed: 0 });
+    expect(await blocks()).toBe(1);
+    // A sync that began reading after the block was added, and did not see it, drops it; so does one that says nothing.
+    expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [], readStartedAt: new Date(Date.now() + 60_000).toISOString() })).toMatchObject({ removed: 1 });
+    await o.sys('kernel.calendar.busy_add', { connectionId: c.connectionId, busy: [busy(day, 540, 570)] });
+    expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [] })).toMatchObject({ removed: 1 });
+    expect(await blocks()).toBe(0);
+  });
+
   it('records a link only for a booking event of the connection\'s member, only for the system, and drops it with the connection', async () => {
     const o = await org();
     const day = nextWorkday();

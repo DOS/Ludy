@@ -90,7 +90,7 @@ describe('runCalendarSync', () => {
     expect(a.busyCalls[0]?.from.toISOString()).toBe('2026-11-03T05:00:00.000Z');
     expect(a.busyCalls.at(-1)?.to.toISOString()).toBe('2027-11-04T05:00:00.000Z');
     const replace = calls.find((c) => c.name === 'kernel.calendar.busy_replace');
-    expect(replace?.input).toEqual({ connectionId: CONNECTION, from: '2026-11-03T05:00:00.000Z', to: '2027-11-04T05:00:00.000Z', busy: [{ start: '2026-11-04T02:00:00.000Z', end: '2026-11-04T03:00:00.000Z' }] });
+    expect(replace?.input).toEqual({ connectionId: CONNECTION, from: '2026-11-03T05:00:00.000Z', to: '2027-11-04T05:00:00.000Z', busy: [{ start: '2026-11-04T02:00:00.000Z', end: '2026-11-04T03:00:00.000Z' }], readStartedAt: NOW.toISOString() });
     // A token with an hour left is not renewed.
     expect(calls.some((c) => c.name === 'kernel.calendar.refresh')).toBe(false);
   });

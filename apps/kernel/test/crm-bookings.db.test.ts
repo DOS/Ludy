@@ -364,6 +364,23 @@ suite('the public booking page on PostgreSQL (#1318)', () => {
     await expect(app.execute('kernel.calendar.busy_add', { connectionId: connected.connectionId, busy }, { actor: asUser(o.host), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(app.query('kernel.calendar.connections_of', { userIds: [o.host] }, { actor: asUser(o.host), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
   });
+  it('adds the type\'s buffers to the window to check live, and names no target for a move of a booking that can no longer move (#2139)', async () => {
+    const o = await org();
+    const day = bookableDay();
+    await app.execute('crm.event_type.update', { eventTypeId: o.type.id, slug: 'tu-van', title: 'Tư vấn thuế', description: null, durationMin: 30, bufferBeforeMin: 15, bufferAfterMin: 10, minNoticeMin: 0, horizonDays: 60, dailyLimit: null, locationKind: 'video', locationValue: 'https://meet.example.test/x', hostUserId: o.host }, { actor: asUser(o.host), orgId: o.orgId });
+    const target = (input: { bookingId: string; requestId?: string }) => worker.query<{ hostUserIds: string[]; from: string; to: string } | null>('crm.booking.live_target', input, { actor: SYSTEM, orgId: o.orgId });
+    await bookingRequest(app, o.slug, 'tu-van', visitor(at(day, 600)));
+    const id = (await o.bookings())[0]?.id as string;
+    expect(await target({ bookingId: id })).toEqual({ hostUserIds: [o.host], from: at(day, 585), to: at(day, 640) });
+    await o.confirm(id);
+    // A move ask, then the booking is cancelled by its host before the worker answers: nothing is left to check.
+    const token = (await worker.execute<{ token: string }>('crm.booking.mail_data', { bookingId: id, revision: 0 }, { actor: SYSTEM, orgId: o.orgId })).token;
+    const ask = await bookingManageAsk(app, o.slug, 'tu-van', { manage: token, action: 'move', startsAt: at(day, 900) });
+    expect(await target({ bookingId: id, requestId: ask?.requestId as string })).toEqual({ hostUserIds: [o.host], from: at(day, 885), to: at(day, 940) });
+    await app.execute('crm.booking.cancel', { bookingId: id }, { actor: asUser(o.host), orgId: o.orgId });
+    expect(await target({ bookingId: id, requestId: ask?.requestId as string })).toBeNull();
+  });
+
   it('takes no cancel or move once the booking has started (#1319)', async () => {
     const o = await org();
     const day = bookableDay();

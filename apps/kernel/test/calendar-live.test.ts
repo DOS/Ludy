@@ -33,9 +33,9 @@ interface Call {
 }
 
 type Target = { hostUserIds: string[]; from: string; to: string } | null;
-type Conn = { connectionId: string; userId: string; provider: string; expiresAt: string | null };
+type Conn = { connectionId: string; userId: string; provider: string; expiresAt: string | null; updatedAt: string };
 
-function fakeRuntime(target: Target, connections: Conn[], over: { credential?: () => unknown; execute?: () => unknown } = {}) {
+function fakeRuntime(target: Target, connections: Conn[], over: { credential?: () => unknown; execute?: () => unknown; state?: () => unknown } = {}) {
   const calls: Call[] = [];
   const runtime = {
     query: async (name: string, input: Record<string, unknown>) => {
@@ -43,6 +43,7 @@ function fakeRuntime(target: Target, connections: Conn[], over: { credential?: (
       if (name === 'crm.booking.live_target') return target;
       if (name === 'kernel.calendar.connections_of') return connections;
       if (name === 'kernel.calendar.credential') return over.credential ? over.credential() : sealed;
+      if (name === 'kernel.calendar.connection_state') return over.state ? over.state() : { status: 'active', updatedAt: 'v1' };
       throw new Error(`unexpected query ${name}`);
     },
     execute: async (name: string, input: Record<string, unknown>) => {
@@ -79,9 +80,9 @@ function adapter(busy: CalendarAdapter['busy']): CalendarAdapter & { asked: Arra
 }
 
 const target: Target = { hostUserIds: [HOST_A], from: FROM, to: TO };
-const connA: Conn = { connectionId: CONN_A, userId: HOST_A, provider: 'google', expiresAt: live };
+const connA: Conn = { connectionId: CONN_A, userId: HOST_A, provider: 'google', expiresAt: live, updatedAt: 'v1' };
 const check = (rt: Runtime, a: CalendarAdapter, over: { timeoutMs?: number } = {}) =>
-  runLiveCheck({ runtime: rt, broker: vault, adapters: { google_calendar: a }, now: () => NOW, ...over }, { orgId: ORG, bookingId: BOOKING });
+  runLiveCheck({ runtime: rt, broker: vault, adapters: { google_calendar: a }, now: () => NOW, budget: new LiveBudget(), ...over }, { orgId: ORG, bookingId: BOOKING });
 const executed = (calls: Call[]) => calls.filter((c) => c.kind === 'execute');
 
 describe('runLiveCheck (#2139)', () => {
@@ -154,7 +155,7 @@ describe('runLiveCheck (#2139)', () => {
   });
 
   it('asks every host\'s connection at once and adds only where one is busy; one failing leaves the others', async () => {
-    const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live };
+    const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live, updatedAt: 'v1' };
     const { runtime, calls } = fakeRuntime({ ...target, hostUserIds: [HOST_A, HOST_B] }, [connA, connB]);
     let n = 0;
     const a = adapter(async () => {
@@ -176,6 +177,16 @@ describe('runLiveCheck (#2139)', () => {
     expect(await check(failing.runtime, adapter(async () => ({ busy: [{ start: FROM, end: TO }] })))).toEqual({ asked: 0, busy: 0 });
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('[calendar-live]'));
     spy.mockRestore();
+  });
+
+  it('leaves the provider alone for a connection that was disconnected or connected again after the list was read', async () => {
+    for (const state of [{ status: 'disconnecting', updatedAt: 'v1' }, { status: 'expired', updatedAt: 'v1' }, { status: 'active', updatedAt: 'v2' }, null]) {
+      const { runtime, calls } = fakeRuntime(target, [connA], { state: () => state });
+      const a = adapter(async () => ({ busy: [{ start: FROM, end: TO }] }));
+      expect(await check(runtime, a)).toEqual({ asked: 0, busy: 0 });
+      expect(a.asked).toEqual([]);
+      expect(executed(calls)).toEqual([]);
+    }
   });
 
   it('passes the manage ask along to the target query, and never renews a token', async () => {
@@ -208,7 +219,7 @@ describe('the budget of live calls (a public page can trigger them)', () => {
   it('makes no call once a connection has used its cap, without using the org\'s budget', async () => {
     const budget = new LiveBudget();
     spend(budget, `conn:${CONN_A}`, LIVE_CONNECTION_PER_MINUTE);
-    const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live };
+    const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live, updatedAt: 'v1' };
     const { runtime } = fakeRuntime({ ...target, hostUserIds: [HOST_A, HOST_B] }, [connA, connB]);
     const a = adapter(busyAnswer);
     // The capped connection is skipped, the other is asked.
