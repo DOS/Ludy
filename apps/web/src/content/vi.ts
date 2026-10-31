@@ -379,8 +379,6 @@ export const vi = {
         first: 401,
         last: 420,
         gaps: [412, 417],
-        gapLabel: 'Số hở',
-        okLabel: 'Đã ghi sổ',
         summary: 'Đã ghi từ số 00000401 đến 00000420, thiếu 2 số: 00000412 và 00000417',
         hint: 'Số hở là hoá đơn bán ra chưa được ghi, hoặc hoá đơn đã huỷ. Kiểm tra trước khi nộp tờ khai.',
       },

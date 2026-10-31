@@ -379,8 +379,6 @@ export const en: Dictionary = {
         first: 401,
         last: 420,
         gaps: [412, 417],
-        gapLabel: 'Gap',
-        okLabel: 'Posted',
         summary: 'Posted from number 00000401 to 00000420, 2 numbers missing: 00000412 and 00000417',
         hint: 'A gap is a sales invoice not yet recorded, or one that was cancelled. Check it before you file the return.',
       },

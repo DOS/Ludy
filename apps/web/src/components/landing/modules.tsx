@@ -171,7 +171,6 @@ export function Modules({ dict }: { dict: Dictionary }) {
                     className={`num rounded-sm border px-1 py-1 text-center text-xs ${gap ? 'border-dashed border-warn/70 bg-warn-soft font-semibold text-warn' : 'border-line bg-surface text-muted'}`}
                   >
                     {String(n).padStart(8, '0').slice(-5)}
-                    <span className="sr-only">, {gap ? finance.sales.gapLabel : finance.sales.okLabel}</span>
                   </li>
                 );
               })}
