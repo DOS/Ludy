@@ -3,7 +3,7 @@
 // balance check. The import itself is tested on PostgreSQL in apps/kernel/test/finance-bank.db.test.ts.
 import { describe, expect, it } from 'vitest';
 import { normalizeStatementAmount, type BankStatementRow } from '@crove/kernel-contract';
-import { balanceBreaks, checkLines, checkStatement, classify, dedupeKeys, parseStatementAmount, parseStatementDate, readFeedLines, readStatement } from '../src/domain/bank-statement.ts';
+import { balanceBreaks, checkLines, checkStatement, classify, dedupeKeys, judge, parseStatementAmount, parseStatementDate, readFeedLines, readStatement } from '../src/domain/bank-statement.ts';
 
 let rowNo = 1;
 const row = (date: string, moneyIn: string, moneyOut: string, balance = '', reference = '', description = 'Giao dịch'): BankStatementRow => ({
@@ -105,6 +105,49 @@ describe('reading a statement', () => {
     // stored line's date and amount is ambiguous.
     expect(classify(lines, keys, stored)).toEqual(['new', 'duplicate', 'duplicate', 'new', 'new', 'ambiguous']);
   });
+
+  it('tells a reference that comes again with another date or amount from the same transaction twice (#2191)', () => {
+    const { lines, keys } = readStatement(
+      input([
+        row('01/09/2026', '1000', '', '', 'FT1'),
+        // The same reference, the same figures: the same transaction.
+        row('01/09/2026', '1000', '', '', 'FT2'),
+        // A forged line: FT3's reference with another amount, and FT4's with another date.
+        row('02/09/2026', '5000', '', '', 'FT3'),
+        row('03/09/2026', '700', '', '', 'FT4'),
+        row('02/09/2026', '700', '', '', 'FT5'),
+      ]),
+    );
+    const refs = new Map([
+      ['FT2', [{ date: '2026-09-01', amount: '1000' }]],
+      ['FT3', [{ date: '2026-09-02', amount: '3000' }]],
+      ['FT4', [{ date: '2026-09-02', amount: '700' }]],
+    ]);
+    const verdicts = judge(lines, keys, { keys: new Set(['ref:FT2', 'ref:FT3', 'ref:FT4']), dateAmounts: new Set(), refs });
+    expect(verdicts.map((v) => v.status)).toEqual(['new', 'duplicate', 'conflict', 'conflict', 'new']);
+    expect(verdicts[2]?.clash).toEqual({ date: '2026-09-02', amount: '3000' });
+    expect(verdicts[3]?.clash).toEqual({ date: '2026-09-02', amount: '700' });
+  });
+
+  it('flags a reference the file itself repeats with other figures, and drops only an exact repeat', () => {
+    const { lines, keys } = readStatement(input([row('01/09/2026', '1000', '', '', 'FT1'), row('01/09/2026', '1000', '', '', 'FT1'), row('01/09/2026', '2000', '', '', 'FT1'), row('01/09/2026', '2000', '', '', 'FT1')]));
+    expect(classify(lines, keys, none)).toEqual(['new', 'duplicate', 'conflict', 'duplicate']);
+  });
+
+  it('matches a line stored as a conflict by its reference too, so a retry of the same file stores nothing more', () => {
+    const { lines, keys } = readStatement(input([row('02/09/2026', '5000', '', '', 'FT3')]));
+    // The account holds FT3 as 3000 (with the key) and as 5000 (the conflict stored earlier, keyless).
+    const refs = new Map([
+      [
+        'FT3',
+        [
+          { date: '2026-09-02', amount: '3000' },
+          { date: '2026-09-02', amount: '5000' },
+        ],
+      ],
+    ]);
+    expect(classify(lines, keys, { keys: new Set(['ref:FT3']), dateAmounts: new Set(), refs })).toEqual(['duplicate']);
+  });
 });
 
 describe('balanceBreaks', () => {
@@ -119,7 +162,7 @@ describe('checkStatement', () => {
   it('stores only new and ambiguous lines, counts every row, and refuses a file with an invalid row', () => {
     const file = input([row('01/09/2026', '100', '', '100', 'A'), row('02/09/2026', '', '30', '70', 'B'), row('03/09/2026', '', '', '70')]);
     const check = checkStatement(file, { keys: new Set(['ref:A']), dateAmounts: new Set() }, { before: null, within: [] });
-    expect(check.preview.counts).toEqual({ new: 1, duplicate: 1, ambiguous: 0, invalid: 1 });
+    expect(check.preview.counts).toEqual({ new: 1, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 1 });
     expect(check.preview.ok).toBe(false);
     expect(check.lines.map((l) => [l.reference, l.position, l.key])).toEqual([['B', 2, 'ref:B']]);
     expect(check.preview.from).toBe('2026-09-01');
@@ -145,7 +188,7 @@ describe('checkStatement', () => {
       before: null,
       within: first.lines.map((l) => ({ date: l.date, amount: l.amount, balance: l.balance })),
     });
-    expect(again.preview.counts).toEqual({ new: 1, duplicate: 2, ambiguous: 0, invalid: 0 });
+    expect(again.preview.counts).toEqual({ new: 1, duplicate: 2, ambiguous: 0, conflict: 0, invalid: 0 });
     expect(again.preview.breaks).toEqual([]);
     expect(again.lines.map((l) => l.position)).toEqual([3]);
   });

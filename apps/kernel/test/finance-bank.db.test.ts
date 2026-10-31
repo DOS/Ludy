@@ -368,10 +368,10 @@ suite('bank statement import (#326)', () => {
       feedLine('2026-11-03', '-22000', 'FT9002', '977978000', 'Phí chuyển tiền'),
       feedLine('2026-11-02', '1000000', 'FT9001', '978000000', 'Khách trả tiền'),
     ]);
-    expect(first.counts).toEqual({ new: 2, duplicate: 0, ambiguous: 0, invalid: 0 });
+    expect(first.counts).toEqual({ new: 2, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 });
     // The next pull overlaps the first and adds one line.
     const next = await ingest([feedLine('2026-11-03', '-22000', 'FT9002', '977978000'), feedLine('2026-11-04', '5000000', 'FT9003', '982978000')]);
-    expect(next.counts).toEqual({ new: 1, duplicate: 1, ambiguous: 0, invalid: 0 });
+    expect(next.counts).toEqual({ new: 1, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 0 });
     expect(next.breaks).toEqual([]);
     // The month's statement file has the same transactions: nothing new.
     const statement = await importFile(
@@ -403,7 +403,7 @@ suite('bank statement import (#326)', () => {
     await expect(worker.execute('finance.bank.ingest', { bankAccount: '1121.VCB', legalEntityId, source: 'sandbox', lines }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
     const fee = [feedLine('2026-11-10', '-11000', 'FT9010')];
     expect((await ingest(fee)).counts).toMatchObject({ new: 1 });
-    expect((await ingest(fee)).counts).toEqual({ new: 0, duplicate: 1, ambiguous: 0, invalid: 0 });
+    expect((await ingest(fee)).counts).toEqual({ new: 0, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 0 });
   });
 
   it('refuses a batch with an amount of zero or more than 2 decimals, or a day no statement has, storing none of it', async () => {
@@ -996,6 +996,95 @@ suite('bank statement import (#326)', () => {
       const runs = await admin(async (c) => (await c.query<{ version: number; status: string; legal_entity_id: string; has_result: boolean }>(`SELECT version, status, legal_entity_id, result IS NOT NULL AS has_result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
       expect(runs.map((r) => [r.version, r.status, r.legal_entity_id === branch, r.has_result])).toEqual([[1, 'failed', false, false], [2, 'failed', false, false], [3, 'done', true, true]]);
       expect(await waiting()).toContain(fileId);
+    });
+
+    // #2191: the approver decides blind, and a forged statement may reuse a real reference with another amount.
+    const feedOne = async (line: BankFeedLine) =>
+      worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount: '1121.VCB', legalEntityId: await defaultEntity(), source: 'sandbox', lines: [line] }, { actor: SYSTEM, orgId });
+
+    it('flags a staged line whose reference the books already hold with another amount, shows it before Import, and stores it flagged instead of dropping it', async () => {
+      // The real transaction arrives first, from the feed.
+      await feedOne(feedLine('2026-09-01', '2000000', 'FT-REAL-1', '12000000', 'Khách trả tiền'));
+      // A forged statement reuses that reference with a larger amount, next to a line that is genuinely new.
+      const forged = [row('01/09/2026', '9000000', '', '19000000', 'FT-REAL-1', 'Chuyển khoản lạ'), row('04/09/2026', '1000', '', '19001000', 'FT-REAL-NEW')];
+      const outcome = await stage(forged);
+      expect(outcome).toMatchObject({ outcome: 'staged', summary: { lines: 2, newLines: 2, duplicateLines: 0, conflictLines: 1 } });
+      const fileId = await stagedFile(forged);
+      const before = await stored('1121.VCB');
+      // The card's data: how the file came, the entity and the masked number, never the number itself.
+      const shown = await status(fileId);
+      expect(shown).toMatchObject({
+        status: 'staged',
+        statement: { conflictLines: 1, accountMask: '*******1234', origin: { channel: 'upload', by: expect.any(String) }, entity: { id: await defaultEntity(), name: expect.any(String) } },
+      });
+      expect(JSON.stringify(shown)).not.toContain(NUMBER);
+      // The lines, conflicts first, with the line they clash with.
+      const listed = await rpc('bank/statementLines', await tokenFor(member), { fileId });
+      expect(listed.status).toBe(200);
+      expect(listed.body).toMatchObject({ total: 2, conflicts: 1 });
+      expect((listed.body.lines as Array<{ reference: string; status: string; clash: unknown }>).map((l) => [l.reference, l.status, l.clash])).toEqual([
+        ['FT-REAL-1', 'conflict', { date: '2026-09-01', amount: '2000000' }],
+        ['FT-REAL-NEW', 'new', null],
+      ]);
+      // A viewer decides nothing and sees no lines; nothing was stored by looking.
+      expect((await rpc('bank/statementLines', await tokenFor(viewer), { fileId })).status).toBe(403);
+      expect(await stored('1121.VCB')).toEqual(before);
+      // Importing stores both: the conflict keyless and flagged "needs a look", never merged into the real line.
+      const done = await confirm(fileId);
+      expect(done.status).toBe(200);
+      expect(done.body.counts).toMatchObject({ new: 1, conflict: 1, duplicate: 0 });
+      const kept = (await stored('1121.VCB')).filter((l) => l.bank_ref?.startsWith('FT-REAL'));
+      expect(kept.map((l) => [l.bank_ref, Number(l.amount), l.dedupe_key, l.ambiguous])).toEqual([
+        ['FT-REAL-1', 2000000, 'ref:FT-REAL-1', false],
+        ['FT-REAL-1', 9000000, null, true],
+        ['FT-REAL-NEW', 1000, 'ref:FT-REAL-NEW', false],
+      ]);
+      // Once decided, the lines are no longer offered.
+      expect(await rpc('bank/statementLines', await tokenFor(member), { fileId })).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      // Importing the same forged lines again finds them all there: a retry stores nothing more.
+      expect((await importFile(forged, '1121.VCB')).body.counts).toMatchObject({ new: 0, conflict: 0, duplicate: 2 });
+      expect((await stored('1121.VCB')).filter((l) => l.bank_ref?.startsWith('FT-REAL'))).toHaveLength(3);
+    });
+
+    it('keeps the real line of a feed that arrives after a forged statement was imported, flagged, never dropped as a duplicate', async () => {
+      // The member imported a forged line first: FT-LATE-1 as 9,000,000.
+      const fileId = await stagedFile([row('02/09/2026', '9000000', '', '', 'FT-LATE-1', 'Chuyển khoản lạ')]);
+      expect((await confirm(fileId)).status).toBe(200);
+      // The real feed line, the same reference with the amount the bank has, arrives.
+      const real = feedLine('2026-09-02', '3000000', 'FT-LATE-1', null, 'Khách trả tiền thật');
+      const first = await feedOne(real);
+      expect(first.counts).toEqual({ new: 0, duplicate: 0, ambiguous: 0, conflict: 1, invalid: 0 });
+      const kept = (await stored('1121.VCB')).filter((l) => l.bank_ref === 'FT-LATE-1');
+      expect(kept.map((l) => [Number(l.amount), l.dedupe_key, l.ambiguous])).toEqual([
+        [9000000, 'ref:FT-LATE-1', false],
+        [3000000, null, true],
+      ]);
+      // The owners and admins are told there is a line to look at, as for any flagged line.
+      const told = await admin(async (c) => (await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.bank.ingest' AND outcome = 'ok' AND (detail->>'conflict')::int > 0`, [orgId])).rows[0]?.n);
+      expect(Number(told)).toBeGreaterThan(0);
+      // The same pull again stores nothing more.
+      expect((await feedOne(real)).counts).toEqual({ new: 0, duplicate: 1, ambiguous: 0, conflict: 0, invalid: 0 });
+      expect((await stored('1121.VCB')).filter((l) => l.bank_ref === 'FT-LATE-1')).toHaveLength(2);
+    });
+
+    it('tells the member a statement came by email, and who uploaded one that did not', async () => {
+      // An email attachment is stored by the worker with no uploader (a file never changes, so it is stored so from the start).
+      const rows = rowsOf('EMAIL');
+      const outcome = await stage(rows);
+      if (outcome.outcome !== 'staged') throw new Error(`not staged: ${outcome.outcome}`);
+      const bytes = new TextEncoder().encode(`PK-sao-ke-email-${randomUUID()}`);
+      const sha256 = sha256Hex(bytes);
+      const fileId = await admin(
+        async (c) =>
+          (
+            await c.query<{ id: string }>(
+              `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source) VALUES ($1, $2, $3, $4, 'sao-ke.zip', 'application/zip', $5, 'email') RETURNING id`,
+              [orgId, sha256, fileKey(orgId, sha256), contentGeneration(sha256), bytes.byteLength],
+            )
+          ).rows[0]?.id as string,
+      );
+      await recordRead(fileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+      expect(await status(fileId)).toMatchObject({ status: 'staged', statement: { origin: { channel: 'email', by: null }, conflictLines: 0 } });
     });
 
     it('is decided by users alone: the worker cannot import or skip a statement', async () => {

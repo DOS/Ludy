@@ -7,6 +7,10 @@
 //   transaction-level advisory lock, so two at once cannot both store the same line: the second waits, then sees the
 //   first's lines (READ COMMITTED, the runtime's isolation for commands). The unique key on (account, dedupe_key)
 //   refuses a double from any writer anyway, and the insert skips a key already there rather than failing.
+//   A reference the account already holds with another date or amount (#2191) is a conflict, not a duplicate: the key
+//   `ref:<reference>` stays as ADR-0021 fixed it (so a transaction seen from a feed and in a file is one line, whichever
+//   date format each prints), the amount and date are compared on top of it, and a line that disagrees is stored
+//   keyless and flagged (ambiguous), as a line "to look at" is, instead of being dropped. Statements and feed pulls alike.
 // - finance.bank.lines: the stored lines of one account for a month, quarter or year, each with what became of it
 //   (stage 2a, bank-match.ts: open, proposed as a voucher, or settled by one).
 // - finance.bank.ingest (ADR-0039, #2044): the lines a bank feed reports, sent by the worker, checked and stored on the
