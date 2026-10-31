@@ -1261,10 +1261,10 @@ export interface NightlyVerificationDeps {
   // A job queued by hand with {"full": true}: read every batch tonight.
   forceFull?: boolean;
   // Posts a line outside the database (the worker's opsAlert: the webhook). `error` stays in the log, not the post.
-  alert: (line: string, error?: unknown) => void;
+  opsAlert: (line: string, error?: unknown) => void;
   log: (line: string) => void;
   // A line for the worker log marking a failed run (the ALERT line the prober's dead letter check is read against).
-  logFailure: (line: string) => void;
+  logFailure: (elapsed: string, message: string) => void;
   now?: () => Date;
 }
 
@@ -1286,14 +1286,14 @@ export async function runNightlyVerification(deps: NightlyVerificationDeps): Pro
     // the store's own write time, alerts on every run, passing or failing, so an operator matches it to a real
     // restore and a webhook down for a night loses nothing.
     const alert = restoreAckAlert(result);
-    if (alert) deps.alert(`[archive] ALERT ${alert}`);
+    if (alert) deps.opsAlert(`[archive] ALERT ${alert}`);
     if (!result.ok) throw new ArchiveMismatchError(result);
     // The out-of-band heartbeat (#2082): a marker in the archive store, which the prober reads without the database.
     try {
       // `distinct`: the quick run and the full pass of one night can end in the same second.
       await writeVerifyMarker(deps.store, result, clock(), { lastFullAt: lastFullAt ?? null, distinct: true });
     } catch (error) {
-      deps.alert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
+      deps.opsAlert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
     }
     const excused = result.restoreAck === null ? '' : `, excused ${result.excused} row(s) under restore acknowledgement #${result.restoreAck}`;
     deps.log(`[archive] verified (${result.mode}) ${result.batchesRead} of ${result.batches} batch(es), ${result.rows} row(s)${excused} in ${elapsed()}`);
@@ -1302,7 +1302,7 @@ export async function runNightlyVerification(deps: NightlyVerificationDeps): Pro
   try {
     // First, from the store alone, before any database query: a run the database owner stops has alerted already.
     const early = await restoreAckStoreAlert(deps.store, { ...alertOptions, now: clock });
-    if (early) deps.alert(`[archive] ALERT ${early}`);
+    if (early) deps.opsAlert(`[archive] ALERT ${early}`);
     const plan: VerificationPlan = deps.forceFull
       ? { mode: 'full', checkpoint: null, lastFullAt: null, reason: 'requested by the job' }
       : await planVerification(deps.store, clock());
@@ -1315,9 +1315,9 @@ export async function runNightlyVerification(deps: NightlyVerificationDeps): Pro
       if (quick?.mode !== 'full') await pass();
     }
   } catch (error) {
-    deps.logFailure(`[archive] ALERT after ${elapsed()}: ${error instanceof Error ? error.message : 'verification could not run'}`);
+    deps.logFailure(elapsed(), error instanceof Error ? error.message : 'verification could not run');
     // The message names codes and batch sequences only (ArchiveMismatchError), so it is safe to post.
-    if (error instanceof ArchiveMismatchError) deps.alert(`[archive] ALERT ${error.message}`);
+    if (error instanceof ArchiveMismatchError) deps.opsAlert(`[archive] ALERT ${error.message}`);
     throw error;
   }
 }

@@ -840,9 +840,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         store,
         ...(deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays }),
         forceFull,
-        alert: opsAlert,
+        opsAlert,
         log: (line) => console.log(line),
-        logFailure: (line) => console.error(line),
+        logFailure: (elapsed, message) => console.error(`[archive] ALERT after ${elapsed}: ${message}`),
       });
     }));
     // The nightly run is short now, but the monthly full pass reads the whole archive (a year is about 105,000 objects):

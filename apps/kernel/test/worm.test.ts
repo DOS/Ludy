@@ -1292,9 +1292,9 @@ describe('series highs and the restore report (#2007)', () => {
           db,
           store,
           forceFull,
-          alert: (line) => alerts.push(line),
+          opsAlert: (line) => alerts.push(line),
           log: (line) => lines.push(line),
-          logFailure: (line) => failures.push(line),
+          logFailure: (elapsed, message) => failures.push(`[archive] ALERT after ${elapsed}: ${message}`),
           now: () => now,
         });
         return { run, alerts, lines, failures };
