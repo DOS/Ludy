@@ -308,6 +308,8 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
       ? b.adapter.removeEvent(secret, a.externalId)
       : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt });
   let first = true;
+  // Answers of "the permission is missing" in a row.
+  let forbiddenRun = 0;
   for (const a of plan.actions) {
     // The plan is a few moments old after the first call: a member who switched write-back off, or disconnected, in the
     // meantime has no more of their bookings sent.
@@ -326,21 +328,26 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
         return typeof stopped === 'string' ? { outcome: 'retry', reason: result.refused } : stopped;
       }
     }
-    // The grant lacks the events permission (the member unticked it): nothing more can be written until they connect again.
-    // (The busy read that follows clears a connection's failure note, so none is written; the next sweep tries again.)
-    if ('scope' in result) return null;
-    // An outage or a limit says nothing about this event and would hit every one behind it: no record, no attempt counted,
-    // and the rest of the batch (each call may wait 30 seconds, and the sweep holds one lock) is left for the next sweep.
-    if ('failed' in result && result.transient) return null;
+    // "Forbidden" while the stored grant carries the events permission (the plan checked it): it is about this event, or the
+    // member took the permission away at Google. Either way it is an error on this link, counted toward its six attempts, and the
+    // batch goes on, so one event never keeps the ones behind it from running. Three in a row mean the permission is gone: stop.
+    const forbidden = 'scope' in result;
+    forbiddenRun = forbidden ? forbiddenRun + 1 : 0;
+    // An outage or a limit hits every event: it is counted against this one too (so a persistent failure of one event gives up
+    // after six tries instead of retrying for ever) but ends the batch, so an outage costs one attempt of one link a run, not one
+    // of every link (each call may wait 30 seconds, and the sweep holds one lock).
+    const transient = 'failed' in result && result.transient === true;
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone
     // until its booking changes.
     const recorded = written ? (a.kind === 'delete' || 'gone' in result ? 'removed' : 'written') : 'error';
+    const reason = forbidden ? 'forbidden' : 'failed' in result ? result.failed : 'failed';
     await b.runtime.execute(
       'kernel.calendar.link.record',
-      { connectionId: b.connectionId, eventId: a.eventId, externalId: a.externalId, state: recorded, syncedHash: a.hash, ...(recorded === 'error' ? { error: String('failed' in result ? result.failed : 'failed').slice(0, 100) || 'failed' } : {}) },
+      { connectionId: b.connectionId, eventId: a.eventId, externalId: a.externalId, state: recorded, syncedHash: a.hash, ...(recorded === 'error' ? { error: String(reason).slice(0, 100) || 'failed' } : {}) },
       b.options,
     );
+    if (transient || forbiddenRun >= 3) return null;
   }
   return null;
 }

@@ -905,6 +905,9 @@ export const calendarLinkRecord = defineCommand({
       .where('kind', '=', 'booking')
       .executeTakeFirst();
     if (!event) throw new DomainError('CALENDAR_EVENT_NOT_FOUND', 404, 'Không tìm thấy sự kiện này trên lịch của bạn');
+    // The provider's event id is the one derived from the org, the booking event and the connection, so a link can only name an
+    // event Ludy made: the worker deletes events by this id, and the database holds the rule, not just the worker.
+    if (input.externalId !== writeBackEventId(ctx.orgId, input.eventId, input.connectionId)) throw new DomainError('VALIDATION', 422, 'Mã sự kiện trên lịch ngoài không khớp với lịch hẹn này');
     const existing = await ctx.trx
       .selectFrom('crove_kernel.calendar_event_link')
       .select(['id', 'attempts', 'synced_hash'])
