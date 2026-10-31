@@ -1,4 +1,4 @@
-import { Bot, CalendarCheck, Check, Factory, Warehouse, Wheat } from 'lucide-react';
+import { Bell, Bot, CalendarCheck, CalendarDays, Check, CornerUpRight, Factory, Link2, Lock, Pin, Users, Warehouse, Wheat } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { Dictionary } from '../../content/vi';
 import { Chip, Section, SectionHead, toneOf } from './ui';
@@ -28,11 +28,33 @@ function Card({ className = '', children }: { className?: string; children: Reac
   return <article className={`flex min-w-0 flex-col rounded-lg border border-line bg-surface p-5 ${className}`}>{children}</article>;
 }
 
-function CardHead({ name, body, people, deptLabel }: { name: string; body: string; people?: Modules['finance']['people']; deptLabel: string }) {
+function CardHead({
+  name,
+  body,
+  people,
+  points,
+  deptLabel,
+}: {
+  name: string;
+  body: string;
+  people?: Modules['finance']['people'];
+  points?: readonly string[];
+  deptLabel: string;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <h3 className="font-display text-xl font-semibold">{name}</h3>
       <p className="max-w-[60ch] text-sm text-muted">{body}</p>
+      {points ? (
+        <ul className="mt-1 flex max-w-[60ch] flex-col gap-1.5 text-sm text-muted">
+          {points.map((point) => (
+            <li key={point} className="flex gap-2">
+              <Check className="mt-0.5 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
+              <span>{point}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {people ? (
         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-subtle">
           <span>{deptLabel}</span>
@@ -52,14 +74,14 @@ const VAT_SHADES = ['bg-accent', 'bg-accent/55', 'bg-accent/30'];
 // and agents who work in it. Finance is the largest because it is what ships first.
 export function Modules({ dict }: { dict: Dictionary }) {
   const { modules } = dict;
-  const { finance, agents, tasks, social, crm } = modules;
+  const { finance, agents, tasks, notes, social, crm } = modules;
   const t = finance.taccount;
   return (
     <Section id="module" labelledBy="modules-title" tinted>
       <SectionHead id="modules-title" title={modules.title} lead={modules.lead} />
       <div className="grid gap-5 lg:grid-cols-2">
         <Card className="lg:col-span-2">
-          <CardHead name={finance.name} body={finance.body} people={finance.people} deptLabel={modules.deptLabel} />
+          <CardHead name={finance.name} body={finance.body} points={finance.points} people={finance.people} deptLabel={modules.deptLabel} />
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-col rounded-md border border-line bg-bg md:col-span-2 lg:col-span-1">
               <div className="flex items-baseline justify-between gap-3 border-b border-line px-3 py-2.5">
@@ -134,6 +156,32 @@ export function Modules({ dict }: { dict: Dictionary }) {
               </figure>
             </div>
           </div>
+          <figure className="mt-4 min-w-0 rounded-md border border-line bg-bg p-3">
+            <figcaption className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+              <span className="text-sm font-semibold">{finance.sales.title}</span>
+              <span className="text-xs text-subtle">{finance.sales.sub}</span>
+            </figcaption>
+            <ol className="mt-3 grid grid-cols-4 gap-1.5 sm:grid-cols-10" aria-label={finance.sales.summary}>
+              {Array.from({ length: finance.sales.last - finance.sales.first + 1 }, (_, k) => {
+                const n = finance.sales.first + k;
+                const gap = finance.sales.gaps.includes(n);
+                return (
+                  <li
+                    key={n}
+                    className={`num rounded-sm border px-1 py-1 text-center text-xs ${gap ? 'border-dashed border-warn/70 bg-warn-soft font-semibold text-warn' : 'border-line bg-surface text-muted'}`}
+                  >
+                    {String(n).padStart(8, '0').slice(-5)}
+                  </li>
+                );
+              })}
+            </ol>
+            <p className="mt-3 text-xs text-muted">{finance.sales.summary}</p>
+            <p className="mt-1 text-xs text-subtle">{finance.sales.hint}</p>
+          </figure>
+          <p className="mt-4 flex items-center gap-2 text-xs text-subtle">
+            <Chip tone="neutral">{finance.soonLabel}</Chip>
+            <span>{finance.soon}</span>
+          </p>
         </Card>
 
         <Card>
@@ -193,45 +241,79 @@ export function Modules({ dict }: { dict: Dictionary }) {
           </ul>
         </Card>
 
+        {/* Ludy Notes (#1671, #1673): notes with their private or shared mark, and one member's own to-dos. */}
         <Card className="lg:col-span-2">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
-            <CardHead name={social.name} body={social.body} people={social.people} deptLabel={modules.deptLabel} />
-            {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1,
-                #1629). It carries the week's name, which the list inside had. */}
-            <div role="group" aria-label={social.weekLabel} tabIndex={0} className="min-w-0 overflow-x-auto">
-              <ol className="grid min-w-[640px] grid-cols-7 gap-1.5">
-                {social.days.map((day) => {
-                  const Art = day.post ? (ART[day.post.art as keyof typeof ART] ?? Wheat) : null;
-                  return (
-                    <li
-                      key={day.label}
-                      className={`flex min-h-36 min-w-0 flex-col gap-1.5 rounded-md border p-1.5 ${day.today ? 'border-accent/70 bg-accent-soft/40' : 'border-line bg-bg'}`}
-                    >
-                      <div className="flex items-center justify-between gap-1 px-0.5 text-[11px]">
-                        <span className={day.today ? 'font-semibold text-accent-ink' : 'text-subtle'}>{day.label}</span>
-                        {day.today ? <span className="sr-only">{social.todayLabel}</span> : null}
-                      </div>
-                      {day.post && Art ? (
-                        <div className="flex min-w-0 flex-col gap-1 rounded-sm border border-line bg-surface p-1.5 text-[11px]">
-                          <span
-                            className={`flex h-10 items-center justify-center rounded-[3px] ${day.post.tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'}`}
-                            aria-hidden="true"
-                          >
-                            <Art className="size-5" />
+            <CardHead name={notes.name} body={notes.body} points={notes.points} people={notes.people} deptLabel={modules.deptLabel} />
+            <div className="grid min-w-0 gap-4 md:grid-cols-2">
+              <figure className="min-w-0 rounded-md border border-line bg-bg">
+                <figcaption className="border-b border-line px-3 py-2.5 text-sm font-semibold">{notes.listTitle}</figcaption>
+                <ul className="divide-y divide-line">
+                  {notes.items.map((note) => (
+                    <li key={note.title} className="flex min-w-0 flex-col gap-1.5 px-3 py-2.5 text-[13px]">
+                      <span className="flex items-start gap-1.5">
+                        {note.pinned ? (
+                          <>
+                            <Pin className="mt-0.5 size-3.5 shrink-0 text-accent-ink" aria-hidden="true" />
+                            <span className="sr-only">{notes.pinned}: </span>
+                          </>
+                        ) : null}
+                        <span className="min-w-0 font-medium">{note.title}</span>
+                      </span>
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <Chip tone={note.shared ? 'neutral' : 'accent'}>
+                          {note.shared ? <Users className="size-3" aria-hidden="true" /> : <Lock className="size-3" aria-hidden="true" />}
+                          {note.shared ? notes.shared : notes.private}
+                        </Chip>
+                        {note.tags.map((tag) => (
+                          <span key={tag} className="rounded-sm border border-line px-1.5 py-0.5 text-[11px] text-muted">
+                            {tag}
                           </span>
-                          <span className="leading-snug font-semibold">{day.post.title}</span>
-                          <span className="num text-subtle">
-                            {day.post.time}, {day.post.channels.join(', ')}
-                          </span>
-                          <Chip tone={toneOf(day.post.tone)} wrap className="self-start text-[10px] leading-snug">
-                            {day.post.state}
-                          </Chip>
-                        </div>
-                      ) : null}
+                        ))}
+                      </span>
+                      <span className="flex min-w-0 items-center gap-1.5 text-xs text-subtle">
+                        <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span className="sr-only">{notes.linkLabel}: </span>
+                        <span className="min-w-0 truncate">{note.link}</span>
+                      </span>
                     </li>
-                  );
-                })}
-              </ol>
+                  ))}
+                </ul>
+              </figure>
+              <figure className="min-w-0 rounded-md border border-line bg-bg">
+                <figcaption className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line px-3 py-2.5">
+                  <span className="text-sm font-semibold">{notes.todoTitle}</span>
+                  <span className="text-xs text-subtle">{notes.todoSub}</span>
+                </figcaption>
+                <div className="flex flex-col divide-y divide-line">
+                  {notes.groups.map((group) => (
+                    <section key={group.label} className="px-3 py-2.5">
+                      <h4 className={`text-[11px] font-semibold ${group.tone === 'warn' ? 'text-warn' : group.tone === 'accent' ? 'text-accent-ink' : 'text-subtle'}`}>{group.label}</h4>
+                      <ul className="mt-1.5 flex flex-col gap-2.5">
+                        {group.items.map((todo) => (
+                          <li key={todo.title} className="flex items-start gap-2.5 text-[13px]">
+                            <span className="mt-0.5 inline-flex size-4 shrink-0 rounded-[4px] border border-line-strong/70 bg-surface" aria-hidden="true" />
+                            <span className="flex min-w-0 flex-1 flex-col gap-1">
+                              <span className="font-medium">{todo.title}</span>
+                              <span className="num flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-subtle">
+                                {todo.remind ? <Bell className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+                                {todo.meta}
+                              </span>
+                              {todo.steps ? <span className="text-xs text-subtle">{todo.steps}</span> : null}
+                              {todo.note ? (
+                                <Chip tone="accent" wrap className="self-start">
+                                  <CornerUpRight className="size-3" aria-hidden="true" />
+                                  {todo.note}
+                                </Chip>
+                              ) : null}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </section>
+                  ))}
+                </div>
+              </figure>
             </div>
           </div>
         </Card>
@@ -239,7 +321,7 @@ export function Modules({ dict }: { dict: Dictionary }) {
         {/* CRM & Calendar (#1568): the public booking page as the client sees it, and what reaches the host. */}
         <Card className="lg:col-span-2">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
-            <CardHead name={crm.name} body={crm.body} people={crm.people} deptLabel={modules.deptLabel} />
+            <CardHead name={crm.name} body={crm.body} points={crm.points} people={crm.people} deptLabel={modules.deptLabel} />
             <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
               <figure className="min-w-0 rounded-md border border-line bg-bg p-3">
                 <figcaption>
@@ -281,11 +363,72 @@ export function Modules({ dict }: { dict: Dictionary }) {
                   <div className="mt-2 font-medium">{crm.booked.who}</div>
                   <div className="num text-subtle">{crm.booked.when}</div>
                 </div>
+                <div className="rounded-md border border-line bg-bg p-3 text-xs">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="size-4 shrink-0 text-subtle" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-semibold">{crm.calendar.provider}</span>
+                      <span className="block truncate text-subtle">{crm.calendar.title}</span>
+                    </span>
+                    <Chip tone={toneOf('ok')}>{crm.calendar.state}</Chip>
+                  </div>
+                  <dl className="mt-3 flex flex-col gap-1.5">
+                    {crm.calendar.rows.map(([label, value]) => (
+                      <div key={label} className="flex items-baseline justify-between gap-3">
+                        <dt className="text-subtle">{label}</dt>
+                        <dd className="num shrink-0 text-right">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
                 <p className="flex gap-2 rounded-md border border-dashed border-accent/50 bg-bg p-3 text-xs text-muted">
                   <Bot className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden="true" />
                   <span>{crm.suggest}</span>
                 </p>
               </div>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
+            <CardHead name={social.name} body={social.body} people={social.people} deptLabel={modules.deptLabel} />
+            {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1,
+                #1629). It carries the week's name, which the list inside had. */}
+            <div role="group" aria-label={social.weekLabel} tabIndex={0} className="min-w-0 overflow-x-auto">
+              <ol className="grid min-w-[640px] grid-cols-7 gap-1.5">
+                {social.days.map((day) => {
+                  const Art = day.post ? (ART[day.post.art as keyof typeof ART] ?? Wheat) : null;
+                  return (
+                    <li
+                      key={day.label}
+                      className={`flex min-h-36 min-w-0 flex-col gap-1.5 rounded-md border p-1.5 ${day.today ? 'border-accent/70 bg-accent-soft/40' : 'border-line bg-bg'}`}
+                    >
+                      <div className="flex items-center justify-between gap-1 px-0.5 text-[11px]">
+                        <span className={day.today ? 'font-semibold text-accent-ink' : 'text-subtle'}>{day.label}</span>
+                        {day.today ? <span className="sr-only">{social.todayLabel}</span> : null}
+                      </div>
+                      {day.post && Art ? (
+                        <div className="flex min-w-0 flex-col gap-1 rounded-sm border border-line bg-surface p-1.5 text-[11px]">
+                          <span
+                            className={`flex h-10 items-center justify-center rounded-[3px] ${day.post.tone === 'ok' ? 'bg-ok-soft text-ok' : 'bg-warn-soft text-warn'}`}
+                            aria-hidden="true"
+                          >
+                            <Art className="size-5" />
+                          </span>
+                          <span className="leading-snug font-semibold">{day.post.title}</span>
+                          <span className="num text-subtle">
+                            {day.post.time}, {day.post.channels.join(', ')}
+                          </span>
+                          <Chip tone={toneOf(day.post.tone)} wrap className="self-start text-[10px] leading-snug">
+                            {day.post.state}
+                          </Chip>
+                        </div>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ol>
             </div>
           </div>
         </Card>
