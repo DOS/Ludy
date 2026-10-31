@@ -82,6 +82,33 @@ describe('storage configuration', () => {
     expect(loadConfig({ ...r2, S3_ENDPOINT: 'https://r2.cloudflarestorage.com.example.net' }).S3_PRESIGNED_URLS).toBe('true');
   });
 
+  // Issue #2192: Zalo OA, Instagram and Threads fetch media by URL. On R2 browser transfers stay off (it has no POST
+  // policy uploads), but the store still signs reads for a platform, so those channels can post images there.
+  it('signs platform fetch URLs on an R2 endpoint with browser transfers off, and on https endpoints only', () => {
+    const r2 = {
+      ...BASE,
+      STORAGE: 's3',
+      S3_BUCKET: 'crove-files',
+      S3_REGION: 'auto',
+      S3_ENDPOINT: 'https://acc0unt.r2.cloudflarestorage.com',
+      S3_ACCESS_KEY_ID: 'AKIAEXAMPLEKEY',
+      S3_SECRET_ACCESS_KEY: 'example-secret-value',
+      S3_PRESIGNED_URLS: 'false',
+      S3_VERSIONING: 'off',
+    };
+    const store = createBlobStore(loadConfig(r2));
+    expect(store.direct).toBeUndefined();
+    expect(store.fetchUrls).toBeDefined();
+    // Local disk has no URL to give; a plain http endpoint (an internal MinIO) would hand a platform an address it cannot reach.
+    expect(createBlobStore(loadConfig(BASE)).fetchUrls).toBeUndefined();
+    expect(createBlobStore(loadConfig({ ...r2, S3_ENDPOINT: 'http://minio:9000' })).fetchUrls).toBeUndefined();
+    expect(createBlobStore(loadConfig({ ...r2, S3_ENDPOINT: 'http://minio:9000', S3_PUBLIC_ENDPOINT: 'https://files.example.com' })).fetchUrls).toBeDefined();
+    // With browser transfers on (AWS) both exist, signed for the same endpoint.
+    const aws = createBlobStore(loadConfig({ ...BASE, STORAGE: 's3', S3_BUCKET: 'crove-files', S3_REGION: 'ap-southeast-1', S3_ACCESS_KEY_ID: 'AKIAEXAMPLEKEY', S3_SECRET_ACCESS_KEY: 'example-secret-value' }));
+    expect(aws.direct).toBeDefined();
+    expect(aws.fetchUrls).toBeDefined();
+  });
+
   // Issue #223: the endpoint browsers reach lands in the CSP connect-src and carries every file.
   it('refuses a plain http endpoint for presigned transfers on a public URL', () => {
     const prod = { ...BASE, PUBLIC_URL: 'https://crove.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', STORAGE: 's3', S3_BUCKET: 'crove-files', S3_FORCE_PATH_STYLE: 'true' };

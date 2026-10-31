@@ -1561,6 +1561,8 @@ suite('social publishing on PostgreSQL (S4)', () => {
     await admin((c) => c.query("UPDATE crove_social.post_variant SET scheduled_at = now() - interval '1 second' WHERE post_id = $1", [postId]));
 
     const read: Record<string, string> = {};
+    const urls: Record<string, string | null> = {};
+    const signed: { key: string; generation: string | null; sha256: string }[] = [];
     const platform = new FakePlatform();
     const publish = platform.publish.bind(platform);
     platform.publish = async (input) => {
@@ -1569,14 +1571,24 @@ suite('social publishing on PostgreSQL (S4)', () => {
           (b) => (Buffer.from(b).equals(Buffer.from(f.bytes)) ? 'read' : 'other'),
           () => 'refused',
         );
+        // The URL a platform that fetches media is given (#2192): only for this variant's own files.
+        urls[f.fileId] = await input.mediaUrl(f.fileId).catch(() => 'refused');
       }
       return publish(input);
     };
-    const store = { get: async (key: string) => stored.get(key) as Uint8Array } as unknown as BlobStore;
+    // A store with a platform fetch signer and no browser transfers (Cloudflare R2): the URL comes from fetchUrls.
+    const store = {
+      get: async (key: string) => stored.get(key) as Uint8Array,
+      fetchUrls: { presign: async (ref: { key: string; generation: string | null; sha256: string }) => (signed.push(ref), `https://files.example.test/${ref.sha256}`) },
+    } as unknown as BlobStore;
     const outcome = await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, store, callTimeoutMs: 2_000 }, o.orgId, v?.id as string, 'sandbox');
     expect(outcome).toEqual({ action: 'call', status: 'published' });
     expect(platform.posts[0]?.settings).toEqual({ cover: { fileId: cover.fileId } });
     expect(read).toEqual({ [video.fileId]: 'read', [cover.fileId]: 'read', [stray.fileId]: 'refused' });
+    expect(signed).toHaveLength(2);
+    expect(urls[video.fileId]).toMatch(/^https:\/\/files\.example\.test\/[0-9a-f]{64}$/);
+    expect(urls[cover.fileId]).toMatch(/^https:\/\/files\.example\.test\/[0-9a-f]{64}$/);
+    expect(urls[stray.fileId]).toBe('refused');
   });
 
   it('asks one platform about two variants at a time at most, and totals every published channel in SQL (#397)', async () => {

@@ -129,14 +129,14 @@ function mediaFileOf(deps: PublishDeps, orgId: string, work: Pick<PublishWork, '
   };
 }
 
-// A presigned GET of the exact version, where the store hands them out (S3); valid briefly, enough for the platform
-// to fetch it right after the call that names it.
+// A short-lived signed GET of the recorded bytes, where the store hands them out (S3, also with browser transfers off,
+// as on R2: #2192); valid briefly, enough for the platform to fetch it right after the call that names it.
 function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>) {
   return async (fileId: string): Promise<string | null> => {
-    const direct = deps.store?.direct;
-    if (!direct) return null;
+    const urls = deps.store?.fetchUrls;
+    if (!urls) return null;
     const file = await mediaFile(fileId);
-    return direct.presignDownload({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType });
+    return urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType });
   };
 }
 

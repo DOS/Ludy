@@ -102,7 +102,8 @@ const schema = z.object({
   S3_VERSIONING: z.enum(['required', 'off']).default('required'),
   // Browsers upload to a staging key and download through presigned URLs (plan §7.6). The bucket needs a CORS rule
   // for PUBLIC_URL (POST and GET). false keeps every transfer streaming through the kernel; Cloudflare R2 needs false
-  // (it has no POST policy uploads, so Crove refuses to start with true on an R2 endpoint).
+  // (it has no POST policy uploads, so Crove refuses to start with true on an R2 endpoint). It does not switch off the
+  // signed reads Zalo OA, Instagram and Threads fetch media by (#2192): those need an https endpoint, not this setting.
   S3_PRESIGNED_URLS: z.enum(['true', 'false']).default('true'),
   // The S3 endpoint browsers reach, when it differs from S3_ENDPOINT (presigned URLs are signed for this host). On a
   // public PUBLIC_URL it must be https: it is where browsers send files, and it lands in the CSP connect-src.

@@ -29,6 +29,10 @@ export interface BlobStore {
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
   // disk, where uploads and downloads stream through the kernel.
   direct?: DirectTransfers | undefined;
+  // Present when the store can sign a download for a platform that takes media by URL (Zalo OA, Instagram, Threads;
+  // issue #2192). Independent of `direct`: it exists with S3_PRESIGNED_URLS=false too (Cloudflare R2), because it signs
+  // reads only and never lets a browser write. Absent for local disk and for GCS.
+  fetchUrls?: FetchUrls | undefined;
   // Deletes staging/ objects last modified before `before` (abandoned presigned uploads), looking at no more than
   // `limit` keys per call. For stores without a lifecycle rule on staging/; the worker's daily retention job calls
   // it. Absent where no staging objects exist (local disk).
@@ -103,6 +107,16 @@ export interface DirectTransfers {
   presignDownload(ref: BlobRef, file: { filename: string; contentType: string }): Promise<string | null>;
   // Streams a staged object, refusing more than maxBytes, and returns its bytes with their sha256.
   readStaged(stagingKey: string, maxBytes: number): Promise<{ bytes: Uint8Array; sha256: string }>;
+}
+
+// A short-lived read-only URL that a platform fetches an org file from, right after the call that names it.
+export interface FetchUrls {
+  // A GET for the exact bytes the reference records, valid DOWNLOAD_TTL_SECONDS, as an attachment. Only org/ files. A
+  // reference pinned to an object version is signed for that version. One that cannot be pinned (S3_VERSIONING=off, a
+  // content: generation, a row from before ADR-0013) is first read through sha256 and signed only when the bytes are
+  // the recorded ones (BlobIntegrityError otherwise), so an object swapped after approval is never handed out; what
+  // remains is the signing window itself.
+  presign(ref: BlobRef, file: { filename: string; contentType: string }): Promise<string>;
 }
 
 // Presigned uploads live 5 minutes (plan §7.6); presigned downloads 60 seconds.

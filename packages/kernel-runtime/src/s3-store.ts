@@ -34,6 +34,7 @@ import {
   type BlobStore,
   type DirectTransfers,
   type EvidenceHolds,
+  type FetchUrls,
   type ListPrefix,
   type ListedBlob,
   type PresignedUpload,
@@ -83,6 +84,8 @@ const CONFLICT_RETRIES = 3;
 // ListObjectsV2 returns at most 1000 keys per page; the sweep deletes this many keys at a time.
 const LIST_PAGE = 1000;
 const SWEEP_DELETES_IN_FLIGHT = 10;
+// The most a platform fetch URL checks by sha256 before signing (a Social video is the largest file).
+const FETCH_VERIFY_MAX_BYTES = 512 * 1024 * 1024;
 
 function isGoogle(endpoint: string | undefined): boolean {
   return Boolean(endpoint) && new URL(endpoint as string).hostname === GOOGLE_HOST;
@@ -245,6 +248,9 @@ export interface S3BlobStoreOptions {
   versioning?: S3Versioning | undefined;
   // The client that signs presigned URLs (for the public endpoint). Absent: no presigned transfers.
   presigner?: S3Client | undefined;
+  // The client that signs read-only URLs for platforms that fetch media by URL (issue #2192). Set whether or not
+  // presigned browser transfers are on, since it never signs a write. Absent: no fetch URLs.
+  fetchSigner?: S3Client | undefined;
   // gcs when the endpoint is GCS interoperability: generations are tagged gcs: instead of s3:.
   flavor?: 's3' | 'gcs' | undefined;
   archiveLock?: ArchiveLock | undefined;
@@ -277,6 +283,7 @@ export class S3BlobStore implements BlobStore {
   private readonly archiveLock: ArchiveLock | undefined;
   private readonly now: () => Date;
   readonly direct: DirectTransfers | undefined;
+  readonly fetchUrls: FetchUrls | undefined;
   readonly holds: EvidenceHolds;
 
   constructor(client: S3Sender, bucket: string, options: S3BlobStoreOptions = {}) {
@@ -294,22 +301,27 @@ export class S3BlobStore implements BlobStore {
           readStaged: (key, maxBytes) => this.readStaged(key, maxBytes),
         }
       : undefined;
+    const fetchSigner = options.fetchSigner;
+    this.fetchUrls = fetchSigner ? { presign: (ref, file) => this.presignFetch(fetchSigner, ref, file) } : undefined;
     this.holds = { available: () => this.holdsAvailable(), hold: (ref, retainUntil) => this.hold(ref, retainUntil) };
   }
 
   static connect(options: S3StoreOptions): S3BlobStore {
     const client = createS3Client(options);
-    // Not on GCS: the SigV4 POST policy fields createPresignedPost signs have not been verified there, so transfers
-    // stream through the kernel instead (ADR-0013).
-    const presigner =
-      options.presign === false || isGoogle(options.endpoint)
-        ? undefined
-        : options.publicEndpoint && options.publicEndpoint !== options.endpoint
-          ? createS3Client(options, options.publicEndpoint)
-          : client;
+    // Not on GCS: the SigV4 fields the signer produces have not been verified there, so transfers stream through the
+    // kernel instead (ADR-0013). The signer is the client for the endpoint browsers and platforms reach.
+    const signer = isGoogle(options.endpoint) ? undefined : options.publicEndpoint && options.publicEndpoint !== options.endpoint ? createS3Client(options, options.publicEndpoint) : client;
+    // Browser transfers can be off (Cloudflare R2 has no POST policy uploads) while platforms still fetch media by a
+    // signed read (#2192).
+    const presigner = options.presign === false ? undefined : signer;
+    // A platform fetches over the internet: a plain http endpoint (a MinIO the kernel reaches as http://minio:9000) would
+    // only hand it an address it cannot reach, and name an internal host. AWS (no endpoint) is https.
+    const signedFor = options.publicEndpoint || options.endpoint;
+    const fetchSigner = signedFor && new URL(signedFor).protocol !== 'https:' ? undefined : signer;
     return new S3BlobStore(client, options.bucket, {
       versioning: options.versioning,
       presigner,
+      fetchSigner,
       flavor: isGoogle(options.endpoint) ? 'gcs' : 's3',
       archiveLock: options.archiveLock,
     });
@@ -598,6 +610,66 @@ export class S3BlobStore implements BlobStore {
       }),
       { expiresIn: DOWNLOAD_TTL_SECONDS },
     );
+  }
+
+  // A GET a platform fetches the file from (issue #2192): short-lived, read-only, for org/ files only, whatever the
+  // bucket's browser transfer setting. A reference pinned to a version is signed for that version, so the bytes cannot
+  // change under it. An unpinned one (versioning off, a content: generation, a row from before ADR-0013) is streamed
+  // through sha256 first and signed only when the bytes are the recorded ones; on a versioned bucket the version just
+  // read is then pinned, and with versioning off (R2 refuses a version on reads) the 60 second URL is the whole window.
+  private async presignFetch(signer: S3Client, ref: BlobRef, file: { filename: string; contentType: string }): Promise<string> {
+    assertStorageKey(ref.key);
+    if (!ref.key.startsWith('org/')) throw new Error('only org files are signed for a platform');
+    let versionId = this.pinned(ref.generation);
+    if (!versionId) {
+      const read = await this.digestCurrent(ref.key, FETCH_VERIFY_MAX_BYTES);
+      if (read.sha256 !== ref.sha256) throw new BlobIntegrityError(ref);
+      if (this.versioning !== 'off' && read.versionId && read.versionId !== 'null') versionId = read.versionId;
+    }
+    return getSignedUrl(
+      signer,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: ref.key,
+        ...(versionId ? { VersionId: versionId } : {}),
+        ResponseContentDisposition: attachment(file.filename),
+        ResponseContentType: file.contentType,
+        ResponseCacheControl: 'private, no-store',
+      }),
+      { expiresIn: DOWNLOAD_TTL_SECONDS },
+    );
+  }
+
+  // The sha256 of the object now under the key, streamed so it is never held whole, refusing one over maxBytes.
+  private async digestCurrent(key: string, maxBytes: number): Promise<{ sha256: string; versionId: string | undefined }> {
+    let out;
+    try {
+      out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    } catch (error) {
+      if (isMissingObject(error)) throw new BlobNotFoundError(key);
+      if (httpStatus(error) === 403) throw new BlobStoreAccessError(this.bucket, key, error);
+      throw error;
+    }
+    if (!out.Body) throw new BlobNotFoundError(key);
+    const stream = out.Body.transformToWebStream();
+    if (out.ContentLength !== undefined && out.ContentLength > maxBytes) {
+      await stream.cancel().catch(() => undefined);
+      throw new BlobTooLargeError(key, maxBytes);
+    }
+    const hash = createHash('sha256');
+    let size = 0;
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new BlobTooLargeError(key, maxBytes);
+      }
+      hash.update(value);
+    }
+    return { sha256: hash.digest('hex'), versionId: out.VersionId };
   }
 
   // Streams the staged object through sha256 and a byte count, and stops reading as soon as it passes maxBytes.
