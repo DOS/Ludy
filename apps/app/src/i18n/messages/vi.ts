@@ -1983,6 +1983,7 @@ export const vi = {
       linesValue: '{lines} dòng ({news} mới, {duplicates} đã có)',
       source: 'Nguồn',
       sourceEmail: 'Nhận qua thư gửi đến địa chỉ nhận chứng từ của tổ chức, lúc {when}. Thư không có gì chứng minh người gửi là ai.',
+      sourceEmailFrom: 'Nhận qua thư từ {from} gửi đến địa chỉ nhận chứng từ của tổ chức, lúc {when}. Địa chỉ người gửi do chính thư khai, không có gì chứng minh đúng.',
       sourceUpload: 'Tải lên bởi {name} lúc {when}',
       sourceFormerMember: 'một người không còn là thành viên',
       sourceUploadUnknown: 'Tải lên lúc {when}',

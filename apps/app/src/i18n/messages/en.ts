@@ -1985,6 +1985,7 @@ export const en = {
       linesValue: '{lines} lines ({news} new, {duplicates} already there)',
       source: 'Source',
       sourceEmail: 'Received by email at the org\'s inbound address, on {when}. Nothing in an email proves who sent it.',
+      sourceEmailFrom: "Received by email from {from} at the org's inbound address, on {when}. The sender address is what the mail itself claims; nothing proves it.",
       sourceUpload: 'Uploaded by {name} on {when}',
       sourceFormerMember: 'someone who is no longer a member',
       sourceUploadUnknown: 'Uploaded on {when}',

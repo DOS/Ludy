@@ -409,7 +409,8 @@ export const receiveInbound = defineCommand({
     subject: z.string().max(500).nullable(),
     // The mail's text (#779); absent from a worker built before it.
     text: z.string().min(1).max(INBOUND_TEXT_MAX).nullable().optional(),
-    files: z.array(zIngestFile).max(20),
+    // The link to the mail is set here, from the message this command inserts, never taken from the caller.
+    files: z.array(zIngestFile.omit({ inboundMessageId: true })).max(20),
   }),
   // Each attachment runs kernel.file.ingest nested, whose event queues the extraction job that sends the file to the
   // AI endpoint (plan §4.7: a job with egress derives R2, through a nested run too; #1698). A system command, so the
@@ -443,7 +444,7 @@ export const receiveInbound = defineCommand({
       .execute();
     const fileIds: string[] = [];
     for (const file of input.files) {
-      const result = await ctx.run<{ fileId: string }>('kernel.file.ingest', file);
+      const result = await ctx.run<{ fileId: string }>('kernel.file.ingest', { ...file, ...(file.source === 'email' ? { inboundMessageId: message.id } : {}) });
       fileIds.push(result.fileId);
     }
     return { duplicate: false, fileIds };
