@@ -8,7 +8,7 @@ import { useTranslations } from 'use-intl';
 import type { CalendarConnectionView, CalendarOAuthProvider } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
-import { ErrorText, Spinner } from '../components/ui.tsx';
+import { ErrorText } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
@@ -98,8 +98,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       {canEdit && offered.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {offered.map((p) => (
-            <Button key={p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p })}>
-              {start.isPending && start.variables?.provider === p ? <Spinner className="text-current" /> : null}
+            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p })}>
               {t('externalConnect', { provider: t(`externalProviders.${p}`) })}
             </Button>
           ))}

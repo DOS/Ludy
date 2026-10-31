@@ -13,7 +13,7 @@ import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { StepUpPrompt } from '../components/two-factor.tsx';
-import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, Spinner, TableSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, PageHeader, PageSkeleton, TableSkeleton } from '../components/ui.tsx';
 import { errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const HANDLING_BADGE = { erase: 'warning', keep_legal: 'secondary', keep_org: 'secondary', keep_record: 'secondary' } as const;
@@ -132,8 +132,7 @@ export function PersonalDataPage() {
             <div className="space-y-2 rounded-lg border border-destructive p-3">
               <p className="text-sm text-foreground">{t('eraseConfirm', { value })}</p>
               <div className="flex gap-2">
-                <Button variant="destructive" disabled={erase.isPending} onClick={eraseNow}>
-                  {erase.isPending ? <Spinner className="text-current" /> : null}
+                <Button loading={erase.isPending} variant="destructive" onClick={eraseNow}>
                   {t('eraseNow')}
                 </Button>
                 <Button variant="ghost" disabled={erase.isPending} onClick={() => setConfirming(false)}>
@@ -178,8 +177,7 @@ export function PersonalDataPage() {
               <p className="pt-1 text-xs text-muted-foreground">{t('privateHint')}</p>
               {isOwner && !erase.data && (
                 <div className="flex flex-wrap items-center gap-2 pt-2">
-                  <Button variant="outline" size="sm" disabled={notify.isPending || notify.isSuccess} onClick={() => notify.mutate({ value, idempotencyKey: noticeKey })}>
-                    {notify.isPending ? <Spinner className="text-current" /> : null}
+                  <Button loading={notify.isPending} variant="outline" size="sm" disabled={notify.isPending || notify.isSuccess} onClick={() => notify.mutate({ value, idempotencyKey: noticeKey })}>
                     {t('notify')}
                   </Button>
                   {notify.data && <span className="text-xs text-foreground">{t('notified', { authors: notify.data.told })}</span>}

@@ -105,8 +105,7 @@ function AddNote({ target, onDone }: { target: NoteLinkTargetInput | undefined; 
           <Button type="button" variant="ghost" size="sm" onClick={onDone}>
             {t('cancel')}
           </Button>
-          <Button type="submit" size="sm" disabled={title.trim() === '' || create.isPending}>
-            {create.isPending && <Spinner className="text-current" />}
+          <Button loading={create.isPending} type="submit" size="sm" disabled={title.trim() === '' || create.isPending}>
             {t('panel.save')}
           </Button>
         </div>

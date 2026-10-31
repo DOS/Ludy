@@ -13,7 +13,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
-import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
+import { ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   coHostChoices,
@@ -181,8 +181,7 @@ function EventTypeForm({
       )}
       <Textarea maxLength={1000} rows={2} placeholder={t('descriptionPlaceholder')} aria-label={t('fields.description')} value={draft.description} onChange={(e) => set('description', e.target.value)} />
       <div className="flex gap-2">
-        <Button type="submit" variant="outline" size="sm" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
-          {pending ? <Spinner className="text-current" /> : null}
+        <Button loading={pending} type="submit" variant="outline" size="sm" disabled={pending || !draft.title.trim() || !draft.slug.trim()}>
           {submitLabel}
         </Button>
         {onCancel && (

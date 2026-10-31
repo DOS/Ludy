@@ -13,7 +13,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
-import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
+import { ErrorText, FieldError, fieldControl, focusFirstInvalid, RowsSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { accountLabel, type ChartAccount } from '../lib/accounts.ts';
@@ -70,8 +70,7 @@ function ConnectForm() {
           }}
           onBlur={(e) => fields.blur('name', e.target.value)}
         />
-        <Button type="submit" variant="outline" size="sm" disabled={connect.isPending}>
-          {connect.isPending ? <Spinner className="text-current" /> : null}
+        <Button loading={connect.isPending} type="submit" variant="outline" size="sm">
           {t('connect')}
         </Button>
       </div>
@@ -180,8 +179,7 @@ function AccountRow({
                 ))}
               </NativeSelect>
             )}
-            <Button type="submit" variant="outline" size="sm" disabled={!active || map.isPending}>
-              {map.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={map.isPending} type="submit" variant="outline" size="sm" disabled={!active || map.isPending}>
               {mapped ? t('remap') : t('map')}
             </Button>
           </div>
@@ -191,15 +189,14 @@ function AccountRow({
       )}
       {mapped && (
         <Button
+          loading={unmap.isPending}
           type="button"
           variant="ghost"
           size="sm"
           className="mt-1"
-          disabled={unmap.isPending}
           onClick={() => unmap.mutate({ feedAccountId: mapped.id, idempotencyKey: crypto.randomUUID() })}
           aria-label={t('unmapOf', { name: row.displayName })}
         >
-          {unmap.isPending ? <Spinner className="text-current" /> : null}
           {t('unmap')}
         </Button>
       )}

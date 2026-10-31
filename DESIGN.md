@@ -151,7 +151,7 @@ Components come from shadcn (base-nova style on Base UI) and are themed only thr
 - Variants: `default` (primary, one per view), `outline` / `secondary`, `ghost` (toolbars), `destructive` (tinted, not solid red, unless it is the confirm step of a destructive dialog), `link`.
 - Labels are verbs in sentence case that say what happens: "Duyệt bút toán", "Xuất Excel", "Gửi lời mời". The resulting toast uses the same verb: "Đã duyệt bút toán".
 - No arrow appended by default, no gradient, no glow shadow, no scale on hover. Press feedback is the existing 1px translate.
-- Loading keeps the label and width, adds a spinner, and disables the button.
+- Loading keeps the label and width, adds a spinner, and disables the button. It is `<Button loading={isPending}>`, never a `<Spinner>` placed in the button: the label stays in the flow (invisible by opacity, so the width does not change and it stays the button's name), the spinner is centered over it at the button's icon size and is `aria-hidden`, and the button gets `aria-busy`, `data-loading` and a native `disabled`, so a second press cannot repeat the action (#2116). The result is announced by the toast or the screen, not by keeping focus on a dead control. `apps/app/test/button-loading.test.ts` fails on a Spinner inside a `Button`; only the paused Social screens are listed as exceptions (decision D5).
 
 ### 4.2 Forms
 

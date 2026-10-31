@@ -1,6 +1,7 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
+import { Loader2Icon } from "lucide-react"
 
 const buttonStyles = cva(
   "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
@@ -45,18 +46,40 @@ function buttonVariants(props?: Parameters<typeof buttonStyles>[0]) {
   return cn(buttonStyles(props))
 }
 
+// `loading` (DESIGN.md 4.1, #2116): the button keeps its label in the flow, invisible but still read, so its width does
+// not change, and centers a spinner over it. It sets aria-busy and data-loading and is natively `disabled`, as the other
+// busy buttons always were: a second press cannot repeat the action, and the screen reads the outcome from the toast or
+// the result, not from a focus that stays on the button. The spinner is aria-hidden and takes the button's icon size
+// (size-4, size-3 for xs, size-3.5 for sm), so the accessible name stays the label ("Save", never "Loading Save").
 function Button({
   className,
   variant = "default",
   size = "default",
+  loading = false,
+  disabled,
+  children,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonStyles>) {
+}: ButtonPrimitive.Props & VariantProps<typeof buttonStyles> & { loading?: boolean }) {
   return (
     <ButtonPrimitive
       data-slot="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      data-loading={loading ? "" : undefined}
+      aria-busy={loading || undefined}
+      disabled={disabled || loading}
+      className={cn(loading && "relative", buttonVariants({ variant, size, className }))}
       {...props}
-    />
+    >
+      {loading ? (
+        <>
+          <span data-slot="button-label" className="inline-flex items-center justify-center gap-[inherit] opacity-0">
+            {children}
+          </span>
+          <Loader2Icon data-slot="button-spinner" aria-hidden="true" className="absolute inset-0 m-auto animate-spin" />
+        </>
+      ) : (
+        children
+      )}
+    </ButtonPrimitive>
   )
 }
 

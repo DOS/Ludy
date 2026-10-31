@@ -13,7 +13,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
-import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, PageHeader, Spinner, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, fieldControl, fieldErrorId, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { groupAmount } from '../lib/amount-input.ts';
 import { apiFetch, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
@@ -211,8 +211,7 @@ function AssetFormCard({ onClose }: { onClose: () => void }) {
         </div>
         {create.error && <ErrorText>{errorMessage(create.error)}</ErrorText>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={create.isPending}>
-            {create.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={create.isPending} type="submit">
             {t('add')}
           </Button>
           <Button type="button" variant="ghost" onClick={onClose} disabled={create.isPending}>
@@ -273,8 +272,7 @@ function DepreciationCard({ slug, onClose }: { slug: string; onClose: () => void
         </label>
         {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
         <div className="flex gap-2">
-          <Button type="submit" disabled={request.isPending || !entity.ready}>
-            {request.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={request.isPending} type="submit" disabled={request.isPending || !entity.ready}>
             {t('depreciationSubmit')}
           </Button>
           <Button type="button" variant="ghost" onClick={onClose} disabled={request.isPending}>
@@ -312,8 +310,7 @@ function EndForm({ asset, onClose }: { asset: FixedAsset; onClose: () => void })
         <span className="text-subtle-foreground">{t('endReason')}</span>
         <Input className="mt-1" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder={t('endReasonPlaceholder')} />
       </label>
-      <Button type="submit" size="sm" disabled={end.isPending || reason.trim() === ''}>
-        {end.isPending ? <Spinner className="text-current" /> : null}
+      <Button loading={end.isPending} type="submit" size="sm" disabled={end.isPending || reason.trim() === ''}>
         {t('end')}
       </Button>
       <Button type="button" size="sm" variant="ghost" onClick={onClose} disabled={end.isPending}>
@@ -367,8 +364,7 @@ export function FixedAssetsPage() {
                 {t('depreciate')}
               </Button>
             )}
-            <Button size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || rows.length === 0}>
-              {exportXlsx.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={exportXlsx.isPending} size="lg" onClick={() => exportXlsx.mutate()} disabled={exportXlsx.isPending || rows.length === 0}>
               {t('export')}
             </Button>
           </div>

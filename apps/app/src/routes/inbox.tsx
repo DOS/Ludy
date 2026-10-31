@@ -418,8 +418,7 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button size="lg" onClick={() => inputRef.current?.click()} disabled={intake.uploading}>
-              {intake.uploading ? <Spinner className="text-current" /> : null}
+            <Button loading={intake.uploading} size="lg" onClick={() => inputRef.current?.click()}>
               {t('upload')}
             </Button>
           </div>
@@ -623,17 +622,20 @@ export function InboxPage() {
               {t('bulk.selectAll', { count: selectable.length })}
             </Label>
             {chosen.length > 0 && <span className="text-sm text-subtle-foreground">{t('bulk.selected', { count: chosen.length })}</span>}
+            {/* The button keeps its label and width while it works, so the batch it is on is said beside it. */}
+            {sending && bulk && (
+              <span role="status" className="text-sm text-muted-foreground">
+                {t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })}
+              </span>
+            )}
             <div className="ml-auto flex gap-2">
               {chosen.length > 0 && !sending && (
                 <Button variant="ghost" size="lg" onClick={() => setSelected(new Set())}>
                   {t('bulk.clear')}
                 </Button>
               )}
-              <Button size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
-                {sending ? <Spinner className="text-current" /> : null}
-                {sending && bulk
-                  ? t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })
-                  : t('bulk.approve', { count: chosen.length })}
+              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
+                {t('bulk.approve', { count: chosen.length })}
               </Button>
             </div>
             {unverifiedChosen > 0 && (

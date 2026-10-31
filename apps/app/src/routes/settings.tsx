@@ -633,8 +633,7 @@ function TaxCodeField({ taxCode, canManage }: { taxCode: string | null; canManag
       {editing ? (
         <form onSubmit={submit} aria-label={t('taxCode')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input value={value} onChange={(e) => setValue(e.target.value)} maxLength={20} placeholder="0101234567" aria-label={t('taxCode')} className="w-48 font-mono" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('taxCodeSave')}
           </Button>
           <Button type="button" size="sm" variant="outline" 
@@ -802,8 +801,7 @@ function TaxCalendarField({ canManage }: { canManage: boolean }) {
             </NativeSelect>
           </span>
           {canManage && draft && (
-            <Button size="sm" onClick={() => save.mutate(current)} disabled={save.isPending}>
-              {save.isPending ? <Spinner className="text-current" /> : null}
+            <Button loading={save.isPending} size="sm" onClick={() => save.mutate(current)}>
               {t('taxCalendarSave')}
             </Button>
           )}
@@ -935,8 +933,7 @@ function AddressField({ address, canManage }: { address: string | null; canManag
       {editing ? (
         <form onSubmit={submit} aria-label={t('address')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input value={value} onChange={(e) => setValue(e.target.value)} maxLength={500} aria-label={t('address')} className="min-w-64 flex-1" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('addressSave')}
           </Button>
           <Button
@@ -993,8 +990,7 @@ function ContactEmailField({ email, canManage }: { email: string | null; canMana
       {editing ? (
         <form onSubmit={submit} aria-label={t('contactEmail')} className="mt-1 flex flex-wrap items-center gap-2">
           <Input type="email" value={value} onChange={(e) => setValue(e.target.value)} maxLength={320} aria-label={t('contactEmail')} className="min-w-64 flex-1" />
-          <Button type="submit" size="sm" disabled={save.isPending}>
-            {save.isPending ? <Spinner className="text-current" /> : null}
+          <Button loading={save.isPending} type="submit" size="sm">
             {t('contactEmailSave')}
           </Button>
           <Button
