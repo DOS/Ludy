@@ -409,6 +409,17 @@ export function checkEnv(env: Env): CheckResult[] {
           },
         ]
       : []),
+    // Without json lines no log line names its request or org, so "the upload failed at 10:42" cannot be traced (#2175).
+    ...(publicDeployment && value(env, 'LOG_FORMAT') !== 'json'
+      ? [
+          {
+            item: 'Logs',
+            status: 'manual' as const,
+            message:
+              'LOG_FORMAT is not json: set LOG_FORMAT=json so every log line is one JSON object with its request id (the x-request-id answer header) and org id, then find a request with docker compose logs api | grep <request id> (docs/runbooks/observability.md)',
+          },
+        ]
+      : []),
     // A rotation of the inbound secret left half done keeps the old value working (#1214).
     ...(inboundPrevious === undefined
       ? []

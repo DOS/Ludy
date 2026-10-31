@@ -30,6 +30,7 @@ const READY: Env = {
   COMPOSE_PROFILES: 'prober',
   COMPOSE_FILE: 'docker-compose.yml:compose.pilot.yml:docker-compose.override.yml:compose.host.yml',
   CROVE_MODULES: 'finance',
+  LOG_FORMAT: 'json',
   BACKUP_S3_ENDPOINT: 'https://backups.storage.example',
   BACKUP_S3_BUCKET: 'crove-backups',
   BACKUP_S3_ACCESS_KEY_ID: fake('backup-key'),
@@ -89,6 +90,19 @@ describe('pilot-check settings', () => {
       'Secrets: CREDENTIAL_KEY is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',
       'Secrets: CREDENTIAL_KEY_PREVIOUS is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',
     ]);
+  });
+
+  // #2175: JSON logs carry the request and org id, so a public deployment is asked to turn them on; a reminder, never a failure.
+  it('recommends LOG_FORMAT=json on a public URL as a manual item, not a failure', () => {
+    const logs = (env: Env) => checkEnv(env).filter((r) => r.item === 'Logs');
+    expect(logs(READY)).toEqual([]);
+    for (const env of [{ ...READY, LOG_FORMAT: undefined }, { ...READY, LOG_FORMAT: 'text' }, { ...READY, LOG_FORMAT: '' }]) {
+      expect(logs(env)).toEqual([{ item: 'Logs', status: 'manual', message: expect.stringContaining('LOG_FORMAT=json') }]);
+      expect(failures(checkEnv(env))).toEqual([]);
+    }
+    expect(logs({ ...READY, LOG_FORMAT: undefined })[0]?.message).toContain('docs/runbooks/observability.md');
+    // A laptop on localhost is not asked.
+    expect(logs({ ...READY, PUBLIC_URL: 'http://localhost:8080', LOG_FORMAT: undefined })).toEqual([]);
   });
 
   it('passes a ready deployment and leaves the human items as manual', () => {

@@ -42,6 +42,7 @@ import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
 import { ChatAlertSaveBudget, ChatAlertTestBudget, requestChatAlertTest, saveChatAlert } from './chat-alert-save.ts';
 import { actorOf, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter } from './concurrency.ts';
+import { setLogContext } from './log.ts';
 import type { StockPhotos } from './stock-photos.ts';
 import type { MediaUrls } from './media-urls.ts';
 import type { InviteRole, SendInviteMail } from './invite-mail.ts';
@@ -66,6 +67,8 @@ export async function resolveMembership(runtime: Runtime, user: AuthUser, slug: 
   const orgs = await runtime.forUser(actorOf(user), (db) => myOrgs(db, user.userId));
   const org = orgs.find((o) => o.slug === slug);
   if (!org) throw new DomainError('NOT_A_MEMBER', 403, 'Bạn không thuộc tổ chức này');
+  // From here on the request's log lines name the org (#2175).
+  setLogContext({ orgId: org.orgId });
   return org;
 }
 

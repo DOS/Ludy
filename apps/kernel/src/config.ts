@@ -61,6 +61,16 @@ const schema = z.object({
   // connections (self-host); set false only behind a transaction-mode pooler (PgBouncer, Supavisor), where the reset
   // would reach another server connection and the pooler's own reset governs.
   DB_RESET_ON_RELEASE: z.enum(['true', 'false']).default('true'),
+  // Connections of the API's pool (DATABASE_URL, the app login) and of the worker's (WORKER_DATABASE_URL), per process
+  // (#2175). Both default to the 10 they were fixed at; raise one when the pool's wait shows in the slow queries or the
+  // logs, keeping the sum over every process under the database's max_connections (docs/runbooks/observability.md).
+  // The worker's floor is 2: the calendar sweep and write-back hold one connection for their lock while their queries need
+  // another, so a pool of 1 would hang them (and every other job behind them).
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(10),
+  WORKER_DATABASE_POOL_MAX: z.coerce.number().int().min(2).max(200).default(10),
+  // json: every log line of the API, the worker and the prober is one JSON object with the request or job ids (#2175,
+  // apps/kernel/src/log.ts); text: the plain lines, the default for a laptop. `pnpm pilot:check` recommends json on a public URL.
+  LOG_FORMAT: z.enum(['json', 'text']).default('text'),
   ADMIN_DATABASE_URL: optional,
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).

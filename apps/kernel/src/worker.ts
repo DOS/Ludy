@@ -47,6 +47,7 @@ import {
   type ArchiveStore,
 } from './worm.ts';
 import type { SessionRevoker, SignOutTarget } from './sessions.ts';
+import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runLiveCheck } from './calendar-live.ts';
@@ -569,6 +570,8 @@ export async function recordLastAttemptFailure(
 
 export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>> {
   const boss = new PgBoss({ connectionString: deps.connectionString, schema: JOB_SCHEMA, migrate: false, createSchema: false });
+  // Every job runs with its queue, its id and the org its payload names on its log lines (#2175).
+  withJobLogContext(boss);
   boss.on('error', (error) => console.error('[pg-boss]', error));
   await boss.start();
 

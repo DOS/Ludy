@@ -21,6 +21,10 @@ x-crove-env: &crove-env
   AUTH_UPSTREAM_URL: http://auth:9999
   DATABASE_URL: postgres://crove_app:${CROVE_APP_DB_PASSWORD:-local-app-password}@db:5432/postgres
   CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
+  # JSON logs and the pool sizes (#2175), as in docker-compose.yml.
+  LOG_FORMAT: ${LOG_FORMAT:-text}
+  DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+  WORKER_DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-10}
   PUBLIC_URL: http://localhost:${SPLIT_PORT:-18080}
   INBOUND_DOMAIN: inbound.crove.test
   INBOUND_SECRET: split-stack-inbound-secret-0123456789abcdef
