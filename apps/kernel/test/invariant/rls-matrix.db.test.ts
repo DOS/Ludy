@@ -54,6 +54,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.bank_account_number',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -261,6 +262,8 @@ let taxObligationYear = 2000;
 let legalEntityBooksYear = 2000;
 // Active bookings of one member never overlap (#1313): each calendar event row its own hour.
 let calendarHour = 0;
+// A bank account number is unique per org (#2183): every factory row takes the next one.
+let bankAccountNumber = 0;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
 const portalListRow = (o: { id: string; file: string }) => ({
@@ -339,6 +342,12 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
+  },
+  // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
+  // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
+  // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.
+  'crove_finance.bank_account_number': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), bank_account: '1121', account_number: String(100_000_000_000 + bankAccountNumber++) } }),
   },
   // Bank statement lines (#326): append-only, one row per line of an import, on a bank account (112 or an org
   // sub-account under it). Tenant roles read and insert; nothing updates or deletes a line.
