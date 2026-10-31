@@ -85,7 +85,7 @@ export const bankStatementStage = defineQuery({
     if (place.kind === 'none') return { outcome: 'unmapped', accountNumber: input.accountNumber };
     if (place.kind === 'ambiguous') return { outcome: 'ambiguous', accountNumber: input.accountNumber };
     // The rows are kept with the file's read until a member decides: a bounded amount, refused with the reason past it.
-    if (JSON.stringify(input.rows).length > STAGED_STATEMENT_MAX_BYTES) return { outcome: 'refused', code: 'STATEMENT_TOO_LARGE', message: TOO_BIG, rows: [] };
+    if (Buffer.byteLength(JSON.stringify(input.rows), 'utf8') > STAGED_STATEMENT_MAX_BYTES) return { outcome: 'refused', code: 'STATEMENT_TOO_LARGE', message: TOO_BIG, rows: [] };
     try {
       const preview = await previewStatement(ctx, { bankAccount: place.bankAccount, filename: input.filename, rows: input.rows, legalEntityId: place.legalEntityId }, place.legalEntityId);
       if (!preview.ok) {
@@ -99,6 +99,8 @@ export const bankStatementStage = defineQuery({
         if (amount.isNegative()) totalOut = totalOut.plus(amount.abs());
         else totalIn = totalIn.plus(amount);
       }
+      // A total the summary cannot hold (zMoney has 16 integer digits) would drop the statement out of the Inbox: refused.
+      if (totalIn.gte('1e16') || totalOut.gte('1e16')) return { outcome: 'refused', code: 'STATEMENT_TOTAL_TOO_LARGE', message: 'Tổng tiền của sao kê vượt giới hạn; hãy kiểm tra các số tiền trong tệp', rows: [] };
       return {
         outcome: 'staged',
         summary: {

@@ -958,6 +958,9 @@ suite('bank statement import (#326)', () => {
       // 4,300 lines of 1,000 characters are about 4.3 MB of rows: over what a staged statement may keep.
       const big = Array.from({ length: 4300 }, (_, i) => ({ ...row('01/09/2026', '1000', '', '', `FT-BIG-${i}`), description: 'x'.repeat(1000) }));
       expect(await stage(big)).toMatchObject({ outcome: 'refused', code: 'STATEMENT_TOO_LARGE' });
+      // Bytes, not characters: 1,500 lines of 1,000 Vietnamese letters of 3 bytes each are 4.5 MB though only 1.5 million characters.
+      const accented = Array.from({ length: 1500 }, (_, i) => ({ ...row('01/09/2026', '1000', '', '', `FT-VN-${i}`), description: 'ế'.repeat(1000) }));
+      expect(await stage(accented)).toMatchObject({ outcome: 'refused', code: 'STATEMENT_TOO_LARGE' });
       // The kernel holds the same bound on what a staged run records.
       const fileId = await ingestZip();
       await expect(recordRead(fileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: {}, rows: big } })).rejects.toMatchObject({ code: 'STATEMENT_TOO_LARGE' });

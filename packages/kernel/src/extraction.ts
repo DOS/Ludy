@@ -391,7 +391,7 @@ export const recordExtraction = defineCommand({
       throw new DomainError('INVALID', 422, 'Lần đọc sao kê không có đề xuất');
     }
     // The rows a staged statement keeps in the run's result are bounded (#2142): the staging checks it, and so does this.
-    if (original.statement === true && JSON.stringify(original.result ?? null).length > STAGED_STATEMENT_MAX_BYTES + 64 * 1024) {
+    if (original.statement === true && Buffer.byteLength(JSON.stringify(original.result ?? null), 'utf8') > STAGED_STATEMENT_MAX_BYTES + 64 * 1024) {
       throw new DomainError('STATEMENT_TOO_LARGE', 422, 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng');
     }
     const file = await lockFile(ctx, original.fileId, original.statement === true);

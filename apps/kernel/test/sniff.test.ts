@@ -25,6 +25,9 @@ describe('upload type detection', () => {
     expect(
       sniffType(text('SAO KÊ TÀI KHOẢN\r\nSố tài khoản: 19880001234\r\n\r\nNgày giao dịch,Diễn giải,Ghi nợ,Ghi có,Số dư\r\n01/09/2026,Thu tiền hàng,,2000000,12000000\r\n')),
     ).toBe('text/csv');
+    // A long preamble above the table does not hide it.
+    const preamble = `${'Thông tin khách hàng và kỳ sao kê\n'.repeat(300)}Ngày,Số tiền\n01/09/2026,1500000\n`;
+    expect(sniffType(text(preamble))).toBe('text/csv');
     // Prose, a single line, and binary bytes are no CSV.
     expect(sniffType(text('Xin chào\nĐây là một thư\n'))).toBeNull();
     expect(sniffType(text('a,b,c\n'))).toBeNull();

@@ -217,8 +217,8 @@ export function normalizeStatementAmount(text: string): string {
   return compact;
 }
 
-// A statement read from a file waits for a member with its rows kept in the run's result (#2142): at most this many bytes
-// of rows (as JSON), so a file cannot park an unbounded amount in the database. Over it the file is refused with the reason
+// A statement read from a file waits for a member with its rows kept in the run's result (#2142): at most this many UTF-8
+// bytes of rows (as JSON), so a file cannot park an unbounded amount in the database. Over it the file is refused with the reason
 // (BANK_IMPORT_MAX_ROWS caps the count: a month of a busy account is far below both).
 export const STAGED_STATEMENT_MAX_BYTES = 4 * 1024 * 1024;
 

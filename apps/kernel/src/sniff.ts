@@ -18,12 +18,14 @@ function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean
 }
 
 // CSV text, as a bank exports a statement (#2142): UTF-8 or UTF-16 with its byte order mark, no control characters, and
-// at least two lines in the first 4 KiB with a comma, semicolon or tab (a header and a line of a table, which has two
+// at least two lines in the first 64 KiB with a comma, semicolon or tab (a header and a line of a table, which has two
 // columns at least, a date and an amount; the title and the account above them have none). Plain text with commas passes too, so where a name is known
 // (an email attachment, an entry of a ZIP) the caller also asks for ".csv" (isCsvName); the file is then read in the
 // sandbox, which decides whether it is a statement at all.
+const CSV_WINDOW = 64 * 1024;
 function looksLikeCsv(bytes: Uint8Array): boolean {
-  const head = bytes.subarray(0, 4096);
+  // Up to 64 KiB, an even number of bytes for UTF-16: a long preamble above the table does not hide it.
+  const head = bytes.subarray(0, CSV_WINDOW);
   const utf16 = head[0] === 0xff && head[1] === 0xfe;
   if (!utf16 && head.includes(0)) return false;
   const text = utf16 ? new TextDecoder('utf-16le').decode(head.subarray(2)) : new TextDecoder('utf-8').decode(head);

@@ -622,7 +622,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         return;
       }
       archive = await archiveSource(deps.runtime, orgId, fileId);
-      if (archive && version !== undefined) return;
+      if (archive && version !== undefined) {
+        // A re-read asked for on a ZIP the sandbox no longer reads as a statement (#2142): its run ends here with the reason,
+        // not pending until it goes stale. An archive of documents is never read again, so none has a version.
+        await recordStatementReadFailure(deps.runtime, orgId, fileId, version, 'Tệp không còn được nhận ra là sao kê ngân hàng');
+        return;
+      }
       if (archive) {
         const { fileIds } = await expandArchive({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, archive, job.retryCount);
         console.log(`[extract] archive ${fileId}: ${fileIds.length} file(s)`);

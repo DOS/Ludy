@@ -3,7 +3,7 @@
 // the header and the lines under it. The column detection itself is covered through the browser import in
 // apps/app/test/bank-statement.test.ts.
 import { describe, expect, it } from 'vitest';
-import { findAccountNumber, findColumns, statementLines, type StatementCell, type StatementGrid } from '../src/index.ts';
+import { findAccountNumber, findColumns, parseCsv, statementLines, type StatementCell, type StatementGrid } from '../src/index.ts';
 
 const grid = (rows: Record<number, Array<string | number | null>>): StatementGrid =>
   new Map(
@@ -42,6 +42,18 @@ describe('findAccountNumber', () => {
     expect(findAccountNumber(grid({ 1: HEADER, 2: ['Số tài khoản: 001100000000'] }), 1)).toBeNull();
     // Too short to be an account number.
     expect(findAccountNumber(grid({ 1: ['Số tài khoản: 12345'], 3: HEADER }), 3)).toBeNull();
+  });
+});
+
+describe('parseCsv', () => {
+  it('takes the delimiter from outside the quoted cells, so quoted commas do not make a semicolon file a comma file', () => {
+    const text = 'Ngày;Diễn giải;Số tiền\n01/09/2026;"Thu tiền hàng A, B, C, D";1500000\n02/09/2026;"Phí, thuế, lệ phí";11000\n';
+    const rows = parseCsv(text);
+    expect([...(rows.get(2) ?? [])].map(([, cell]) => cell.value)).toEqual(['01/09/2026', 'Thu tiền hàng A, B, C, D', '1500000']);
+    const mapping = findColumns(rows);
+    expect(mapping?.columns).toMatchObject({ date: 0, description: 1, amount: 2 });
+    // A quote inside a quoted cell is written twice, and a tab file is still a tab file.
+    expect([...(parseCsv('a\tb\n"x ""y"", z"\tw\n').get(2) ?? [])].map(([, cell]) => cell.value)).toEqual(['x "y", z', 'w']);
   });
 });
 

@@ -176,12 +176,40 @@ export function findAccountNumber(rows: StatementGrid, headerRow: number): strin
   return null;
 }
 
+// How often `delimiter` appears in `text` outside double-quoted cells, by the quote rules parseCsv reads with: a quote
+// opens a cell only at its start and "" inside one is a quote character, so a quoted cell full of commas does not make
+// comma the file's delimiter.
+function countOutsideQuotes(text: string, delimiter: string): number {
+  let count = 0;
+  let quoted = false;
+  let atStart = true;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i + 1] === '"') i++;
+      else if (ch === '"') quoted = false;
+      atStart = false;
+    } else if (ch === '"' && atStart) {
+      quoted = true;
+      atStart = false;
+    } else if (ch === delimiter) {
+      count++;
+      atStart = true;
+    } else if (ch === '\n') {
+      atStart = true;
+    } else if (ch !== '\r') {
+      atStart = false;
+    }
+  }
+  return count;
+}
+
 // CSV as banks export it: comma, semicolon or tab separated (the one the first lines use most), double quotes around
 // cells that hold one, "" for a quote inside. Every cell is text. Rows are numbered from 1, like a sheet.
 export function parseCsv(text: string): Map<number, Map<number, { kind: 'text'; value: string }>> {
   const body = text.replace(/^﻿/, '');
   const sample = body.split(/\r?\n/).slice(0, 10).join('\n');
-  const delimiter = [',', ';', '\t'].reduce((best, d) => (sample.split(d).length > sample.split(best).length ? d : best), ',');
+  const delimiter = [',', ';', '\t'].reduce((best, d) => (countOutsideQuotes(sample, d) > countOutsideQuotes(sample, best) ? d : best), ',');
   const rows = new Map<number, Map<number, { kind: 'text'; value: string }>>();
   let row = new Map<number, { kind: 'text'; value: string }>();
   let col = 0;
