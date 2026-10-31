@@ -256,8 +256,9 @@ export const vi = {
         title: 'Công việc',
         sub: 'Việc cho người và cho agent, có hạn và người chịu trách nhiệm.',
         items: [
-          { title: 'Bổ sung mã CQT cho phiếu HTX Tân Hồng', amount: '', sub: 'Giao cho Agent Kế toán, hạn 20/10/2026', tone: 'accent', chip: 'Agent đang làm', note: '' },
-          { title: 'Chốt sổ tháng 10', amount: '', sub: 'Giao cho Chị Lan, hạn 05/11/2026', tone: 'neutral', chip: 'Đang mở', note: '' },
+          { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', amount: '', sub: 'Giao cho Agent Kế toán, hạn 20/10/2026', tone: 'accent', chip: 'Agent đang làm', note: '' },
+          { title: 'Bổ sung mã CQT phiếu HTX Tân Hồng', amount: '', sub: 'Giao cho Chị Lan, hạn 21/10/2026', tone: 'neutral', chip: 'Đang mở', note: '' },
+          { title: 'Chụp ảnh gạo ST25 cho bài đăng', amount: '', sub: 'Giao cho Anh Minh, hạn 18/10/2026', tone: 'neutral', chip: 'Đang mở', note: '' },
         ],
       },
       social: {
@@ -300,7 +301,7 @@ export const vi = {
   },
   owner: {
     title: 'Không biết kế toán vẫn dùng được',
-    lead: 'Chụp hoặc chuyển tiếp hoá đơn từ điện thoại. Ludy kiểm tra từng con số và soạn sẵn bút toán. Bạn xem lại rồi bấm duyệt, kế toán nhận file Excel đầy đủ.',
+    lead: 'Tải ảnh chụp hoá đơn lên, hoặc chuyển tiếp email hoá đơn, ngay từ điện thoại. Ludy kiểm tra từng con số và soạn sẵn bút toán. Bạn xem lại rồi bấm duyệt, kế toán nhận file Excel đầy đủ.',
     points: [
       'Đọc hoá đơn điện tử XML, file PDF và ảnh chụp',
       'Không có gì vào sổ khi bạn chưa duyệt',
@@ -311,7 +312,7 @@ export const vi = {
       time: '14:21',
       app: 'AI Inbox',
       org: 'Gạo Sạch Mekong',
-      steps: ['Chụp ảnh', 'Kiểm tra', 'Duyệt'],
+      steps: ['Tải ảnh lên', 'Kiểm tra', 'Duyệt'],
       cardTitle: 'Bút toán đề xuất',
       cardSub: 'Bao Bì Phú Thịnh, 14/10/2026',
       edit: 'Sửa',
@@ -445,7 +446,7 @@ export const vi = {
     },
     social: {
       name: 'Social',
-      body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA, Google Business và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung.',
+      body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
         { name: 'Agent Social', initials: '', agent: true },
