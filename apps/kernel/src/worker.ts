@@ -53,6 +53,7 @@ import {
 import type { SessionRevoker, SignOutTarget } from './sessions.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -914,6 +915,23 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         await deps.runtime.execute('crm.booking.confirm', { bookingId: job.data.bookingId }, { actor, orgId: job.data.orgId });
       }
     });
+    // The same two jobs for a visitor's request or ask (#2139), after the slot is checked live at the hosts' connected
+    // calendars: a busy answer lands in their stored blocks, so the command below refuses the slot as taken. Any trouble with
+    // the check (no connection, a slow or failing provider) leaves the stored blocks to decide; the booking never waits on
+    // Google for more than the check's short timeout. The crm-booking queue above keeps the member events and jobs queued
+    // before this queue existed.
+    await boss.work<BookingJob>(QUEUES.crmBookingLive, { batchSize: 1 }, async ([job]) => {
+      if (!job || 'memberEventId' in job.data) return;
+      const { orgId, bookingId, requestId } = job.data;
+      if (deps.channels && Object.keys(deps.channels.calendars ?? {}).length > 0) {
+        await runLiveCheck({ runtime: deps.runtime, broker: deps.channels.broker, adapters: deps.channels.calendars ?? {} }, { orgId, bookingId, ...(requestId ? { requestId } : {}) }).catch((error: unknown) =>
+          console.error(`[calendar-live] booking ${bookingId.slice(0, 8)}: ${error instanceof Error ? error.name : 'error'}`),
+        );
+      }
+      const actor = { type: 'system' as const, component: 'crm.booking' };
+      if (requestId) await deps.runtime.execute('crm.booking.manage', { bookingId, requestId }, { actor, orgId });
+      else await deps.runtime.execute('crm.booking.confirm', { bookingId }, { actor, orgId });
+    });
     // Reminders (#1319): a job per booking, time and lead, run when it is due; the command mails only while the booking
     // is confirmed and still starts then.
     await boss.work<BookingRemindJob>(QUEUES.crmBookingRemind, { batchSize: 1 }, async ([job]) => {
@@ -1739,8 +1757,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // A visitor's booking (#1318): the worker confirms or refuses it as the system.
               if (crm && row.type === 'crm.booking.requested') {
                 const bookingId = String(row.payload.booking_id);
-                return boss.send(QUEUES.crmBooking, { orgId: row.org_id, bookingId } satisfies BookingJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.crmBooking, bookingId),
+                return boss.send(QUEUES.crmBookingLive, { orgId: row.org_id, bookingId } satisfies BookingJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, bookingId),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
                   retryBackoff: true,
@@ -1750,8 +1768,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               if (crm && row.type === 'crm.booking.manage_requested') {
                 const bookingId = String(row.payload.booking_id);
                 const requestId = String(row.payload.request_id);
-                return boss.send(QUEUES.crmBooking, { orgId: row.org_id, bookingId, requestId } satisfies BookingJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.crmBooking, `${bookingId}:${requestId}`),
+                return boss.send(QUEUES.crmBookingLive, { orgId: row.org_id, bookingId, requestId } satisfies BookingJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, `${bookingId}:${requestId}`),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
                   retryBackoff: true,

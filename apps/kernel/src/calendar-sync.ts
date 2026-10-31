@@ -254,6 +254,8 @@ export async function runCalendarSync(deps: CalendarSyncDeps, job: CalendarSyncJ
   const from = new Date(Math.floor(now().getTime() / HOUR_MS) * HOUR_MS);
   const to = new Date(from.getTime() + CALENDAR_SYNC_DAYS * DAY_MS);
   // The farthest an event type may book ahead is a year: the whole of it is read, in pieces a request can bear.
+  // Blocks a live check adds after this are newer than what this read answers: busy_replace keeps them.
+  const readStartedAt = now().toISOString();
   const readAll = async (): Promise<{ busy: Array<{ start: number; end: number }> } | { refused: string } | { failed: string }> => {
     const busy: Array<{ start: number; end: number }> = [];
     for (let start = from.getTime(); start < to.getTime(); start += CHUNK_DAYS * DAY_MS) {
@@ -278,7 +280,7 @@ export async function runCalendarSync(deps: CalendarSyncDeps, job: CalendarSyncJ
   if (merged.length > MAX_BUSY) return retry('too_many_busy_intervals');
   const done = await deps.runtime.execute<{ replaced: boolean; added: number; removed: number }>(
     'kernel.calendar.busy_replace',
-    { connectionId: job.connectionId, from: from.toISOString(), to: to.toISOString(), busy: merged.map((b) => ({ start: new Date(b.start).toISOString(), end: new Date(b.end).toISOString() })) },
+    { connectionId: job.connectionId, from: from.toISOString(), to: to.toISOString(), busy: merged.map((b) => ({ start: new Date(b.start).toISOString(), end: new Date(b.end).toISOString() })), readStartedAt },
     options,
   );
   return done.replaced ? { outcome: 'synced', added: done.added, removed: done.removed } : { outcome: 'skipped', reason: 'not_active' };
