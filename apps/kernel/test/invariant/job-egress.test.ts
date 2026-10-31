@@ -111,6 +111,51 @@ const NO_COMMAND: Readonly<Record<string, string>> = {
   'social.review.answered': 'the review link definers',
 };
 
+// Events that no command writes and that feed, or are about to feed, a queue with egress, listed for a limited time so the
+// two steps of an invariant change can land apart (the PENDING_TABLES pattern of the RLS matrix). A fed entry here counts
+// like one in NO_COMMAND, with its reason shown; an entry may also be listed before its feed lands. It fails the test after
+// its expiry date (a fixed date written here, not computed: the entry is then moved to NO_COMMAND or removed), if any
+// command emits its event, or if it is also in NO_COMMAND. Each entry names its reason with the issue.
+interface PendingEntry {
+  reason: string;
+  // yyyy-mm-dd; the test fails on any later day.
+  expires: string;
+}
+const NO_COMMAND_PENDING: Readonly<Record<string, PendingEntry>> = {
+  // The booking request definers (crove_crm.booking_request and booking_manage_request, run by the public booking page's route):
+  // #2139 checks the slot at the hosts' connected calendars in a queue handler before the worker decides them.
+  'crm.booking.requested': { reason: 'the booking request definer, fed to a queue with egress by #2139', expires: '2026-11-14' },
+  'crm.booking.manage_requested': { reason: 'the booking manage request definer, fed to a queue with egress by #2139', expires: '2026-11-14' },
+};
+
+// What is wrong with the pending entries: an expired one, a malformed one, one listed twice, one a command emits.
+function pendingProblems(
+  pending: Readonly<Record<string, PendingEntry>>,
+  noCommand: Readonly<Record<string, string>>,
+  emitters: ReadonlyMap<string, ReadonlySet<string>>,
+  today: string,
+): string[] {
+  const out: string[] = [];
+  for (const [event, { reason, expires }] of Object.entries(pending)) {
+    if (!/#\d+/.test(reason)) out.push(`${event}: the reason names no issue (#<number>)`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(expires)) out.push(`${event}: the expiry date is not a yyyy-mm-dd date`);
+    else if (today > expires) out.push(`${event}: the pending entry expired on ${expires} (${reason}); move it to NO_COMMAND or remove it`);
+    if (Object.hasOwn(noCommand, event)) out.push(`${event}: listed in NO_COMMAND and NO_COMMAND_PENDING`);
+    const by = [...(emitters.get(event) ?? [])].sort();
+    if (by.length > 0) out.push(`${event}: emitted by ${by.join(', ')}; NO_COMMAND_PENDING names events no command writes`);
+  }
+  return out;
+}
+
+// Fed events that no command emits against the lists: each must be in NO_COMMAND or pending, and NO_COMMAND names only fed ones
+// (an exact match of what is fed, as before); a pending entry may be fed or not yet.
+function noCommandProblems(fedWithoutCommand: readonly string[], noCommand: Readonly<Record<string, string>>, pending: Readonly<Record<string, PendingEntry>>): string[] {
+  const out: string[] = [];
+  for (const event of fedWithoutCommand) if (!Object.hasOwn(noCommand, event) && !Object.hasOwn(pending, event)) out.push(`${event}: feeds a queue with egress and no command emits it; list it in NO_COMMAND with its reason`);
+  for (const event of Object.keys(noCommand)) if (!fedWithoutCommand.includes(event)) out.push(`${event}: listed in NO_COMMAND but no queue with egress is fed by it without a command`);
+  return out;
+}
+
 describe('job egress (#1653)', () => {
   const sources = new Sources();
 
@@ -277,7 +322,17 @@ describe('job egress (#1653)', () => {
 
     const { commands, runs, problems } = emittersOf(feeds, sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
     expect(problems).toEqual([]);
-    expect([...commands].filter(([, by]) => by.size === 0).map(([event]) => event)).toEqual(Object.keys(NO_COMMAND).sort());
+    expect(
+      noCommandProblems(
+        [...commands].filter(([, by]) => by.size === 0).map(([event]) => event),
+        NO_COMMAND,
+        NO_COMMAND_PENDING,
+      ),
+    ).toEqual([]);
+    // The pending entries: not expired, written by no command, and not also listed above.
+    const pendingEmitters = emittersOf(Object.keys(NO_COMMAND_PENDING), sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
+    expect(pendingEmitters.problems).toEqual([]);
+    expect(pendingProblems(NO_COMMAND_PENDING, NO_COMMAND, pendingEmitters.commands, new Date().toISOString().slice(0, 10))).toEqual([]);
     // A command that runs one of the commands that decide the other sends, at any depth, declares an external effect.
     for (const [site, why] of Object.entries(OTHER_SENDS)) {
       if (!('command' in why)) continue;
@@ -304,6 +359,53 @@ describe('job egress (#1653)', () => {
         .sort()
         .map((q) => `${event} -> ${q} (${targets(queueEgress(q)).join(', ')})`);
     expect(belowR2(commands, external, fed)).toEqual(BELOW_R2);
+  });
+
+  it('fails a pending no-command event that expired, that a command emits, that is listed twice or has no issue or a bad date', () => {
+    const pending = {
+      'planted.emitted': { reason: 'a definer, #1', expires: '2026-11-14' },
+      'planted.both': { reason: 'a definer, #1', expires: '2026-11-14' },
+      'planted.late': { reason: 'a definer, #1', expires: '2026-11-14' },
+      'planted.noissue': { reason: 'a definer', expires: '2026-11-14' },
+      'planted.baddate': { reason: 'a definer, #1', expires: 'in two weeks' },
+      'planted.fine': { reason: 'a definer, #1', expires: '2026-11-14' },
+    };
+    const emitters = new Map<string, ReadonlySet<string>>([
+      ['planted.emitted', new Set(['planted.emit', 'planted.other'])],
+      ['planted.fine', new Set()],
+    ]);
+    // On the last day it is still fine; the day after, every entry that has not been moved fails, naming its issue.
+    expect(pendingProblems({ 'planted.fine': pending['planted.fine'] }, {}, emitters, '2026-11-14')).toEqual([]);
+    expect(pendingProblems({ 'planted.fine': pending['planted.fine'] }, {}, emitters, '2026-11-15')).toEqual([
+      'planted.fine: the pending entry expired on 2026-11-14 (a definer, #1); move it to NO_COMMAND or remove it',
+    ]);
+    expect(pendingProblems(pending, { 'planted.both': 'x' }, emitters, '2026-11-10')).toEqual([
+      'planted.emitted: emitted by planted.emit, planted.other; NO_COMMAND_PENDING names events no command writes',
+      'planted.both: listed in NO_COMMAND and NO_COMMAND_PENDING',
+      'planted.noissue: the reason names no issue (#<number>)',
+      'planted.baddate: the expiry date is not a yyyy-mm-dd date',
+    ]);
+    // The planted emitter is seen in a source the way the real ones are: a command that emits a pending event.
+    const planted = new Sources({ 'modules/planted/src/a.ts': "export const emitter = defineCommand({ name: 'planted.emit', risk: 'R2', sideEffect: 'external', handler: async (ctx) => ctx.emit('planted.emitted', {}) });" });
+    const seen = emittersOf(['planted.emitted', 'planted.fine'], planted, known, ['modules/planted']);
+    expect(seen.problems).toEqual([]);
+    expect(pendingProblems({ 'planted.emitted': pending['planted.emitted'] }, {}, seen.commands, '2026-11-10')).toEqual([
+      'planted.emitted: emitted by planted.emit; NO_COMMAND_PENDING names events no command writes',
+    ]);
+  });
+
+  it('counts a fed pending event like one in NO_COMMAND, and keeps NO_COMMAND an exact match of what is fed', () => {
+    const pending = { 'planted.pending': { reason: 'a definer, #1', expires: '2026-11-14' } };
+    // Fed or not yet fed, a pending entry is fine.
+    expect(noCommandProblems(['planted.listed', 'planted.pending'], { 'planted.listed': 'x' }, pending)).toEqual([]);
+    expect(noCommandProblems(['planted.listed'], { 'planted.listed': 'x' }, pending)).toEqual([]);
+    // A fed event no command emits and nobody lists fails; so does a NO_COMMAND entry nothing feeds.
+    expect(noCommandProblems(['planted.listed', 'planted.stray'], { 'planted.listed': 'x' }, pending)).toEqual([
+      'planted.stray: feeds a queue with egress and no command emits it; list it in NO_COMMAND with its reason',
+    ]);
+    expect(noCommandProblems(['planted.pending'], { 'planted.listed': 'x' }, pending)).toEqual([
+      'planted.listed: listed in NO_COMMAND but no queue with egress is fed by it without a command',
+    ]);
   });
 
   it('follows nested runs to the command that runs them, and fails a planted R1 command that runs an emitter (#1698)', () => {
