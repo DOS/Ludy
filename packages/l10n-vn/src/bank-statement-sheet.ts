@@ -118,7 +118,8 @@ export interface StatementLine {
 }
 
 // The lines under the header: every row whose date cell holds a digit (a title, a blank or a "Tổng cộng" row below the
-// lines has none). At most maxRows; null when the file has more.
+// lines has none, and a total labelled with a year is told by its words). At most maxRows; null when the file has more.
+const TOTAL_ROW = /\b(?:tong|cong|total|so du|balance|ket chuyen)\b/;
 export function statementLines(rows: StatementGrid, mapping: StatementMapping, maxRows: number): StatementLine[] | null {
   const { headerRow, columns } = mapping;
   const out: StatementLine[] = [];
@@ -128,6 +129,8 @@ export function statementLines(rows: StatementGrid, mapping: StatementMapping, m
     const row = rows.get(n) ?? new Map<number, StatementCell>();
     const date = cellText(cell(row, columns.date));
     if (!/\d/.test(date)) continue;
+    // A totals or balance row can carry a year in its label ("Tổng cộng 2026"): it is no line of the statement.
+    if (TOTAL_ROW.test(headerKey(date))) continue;
     if (out.length === maxRows) return null;
     const signed = columns.amount !== null && columns.moneyIn === null && columns.moneyOut === null;
     out.push({
@@ -143,8 +146,35 @@ export function statementLines(rows: StatementGrid, mapping: StatementMapping, m
   return out;
 }
 
-// What labels the account number in the rows above the lines: "Số tài khoản", "STK", "Account number" and the like.
-const ACCOUNT_LABELS = ['so tai khoan', 'so tk', 'stk', 'tai khoan', 'account number', 'account no', 'a c no', 'a c number', 'acc no'];
+// What labels the account number in the rows above the lines. "Số tài khoản", "STK" and "Account number" name the number
+// outright; a bare "Tài khoản" is weaker and counts only when no strong label gives one.
+const STRONG_LABELS = ['so tai khoan', 'so tk', 'stk', 'account number', 'account no', 'a c no', 'a c number', 'acc no'];
+const WEAK_LABELS = ['tai khoan', 'account'];
+// A label that names the other side of a transfer or the account's name is never the statement's own account number: the
+// beneficiary, a counterpart, a sender or receiver. Such a row above the real label must not decide where the lines go.
+const OTHER_PARTY = [
+  'thu huong',
+  'doi ung',
+  'doi tac',
+  'nguoi nhan',
+  'nguoi gui',
+  'nguoi thu',
+  'ben nhan',
+  'ben gui',
+  'ben thu',
+  'beneficiary',
+  'counterpart',
+  'payee',
+  'payer',
+  'sender',
+  'receiver',
+  'recipient',
+  'from account',
+  'to account',
+  'ten tai khoan',
+  'account name',
+  'account holder',
+];
 
 // An account number as banks print it: 6 to 20 digits, with spaces, dots or dashes between groups. Anything else (a
 // name, a currency, a date) is not one.
@@ -154,10 +184,13 @@ function accountDigits(text: string): string | null {
 }
 
 // The account number the statement is of, from the rows above the header: a cell that names it ("Số tài khoản: 0011
-// 0000 0000"), with the number after the colon or in the next cell to its right. Null when none is found: "Tên tài
-// khoản" (the account's name) and the like are skipped, as their value is no number. Only the digits are returned, so
-// "0011 0000 0000", "0011.0000.0000" and "001100000000" are one account.
+// 0000 0000"), with the number after the colon or in the next cell to its right. It decides which bank account the lines
+// go to, so it is read strictly: labels of the other party are skipped, the strongest label wins whatever its row, and a
+// file that names two different numbers under equally strong labels names none (null: no account is picked for it).
+// Null too when none is found; "Tên tài khoản" (the account's name) and the like are skipped, as their value is no
+// number. Only the digits are returned, so "0011 0000 0000", "0011.0000.0000" and "001100000000" are one account.
 export function findAccountNumber(rows: StatementGrid, headerRow: number): string | null {
+  const found: Array<{ rank: number; digits: string }> = [];
   for (const n of [...rows.keys()].sort((a, b) => a - b)) {
     if (n >= headerRow) break;
     const cells = [...(rows.get(n) ?? [])].sort((a, b) => a[0] - b[0]);
@@ -165,15 +198,19 @@ export function findAccountNumber(rows: StatementGrid, headerRow: number): strin
       const text = cellText(cell);
       const colon = text.search(/[:：]/);
       const label = headerKey(colon >= 0 ? text.slice(0, colon) : text);
-      if (!ACCOUNT_LABELS.some((word) => label === word || label.includes(word))) continue;
+      if (OTHER_PARTY.some((word) => label.includes(word))) continue;
+      const rank = STRONG_LABELS.some((word) => label.includes(word)) ? 0 : WEAK_LABELS.some((word) => label.includes(word)) ? 1 : -1;
+      if (rank < 0) continue;
       const inline = colon >= 0 ? accountDigits(text.slice(colon + 1)) : null;
-      if (inline) return inline;
       const next = cells[index + 1]?.[1];
-      const beside = next ? accountDigits(cellText(next)) : null;
-      if (beside) return beside;
+      const digits = inline ?? (next ? accountDigits(cellText(next)) : null);
+      if (digits) found.push({ rank, digits });
     }
   }
-  return null;
+  if (found.length === 0) return null;
+  const best = Math.min(...found.map((f) => f.rank));
+  const numbers = new Set(found.filter((f) => f.rank === best).map((f) => f.digits));
+  return numbers.size === 1 ? ([...numbers][0] ?? null) : null;
 }
 
 // How often `delimiter` appears in `text` outside double-quoted cells, by the quote rules parseCsv reads with: a quote
@@ -204,13 +241,27 @@ function countOutsideQuotes(text: string, delimiter: string): number {
   return count;
 }
 
-// CSV as banks export it: comma, semicolon or tab separated (the one the first lines use most), double quotes around
-// cells that hold one, "" for a quote inside. Every cell is text. Rows are numbered from 1, like a sheet.
-export function parseCsv(text: string): Map<number, Map<number, { kind: 'text'; value: string }>> {
+type CsvRows = Map<number, Map<number, { kind: 'text'; value: string }>>;
+
+// CSV as banks export it: comma, semicolon or tab separated, double quotes around cells that hold one, "" for a quote
+// inside. Every cell is text. Rows are numbered from 1, like a sheet. The delimiter is the one that makes the table
+// readable: the candidates are tried from the one the first lines use most (outside quotes), and the first that gives a
+// header with a date and an amount wins, so a title above the table with many commas, or a table that starts late, does
+// not decide it; when none does, the most used one is kept.
+export function parseCsv(text: string): CsvRows {
   const body = text.replace(/^﻿/, '');
-  const sample = body.split(/\r?\n/).slice(0, 10).join('\n');
-  const delimiter = [',', ';', '\t'].reduce((best, d) => (countOutsideQuotes(sample, d) > countOutsideQuotes(sample, best) ? d : best), ',');
-  const rows = new Map<number, Map<number, { kind: 'text'; value: string }>>();
+  const sample = body.split(/\r?\n/).slice(0, 40).join('\n');
+  const candidates = [',', ';', '\t'].map((d) => ({ d, n: countOutsideQuotes(sample, d) })).sort((a, b) => b.n - a.n);
+  for (const { d } of candidates) {
+    const rows = parseCsvWith(body, d);
+    if (findColumns(rows)) return rows;
+  }
+  return parseCsvWith(body, candidates[0]?.d ?? ',');
+}
+
+// One pass over the text with a given delimiter.
+function parseCsvWith(body: string, delimiter: string): CsvRows {
+  const rows: CsvRows = new Map();
   let row = new Map<number, { kind: 'text'; value: string }>();
   let col = 0;
   let value = '';

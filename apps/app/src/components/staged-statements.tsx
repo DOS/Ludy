@@ -10,7 +10,7 @@ import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
-import { ErrorText } from './ui.tsx';
+import { CardSkeleton, ErrorText } from './ui.tsx';
 
 type Statement = NonNullable<FileStatus['statement']>;
 
@@ -45,8 +45,9 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
       },
     }),
   );
-  // A failed list must not look like no statement waiting.
+  // A failed list must not look like no statement waiting, and a list on its way shows the shape of a card.
   if (listed.isError) return <ErrorText>{errorMessage(listed.error)}</ErrorText>;
+  if (listed.isPending) return <CardSkeleton className="mt-6" />;
   if (staged.length === 0) return null;
   const busy = confirm.isPending || reject.isPending;
   return (

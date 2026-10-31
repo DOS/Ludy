@@ -92,4 +92,57 @@ describe('statementLines', () => {
     expect(line?.moneyIn?.value).toBe('-50000');
     expect(line?.moneyOut).toBeUndefined();
   });
+
+  it('leaves out a totals or balance row even when its label carries a year', () => {
+    const withTotals = grid({
+      1: HEADER,
+      2: ['01/09/2026', 'Thu tiền hàng', null, '1.500.000', '11.500.000', 'FT001'],
+      3: ['Tổng cộng 2026', null, 11000, '1.500.000'],
+      4: ['Số dư cuối kỳ 30/09/2026', null, null, null, '11.489.000'],
+      5: ['02/09/2026', 'Phí', 11000, null, 11489000, 'FT002'],
+    });
+    const mapping = findColumns(withTotals) as NonNullable<ReturnType<typeof findColumns>>;
+    expect(statementLines(withTotals, mapping, 100)?.map((l) => l.rowNo)).toEqual([2, 5]);
+  });
+});
+
+describe('findAccountNumber, which decides the account the lines go to', () => {
+  it('ignores a label of the other party, whatever its row', () => {
+    const rows = grid({
+      1: ['Tài khoản thụ hưởng: 123456789012'],
+      2: ['Số tài khoản đối ứng: 210987654321'],
+      3: ['Số tài khoản: 001100000999'],
+      5: HEADER,
+    });
+    expect(findAccountNumber(rows, 5)).toBe('001100000999');
+    // Only the other party's labels: no account is named.
+    expect(findAccountNumber(grid({ 1: ['Tài khoản thụ hưởng: 123456789012'], 3: HEADER }), 3)).toBeNull();
+    expect(findAccountNumber(grid({ 1: ['Beneficiary account number: 123456789012'], 2: ['Sender account: 210987654321'], 4: HEADER }), 4)).toBeNull();
+  });
+
+  it('prefers the strong label to a bare "Tài khoản", and takes the bare one when it is alone', () => {
+    expect(findAccountNumber(grid({ 1: ['Tài khoản: 111111111111'], 2: ['Số tài khoản: 222222222222'], 4: HEADER }), 4)).toBe('222222222222');
+    expect(findAccountNumber(grid({ 1: ['Tài khoản: 111111111111'], 3: HEADER }), 3)).toBe('111111111111');
+  });
+
+  it('names no account when two different numbers stand under equally strong labels, and one number twice is that number', () => {
+    expect(findAccountNumber(grid({ 1: ['Số tài khoản: 111111111111'], 2: ['STK: 222222222222'], 4: HEADER }), 4)).toBeNull();
+    expect(findAccountNumber(grid({ 1: ['Số tài khoản: 1111 1111 1111'], 2: ['STK: 111111111111'], 4: HEADER }), 4)).toBe('111111111111');
+  });
+});
+
+describe('parseCsv, choosing the delimiter from the table', () => {
+  it('reads a semicolon table under a preamble with more commas than the table has semicolons, and a table that starts late', () => {
+    const preamble = Array.from({ length: 12 }, () => 'Công ty A, chi nhánh B, địa chỉ C, thành phố D, quốc gia E').join('\n');
+    const rows = parseCsv(`${preamble}\nNgày;Diễn giải;Số tiền\n01/09/2026;Thu tiền;1500000\n`);
+    expect(findColumns(rows)).toMatchObject({ columns: { date: 0, description: 1, amount: 2 } });
+    // The header is looked for in the first 30 rows, so the table starts at row 26 here; the first ten lines held no semicolon.
+    const late = parseCsv(`${Array.from({ length: 25 }, () => 'a, b, c, d, e, f').join('\n')}\nNgày;Số tiền\n01/09/2026;1500000\n`);
+    expect(findColumns(late)).toMatchObject({ columns: { date: 0, amount: 1 } });
+  });
+
+  it('keeps the most used delimiter when no delimiter gives a table', () => {
+    const rows = parseCsv('a,b,c\n1,2,3\n');
+    expect([...(rows.get(1) ?? [])].map(([, cell]) => cell.value)).toEqual(['a', 'b', 'c']);
+  });
 });
