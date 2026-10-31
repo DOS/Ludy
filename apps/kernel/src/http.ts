@@ -93,7 +93,7 @@ import {
 } from './auth-signup-policy.ts';
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
-import { logEvent, runWithLogContext } from './log.ts';
+import { logEvent, runWithLogContext, setLogContext } from './log.ts';
 import { publicAuthUrl, type Config } from './config.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
@@ -1042,6 +1042,8 @@ export function createHttpApp(deps: HttpDeps) {
       }
       const actor = ticketActor(binding);
       const orgId = binding.orgId;
+      // The stream's access line names the org the ticket was issued for (#2175).
+      setLogContext({ orgId });
       // The check also answers the legal-entity scope the stream's hints are filtered by (#1692).
       const check = () => runtime.query(STREAM_CHECK_QUERY, {}, { actor, orgId }).then(streamScopeOf);
       let scope: StreamScope;

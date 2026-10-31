@@ -83,10 +83,15 @@ export function describeError(error: Error, depth = 0): string {
   return `${head}${fields.length > 0 ? ` { ${fields.join(', ')} }` : ''}${cause}`;
 }
 
+// The patterns run over the message up to a little past the cut, and the redacted text is cut after: a URL password that
+// spans the cut is blanked whole (a match is at most about 530 characters), not left as an unterminated prefix.
+const REDACTION_OVERLAP = 2048;
+
 export function redact(message: string): string {
-  let out = message.length > MAX_MESSAGE_CHARS ? `${message.slice(0, MAX_MESSAGE_CHARS)}...[${message.length - MAX_MESSAGE_CHARS} more characters]` : message;
+  const cut = message.length > MAX_MESSAGE_CHARS;
+  let out = cut ? message.slice(0, MAX_MESSAGE_CHARS + REDACTION_OVERLAP) : message;
   for (const [pattern, replacement] of REDACTIONS) out = out.replace(pattern, replacement);
-  return out;
+  return cut ? `${out.slice(0, MAX_MESSAGE_CHARS)}...[${message.length - MAX_MESSAGE_CHARS} more characters]` : out;
 }
 
 export interface LogFields {
@@ -181,7 +186,20 @@ export function withJobLogContext(boss: WorkerLike): void {
       const orgId = single ? orgIdOf(first?.data) : undefined;
       return runWithLogContext(
         { queue: name, ...(single && typeof first?.id === 'string' ? { jobId: first.id } : {}), ...(orgId ? { orgId } : {}) },
-        () => (handler as (...args: unknown[]) => unknown)(jobs, ...extra),
+        () => {
+          // A rejection is logged here, while the job's ids are on the line (pg-boss reports it later, outside this
+          // context), and then rethrown so pg-boss still records the failed job and retries it.
+          const failed = (error: unknown): never => {
+            console.error(`[jobs] ${name} handler failed`, error);
+            throw error;
+          };
+          try {
+            const result = (handler as (...args: unknown[]) => unknown)(jobs, ...extra);
+            return result instanceof Promise ? result.catch(failed) : result;
+          } catch (error) {
+            return failed(error);
+          }
+        },
       );
     };
     return original(name, ...rest.slice(0, -1), wrapped);

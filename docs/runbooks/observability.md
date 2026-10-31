@@ -6,7 +6,7 @@ When someone reports "an upload failed at 10:42", this page is how to find the r
 
 Set `LOG_FORMAT=json` in `.env` (the default is `text`, plain lines for a laptop) and restart the stack. `pnpm pilot:check` lists it as a manual item on a public URL until it is set.
 
-Every line the API, the worker and the prober print is then one JSON object. The messages are the ones the code always printed; only the format changes.
+Every line the API, the worker and the prober print through `console.*` is then one JSON object. What Node itself writes, such as the trace of an uncaught exception that ends the process, stays plain text, which is why the `jq` commands below skip lines that are not JSON. The messages are the ones the code always printed; only the format changes.
 
 | Field | Meaning |
 |---|---|
@@ -18,6 +18,8 @@ Every line the API, the worker and the prober print is then one JSON object. The
 | `orgId` | the org, once the request's caller is known to be a member of one, and on a job's lines when its payload names one |
 | `jobId`, `queue` | on a job's lines: the job's id (one job at a time) and its queue |
 | `method`, `route`, `status`, `durationMs` | only on the access line (`"msg":"request"`), see below |
+
+A request's lines carry its request id and, once the caller is known to be a member, the org id; a job's lines carry its id, its queue and, when its payload names one, the org id; the prober's and the startup lines carry neither. A job whose handler fails also prints one `[jobs] <queue> handler failed` line with its ids before the queue records the failure.
 
 The one-time commands, the migrations and the CLI roles (`vapid-keys`, `pilot-check`, `restore-report` and the like) print plain text for a person to read.
 
@@ -72,4 +74,4 @@ Sort by `mean_exec_time` for the statements that are slow each time, by `calls` 
 
 ## 5. Pool sizes
 
-Each process keeps a pool of database connections: `DATABASE_POOL_MAX` for the API (the app login) and `WORKER_DATABASE_POOL_MAX` for the worker, both 10 by default. Raise one when requests or jobs wait for a free connection, which shows as many fast queries in `pg_stat_statements` with a slow request in the access line. The sum over every API and worker process, plus the queue's own pool (pg-boss opens up to 10 connections per worker process, a size this setting does not change) and Supabase Auth's, must stay under the database's `max_connections` (100 by default): `docker compose exec db psql -U postgres -c "SHOW max_connections"`. A bigger pool on a busy database slows it down; change one number at a time.
+Each process keeps a pool of database connections: `DATABASE_POOL_MAX` for the API (the app login) and `WORKER_DATABASE_POOL_MAX` for the worker, both 10 by default (the worker's pool needs at least 2: the calendar jobs hold one connection for a lock and query on another). Raise one when requests or jobs wait for a free connection, which shows as many fast queries in `pg_stat_statements` with a slow request in the access line. The sum over every API and worker process, plus the queue's own pool (pg-boss opens up to 10 connections per worker process, a size this setting does not change) and Supabase Auth's, must stay under the database's `max_connections` (100 by default): `docker compose exec db psql -U postgres -c "SHOW max_connections"`. A bigger pool on a busy database slows it down; change one number at a time.

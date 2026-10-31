@@ -125,7 +125,7 @@ The owner learns about an outage before the partner calls (M1-9, issue #309): pr
 
 ## 6b. Logs name their request, and the slow queries can be read (#2175)
 
-`LOG_FORMAT=json` makes every log line of the API, the worker and the prober one JSON object, with the request id (the `x-request-id` answer header), the org and, for a job, its id and queue; `pnpm pilot:check` lists it as a manual item on a public URL until it is set. With `pg_stat_statements` loaded, the slowest queries are one query away. How to find one request's lines, a job's lines and the slowest queries: [observability.md](observability.md).
+`LOG_FORMAT=json` makes every line that the API, the worker and the prober print through `console.*` one JSON object, with the request id (the `x-request-id` answer header), the org and, for a job, its id and queue; a fatal crash trace (Node's own output for an uncaught exception) is plain text; `pnpm pilot:check` lists it as a manual item on a public URL until it is set. With `pg_stat_statements` loaded, the slowest queries are one query away. How to find one request's lines, a job's lines and the slowest queries: [observability.md](observability.md).
 
 ## 7. Safe defaults: separate API and worker, finance only, a cost cap that counts
 

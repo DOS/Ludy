@@ -172,6 +172,16 @@ describe('JSON log lines', () => {
     expect(redact('authorization: bearer abc123')).toBe('authorization: Bearer [redacted]');
   });
 
+  it('blanks a URL password that spans the cut of an enormous message', () => {
+    // 32,768 characters of filler, then a URL whose password straddles the cut, then more text.
+    const head = 'x'.repeat(32_768 - 30);
+    const out = redact(`${head}postgres://crove_app:straddling-password-value@db:5432/x and the rest`);
+    expect(out).not.toContain('straddling-password');
+    expect(out).not.toContain('straddling');
+    expect(out).toMatch(/more characters\]$/);
+    expect(out.length).toBeLessThan(32_768 + 64);
+  });
+
   it('reads a job payload for its org id only: a uuid, and nothing else of it', () => {
     const org = randomUUID();
     expect(orgIdOf({ orgId: org.toUpperCase(), email: 'a@b.test' })).toBe(org);
@@ -191,6 +201,9 @@ describe('JSON log lines', () => {
     expect(loadConfig({ ...base, LOG_FORMAT: 'json', DATABASE_POOL_MAX: '25', WORKER_DATABASE_POOL_MAX: '4' })).toMatchObject({ LOG_FORMAT: 'json', DATABASE_POOL_MAX: 25, WORKER_DATABASE_POOL_MAX: 4 });
     expect(() => loadConfig({ ...base, LOG_FORMAT: 'yaml' })).toThrow();
     expect(() => loadConfig({ ...base, DATABASE_POOL_MAX: '0' })).toThrow();
+    // The worker's pool needs a second connection: the calendar jobs hold one for a lock and query on another.
+    expect(() => loadConfig({ ...base, WORKER_DATABASE_POOL_MAX: '1' })).toThrow();
+    expect(loadConfig({ ...base, DATABASE_POOL_MAX: '1', WORKER_DATABASE_POOL_MAX: '2' })).toMatchObject({ DATABASE_POOL_MAX: 1, WORKER_DATABASE_POOL_MAX: 2 });
   });
 });
 
@@ -348,6 +361,29 @@ describe('the lines of a job (#2175)', () => {
     expect(batch).not.toHaveProperty('jobId');
   });
 
+  it('logs a failed handler with the job ids, then rethrows it so the queue records the failure', async () => {
+    const log = capture('worker');
+    const { boss, run } = fakeBoss();
+    const org = randomUUID();
+    const refused = Object.assign(new Error('the handler said no'), { detail: 'private-row-detail', table: 'orders' });
+    await boss.work('finance-file-extract', async () => {
+      await Promise.resolve();
+      throw refused;
+    });
+    await boss.work('kernel-sync-throw', () => {
+      throw new Error('thrown before any await');
+    });
+    await expect(run('finance-file-extract', [{ id: 'job-9', data: { orgId: org } }])).rejects.toBe(refused);
+    // A handler that throws before its first await (the queue awaits it, so it is a rejection there too).
+    await expect((async () => run('kernel-sync-throw', [{ id: 'job-10' }]))()).rejects.toThrow('thrown before any await');
+    const [first, second] = log.lines();
+    expect(first).toMatchObject({ level: 'error', queue: 'finance-file-extract', jobId: 'job-9', orgId: org });
+    expect(first?.msg).toContain('[jobs] finance-file-extract handler failed Error: the handler said no');
+    expect(first?.msg).toContain('{ table: orders }');
+    expect(second).toMatchObject({ queue: 'kernel-sync-throw', jobId: 'job-10' });
+    expect(log.raw.join('\n')).not.toContain('private-row-detail');
+  });
+
   it('passes every argument the queue gives the handler, and its result', async () => {
     const seen: unknown[][] = [];
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
@@ -386,7 +422,8 @@ describe('the lines of a job (#2175)', () => {
   // PASSWORD '<literal>': the database must load the extension with utility tracking off (#2175).
   it('loads pg_stat_statements in the compose database with utility statements untracked', () => {
     const compose = readFileSync(join(import.meta.dirname, '..', '..', '..', 'docker-compose.yml'), 'utf8');
-    expect(compose).toContain("command: ['postgres', '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'pg_stat_statements.track_utility=off']");
+    // An active line: a commented-out copy would not do.
+    expect(compose).toMatch(/^ {4}command: \['postgres', '-c', 'shared_preload_libraries=pg_stat_statements', '-c', 'pg_stat_statements\.track_utility=off'\]$/m);
   });
 
   it('does not leak a job context to the code after it', async () => {
