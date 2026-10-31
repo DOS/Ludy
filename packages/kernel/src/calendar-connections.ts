@@ -559,6 +559,38 @@ export const calendarBusyAdd = defineCommand({
   },
 });
 
+// The budget of live calls (#2139): a public booking page can trigger a live read of a host's calendar, so each org gets at most
+// LIVE_ORG_PER_MINUTE of them in any minute and each connection at most LIVE_CONNECTION_PER_MINUTE. The count is the audit
+// rows of this command that allowed a call in the last minute, read and written in one transaction under a lock per org, so it
+// is shared by every worker process (and by anything else that runs the command); the limits are fixed here, not the caller's.
+// A call over a budget is answered allowed: false, and the caller falls back to the stored blocks: it never refuses a booking.
+export const LIVE_ORG_PER_MINUTE = 60;
+export const LIVE_CONNECTION_PER_MINUTE = 12;
+export const calendarLiveTake = defineCommand({
+  name: 'kernel.calendar.live_take',
+  input: z.strictObject({ connectionId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.calendar_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ allowed: boolean; limit?: 'connection' | 'org' }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.calendar_live:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    const conn = await ctx.trx.selectFrom('crove_kernel.calendar_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).executeTakeFirst();
+    if (!conn || conn.status !== 'active') throw new DomainError('CALENDAR_NOT_FOUND', 404, 'Không tìm thấy lịch đã kết nối này');
+    const { rows } = await sql<{ org: string; connection: string }>`
+      SELECT count(*) AS org, count(*) FILTER (WHERE target_id = ${input.connectionId}::uuid) AS connection
+      FROM crove_kernel.audit_event
+      WHERE org_id = ${ctx.orgId}::uuid AND command = 'kernel.calendar.live_take' AND outcome = 'ok'
+        AND occurred_at > now() - interval '1 minute' AND detail->>'allowed' = 'true'`.execute(ctx.trx);
+    const used = { org: Number(rows[0]?.org ?? 0), connection: Number(rows[0]?.connection ?? 0) };
+    // The connection's cap first: a connection over it does not spend the org's budget (a refused call is not counted).
+    const limit = used.connection >= LIVE_CONNECTION_PER_MINUTE ? ('connection' as const) : used.org >= LIVE_ORG_PER_MINUTE ? ('org' as const) : undefined;
+    ctx.audit({ connection_id: input.connectionId, allowed: limit === undefined, ...(limit ? { limit } : {}) });
+    return limit === undefined ? { allowed: true } : { allowed: false, limit };
+  },
+});
+
 // The active connections of these members, for the live check of a slot before a booking is decided (#2139): the worker's,
 // as the system. Only what the check needs; the credential is read separately.
 export const calendarConnectionsOf = defineQuery({
@@ -934,5 +966,5 @@ export const calendarWriteBackConnections = defineQuery({
     return rows.map((r) => r.id);
   },
 });
-export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace, calendarBusyAdd];
+export const calendarConnectionCommands = [calendarOAuthBegin, calendarOAuthConsume, calendarConnect, calendarDisconnect, calendarFinishDisconnect, calendarWriteBackSet, calendarLinkRecord, calendarMarkFailed, calendarRefresh, calendarBusyReplace, calendarBusyAdd, calendarLiveTake];
 export const calendarConnectionQueries = [calendarCredential, calendarConnectionState, calendarConnections, calendarWriteBackPlan, calendarWriteBackConnections, calendarConnectionsOf];

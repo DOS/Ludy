@@ -6208,6 +6208,7 @@ export const en = {
         },
         writeback_plan: 'Read what has to be written to an outside calendar',
         writeback_connections: 'List the outside calendars that bookings are written to',
+        live_take: 'Count a live read of an outside calendar against its budget',
         link: {
           record: 'Record the result of writing an appointment to an outside calendar',
         },

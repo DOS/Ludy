@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { CalendarAdapter } from '@crove/channel';
 import { calendarBinding } from '@crove/kernel-contract';
 import { CredentialVault, parseVaultKey, type Runtime } from '@crove/kernel-runtime';
-import { LIVE_CHECK_TIMEOUT_MS, LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, LiveBudget, runLiveCheck } from '../src/calendar-live.ts';
+import { LIVE_CHECK_TIMEOUT_MS, runLiveCheck } from '../src/calendar-live.ts';
 
 const ORG = '11111111-1111-4111-8111-111111111111';
 const BOOKING = '33333333-3333-4333-8333-333333333333';
@@ -35,7 +35,7 @@ interface Call {
 type Target = { hostUserIds: string[]; from: string; to: string } | null;
 type Conn = { connectionId: string; userId: string; provider: string; expiresAt: string | null; updatedAt: string };
 
-function fakeRuntime(target: Target, connections: Conn[], over: { credential?: () => unknown; execute?: () => unknown; state?: () => unknown } = {}) {
+function fakeRuntime(target: Target, connections: Conn[], over: { credential?: () => unknown; execute?: () => unknown; state?: () => unknown; take?: (connectionId: string) => unknown } = {}) {
   const calls: Call[] = [];
   const runtime = {
     query: async (name: string, input: Record<string, unknown>) => {
@@ -48,6 +48,8 @@ function fakeRuntime(target: Target, connections: Conn[], over: { credential?: (
     },
     execute: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'execute', name, input });
+      // The shared budget answers allowed unless a test says otherwise.
+      if (name === 'kernel.calendar.live_take') return over.take ? over.take(String(input.connectionId)) : { allowed: true };
       if (over.execute) return over.execute();
       return { added: 1 };
     },
@@ -82,8 +84,10 @@ function adapter(busy: CalendarAdapter['busy']): CalendarAdapter & { asked: Arra
 const target: Target = { hostUserIds: [HOST_A], from: FROM, to: TO };
 const connA: Conn = { connectionId: CONN_A, userId: HOST_A, provider: 'google', expiresAt: live, updatedAt: 'v1' };
 const check = (rt: Runtime, a: CalendarAdapter, over: { timeoutMs?: number } = {}) =>
-  runLiveCheck({ runtime: rt, broker: vault, adapters: { google_calendar: a }, now: () => NOW, budget: new LiveBudget(), ...over }, { orgId: ORG, bookingId: BOOKING });
-const executed = (calls: Call[]) => calls.filter((c) => c.kind === 'execute');
+  runLiveCheck({ runtime: rt, broker: vault, adapters: { google_calendar: a }, now: () => NOW, ...over }, { orgId: ORG, bookingId: BOOKING });
+// What the check wrote to the stored blocks (the budget's own calls are looked at apart).
+const executed = (calls: Call[]) => calls.filter((c) => c.kind === 'execute' && c.name === 'kernel.calendar.busy_add');
+const taken = (calls: Call[]) => calls.filter((c) => c.name === 'kernel.calendar.live_take').map((c) => c.input.connectionId);
 
 describe('runLiveCheck (#2139)', () => {
   it('adds what the host\'s calendar shows busy in the slot to the stored blocks, with the token it opened and a short timeout', async () => {
@@ -199,53 +203,41 @@ describe('runLiveCheck (#2139)', () => {
   });
 });
 
-describe('the budget of live calls (a public page can trigger them)', () => {
+describe('the budget of live calls (a public page can trigger them; kept in the kernel, shared by every worker)', () => {
   const busyAnswer = async () => ({ busy: [{ start: FROM, end: TO }] });
-  const run = (rt: Runtime, a: CalendarAdapter, budget: LiveBudget, now = NOW) => runLiveCheck({ runtime: rt, broker: vault, adapters: { google_calendar: a }, now: () => now, budget }, { orgId: ORG, bookingId: BOOKING });
-  const spend = (budget: LiveBudget, key: string, limit: number) => {
-    for (let i = 0; i < limit; i++) expect(budget.take(key, limit, NOW.getTime())).toBe(true);
-  };
+  const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live, updatedAt: 'v1' };
 
-  it('makes no call once the org has used its calls of the minute, and the stored blocks decide', async () => {
-    const budget = new LiveBudget();
-    spend(budget, `org:${ORG}`, LIVE_ORG_PER_MINUTE);
-    const { runtime, calls } = fakeRuntime(target, [connA]);
+  it('takes one call of the budget per connection asked, before it reads the credential or calls the provider', async () => {
+    const { runtime, calls } = fakeRuntime({ ...target, hostUserIds: [HOST_A, HOST_B] }, [connA, connB]);
+    expect(await check(runtime, adapter(busyAnswer))).toEqual({ asked: 2, busy: 2 });
+    expect(taken(calls)).toEqual([CONN_A, CONN_B]);
+    const names = calls.map((c) => c.name);
+    expect(names.indexOf('kernel.calendar.live_take')).toBeLessThan(names.indexOf('kernel.calendar.credential'));
+  });
+
+  it('makes no call once the budget is spent, and the stored blocks decide: no credential read, no call, nothing added', async () => {
+    const { runtime, calls } = fakeRuntime(target, [connA], { take: () => ({ allowed: false, limit: 'org' }) });
     const a = adapter(busyAnswer);
-    expect(await run(runtime, a, budget)).toEqual({ asked: 0, busy: 0, limited: 1 });
+    expect(await check(runtime, a)).toEqual({ asked: 0, busy: 0, limited: 1 });
     expect(a.asked).toEqual([]);
-    expect(calls.some((c) => c.name === 'kernel.calendar.credential' || c.kind === 'execute')).toBe(false);
+    expect(calls.some((c) => c.name === 'kernel.calendar.credential')).toBe(false);
+    expect(executed(calls)).toEqual([]);
   });
 
-  it('makes no call once a connection has used its cap, without using the org\'s budget', async () => {
-    const budget = new LiveBudget();
-    spend(budget, `conn:${CONN_A}`, LIVE_CONNECTION_PER_MINUTE);
-    const connB: Conn = { connectionId: CONN_B, userId: HOST_B, provider: 'google', expiresAt: live, updatedAt: 'v1' };
-    const { runtime } = fakeRuntime({ ...target, hostUserIds: [HOST_A, HOST_B] }, [connA, connB]);
+  it('skips only the connection that is over its budget and still asks the others', async () => {
+    const { runtime } = fakeRuntime({ ...target, hostUserIds: [HOST_A, HOST_B] }, [connA, connB], { take: (id) => (id === CONN_A ? { allowed: false, limit: 'connection' } : { allowed: true }) });
     const a = adapter(busyAnswer);
-    // The capped connection is skipped, the other is asked.
-    expect(await run(runtime, a, budget)).toEqual({ asked: 1, busy: 1, limited: 1 });
+    expect(await check(runtime, a)).toEqual({ asked: 1, busy: 1, limited: 1 });
     expect(a.asked).toHaveLength(1);
-    // Only the asked connection took from the org's budget.
-    for (let i = 0; i < LIVE_ORG_PER_MINUTE - 1; i++) expect(budget.take(`org:${ORG}`, LIVE_ORG_PER_MINUTE, NOW.getTime())).toBe(true);
-    expect(budget.take(`org:${ORG}`, LIVE_ORG_PER_MINUTE, NOW.getTime())).toBe(false);
   });
 
-  it('counts each call it makes, and the window moves on after a minute', async () => {
-    const budget = new LiveBudget();
-    const a = adapter(async () => ({ busy: [] }));
-    for (let i = 0; i < LIVE_CONNECTION_PER_MINUTE; i++) expect(await run(fakeRuntime(target, [connA]).runtime, a, budget)).toEqual({ asked: 1, busy: 0 });
-    expect(await run(fakeRuntime(target, [connA]).runtime, a, budget)).toEqual({ asked: 0, busy: 0, limited: 1 });
-    expect(a.asked).toHaveLength(LIVE_CONNECTION_PER_MINUTE);
-    // A minute later the calls are asked again.
-    const later = new Date(NOW.getTime() + 61_000);
-    const fresh = fakeRuntime(target, [{ ...connA, expiresAt: new Date(later.getTime() + 3_600_000).toISOString() }]);
-    expect(await run(fresh.runtime, a, budget, later)).toEqual({ asked: 1, busy: 0 });
-  });
-
-  it('keeps the budget of one org apart from another\'s', () => {
-    const budget = new LiveBudget();
-    spend(budget, 'org:one', LIVE_ORG_PER_MINUTE);
-    expect(budget.take('org:one', LIVE_ORG_PER_MINUTE, NOW.getTime())).toBe(false);
-    expect(budget.take('org:two', LIVE_ORG_PER_MINUTE, NOW.getTime())).toBe(true);
+  it('falls back to the stored blocks when the budget cannot be read: never a refusal, no call', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const { runtime, calls } = fakeRuntime(target, [connA], { take: () => Promise.reject(new Error('database blip')) });
+    const a = adapter(busyAnswer);
+    expect(await check(runtime, a)).toEqual({ asked: 0, busy: 0 });
+    expect(a.asked).toEqual([]);
+    expect(executed(calls)).toEqual([]);
+    spy.mockRestore();
   });
 });

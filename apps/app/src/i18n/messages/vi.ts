@@ -6208,6 +6208,7 @@ export const vi = {
         },
         writeback_plan: 'Xem việc cần ghi vào lịch ngoài',
         writeback_connections: 'Xem các lịch ngoài được ghi lịch hẹn vào',
+        live_take: 'Tính một lần đọc trực tiếp lịch ngoài vào hạn mức',
         link: {
           record: 'Ghi nhận kết quả ghi lịch hẹn vào lịch ngoài',
         },

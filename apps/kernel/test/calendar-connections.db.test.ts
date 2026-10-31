@@ -8,7 +8,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
+import { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, createOrg, kernelCommands, kernelQueries, upsertIdentity, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from '@crove/kernel';
 import { GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, weekdayOf, zonedDate, zonedInstant } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -718,6 +718,47 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     await o.sys('kernel.calendar.busy_add', { connectionId: c.connectionId, busy: [busy(day, 540, 570)] });
     expect(await o.sys('kernel.calendar.busy_replace', { connectionId: c.connectionId, ...window, busy: [] })).toMatchObject({ removed: 1 });
     expect(await blocks()).toBe(0);
+  });
+
+  it('budgets live calls per connection and per org, counted in the database so every worker shares it (#2139)', async () => {
+    const o = await org();
+    const take = (connectionId: string) => o.sys<{ allowed: boolean; limit?: string }>('kernel.calendar.live_take', { connectionId });
+    const connections: string[] = [];
+    for (let i = 0; i < 6; i++) connections.push((await connect(o, o.member)).connectionId);
+    const [first, ...rest] = connections as [string, ...string[]];
+    // One connection: its cap of the minute, then refusals that are not counted (the next one is refused for the same reason).
+    for (let i = 0; i < LIVE_CONNECTION_PER_MINUTE; i++) expect(await take(first), `call ${i + 1}`).toEqual({ allowed: true });
+    expect(await take(first)).toEqual({ allowed: false, limit: 'connection' });
+    expect(await take(first)).toEqual({ allowed: false, limit: 'connection' });
+    // The org: four more connections use their caps (a refused call of the first spent none of the org's budget), so the org's
+    // budget is gone after LIVE_ORG_PER_MINUTE calls in all, and the sixth connection is refused for the org.
+    for (const id of rest.slice(0, 4)) for (let i = 0; i < LIVE_CONNECTION_PER_MINUTE; i++) expect((await take(id)).allowed).toBe(true);
+    expect(await take(rest[4] as string)).toEqual({ allowed: false, limit: 'org' });
+    // Only the calls that were allowed are counted: 5 connections of their cap, nothing for the refusals.
+    const counted = await admin((cl) => cl.query<{ n: string }>("SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.calendar.live_take' AND detail->>'allowed' = 'true'", [o.orgId]));
+    expect(Number(counted.rows[0]?.n)).toBe(5 * LIVE_CONNECTION_PER_MINUTE);
+    expect(5 * LIVE_CONNECTION_PER_MINUTE).toBe(LIVE_ORG_PER_MINUTE);
+    // Another org has its own budget.
+    const other = await org();
+    const theirs = (await connect(other, other.member)).connectionId;
+    expect(await other.sys('kernel.calendar.live_take', { connectionId: theirs })).toEqual({ allowed: true });
+    // Only the system takes from it, and only for a connection that is there and active.
+    await expect(o.exec(o.member, 'kernel.calendar.live_take', { connectionId: first })).rejects.toMatchObject({ status: 403 });
+    await expect(other.sys('kernel.calendar.live_take', { connectionId: first })).rejects.toMatchObject({ code: 'CALENDAR_NOT_FOUND' });
+  });
+
+  it('never lets concurrent callers go over a budget: twenty at once on one connection allow exactly its cap, seventy across six allow exactly the org\'s (#2139)', async () => {
+    const o = await org();
+    const take = (connectionId: string) => o.sys<{ allowed: boolean }>('kernel.calendar.live_take', { connectionId });
+    const one = (await connect(o, o.member)).connectionId;
+    const answers = await Promise.all(Array.from({ length: 20 }, () => take(one)));
+    expect(answers.filter((a) => a.allowed)).toHaveLength(LIVE_CONNECTION_PER_MINUTE);
+    const o2 = await org();
+    const take2 = (connectionId: string) => o2.sys<{ allowed: boolean }>('kernel.calendar.live_take', { connectionId });
+    const six: string[] = [];
+    for (let i = 0; i < 6; i++) six.push((await connect(o2, o2.member)).connectionId);
+    const many = await Promise.all(Array.from({ length: 70 }, (_, i) => take2(six[i % 6] as string)));
+    expect(many.filter((a) => a.allowed)).toHaveLength(LIVE_ORG_PER_MINUTE);
   });
 
   it('records a link only for a booking event of the connection\'s member, only for the system, and drops it with the connection', async () => {

@@ -20,31 +20,6 @@ export const LIVE_CHECK_TIMEOUT_MS = 3_000;
 const MIN_TOKEN_MS = 60_000;
 // The most connections one check asks (the hosts of a team type).
 const MAX_HOSTS = 20;
-// A public booking page can trigger this check, so the live calls are budgeted: this many in any minute for an org, and for one
-// connection. Counted in this worker process (a deployment with several workers allows that much per worker, far under the
-// provider's quota). A call over the budget is not made and the stored blocks decide: the budget never refuses a booking.
-export const LIVE_ORG_PER_MINUTE = 60;
-export const LIVE_CONNECTION_PER_MINUTE = 12;
-const BUDGET_WINDOW_MS = 60_000;
-
-// Counts calls per key in a sliding window; take() says whether one more is within the limit and counts it if so.
-export class LiveBudget {
-  private readonly calls = new Map<string, number[]>();
-  take(key: string, limit: number, now: number): boolean {
-    const recent = (this.calls.get(key) ?? []).filter((at) => now - at < BUDGET_WINDOW_MS);
-    if (recent.length >= limit) {
-      this.calls.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.calls.set(key, recent);
-    // Keys of orgs and connections that went quiet do not pile up.
-    if (this.calls.size > 10_000) for (const [k, v] of this.calls) if (v.every((at) => now - at >= BUDGET_WINDOW_MS)) this.calls.delete(k);
-    return true;
-  }
-}
-
-const defaultBudget = new LiveBudget();
 
 export interface LiveCheckDeps {
   runtime: Runtime;
@@ -53,8 +28,6 @@ export interface LiveCheckDeps {
   adapters: Readonly<Partial<Record<string, CalendarAdapter>>>;
   now?: () => Date;
   timeoutMs?: number;
-  // The budget of live calls (one per worker process unless a test gives its own).
-  budget?: LiveBudget;
 }
 
 export interface LiveCheckJob {
@@ -100,15 +73,15 @@ export async function runLiveCheck(deps: LiveCheckDeps, job: LiveCheckJob): Prom
   );
   const from = new Date(target.from);
   const to = new Date(target.to);
-  const budget = deps.budget ?? defaultBudget;
   const askOne = async (c: (typeof connections)[number]): Promise<'asked' | 'busy' | 'skipped' | 'limited'> => {
     try {
       const adapter = Object.values(deps.adapters).find((a) => a?.provider === c.provider);
       if (!adapter || c.expiresAt === null || Date.parse(c.expiresAt) - now().getTime() < MIN_TOKEN_MS) return 'skipped';
-      // Over the budget: no call, the stored blocks decide. The connection's cap is looked at first so a connection that is
-      // over it does not use the org's budget.
-      const at = now().getTime();
-      if (!budget.take(`conn:${c.connectionId}`, LIVE_CONNECTION_PER_MINUTE, at) || !budget.take(`org:${job.orgId}`, LIVE_ORG_PER_MINUTE, at)) return 'limited';
+      // A public booking page can trigger this check, so each live call is counted against the org's and the connection's budget
+      // of the minute in the kernel (kernel.calendar.live_take, shared by every worker): over it, no call is made and the stored
+      // blocks decide, never a refusal.
+      const take = await deps.runtime.execute<{ allowed: boolean }>('kernel.calendar.live_take', { connectionId: c.connectionId }, options);
+      if (!take.allowed) return 'limited';
       const sealed = await deps.runtime.query<SealedCalendarCredential>('kernel.calendar.credential', { connectionId: c.connectionId }, options);
       // The credential is also handed out for a connection on its way out (its revoke needs it): a member who disconnected, or
       // connected again, since the list was read has this check leave the provider alone, like the sync does.

@@ -26,6 +26,6 @@ export { isArchiveType } from './files.ts';
 export * from './proposal-resubmit.ts';
 export { normalizeEntityName } from './legal-entities.ts';
 export { busyOf, workingHoursOf } from './calendar.ts';
-export { busyPieces, cutOut, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from './calendar-connections.ts';
+export { LIVE_CONNECTION_PER_MINUTE, LIVE_ORG_PER_MINUTE, busyPieces, cutOut, writeBackEventId, writeBackHash, type SealedCalendarCredential, type WriteBackAction } from './calendar-connections.ts';
 export * from './numbering.ts';
 export * from './manifest.ts';

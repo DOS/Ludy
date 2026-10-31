@@ -109,6 +109,10 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
 const NO_COMMAND: Readonly<Record<string, string>> = {
   // A client's answer on a review link (crove_social review link definers, run by the public link's route).
   'social.review.answered': 'the review link definers',
+  // A visitor's booking request and a visitor's ask from a manage link (crove_crm.booking_request and booking_manage_request,
+  // run by the public booking page's route): the worker decides them after checking the slot at the hosts' connected calendars (#2139).
+  'crm.booking.requested': 'the booking request definer',
+  'crm.booking.manage_requested': 'the booking manage request definer',
 };
 
 // Events that no command writes and that feed, or are about to feed, a queue with egress, listed for a limited time so the
@@ -122,10 +126,7 @@ interface PendingEntry {
   expires: string;
 }
 const NO_COMMAND_PENDING: Readonly<Record<string, PendingEntry>> = {
-  // The booking request definers (crove_crm.booking_request and booking_manage_request, run by the public booking page's route):
-  // #2139 checks the slot at the hosts' connected calendars in a queue handler before the worker decides them.
-  'crm.booking.requested': { reason: 'the booking request definer, fed to a queue with egress by #2139', expires: '2026-11-14' },
-  'crm.booking.manage_requested': { reason: 'the booking manage request definer, fed to a queue with egress by #2139', expires: '2026-11-14' },
+  // None now: #2139 moved its two booking request events to NO_COMMAND.
 };
 
 // What is wrong with the pending entries: an expired one, a malformed one, one listed twice, one a command emits.
