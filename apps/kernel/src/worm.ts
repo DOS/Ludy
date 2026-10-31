@@ -1122,7 +1122,7 @@ const PLAN_MAX_MARKERS = 45;
 
 // The prober alerts when the newest full pass is older than this (#2121): a full pass that never finishes (the database
 // owner can stop its queries) must not hide behind incremental runs that keep the heartbeat fresh.
-export const FULL_VERIFY_ALERT_DAYS = FULL_VERIFY_DAYS + 7;
+export const FULL_VERIFY_ALERT_DAYS = FULL_VERIFY_DAYS + 2;
 
 export interface VerificationPlan {
   // 'incremental': start from `checkpoint`. 'full': read every batch; `checkpoint`, when there is one, is where a quick
@@ -1252,6 +1252,74 @@ export async function runArchiveVerification(db: Db, store: ArchiveStore, option
   const result = await verifyArchive(db, store, options);
   if (!result.ok) throw new ArchiveMismatchError(result);
   return result;
+}
+
+export interface NightlyVerificationDeps {
+  db: Db;
+  store: ArchiveStore;
+  restoreAlertDays?: number;
+  // A job queued by hand with {"full": true}: read every batch tonight.
+  forceFull?: boolean;
+  // Posts a line outside the database (the worker's opsAlert: the webhook). `error` stays in the log, not the post.
+  alert: (line: string, error?: unknown) => void;
+  log: (line: string) => void;
+  // A line for the worker log marking a failed run (the ALERT line the prober's dead letter check is read against).
+  logFailure: (line: string) => void;
+  now?: () => Date;
+}
+
+// The nightly verification job (#2121), as the worker runs it: plans from the markers in the store, runs an incremental
+// pass (or, about monthly, a quick incremental pass and then the full pass, so the heartbeat marker stays fresh while
+// the long pass runs), and writes the marker of each pass that held. A pass that finds a mismatch posts the alert at
+// once, through `alert`, before the job fails: after a quick pass has written its marker, the heartbeat no longer goes
+// stale when a full pass fails, so the marker alone would only show it once the last full pass is over a month old. It
+// then throws ArchiveMismatchError (the job fails without a retry, the dead letter stays for the prober).
+export async function runNightlyVerification(deps: NightlyVerificationDeps): Promise<void> {
+  const clock = deps.now ?? (() => new Date());
+  const started = clock().getTime();
+  const elapsed = () => `${Math.round((clock().getTime() - started) / 1000)} s`;
+  const alertOptions = deps.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.restoreAlertDays };
+  // One verification pass: records and alerts as before, and writes the marker of a pass that held.
+  const pass = async (from?: VerifyCheckpoint, lastFullAt?: string | null) => {
+    const result = await verifyArchive(deps.db, deps.store, from ? { ...alertOptions, from } : alertOptions);
+    // An excuse is never silent (#2020): every run says what a restore acknowledgement excused, and a recent one, by
+    // the store's own write time, alerts on every run, passing or failing, so an operator matches it to a real
+    // restore and a webhook down for a night loses nothing.
+    const alert = restoreAckAlert(result);
+    if (alert) deps.alert(`[archive] ALERT ${alert}`);
+    if (!result.ok) throw new ArchiveMismatchError(result);
+    // The out-of-band heartbeat (#2082): a marker in the archive store, which the prober reads without the database.
+    try {
+      // `distinct`: the quick run and the full pass of one night can end in the same second.
+      await writeVerifyMarker(deps.store, result, clock(), { lastFullAt: lastFullAt ?? null, distinct: true });
+    } catch (error) {
+      deps.alert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
+    }
+    const excused = result.restoreAck === null ? '' : `, excused ${result.excused} row(s) under restore acknowledgement #${result.restoreAck}`;
+    deps.log(`[archive] verified (${result.mode}) ${result.batchesRead} of ${result.batches} batch(es), ${result.rows} row(s)${excused} in ${elapsed()}`);
+    return result;
+  };
+  try {
+    // First, from the store alone, before any database query: a run the database owner stops has alerted already.
+    const early = await restoreAckStoreAlert(deps.store, { ...alertOptions, now: clock });
+    if (early) deps.alert(`[archive] ALERT ${early}`);
+    const plan: VerificationPlan = deps.forceFull
+      ? { mode: 'full', checkpoint: null, lastFullAt: null, reason: 'requested by the job' }
+      : await planVerification(deps.store, clock());
+    if (plan.mode === 'incremental') {
+      await pass(plan.checkpoint ?? undefined, plan.lastFullAt);
+    } else {
+      deps.log(`[archive] full verification: ${plan.reason}`);
+      // A restore acknowledgement in force makes the quick run full already, so it is not repeated.
+      const quick = plan.checkpoint ? await pass(plan.checkpoint, plan.lastFullAt) : null;
+      if (quick?.mode !== 'full') await pass();
+    }
+  } catch (error) {
+    deps.logFailure(`[archive] ALERT after ${elapsed()}: ${error instanceof Error ? error.message : 'verification could not run'}`);
+    // The message names codes and batch sequences only (ArchiveMismatchError), so it is safe to post.
+    if (error instanceof ArchiveMismatchError) deps.alert(`[archive] ALERT ${error.message}`);
+    throw error;
+  }
 }
 
 // After a restore (#2007, plan §7.9): what the archive holds that the restored database lacks. A restore to a backup
