@@ -57,7 +57,8 @@ export function hintMatches(hint: StreamHint, query: Query): boolean {
       return path === 'inbox.get' && (result?.journalEntryId === id || result?.reversedEntryId === id);
     }
     case 'document': {
-      if (path === 'documents.list' || path === 'parties.list' || path === 'parties.customers') return true;
+      // The sales invoice number gaps (#2140) read every recorded sale, so a new or voided document changes them.
+      if (path === 'documents.list' || path === 'parties.list' || path === 'parties.customers' || path === 'vat.salesNumberGaps') return true;
       const result = detail(query)?.result;
       return path === 'inbox.get' && (result?.documentId === id || result?.voidedDocumentId === id);
     }

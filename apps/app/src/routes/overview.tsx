@@ -12,6 +12,7 @@ import { NavIcon, type NavIconName } from '@crove/ui/components/nav-icon';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { cn } from '@crove/ui/lib/utils';
 import { OrgNotesPanel } from '../components/notes-panel.tsx';
+import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { DueWhen, TONE_CLASS, usePeriodLabel } from '../components/tax-due.tsx';
 import { useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
@@ -21,7 +22,7 @@ import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { allCounted, waitingItems, type WaitingKey } from '../lib/overview.ts';
+import { allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
@@ -172,6 +173,7 @@ export function OverviewPage() {
   const t = useTranslations('overview');
   const tt = useTranslations('taxCalendar');
   const tcl = useTranslations('clients');
+  const tg = useTranslations('salesGaps');
   const f = useFormat();
   const periodLabel = usePeriodLabel();
   const { slug } = useParams({ strict: false }) as { slug: string };
@@ -267,6 +269,22 @@ export function OverviewPage() {
       </section>
 
       <AppCards slug={slug} vat={vat} vatLoaded={overview.isSuccess} />
+
+      {/* Numbers missing in the org's own sales invoice series (#2140): this year's series, and last year's while its returns are filed. */}
+      {financeOn && (
+        <SalesNumberGaps
+          className="mt-8"
+          quiet
+          fromYear={gapsFromYear(new Date())}
+          legalEntityId={entity.legalEntityId}
+          enabled={entity.ready}
+          action={
+            <Link to="/o/$slug/vat" params={{ slug }} className="text-link underline">
+              {tg('open')}
+            </Link>
+          }
+        />
+      )}
 
       {/* The org's notes (#1671): in a client company's org, notes about the client. */}
       {notesOn && <OrgNotesPanel slug={slug} />}

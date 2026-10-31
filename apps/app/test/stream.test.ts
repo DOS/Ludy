@@ -41,6 +41,7 @@ function seeded() {
     entry: orpc.journal.get.queryKey({ input: { id: ENTRY } }),
     documents: orpc.documents.list.queryKey({ input: {} }),
     parties: orpc.parties.list.queryKey({ input: {} }),
+    salesGaps: orpc.vat.salesNumberGaps.queryKey({ input: { period: '2026-09' } }),
     customers: orpc.parties.customers.infiniteKey({ input: () => ({}), initialPageParam: undefined }),
     ledger: orpc.ledger.period.queryKey({ input: { period: '2026-09' } }),
     ledgerAccount: orpc.ledger.account.queryKey({ input: { period: '2026-09', accountCode: '331' } }),
@@ -88,10 +89,10 @@ describe('invalidateHint', () => {
     expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount']);
   });
 
-  it('document: the documents, the vendors, the customers and the proposal that recorded it', async () => {
+  it('document: the documents, the vendors, the customers, the sales number gaps and the proposal that recorded it', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'document', id: DOC });
-    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'parties']);
+    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'parties', 'salesGaps']);
   });
 
   it('social_post: the calendar, that post and the queues', async () => {

@@ -9,6 +9,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AmountInput } from '../components/amount-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
+import { SalesNumberGaps } from '../components/sales-number-gaps.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
@@ -558,6 +559,8 @@ export function VatPage() {
               <InvoiceTable invoices={data.output.documents} partyLabel={t('columns.buyer')} />
             )}
           </section>
+
+          <SalesNumberGaps period={period} legalEntityId={entity.legalEntityId} enabled={entity.ready && data.output.available} />
 
           <section>
             <h2 className="mb-2 text-base font-semibold text-foreground">{t('inputTitle', { count: f.number(data.input.documents.length) })}</h2>

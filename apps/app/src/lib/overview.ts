@@ -27,3 +27,9 @@ export function waitingItems(counts: WaitingCounts): { key: WaitingKey; count: n
 export function allCounted(counts: WaitingCounts, asked: readonly WaitingKey[]): boolean {
   return asked.every((key) => counts[key] !== undefined);
 }
+
+// The first year whose sales invoice number gaps the Overview shows (#2140): this year's, and last year's through
+// March, while its last quarter's VAT return and the year's closing are still being filed.
+export function gapsFromYear(now: Date): number {
+  return now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear();
+}

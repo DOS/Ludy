@@ -1095,6 +1095,16 @@ export const vi = {
     reversalPendingBadge: 'Đang chờ duyệt đảo',
     reversalPendingLink: 'Xem đề xuất đảo đang chờ duyệt',
   },
+  salesGaps: {
+    title: 'Hóa đơn bán ra thiếu hoặc đã hủy ({count} số)',
+    hintPeriod:
+      'Các số nằm giữa số nhỏ nhất và số lớn nhất đã ghi nhận của cùng mẫu số, ký hiệu và năm mà chưa có trong sổ, có thể thuộc kỳ này. Đó là hóa đơn bán ra chưa được ghi, hoặc hóa đơn đã hủy; hãy kiểm tra trước khi nộp tờ khai.',
+    hint: 'Các số nằm giữa số nhỏ nhất và số lớn nhất đã ghi nhận của cùng mẫu số, ký hiệu và năm mà chưa có trong sổ. Đó là hóa đơn bán ra chưa được ghi, hoặc hóa đơn đã hủy; mở bảng kê thuế GTGT của kỳ để kiểm tra trước khi nộp tờ khai.',
+    columns: { series: 'Mẫu số và ký hiệu', year: 'Năm', missing: 'Số thiếu hoặc đã hủy', recorded: 'Đã ghi trong sổ', count: 'Số lượng' },
+    recordedRange: 'Từ số {first} đến số {last}, {recorded} số',
+    more: 'và các khoảng khác',
+    open: 'Xem bảng kê thuế GTGT',
+  },
   vat: {
     title: 'Tờ khai thuế GTGT',
     subtitle:
@@ -6137,6 +6147,7 @@ export const vi = {
         payment_mark: 'Đánh dấu đã nộp thuế GTGT',
         period: 'Xem thuế GTGT theo kỳ',
         return_mark: 'Đánh dấu đã nộp tờ khai thuế GTGT',
+        sales_number_gaps: 'Xem số hóa đơn bán ra còn thiếu hoặc đã hủy',
       },
       vendor: {
         set_default_account: 'Đặt tài khoản mặc định cho nhà cung cấp',

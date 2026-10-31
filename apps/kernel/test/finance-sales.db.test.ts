@@ -528,4 +528,22 @@ suite('sales e-invoices (#313)', () => {
     expect(purchaseDetail.body.payload).toMatchObject({ seller: { taxCode: supplierBranch } });
     await expect(approve(purchase)).resolves.toMatchObject({ documentId: expect.any(String) });
   });
+
+  it('lists the numbers missing in the sales series between the lowest and the highest recorded, for a period and for the Overview (#2140)', async () => {
+    for (const number of ['7001', '7002', '7004']) await approve(await read(invoice(number)));
+    const gaps = await rpc('vat/salesNumberGaps', await tokenFor(viewer), { period: '2026-09' });
+    expect(gaps.status).toBe(200);
+    const group = gaps.body.groups.find((g: { series: string; year: number }) => g.series === 'C26TAB' && g.year === 2026);
+    expect(group).toMatchObject({ template: null, lastNumber: '7004' });
+    const runs = group.ranges.map((r: { from: string; to: string }) => `${r.from}-${r.to}`);
+    // 7001, 7002 and 7004 are recorded, so only 7003 is missing between them; 5001 and 6001 bound the runs before.
+    expect(runs).toContain('7003-7003');
+    expect(runs.some((r: string) => r.startsWith('7001') || r.startsWith('7002') || r.startsWith('7004'))).toBe(false);
+    // A voided or never-recorded number is no sale of the books, so the Overview's read (from a year on) agrees.
+    const overview = await rpc('vat/salesNumberGaps', await tokenFor(viewer), { fromYear: 2026 });
+    expect(overview.body.groups.map((g: { series: string }) => g.series)).toContain('C26TAB');
+    // The recorded invoices are all dated 15 September: another month has no run reaching it, and an earlier year no series.
+    expect((await rpc('vat/salesNumberGaps', await tokenFor(viewer), { period: '2026-11' })).body).toEqual({ groups: [], missingCount: 0 });
+    expect((await rpc('vat/salesNumberGaps', await tokenFor(viewer), { fromYear: 2027 })).body).toEqual({ groups: [], missingCount: 0 });
+  });
 });

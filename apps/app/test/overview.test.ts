@@ -1,6 +1,6 @@
 // The org overview's waiting list (issue #1249): what it lists, in which order, and when it may say nothing waits.
 import { describe, expect, it } from 'vitest';
-import { allCounted, waitingItems } from '../src/lib/overview.ts';
+import { allCounted, gapsFromYear, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
   it('lists what waits, the books first, and leaves out counts of 0', () => {
@@ -17,5 +17,12 @@ describe('org overview', () => {
     expect(allCounted({ proposals: 0 }, ['proposals', 'failedFiles'])).toBe(false);
     // A figure the deployment does not run (no finance: no bank lines) is not asked for.
     expect(allCounted({ proposals: 0, tasks: 0 }, ['proposals', 'tasks'])).toBe(true);
+  });
+
+  it('reads sales invoice number gaps from this year on, and from last year through March (#2140)', () => {
+    expect(gapsFromYear(new Date(2026, 0, 15))).toBe(2025);
+    expect(gapsFromYear(new Date(2026, 2, 31))).toBe(2025);
+    expect(gapsFromYear(new Date(2026, 3, 1))).toBe(2026);
+    expect(gapsFromYear(new Date(2026, 9, 31))).toBe(2026);
   });
 });
