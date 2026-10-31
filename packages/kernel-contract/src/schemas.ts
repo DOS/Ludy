@@ -635,18 +635,36 @@ export const zInboxDetail = zInboxItem.extend({
   canReextract: z.boolean(),
 });
 
+// What the Inbox shows of a bank statement read from a file (#2142): the bank account its account number is mapped to, the
+// lines it holds (newLines and duplicateLines as checked against the account when it was read, then as stored when a member
+// imported it), its period and its totals. state: staged (waiting for a member), imported, rejected (skipped).
+export const zStatementSummary = z.object({
+  state: z.enum(['staged', 'imported', 'rejected']),
+  bankAccount: z.string(),
+  filename: z.string(),
+  lines: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  duplicateLines: z.number().int().nonnegative(),
+  from: zLocalDate.nullable(),
+  to: zLocalDate.nullable(),
+  totalIn: zMoney,
+  totalOut: zMoney,
+});
+export type StatementSummary = z.infer<typeof zStatementSummary>;
+
 export const zFileStatus = z.object({
   id: zId,
   filename: z.string(),
   contentType: z.string(),
   // expanded: a ZIP archive whose entries were filed as documents of their own (#314). waiting: kept unread because
   // the org used its daily extraction limit (#675); it is read once the org is back under it.
-  // imported: a bank statement read into bank lines of a mapped account (#2142); there is no proposal to decide.
-  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded', 'imported']),
+  // A bank statement read from a file (#2142) has no proposal: staged is a statement waiting for a member to import it
+  // (nothing is stored until then), imported one whose lines were stored, dismissed one a member skipped.
+  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded', 'staged', 'imported', 'dismissed']),
   // The newest run's error, when that run failed.
   error: z.string().nullable(),
-  // What an imported bank statement brought in (#2142), null for any other file.
-  statement: z.object({ bankAccount: z.string(), newLines: z.number().int().nonnegative(), duplicateLines: z.number().int().nonnegative() }).nullable(),
+  // The bank statement of a staged, imported or dismissed file (#2142), null for any other file.
+  statement: zStatementSummary.nullable(),
   proposalId: zId.nullable(),
   // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
   // apart (DESIGN.md principle 2). Null when the file has no proposal.

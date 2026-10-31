@@ -1480,6 +1480,12 @@ export const contract = {
   bank: {
     preview: oc.input(zBankStatementImport).output(zBankImportPreview),
     import: oc.input(zBankStatementImport.extend({ idempotencyKey: zId })).output(zBankImportResult),
+    // A statement read from a file sent by email or dropped in the Inbox (#2142) waits, staged, for a member: statementConfirm
+    // (owners, admins, members; R1, audited) stores its lines once, on the account its account number is mapped to, and
+    // statementReject skips it, storing nothing. STATEMENT_NOT_STAGED (409) when it was already decided or read again;
+    // STATEMENT_MAPPING_CHANGED (409) when its account is no longer mapped to the same bank account.
+    statementConfirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zBankImportResult),
+    statementReject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
     lines: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankLines),
     // The báo Có or báo Nợ a line makes and the party it is probably about (#326, stage 2a), for the voucher form; the
     // voucher itself is asked for with inbox.request (finance.voucher.record, bankLineId set). Owners, admins and

@@ -513,4 +513,62 @@ export const recordExtraction = defineCommand({
   },
 });
 
-export const extractionCommands = [reextractFile, recordExtraction];
+// A staged bank statement (#2142) is decided: imported (the finance module stored its lines in this same transaction) or
+// rejected (skipped, nothing stored). The run keeps its summary with the new state and drops its rows, so the file shows
+// what became of it and the rows are no longer held. Run by finance.bank.statement_confirm and .statement_reject, as the
+// member who decided; only a staged statement run can be decided, once.
+export const statementState = defineCommand({
+  name: 'kernel.extraction.statement_state',
+  input: z.object({
+    fileId: zId,
+    state: z.enum(['imported', 'rejected']),
+    // What an import stored: the lines new to the account, the lines it already had, and the import.
+    newLines: z.number().int().nonnegative().optional(),
+    duplicateLines: z.number().int().nonnegative().optional(),
+    importId: zId.optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: REEXTRACT_ROLES,
+  target: (input) => ({ type: 'kernel.file', id: input.fileId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới quyết định được sao kê');
+    await lockFile(ctx, input.fileId, true);
+    const run = await ctx.trx
+      .selectFrom('crove_kernel.extraction')
+      .select(['id', 'status', 'result'])
+      .where('org_id', '=', ctx.orgId)
+      .where('file_id', '=', input.fileId)
+      .orderBy('version', 'desc')
+      .limit(1)
+      .forUpdate()
+      .executeTakeFirst();
+    const result = run?.result as { kind?: unknown; summary?: { state?: unknown } & Record<string, unknown> } | null | undefined;
+    if (!run || run.status !== 'done' || result?.kind !== 'bank_statement' || result.summary?.state !== 'staged') {
+      throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
+    }
+    const summary = {
+      ...result.summary,
+      state: input.state,
+      ...(input.newLines !== undefined ? { newLines: input.newLines } : {}),
+      ...(input.duplicateLines !== undefined ? { duplicateLines: input.duplicateLines } : {}),
+      ...(input.importId !== undefined ? { importId: input.importId } : {}),
+    };
+    await ctx.trx
+      .updateTable('crove_kernel.extraction')
+      .set({ result: JSON.stringify({ kind: 'bank_statement', summary }) })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', run.id)
+      .execute();
+    ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
+    await ctx.activity(
+      'kernel.file',
+      input.fileId,
+      input.state === 'imported' ? 'statement.imported' : 'statement.rejected',
+      input.state === 'imported' ? `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có` : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
+    );
+    return { fileId: input.fileId, state: input.state };
+  },
+});
+
+export const extractionCommands = [reextractFile, recordExtraction, statementState];

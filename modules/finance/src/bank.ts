@@ -177,6 +177,13 @@ export const bankPreview = defineQuery({
   },
 });
 
+// A statement file checked against the account and what it already has, writing nothing: what a file received is staged
+// with (#2142), so a member sees the account, the lines, the period and the totals before anything is stored.
+export async function previewStatement(ctx: QueryContext, input: BankStatementImport, legalEntityId: string): Promise<BankImportPreview> {
+  await bankAccount(ctx, input.bankAccount, true);
+  return (await check(ctx, input, legalEntityId)).preview;
+}
+
 // Checks a statement file against the account and stores its new and ambiguous lines as one import, under the account's
 // lock, refusing a file with an invalid row (BANK_IMPORT_INVALID, before anything is written). The browser import
 // (finance.bank.import) and a statement read from a forwarded or dropped file (finance.bank.statement_file, #2142) store

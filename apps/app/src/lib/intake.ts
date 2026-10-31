@@ -29,6 +29,9 @@ export type IntakeState =
   | 'failed'
   // A bank statement read into bank lines (#2142).
   | 'imported'
+  // A bank statement waiting for a member to import it, and one a member skipped.
+  | 'staged'
+  | 'dismissed'
   // An archive opened into its entries.
   | 'expanded'
   // An entry of an archive that was not filed; reason says why.
@@ -120,7 +123,7 @@ export function applyBatch(items: readonly IntakeItem[], batch: readonly BatchFi
   });
 }
 
-const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'imported', 'duplicate', 'failed', 'rejected']);
+const SETTLED: ReadonlySet<IntakeState> = new Set(['upload_failed', 'waiting', 'proposed', 'staged', 'imported', 'dismissed', 'duplicate', 'failed', 'rejected']);
 
 // The documents of the batch: an opened archive counts as the entries it held, anything else as itself.
 export function leaves(items: readonly IntakeItem[]): IntakeItem[] {
@@ -142,7 +145,8 @@ export function summarize(items: readonly IntakeItem[]): IntakeSummary {
   return {
     total: all.length,
     settled: all.filter((item) => SETTLED.has(item.state)).length,
-    proposed: count(['proposed']),
+    // A statement waiting for a member waits for a decision like a proposal does.
+    proposed: count(['proposed', 'staged']),
     imported: count(['imported']),
     duplicate: count(['duplicate']),
     failed: count(['failed', 'upload_failed', 'rejected']),

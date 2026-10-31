@@ -2,7 +2,7 @@
 // (#314), opened into files of its own. Shared by files.recent and files.batch.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ARCHIVE_ENTRY_REASONS, zId, type FileStatus } from '@crove/kernel-contract';
+import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@crove/kernel-contract';
 import type { QueryContext } from '@crove/kernel-runtime';
 import { EDITOR_ROLES } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, REEXTRACT_STALE_MINUTES, STALE_RUN_ERROR, voidedProposals } from './extraction.ts';
@@ -20,13 +20,14 @@ export const zStoredArchiveEntry = z.object({
 });
 export type StoredArchiveEntry = z.infer<typeof zStoredArchiveEntry>;
 
-const zStatementSummary = z.object({ bankAccount: z.string(), newLines: z.number().int().nonnegative(), duplicateLines: z.number().int().nonnegative() });
-
-// The summary kernel.extraction.record keeps in the result of a statement read into bank lines (#2142), read defensively.
-function importedStatement(value: unknown): FileStatus['statement'] {
+// The summary a bank statement read from a file keeps in its run's result (#2142), read defensively; the run's rows and
+// the account number that named its account (the finance module's) stay out of what the Inbox is told.
+function statementOf(value: unknown): FileStatus['statement'] {
   const parsed = zStatementSummary.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+const STATEMENT_STATUS = { staged: 'staged', imported: 'imported', rejected: 'dismissed' } as const;
 
 export interface FileStatusRow {
   status: FileStatus;
@@ -129,7 +130,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const lastRunFailed = r.extraction_status === 'failed' || (r.extraction_status === 'pending' && !r.in_flight);
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
-    const statement = importedStatement(r.statement);
+    const statement = statementOf(r.statement);
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight
@@ -139,7 +140,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             ? 'expanded'
             : 'failed'
           : statement
-            ? 'imported'
+            ? STATEMENT_STATUS[statement.state]
             : r.proposal_id && !failedSinceDecision
               ? r.duplicate_of
                 ? 'duplicate'
@@ -168,8 +169,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           editor &&
           // An archive is opened once; a ZIP read as a bank statement (#2142) may be read again.
           (!archive || r.method === 'unsupported') &&
-          // A statement is stored once: reading it again would only find its lines already there.
-          !statement &&
+          // A statement imported is stored once: reading it again would only find its lines already there. One waiting or
+          // skipped may be read again (a corrected mapping, a second look).
+          statement?.state !== 'imported' &&
           Boolean(r.extraction_status) &&
           !r.in_flight &&
           (r.proposal_status !== 'executed' || isVoided) &&

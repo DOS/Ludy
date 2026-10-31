@@ -16,7 +16,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { CredentialVault, contentGeneration, fileKey, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries, type StatementFileOutcome } from '@crove/mod-finance';
+import { financeCommands, financeQueries, type StatementStageOutcome } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -764,58 +764,28 @@ suite('bank statement import (#326)', () => {
     expect(accounts.find((a: { externalAccountId: string }) => a.externalAccountId === 'SBX-001').id).toBe(mapped.body.feedAccountId);
   });
 
-  // #2142: a statement that arrives as a file is stored as the lines of the account its own account number names through
-  // the bank feed mappings, on the import's path (the same keys), and an unmapped number writes nothing.
+  // #2142: a statement that arrives as a file (forwarded by email, whose sender no one can vouch for, or dropped in the
+  // Inbox) is STAGED, never stored: the account its own number names comes from the bank feed mappings, the lines wait
+  // with the file's read, and no line and no dedupe key exists until a member imports it. A skipped statement leaves every
+  // key free for the real lines.
   describe('a statement read from a forwarded or dropped file (#2142)', () => {
     const NUMBER = '19880001234';
-    const FILE_ACTOR = { type: 'system' as const, component: 'finance.bank_statement' };
-    const statementFile = (rows: BankStatementRow[], accountNumber: string | null = NUMBER) =>
-      worker.execute<StatementFileOutcome>('finance.bank.statement_file', { fileId: randomUUID(), filename: 'sao-ke.xlsx', accountNumber, rows }, { actor: FILE_ACTOR, orgId });
-    const fileRows = () => [
-      row('01/09/2026', '2000000', '', '12000000', 'FT26244000001'),
-      row('02/09/2026', '', '11000', '11989000', 'FT26245000002'),
-      row('03/09/2026', '', '850000', '11139000', 'FT26246000003'),
+    const WORKER = { type: 'system' as const, component: 'finance.bank_statement' };
+    const ownerActor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: owner.session, mfaAt: null };
+    let mappingId = '';
+    let connectionId = '';
+    const stage = (rows: BankStatementRow[], accountNumber: string | null = NUMBER) =>
+      worker.query<StatementStageOutcome>('finance.bank.statement_stage', { fileId: randomUUID(), filename: 'sao-ke.xlsx', accountNumber, rows }, { actor: WORKER, orgId });
+    const rowsOf = (tag: string) => [
+      row('01/09/2026', '2000000', '', '12000000', `FT-${tag}-1`),
+      row('02/09/2026', '', '11000', '11989000', `FT-${tag}-2`),
+      row('03/09/2026', '', '850000', '11139000', `FT-${tag}-3`),
     ];
-
-    it('stores the lines of the mapped account once, and a second file of the same lines adds none', async () => {
-      const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng sao kê tệp' })).body.connectionId);
-      // The account is listed with the spaces a bank prints; the file's number is its digits.
-      await admin((c) =>
-        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '1988 0001 234', 'TK thử']),
-      );
-      const mapped = await feed('map', owner, { connectionId, externalAccountId: '1988 0001 234', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
-      expect(mapped.status).toBe(200);
-      const before = (await stored('1121.VCB')).length;
-      const first = await statementFile(fileRows());
-      expect(first).toMatchObject({ outcome: 'imported', bankAccount: '1121.VCB', counts: { new: 3, duplicate: 0 } });
-      const after = await stored('1121.VCB');
-      expect(after.length - before).toBe(3);
-      // The keys are the browser import's: the bank's reference.
-      expect(after.filter((l) => l.dedupe_key?.startsWith('ref:FT2624')).length).toBe(3);
-      // The same lines again, from another file or the same one sent twice, are all duplicates and store nothing.
-      expect(await statementFile(fileRows())).toMatchObject({ outcome: 'imported', counts: { new: 0, duplicate: 3 } });
-      expect((await stored('1121.VCB')).length).toBe(after.length);
-      // The browser import of the same lines finds them there too: one line whichever way it came.
-      expect((await importFile([row('01/09/2026', '2000000', '', '12000000', 'FT26244000001')], '1121.VCB')).body.counts).toMatchObject({ new: 0, duplicate: 1 });
-      // The file names no account number: nothing is stored.
-      expect(await statementFile(fileRows(), null)).toEqual({ outcome: 'unmapped', accountNumber: null });
-      expect((await stored('1121.VCB')).length).toBe(after.length);
-    });
-
-    it('writes nothing for an account number no one mapped, and nothing for a file with an unreadable row', async () => {
-      const before = (await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n)) as string;
-      const other = await statementFile([row('05/09/2026', '1000', '', '', 'FT-OTHER-1')], '009900000999');
-      expect(other).toEqual({ outcome: 'unmapped', accountNumber: '009900000999' });
-      // A mapped account, but a row whose date is no day: refused whole, with its row number.
-      const bad = await statementFile([row('05/09/2026', '1000', '', '', 'FT-BAD-1'), row('not a date', '1000', '', '', 'FT-BAD-2')]);
-      expect(bad).toMatchObject({ outcome: 'refused', code: 'BANK_IMPORT_INVALID', rows: [expect.any(Number)] });
-      expect((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n))).toBe(before);
-    });
-
-    // An .xlsx statement is stored as a ZIP: its read is recorded with the statement flag, shows as imported, and a read
-    // that failed because the account was not mapped yet can be asked for again.
-    it('records the read of a statement stored as a ZIP, shows it as imported, and lets a failed read be asked for again', async () => {
-      const ownerActor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: owner.session, mfaAt: null };
+    const lineCount = async () => Number((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n)));
+    const status = async (fileId: string) =>
+      ((await rpc('files/recent', await tokenFor(owner), {})).body as Array<{ id: string; status: string; error: string | null; statement: Record<string, unknown> | null; canReextract: boolean }>).find((f) => f.id === fileId);
+    // A file stored as a ZIP, as an emailed .xlsx is, and its read recorded the way the worker records it.
+    async function ingestZip(): Promise<string> {
       const bytes = new TextEncoder().encode(`PK-sao-ke-${randomUUID()}`);
       const sha256 = sha256Hex(bytes);
       const { fileId } = await api.execute<{ fileId: string }>(
@@ -823,42 +793,139 @@ suite('bank statement import (#326)', () => {
         { filename: 'sao-ke.zip', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), source: 'upload' },
         { actor: ownerActor, orgId },
       );
-      const record = (fields: Record<string, unknown>) =>
-        worker.execute('kernel.extraction.record', { fileId, method: 'unsupported', checks: [], proposal: null, result: null, error: null, ...fields }, { actor: FILE_ACTOR, orgId });
-      const status = async () => ((await rpc('files/recent', await tokenFor(owner), {})).body as Array<{ id: string; status: string; error: string | null; statement: unknown; canReextract: boolean }>).find((f) => f.id === fileId);
+      return fileId;
+    }
+    const recordRead = (fileId: string, fields: Record<string, unknown>) =>
+      worker.execute('kernel.extraction.record', { fileId, method: 'unsupported', checks: [], proposal: null, result: null, error: null, ...fields }, { actor: WORKER, orgId });
+    async function stagedFile(rows: BankStatementRow[]): Promise<string> {
+      const outcome = await stage(rows);
+      if (outcome.outcome !== 'staged') throw new Error(`not staged: ${outcome.outcome}`);
+      const fileId = await ingestZip();
+      await recordRead(fileId, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+      return fileId;
+    }
+    const confirm = async (fileId: string, who: Account = member, org = slug) => rpc('bank/statementConfirm', await tokenFor(who), { fileId, idempotencyKey: randomUUID() }, org);
+    const reject = async (fileId: string, who: Account = member, org = slug) => rpc('bank/statementReject', await tokenFor(who), { fileId, idempotencyKey: randomUUID() }, org);
+
+    it('stages the statement of the mapped account with its summary, and stores no line', async () => {
+      connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng sao kê tệp' })).body.connectionId);
+      // The account is listed with the spaces a bank prints; the file's number is its digits.
+      await admin((c) =>
+        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '1988 0001 234', 'TK thử']),
+      );
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: '1988 0001 234', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      mappingId = String(mapped.body.feedAccountId);
+      const before = await stored('1121.VCB');
+      const outcome = await stage(rowsOf('STAGE'));
+      expect(outcome).toMatchObject({
+        outcome: 'staged',
+        summary: { state: 'staged', bankAccount: '1121.VCB', accountNumber: NUMBER, lines: 3, newLines: 3, duplicateLines: 0, from: '2026-09-01', to: '2026-09-03', totalIn: '2000000', totalOut: '861000' },
+      });
+      // Nothing is stored and no dedupe key is taken: a staged statement is only a question.
+      expect(await stored('1121.VCB')).toEqual(before);
+      // The file names no account number, or one no one mapped: nothing to stage.
+      expect(await stage(rowsOf('NONE'), null)).toEqual({ outcome: 'unmapped', accountNumber: null });
+      expect(await stage(rowsOf('NONE'), '009900000999')).toEqual({ outcome: 'unmapped', accountNumber: '009900000999' });
+      // A row whose date is no day refuses the whole file, with its row number.
+      expect(await stage([row('05/09/2026', '1000', '', '', 'FT-BAD-1'), row('not a date', '1000', '', '', 'FT-BAD-2')])).toMatchObject({ outcome: 'refused', code: 'BANK_IMPORT_INVALID', rows: [expect.any(Number)] });
+      expect(await stored('1121.VCB')).toEqual(before);
+    });
+
+    it('writes no line before a member imports a statement, and stores its lines once after', async () => {
+      const rows = rowsOf('APPROVE');
+      const fileId = await stagedFile(rows);
+      const before = await lineCount();
+      // Read, but not imported: the Inbox shows it waiting with what a member needs to decide.
+      expect(await status(fileId)).toMatchObject({
+        status: 'staged',
+        statement: { state: 'staged', bankAccount: '1121.VCB', lines: 3, newLines: 3, duplicateLines: 0, from: '2026-09-01', to: '2026-09-03', totalIn: '2000000', totalOut: '861000' },
+      });
+      expect(await lineCount()).toBe(before);
+      // A viewer, and another org, cannot decide it.
+      expect((await confirm(fileId, viewer)).status).toBe(403);
+      expect(await confirm(fileId, outsider, otherSlug)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      expect(await lineCount()).toBe(before);
+      // A member imports it: its three lines appear, on the mapped account, with the import's own keys.
+      const done = await confirm(fileId);
+      expect(done.status).toBe(200);
+      expect(done.body.counts).toMatchObject({ new: 3, duplicate: 0 });
+      expect(await lineCount()).toBe(before + 3);
+      expect((await stored('1121.VCB')).filter((l) => l.dedupe_key?.startsWith('ref:FT-APPROVE-')).length).toBe(3);
+      expect(await status(fileId)).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 3, duplicateLines: 0 }, canReextract: false });
+      // Deciding it again stores nothing more, and the browser import of the same lines finds them there.
+      expect(await confirm(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      expect(await reject(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      expect(await lineCount()).toBe(before + 3);
+      expect((await importFile(rows, '1121.VCB')).body.counts).toMatchObject({ new: 0, duplicate: 3 });
+      // The rows are no longer held with the read.
+      expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 AND result ? \'rows\'', [orgId, fileId])).rows)).toEqual([]);
+    });
+
+    it('stores nothing for a statement a member skips, and leaves its dedupe keys free for the real lines', async () => {
+      // A forged statement, as anyone who knows the address could send it, with the references the real lines will have.
+      const rows = rowsOf('FORGED');
+      const fileId = await stagedFile(rows);
+      const before = await lineCount();
+      expect((await reject(fileId, viewer)).status).toBe(403);
+      const skipped = await reject(fileId);
+      expect(skipped.status).toBe(200);
+      expect(await status(fileId)).toMatchObject({ status: 'dismissed', statement: { state: 'rejected' }, canReextract: true });
+      expect(await lineCount()).toBe(before);
+      expect(await confirm(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      // The real lines (the same references, from the feed or a genuine file) land as new: nothing took their keys.
+      expect((await importFile(rows, '1121.VCB')).body.counts).toMatchObject({ new: 3, duplicate: 0 });
+      expect(await lineCount()).toBe(before + 3);
+      expect(
+        (await worker.execute<BankImportResult>('finance.bank.ingest', { bankAccount: '1121.VCB', legalEntityId: await defaultEntity(), source: 'sandbox', lines: [feedLine('2026-09-04', '1000', 'FT-FORGED-4')] }, { actor: SYSTEM, orgId })).counts,
+      ).toMatchObject({ new: 1 });
+    });
+
+    it('imports to the account the mapping names now, and refuses once the mapping is gone', async () => {
+      const fileId = await stagedFile(rowsOf('MAPPING'));
+      const before = await lineCount();
+      expect((await feed('unmap', owner, { feedAccountId: mappingId, idempotencyKey: randomUUID() })).status).toBe(200);
+      expect(await confirm(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_MAPPING_CHANGED' } });
+      expect(await lineCount()).toBe(before);
+      // The file still waits: the owner can map the account again and import, or skip it.
+      expect(await status(fileId)).toMatchObject({ status: 'staged' });
+      const remapped = await feed('map', owner, { connectionId, externalAccountId: '1988 0001 234', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(remapped.status).toBe(200);
+      mappingId = String(remapped.body.feedAccountId);
+      expect((await confirm(fileId)).body.counts).toMatchObject({ new: 3 });
+      expect(await lineCount()).toBe(before + 3);
+    });
+
+    // An .xlsx statement is stored as a ZIP: its read is recorded with the statement flag, and a read that failed because
+    // the account was not mapped yet can be asked for again.
+    it('records the read of a statement stored as a ZIP, and lets a failed read be asked for again', async () => {
+      const fileId = await ingestZip();
       // Without the statement flag a ZIP is still never read as a document; the flag is for a statement run alone.
-      await expect(record({ status: 'failed', error: 'x' })).rejects.toMatchObject({ code: 'ARCHIVE_NOT_READ' });
-      await expect(record({ status: 'failed', error: 'x', statement: true, method: 'archive' })).rejects.toThrow();
+      await expect(recordRead(fileId, { status: 'failed', error: 'x' })).rejects.toMatchObject({ code: 'ARCHIVE_NOT_READ' });
+      await expect(recordRead(fileId, { status: 'failed', error: 'x', statement: true, method: 'archive' })).rejects.toThrow();
       // Unmapped when first read: a failed read with the reason, which may be read again.
-      await record({ status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: true });
-      expect(await status()).toMatchObject({ status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: null, canReextract: true });
+      await recordRead(fileId, { status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: true });
+      expect(await status(fileId)).toMatchObject({ status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: null, canReextract: true });
       const again = await rpc('files/reextract', await tokenFor(owner), { fileId, idempotencyKey: randomUUID() });
       expect(again.status).toBe(200);
       expect(again.body.version).toBe(2);
-      // The re-read lands on that run, and the file shows what it brought.
-      await record({
-        version: 2,
-        status: 'done',
-        statement: true,
-        result: { kind: 'bank_statement', summary: { bankAccount: '1121.VCB', importId: randomUUID(), newLines: 3, duplicateLines: 1 } },
-        summary: 'Đã nhập sao kê tài khoản 1121.VCB: 3 dòng mới, 1 dòng đã có',
-      });
-      expect(await status()).toMatchObject({ status: 'imported', error: null, statement: { bankAccount: '1121.VCB', newLines: 3, duplicateLines: 1 }, canReextract: false });
+      // The re-read lands on that run, and the file waits for a member again.
+      const rows = rowsOf('REREAD');
+      const outcome = await stage(rows);
+      if (outcome.outcome !== 'staged') throw new Error('expected staged');
+      await recordRead(fileId, { version: 2, status: 'done', statement: true, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+      expect(await status(fileId)).toMatchObject({ status: 'staged', statement: { state: 'staged', lines: 3 }, canReextract: true });
       // A ZIP that was opened as an archive is still never read again.
-      const archiveBytes = new TextEncoder().encode(`PK-archive-${randomUUID()}`);
-      const archiveSha = sha256Hex(archiveBytes);
-      const archive = await api.execute<{ fileId: string }>(
-        'kernel.file.ingest',
-        { filename: 'hoa-don.zip', contentType: 'application/zip', sizeBytes: archiveBytes.byteLength, sha256: archiveSha, storageKey: fileKey(orgId, archiveSha), generation: contentGeneration(archiveSha), source: 'upload' },
-        { actor: ownerActor, orgId },
-      );
-      expect(await rpc('files/reextract', await tokenFor(owner), { fileId: archive.fileId, idempotencyKey: randomUUID() })).toMatchObject({ status: 409 });
+      const archive = await ingestZip();
+      expect(await rpc('files/reextract', await tokenFor(owner), { fileId: archive, idempotencyKey: randomUUID() })).toMatchObject({ status: 409 });
     });
 
-    it('is the worker command alone: no person, and no other org, can use it', async () => {
-      await expect(
-        api.execute('finance.bank.statement_file', { fileId: randomUUID(), filename: 'x.xlsx', accountNumber: NUMBER, rows: fileRows() }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId }),
-      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    it('is decided by users alone: the worker cannot import or skip a statement', async () => {
+      const fileId = await stagedFile(rowsOf('WORKER'));
+      await expect(worker.execute('finance.bank.statement_confirm', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(worker.execute('finance.bank.statement_reject', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      await expect(worker.execute('kernel.extraction.statement_state', { fileId, state: 'imported' }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      expect(await status(fileId)).toMatchObject({ status: 'staged' });
     });
   });
 });

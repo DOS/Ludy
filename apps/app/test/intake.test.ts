@@ -70,15 +70,16 @@ describe('bulk intake state', () => {
     expect(summarize(items)).toEqual({ total: 3, settled: 3, proposed: 1, imported: 0, duplicate: 1, failed: 1 });
   });
 
-  it('settles a bank statement read into bank lines, apart from the proposals (#2142)', () => {
-    let items = [newItem('a', 'sao-ke-t9.xlsx'), newItem('b', 'hd.xml')];
-    items = [uploaded(items[0]!, { fileId: ID(1), duplicate: false }), uploaded(items[1]!, { fileId: ID(2), duplicate: false })];
-    expect(pendingIds(items)).toEqual([ID(1), ID(2)]);
-    items = applyBatch(items, [batchFile(ID(1), 'imported'), batchFile(ID(2), 'proposed')]);
-    expect(items.map((i) => i.state)).toEqual(['imported', 'proposed']);
+  it('settles a bank statement waiting for a member, one imported and one skipped, apart from the proposals (#2142)', () => {
+    let items = [newItem('a', 'sao-ke-t9.xlsx'), newItem('b', 'hd.xml'), newItem('c', 'sao-ke-t10.csv'), newItem('d', 'sao-ke-t11.csv')];
+    items = items.map((item, i) => uploaded(item, { fileId: ID(i + 1), duplicate: false }));
+    expect(pendingIds(items)).toEqual([ID(1), ID(2), ID(3), ID(4)]);
+    items = applyBatch(items, [batchFile(ID(1), 'imported'), batchFile(ID(2), 'proposed'), batchFile(ID(3), 'staged'), batchFile(ID(4), 'dismissed')]);
+    expect(items.map((i) => i.state)).toEqual(['imported', 'proposed', 'staged', 'dismissed']);
     expect(pendingIds(items)).toEqual([]);
     expect(isSettled(items)).toBe(true);
-    expect(summarize(items)).toEqual({ total: 2, settled: 2, proposed: 1, imported: 1, duplicate: 0, failed: 0 });
+    // A statement waiting for a member waits for a decision, as a proposal does.
+    expect(summarize(items)).toEqual({ total: 4, settled: 4, proposed: 2, imported: 1, duplicate: 0, failed: 0 });
   });
 
   it("carries a proposed file's proposal status, so its chip tells posted from waiting (#2009)", () => {

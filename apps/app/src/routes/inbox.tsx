@@ -14,6 +14,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
+import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -499,6 +500,7 @@ export function InboxPage() {
       )}
 
       <IntakePanel intake={intake} />
+      {config.modules.includes('finance') && <StagedStatements files={files.data ?? []} canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
       {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
       {config.modules.includes('social') && <SocialAttention slug={slug} />}

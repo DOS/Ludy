@@ -1,22 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A bank statement that arrives as a file (#2142): forwarded to the org's inbound address or dropped in the Inbox as an
-// .xlsx or CSV, read in the parsing sandbox (kind bank_statement, the browser import's header detection) and stored as
-// the bank lines of the account its own account number names. Nothing here is a proposal: the lines are the bank's own
-// figures, stored as an import's are (finance.bank.import), so a line a statement and a feed both carry, or a file sent
-// twice, is stored once. The account is never chosen by the file's sender: the account number in the file must be one an
-// owner or admin mapped to a bank account in Settings (finance.bank_feed.map, #2099); a file whose number is not mapped
-// is an Inbox exception (a failed read with the reason) and nothing is written.
-// - finance.bank.statement_file (system) maps the account number, stores the lines and answers what became of the file.
-// - readStatementFile is the worker's side: the sandbox's answer is checked again here, then the command runs and the
-//   file's read is recorded (kernel.extraction.record) as done (imported) or failed (the exception).
+// .xlsx or CSV, read in the parsing sandbox (kind bank_statement, the browser import's header detection) and STAGED: the
+// lines are kept with the file's read, none is stored and no dedupe key is taken, until a member imports them. An email
+// carries no proof of who sent it, so it can never write bank lines by itself; a forged statement a member skips leaves
+// every key free for the real lines.
+// - The account is never chosen by the file's sender: the account number in the file must be one an owner or admin mapped
+//   to a bank account in Settings (finance.bank_feed.map, #2099); a file whose number is not mapped is an Inbox
+//   exception (a failed read with the reason) and nothing is staged.
+// - finance.bank.statement_stage (a system query, the worker's) maps the account number, checks the lines against the
+//   account (writing nothing) and answers the summary the Inbox shows: account, lines, period, totals.
+// - readStatementFile is the worker's side: the sandbox's answer is checked again, then the read is recorded
+//   (kernel.extraction.record) as done (staged, with the rows) or failed (the exception).
+// - finance.bank.statement_confirm (owners, admins, members; R1) stores the staged lines once through the import's own path
+//   (the same checks, keys and account lock) and marks the read imported, in one transaction; finance.bank.statement_reject
+//   skips it, dropping the rows. Both run on the staged run only, locked, so two members cannot both decide it.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
-import { BANK_IMPORT_MAX_ROWS, statementAmountText, zBankStatementRow, zId, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
-import { DomainError, defineCommand, readVerified, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { importStatement } from './bank.ts';
+import type { MemberRole } from '@crove/db';
+import { BANK_IMPORT_MAX_ROWS, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
+import { Decimal } from '@crove/l10n-vn';
+import { importStatement, previewStatement } from './bank.ts';
+import { resolveLegalEntity } from './legal-entity.ts';
 
 export const BANK_STATEMENT_ACTOR = { type: 'system' as const, component: 'finance.bank_statement' };
+// Importing a statement is data entry, like uploading invoices: the browser import's roles.
+const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
 const ZIP = 'application/zip';
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -30,55 +40,150 @@ const zStatementFile = z.strictObject({
   rows: z.array(zBankStatementRow).min(1).max(BANK_IMPORT_MAX_ROWS),
 });
 
+// What the stage keeps with the file's read, next to the summary the Inbox shows: where the lines go when a member
+// imports them, and the number that named the account, so the mapping is looked at again then.
+const zStagedSummary = zStatementSummary.extend({ accountNumber: z.string(), legalEntityId: zId, importId: zId.optional() });
+type StagedSummary = z.infer<typeof zStagedSummary>;
+const zStagedResult = z.object({ kind: z.literal('bank_statement'), summary: zStagedSummary, rows: z.array(zBankStatementRow).optional() });
+
 // What became of the file. unmapped: no mapping for its account number (or the file names none), ambiguous: the number is
-// mapped to two different bank accounts or entities, refused: the lines could not be stored (an invalid row, an account
-// that is gone or stopped). Only imported writes anything.
-export type StatementFileOutcome =
-  | { outcome: 'imported'; importId: string; bankAccount: string; legalEntityId: string; counts: BankImportResult['counts'] }
+// mapped to two different bank accounts or entities, refused: the lines would not be accepted (an invalid row, an account
+// that is gone or stopped). Only staged goes on, and nothing is written in any case.
+export type StatementStageOutcome =
+  | { outcome: 'staged'; summary: StagedSummary }
   | { outcome: 'unmapped'; accountNumber: string | null }
   | { outcome: 'ambiguous'; accountNumber: string }
   | { outcome: 'refused'; code: string; message: string; rows: number[] };
 
-// Refusals the file can be told about; anything else is a fault and the job is retried.
-const REFUSED_CODES: ReadonlySet<string> = new Set(['BANK_IMPORT_INVALID', 'NOT_A_BANK_ACCOUNT', 'ACCOUNT_INACTIVE']);
+type Place = { kind: 'none' } | { kind: 'ambiguous' } | { kind: 'one'; bankAccount: string; legalEntityId: string };
 
-export const bankStatementFile = defineCommand({
-  name: 'finance.bank.statement_file',
+// The bank account and legal entity an account number is mapped to. The mapping's account number is the digits of its
+// external account id: banks print it with spaces or dots.
+async function mappedPlace(ctx: QueryContext, accountNumber: string): Promise<Place> {
+  const mapped = await ctx.trx
+    .selectFrom('crove_finance.bank_feed_account')
+    .select(['bank_account', 'legal_entity_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${accountNumber}`)
+    .execute();
+  const places = new Map(mapped.map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
+  if (places.size > 1) return { kind: 'ambiguous' };
+  const [place] = [...places.values()];
+  return place ? { kind: 'one', bankAccount: place.bank_account, legalEntityId: place.legal_entity_id } : { kind: 'none' };
+}
+
+// Refusals the file can be told about; anything else is a fault and the job is retried.
+const REFUSED_CODES: ReadonlySet<string> = new Set(['NOT_A_BANK_ACCOUNT', 'ACCOUNT_INACTIVE']);
+
+export const bankStatementStage = defineQuery({
+  name: 'finance.bank.statement_stage',
   input: zStatementFile,
+  access: 'system',
+  handler: async (ctx, input): Promise<StatementStageOutcome> => {
+    if (input.accountNumber === null) return { outcome: 'unmapped', accountNumber: null };
+    const place = await mappedPlace(ctx, input.accountNumber);
+    if (place.kind === 'none') return { outcome: 'unmapped', accountNumber: input.accountNumber };
+    if (place.kind === 'ambiguous') return { outcome: 'ambiguous', accountNumber: input.accountNumber };
+    try {
+      const preview = await previewStatement(ctx, { bankAccount: place.bankAccount, filename: input.filename, rows: input.rows, legalEntityId: place.legalEntityId }, place.legalEntityId);
+      if (!preview.ok) {
+        return { outcome: 'refused', code: 'BANK_IMPORT_INVALID', message: 'Sao kê có dòng không đọc được', rows: preview.rows.filter((r) => r.errors.length > 0).map((r) => r.rowNo).slice(0, 20) };
+      }
+      let totalIn = new Decimal(0);
+      let totalOut = new Decimal(0);
+      for (const row of preview.rows) {
+        if (row.amount === null) continue;
+        const amount = new Decimal(row.amount);
+        if (amount.isNegative()) totalOut = totalOut.plus(amount.abs());
+        else totalIn = totalIn.plus(amount);
+      }
+      return {
+        outcome: 'staged',
+        summary: {
+          state: 'staged',
+          accountNumber: input.accountNumber,
+          bankAccount: place.bankAccount,
+          legalEntityId: place.legalEntityId,
+          filename: input.filename,
+          lines: preview.rows.length,
+          newLines: preview.counts.new + preview.counts.ambiguous,
+          duplicateLines: preview.counts.duplicate,
+          from: preview.from,
+          to: preview.to,
+          totalIn: totalIn.toFixed(),
+          totalOut: totalOut.toFixed(),
+        },
+      };
+    } catch (error) {
+      if (error instanceof DomainError && REFUSED_CODES.has(error.code)) return { outcome: 'refused', code: error.code, message: error.message, rows: [] };
+      throw error;
+    }
+  },
+});
+
+// The newest run of a file, locked: the run a member decides. Null when the file has no run, or its newest run is not a
+// staged statement (decided already, read again, or no statement at all).
+async function stagedRun(ctx: QueryContext, fileId: string): Promise<{ summary: StagedSummary; rows: BankStatementRow[] } | null> {
+  const run = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select(['result', 'status'])
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .orderBy('version', 'desc')
+    .limit(1)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!run || run.status !== 'done') return null;
+  const parsed = zStagedResult.safeParse(run.result);
+  if (!parsed.success || parsed.data.summary.state !== 'staged' || !parsed.data.rows) return null;
+  return { summary: parsed.data.summary, rows: parsed.data.rows };
+}
+
+const notStaged = () => new DomainError('STATEMENT_NOT_STAGED', 409, 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
+
+export const bankStatementConfirm = defineCommand({
+  name: 'finance.bank.statement_confirm',
+  input: z.strictObject({ fileId: zId }),
   // Records the bank's own figures and posts nothing, as an import does (R1).
   risk: 'R1',
   sideEffect: 'internal',
-  access: 'system',
-  handler: async (ctx, input): Promise<StatementFileOutcome> => {
-    if (input.accountNumber === null) return { outcome: 'unmapped', accountNumber: null };
-    // The mapping's account number is the digits of the external account id: banks print it with spaces or dots.
-    const mapped = await ctx.trx
-      .selectFrom('crove_finance.bank_feed_account')
-      .select(['bank_account', 'legal_entity_id'])
-      .where('org_id', '=', ctx.orgId)
-      .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${input.accountNumber}`)
-      .execute();
-    const places = new Map(mapped.map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
-    if (places.size === 0) return { outcome: 'unmapped', accountNumber: input.accountNumber };
-    if (places.size > 1) return { outcome: 'ambiguous', accountNumber: input.accountNumber };
-    const [place] = [...places.values()];
-    if (!place) return { outcome: 'unmapped', accountNumber: input.accountNumber };
-    try {
-      const result = await importStatement(
-        ctx,
-        { bankAccount: place.bank_account, filename: input.filename, rows: input.rows, legalEntityId: place.legal_entity_id },
-        place.legal_entity_id,
-        input.fileId,
-      );
-      return { outcome: 'imported', importId: result.importId, bankAccount: place.bank_account, legalEntityId: place.legal_entity_id, counts: result.counts };
-    } catch (error) {
-      // Raised before anything is written (the account check, the file's own check), so the transaction is whole.
-      if (error instanceof DomainError && REFUSED_CODES.has(error.code)) {
-        const rows = (error.details as { rows?: unknown } | undefined)?.rows;
-        return { outcome: 'refused', code: error.code, message: error.message, rows: Array.isArray(rows) ? rows.filter((r): r is number => typeof r === 'number').slice(0, 20) : [] };
-      }
-      throw error;
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<BankImportResult> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhập được sao kê');
+    const staged = await stagedRun(ctx, input.fileId);
+    if (!staged) throw notStaged();
+    // The mapping is looked at again: an owner may have removed or moved it since the file was read, and the lines go to
+    // the account it names now, never to one the file's sender or an old reading chose.
+    const place = await mappedPlace(ctx, staged.summary.accountNumber);
+    if (place.kind !== 'one' || place.bankAccount !== staged.summary.bankAccount || place.legalEntityId !== staged.summary.legalEntityId) {
+      throw new DomainError('STATEMENT_MAPPING_CHANGED', 409, 'Số tài khoản của sao kê không còn liên kết với tài khoản ngân hàng này; hãy kiểm tra Cài đặt rồi đọc lại tệp');
     }
+    const legalEntityId = await resolveLegalEntity(ctx, place.legalEntityId);
+    const result = await importStatement(ctx, { bankAccount: place.bankAccount, filename: staged.summary.filename, rows: staged.rows, legalEntityId }, legalEntityId, input.fileId);
+    await ctx.run('kernel.extraction.statement_state', {
+      fileId: input.fileId,
+      state: 'imported',
+      newLines: result.counts.new + result.counts.ambiguous,
+      duplicateLines: result.counts.duplicate,
+      importId: result.importId,
+    });
+    return result;
+  },
+});
+
+export const bankStatementReject = defineCommand({
+  name: 'finance.bank.statement_reject',
+  input: z.strictObject({ fileId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: IMPORTERS,
+  handler: async (ctx, input): Promise<{ fileId: string }> => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới bỏ qua được sao kê');
+    if (!(await stagedRun(ctx, input.fileId))) throw notStaged();
+    // Nothing was stored: the rows are dropped with the read, and every dedupe key stays free.
+    await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'rejected' });
+    ctx.audit({ fileId: input.fileId });
+    return { fileId: input.fileId };
   },
 });
 
@@ -113,7 +218,7 @@ export function unmappedMessage(accountNumber: string | null): string {
     : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; hãy liên kết trong Cài đặt, mục nguồn giao dịch ngân hàng, rồi bấm Đọc lại ở tệp này`;
 }
 
-function failureMessage(outcome: Exclude<StatementFileOutcome, { outcome: 'imported' }>): string {
+function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'staged' }>): string {
   switch (outcome.outcome) {
     case 'unmapped':
       return unmappedMessage(outcome.accountNumber);
@@ -141,11 +246,11 @@ export function statementFileRows(rows: ReadonlyArray<{ rowNo: number; date: str
 
 // Tries to read a received file as a bank statement, before it is read as an invoice or opened as an archive: an .xlsx
 // arrives as a ZIP (its content is what tells it from an archive of invoices), a CSV with its own type. handled is true
-// when the file's read is recorded here (imported or the exception), false when it is no statement and the caller goes
+// when the file's read is recorded here (staged or the exception), false when it is no statement and the caller goes
 // on as before. `attempt` is the job's retry count: a sandbox that cannot answer throws and the job is retried; a
 // timeout or memory answer is retried EXTRACT_LIMIT_RETRIES times first. `version` is a re-read someone asked for (the
 // "Đọc lại" button, for instance once the account is mapped): it runs only while that run is still pending, and its
-// outcome is recorded on that run.
+// outcome is recorded on that run. Nothing is stored in the account's lines here, however often a job runs.
 export async function readStatementFile(deps: StatementFileDeps, orgId: string, fileId: string, attempt = 0, version?: number): Promise<{ handled: boolean }> {
   const actor = BANK_STATEMENT_ACTOR;
   const file = await deps.runtime.query<StatementFileSource | null>(
@@ -202,24 +307,22 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
     await record('failed', { error: TOO_MANY });
     return { handled: true };
   }
-  const outcome = await deps.runtime.execute<StatementFileOutcome>(
-    'finance.bank.statement_file',
-    { fileId, filename: file.filename.slice(0, 255), accountNumber: statement.accountNumber, rows: statementFileRows(statement.rows) },
-    // One key per run of the file: a job that stored the lines and then failed before recording the read (or was killed)
-    // finds the stored answer instead of storing again, which lines with neither a reference nor a balance would not
-    // guard against (the import marks them ambiguous and stores them). A re-read is another run, so it asks afresh.
-    { actor, orgId, idempotencyKey: `bank-statement-file:${fileId}:${version ?? 0}` },
+  const rows = statementFileRows(statement.rows);
+  // A read-only question: nothing is stored whatever happens to this job.
+  const outcome = await deps.runtime.query<StatementStageOutcome>(
+    'finance.bank.statement_stage',
+    { fileId, filename: file.filename.slice(0, 255), accountNumber: statement.accountNumber, rows },
+    { actor, orgId },
   );
-  if (outcome.outcome !== 'imported') {
+  if (outcome.outcome !== 'staged') {
     await record('failed', { error: failureMessage(outcome).slice(0, 2000) });
     return { handled: true };
   }
-  const { counts } = outcome;
-  const newLines = counts.new + counts.ambiguous;
+  const { summary } = outcome;
   await record('done', {
     error: null,
-    result: { kind: 'bank_statement', summary: { bankAccount: outcome.bankAccount, importId: outcome.importId, newLines, duplicateLines: counts.duplicate } },
-    summary: `Đã nhập sao kê tài khoản ${outcome.bankAccount}: ${newLines} dòng mới, ${counts.duplicate} dòng đã có`,
+    result: { kind: 'bank_statement', summary, rows },
+    summary: `Sao kê tài khoản ${summary.bankAccount} chờ nhập: ${summary.lines} dòng, ${summary.newLines} dòng mới`,
   });
   return { handled: true };
 }

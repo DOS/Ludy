@@ -259,6 +259,9 @@ export const KERNEL_ERROR_CODES = [
   // Bank statements (#326).
   'NOT_A_BANK_ACCOUNT',
   'BANK_IMPORT_INVALID',
+  // A statement read from a file waits for a member (#2142).
+  'STATEMENT_NOT_STAGED',
+  'STATEMENT_MAPPING_CHANGED',
   // Bank feeds (ADR-0039, #2044).
   'BANK_FEED_NOT_FOUND',
   'BANK_FEED_INACTIVE',

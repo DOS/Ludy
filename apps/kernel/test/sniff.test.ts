@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { isCsvName, safeFilename, sniffType } from '../src/sniff.ts';
-import { statementCsv } from '../../extract/test/statement-fixture.ts';
-
 const bytes = (...values: number[]) => new Uint8Array(values);
 const text = (value: string) => new TextEncoder().encode(value);
 
@@ -24,7 +22,9 @@ describe('upload type detection', () => {
     const utf16 = new Uint8Array([0xff, 0xfe, ...[...'Date\tAmount\tRef\n01/09/2026\t100000\tFT1\n'].flatMap((c) => [c.charCodeAt(0), 0])]);
     expect(sniffType(utf16)).toBe('text/csv');
     // A statement as banks write it: a title and the account above the table, which have no delimiter.
-    expect(sniffType(statementCsv())).toBe('text/csv');
+    expect(
+      sniffType(text('SAO KÊ TÀI KHOẢN\r\nSố tài khoản: 19880001234\r\n\r\nNgày giao dịch,Diễn giải,Ghi nợ,Ghi có,Số dư\r\n01/09/2026,Thu tiền hàng,,2000000,12000000\r\n')),
+    ).toBe('text/csv');
     // Prose, a single line, and binary bytes are no CSV.
     expect(sniffType(text('Xin chào\nĐây là một thư\n'))).toBeNull();
     expect(sniffType(text('a,b,c\n'))).toBeNull();
