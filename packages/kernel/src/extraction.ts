@@ -429,13 +429,38 @@ export const recordExtraction = defineCommand({
     } else {
       const pending = await ctx.trx
         .selectFrom('crove_kernel.extraction')
-        .select(['id', 'version', 'status', 'requested_by'])
+        .select(['id', 'version', 'status', 'requested_by', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('file_id', '=', input.fileId)
         .where('version', '=', input.version)
         .forUpdate()
         .executeTakeFirst();
       if (!pending || pending.status !== 'pending') return { extractionId: pending?.id ?? null, proposalId: null, duplicate: true };
+      // A re-read of a bank statement whose account is now mapped in another legal entity than the run's (#2142). A run
+      // keeps its entity and the statement's account and totals must not reach members of the run's entity, so this run is
+      // closed as failed, with nothing of the statement, and the reading is recorded as a new run in the account's entity.
+      if (
+        original.statement === true &&
+        input.status === 'done' &&
+        original.legalEntityId !== undefined &&
+        pending.legal_entity_id !== null &&
+        pending.legal_entity_id !== original.legalEntityId.toLowerCase()
+      ) {
+        await ctx.trx
+          .updateTable('crove_kernel.extraction')
+          .set({ method: 'unsupported', status: 'failed', result: null, checks: '[]', error: 'Sao kê thuộc sổ của pháp nhân khác; hãy xem lần đọc mới nhất', completed_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', pending.id)
+          .execute();
+        const moved = await ctx.trx
+          .insertInto('crove_kernel.extraction')
+          .values({ org_id: ctx.orgId, file_id: input.fileId, legal_entity_id: original.legalEntityId, ...outcome })
+          .returning(['id', 'version'])
+          .executeTakeFirstOrThrow();
+        ctx.audit({ version: moved.version, status: input.status, applied: true, moved_from_version: pending.version });
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
+        return { extractionId: moved.id, proposalId: null, duplicate: false };
+      }
       // The proposal is locked before the run's age is read, and the age is read on the clock at this moment
       // (clock_timestamp()), not at the start of the transaction: a decision that went through because the run was
       // stale either committed before this lock, and then the run is older still here, or waits for this command

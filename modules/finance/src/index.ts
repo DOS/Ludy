@@ -29,7 +29,7 @@ import { customersList } from './parties.ts';
 import { financeNotificationCommands } from './notifications.ts';
 
 export { aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
-export { NOT_A_STATEMENT, readStatementFile, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
+export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
 export {
   checkPortalList,
   firstPerOutcome,

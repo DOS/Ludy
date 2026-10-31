@@ -6311,6 +6311,7 @@ export const en = {
       files: {
         batch: 'Read the files of an upload',
         recent: 'List recent files',
+        staged: 'List bank statements waiting to be imported',
       },
       inbound: {
         receive: 'Receive an email',

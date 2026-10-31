@@ -67,7 +67,8 @@ export interface FileStatusRow {
   entryCount: number | null;
 }
 
-export type FileStatusFilter = { ids: readonly string[] } | { recent: number };
+// staged: the files whose newest run is a bank statement waiting for a member (#2142), however old, newest first.
+export type FileStatusFilter = { ids: readonly string[] } | { recent: number } | { staged: number };
 
 export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter): Promise<FileStatusRow[]> {
   if ('ids' in filter && filter.ids.length === 0) return [];
@@ -142,7 +143,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
     // uploaded as one and read.
     .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import']), eb('e.status', 'is not', null)]));
-  query = 'ids' in filter ? query.where('f.id', 'in', [...filter.ids]) : query.orderBy('f.created_at', 'desc').limit(filter.recent);
+  if ('ids' in filter) query = query.where('f.id', 'in', [...filter.ids]);
+  else if ('staged' in filter) query = query.where(sql<boolean>`(e.statement ->> 'state') = 'staged'`).orderBy('f.created_at', 'desc').limit(filter.staged);
+  else query = query.orderBy('f.created_at', 'desc').limit(filter.recent);
   const rows = await query.execute();
   // An executed purchase whose document was voided by a reversal (#165) may be read again.
   const voided = await voidedProposals(

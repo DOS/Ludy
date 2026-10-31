@@ -6311,6 +6311,7 @@ export const vi = {
       files: {
         batch: 'Xem các tệp của một lần tải lên',
         recent: 'Xem các tệp gần đây',
+        staged: 'Xem các sao kê ngân hàng đang chờ nhập',
       },
       inbound: {
         receive: 'Nhận thư gửi đến',

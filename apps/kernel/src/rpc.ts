@@ -1675,6 +1675,9 @@ export function createRpcHandler(
       recent: os.inbound.recent.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbound.recent', {}, { actor, orgId }))),
     },
     files: {
+      staged: os.files.staged.handler(({ context }) =>
+        inOrg(context, (orgId, actor) => runtime.query('kernel.files.staged', {}, { actor, orgId })),
+      ),
       recent: os.files.recent.handler(({ context }) =>
         inOrg(context, (orgId, actor) => runtime.query('kernel.files.recent', {}, { actor, orgId })),
       ),

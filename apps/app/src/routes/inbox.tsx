@@ -500,7 +500,7 @@ export function InboxPage() {
       )}
 
       <IntakePanel intake={intake} />
-      {config.modules.includes('finance') && <StagedStatements files={files.data ?? []} canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} />}
+      {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
       {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
       {config.modules.includes('social') && <SocialAttention slug={slug} />}

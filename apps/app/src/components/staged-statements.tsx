@@ -2,7 +2,7 @@
 // Bank statements that arrived as files and wait for a member (#2142): forwarded to the org's inbound address or dropped in
 // the Inbox. Nothing of them is stored until a member imports them, so a statement nobody sent in good faith costs nothing:
 // the card shows the account, the lines, the period and the totals, and two choices, import and skip.
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import type { FileStatus } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -13,10 +13,12 @@ import { toast } from '../lib/toast.ts';
 
 type Statement = NonNullable<FileStatus['statement']>;
 
-export function StagedStatements({ files, canDecide }: { files: readonly FileStatus[]; canDecide: boolean }) {
+export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean; refetchMs: number | false }) {
   const t = useTranslations('inbox.staged');
   const f = useFormat();
-  const staged = files.filter((file): file is FileStatus & { statement: Statement } => file.status === 'staged' && file.statement !== null);
+  // Asked apart from the recent files, which show only the newest: a statement waits however many files came since.
+  const listed = useQuery({ ...orpc.files.staged.queryOptions(), refetchInterval: refetchMs });
+  const staged = (listed.data ?? []).filter((file): file is FileStatus & { statement: Statement } => file.status === 'staged' && file.statement !== null);
   const settle = () => void queryClient.invalidateQueries();
   const confirm = useMutation(
     orpc.bank.statementConfirm.mutationOptions({

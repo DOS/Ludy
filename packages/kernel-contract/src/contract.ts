@@ -1251,6 +1251,9 @@ export const contract = {
   },
   files: {
     recent: oc.output(z.array(zFileStatus)),
+    // Every role: the bank statements read from files that wait for a member to import or skip them (#2142), newest first,
+    // however many files came since (recent lists only the newest).
+    staged: oc.output(z.array(zFileStatus)),
     // Every role: the status of the given files of the org, in the order asked (ids it cannot see are left out), and
     // for a ZIP archive the entries it was opened into, each with its own file's status (bulk intake, #314).
     batch: oc.input(z.object({ ids: z.array(zId).min(1).max(MAX_BATCH_FILES) })).output(z.array(zBatchFile)),

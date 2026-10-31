@@ -28,7 +28,8 @@ describe('upload type detection', () => {
     // Prose, a single line, and binary bytes are no CSV.
     expect(sniffType(text('Xin chào\nĐây là một thư\n'))).toBeNull();
     expect(sniffType(text('a,b,c\n'))).toBeNull();
-    expect(sniffType(text('Xin chào,\nCảm ơn bạn, hẹn gặp lại\n'))).toBeNull();
+    // A statement with two columns, a date and an amount, under a title and an account line.
+    expect(sniffType(text('Số tài khoản: 19880001234\nNgày,Số tiền\n01/09/2026,1500000\n'))).toBe('text/csv');
     expect(sniffType(bytes(0x61, 0x2c, 0x62, 0x0a, 0x01, 0x2c, 0x02, 0x0a))).toBeNull();
     expect(isCsvName('Sao-ke.CSV')).toBe(true);
     expect(isCsvName('sao-ke.csv.exe')).toBe(false);

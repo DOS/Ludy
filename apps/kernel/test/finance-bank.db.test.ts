@@ -959,6 +959,36 @@ suite('bank statement import (#326)', () => {
       expect(await stage(Array.from({ length: 300 }, (_, i) => ({ ...row('01/09/2026', '1000', '', '', `FT-MID-${i}`), description: 'x'.repeat(1000) })))).toMatchObject({ outcome: 'staged' });
     });
 
+    it('lists the statements that wait however many files came since, and records a re-read in the entity its account is mapped to', async () => {
+      const staged = await stagedFile(rowsOf('LIST'));
+      const waiting = async () => ((await rpc('files/staged', await tokenFor(viewer), {})).body as Array<{ id: string; status: string }>).map((f) => f.id);
+      expect(await waiting()).toContain(staged);
+      // Not the ones a member decided.
+      expect((await reject(staged)).status).toBe(200);
+      expect(await waiting()).not.toContain(staged);
+      // An account mapped to another legal entity than the one the first (failed) read belongs to.
+      const branch = await admin(
+        async (c) =>
+          (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh sao kê', 'branch', $2) RETURNING id`, [orgId, owner.userId])).rows[0]?.id as string,
+      );
+      await admin((c) =>
+        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '5566 7788 9900', 'TK chi nhánh']),
+      );
+      expect((await feed('map', owner, { connectionId, externalAccountId: '5566 7788 9900', bankAccount: '1121', legalEntityId: branch, idempotencyKey: randomUUID() })).status).toBe(200);
+      const fileId = await ingestZip();
+      await recordRead(fileId, { status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: true });
+      expect((await rpc('files/reextract', await tokenFor(owner), { fileId, idempotencyKey: randomUUID() })).status).toBe(200);
+      const rows = rowsOf('MOVED');
+      const outcome = await stage(rows, '55667788990');
+      if (outcome.outcome !== 'staged') throw new Error('expected staged');
+      expect(outcome.summary.legalEntityId).toBe(branch);
+      await recordRead(fileId, { version: 2, status: 'done', statement: true, legalEntityId: branch, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
+      // The run the account's entity sees is a new one; the pending run of the first entity is closed with nothing of the statement.
+      const runs = await admin(async (c) => (await c.query<{ version: number; status: string; legal_entity_id: string; has_result: boolean }>(`SELECT version, status, legal_entity_id, result IS NOT NULL AS has_result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
+      expect(runs.map((r) => [r.version, r.status, r.legal_entity_id === branch, r.has_result])).toEqual([[1, 'failed', false, false], [2, 'failed', false, false], [3, 'done', true, true]]);
+      expect(await waiting()).toContain(fileId);
+    });
+
     it('is decided by users alone: the worker cannot import or skip a statement', async () => {
       const fileId = await stagedFile(rowsOf('WORKER'));
       await expect(worker.execute('finance.bank.statement_confirm', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });

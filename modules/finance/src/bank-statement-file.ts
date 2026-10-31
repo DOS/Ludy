@@ -254,6 +254,16 @@ export function statementFileRows(rows: ReadonlyArray<{ rowNo: number; date: str
   }));
 }
 
+// Fails the pending re-read `version` of a bank statement with the reason, for a job that kept failing (#2142): the run
+// is a statement's, so a ZIP is let through, as for any record of a statement run.
+export function recordStatementReadFailure(runtime: Runtime, orgId: string, fileId: string, version: number, error: string) {
+  return runtime.execute(
+    'kernel.extraction.record',
+    { fileId, version, method: 'unsupported', status: 'failed', result: null, checks: [], error: error.slice(0, 2000), proposal: null, statement: true },
+    { actor: BANK_STATEMENT_ACTOR, orgId },
+  );
+}
+
 // Tries to read a received file as a bank statement, before it is read as an invoice or opened as an archive: an .xlsx
 // arrives as a ZIP (its content is what tells it from an archive of invoices), a CSV with its own type. handled is true
 // when the file's read is recorded here (staged or the exception), false when it is no statement and the caller goes
