@@ -543,6 +543,7 @@ export const en = {
     email: 'Email',
     phone: 'Phone (optional)',
     note: 'Note (optional)',
+    calendarNotice: 'Your name and the time of the appointment may be sent to the calendar provider of the person you are meeting (for example Google Calendar) to put this appointment on their calendar.',
     book: 'Book',
     back: 'Pick another time',
     waiting: 'Holding the time for you...',

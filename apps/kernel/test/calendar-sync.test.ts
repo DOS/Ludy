@@ -343,9 +343,36 @@ describe('write-back in the sweep', () => {
       },
     });
     expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
-    expect(a.writes).toEqual(['write ext1ext1ext1']);
+    // The second event fails the same way, so it is an outage: no more calls, and neither failure is counted.
+    expect(a.writes).toEqual(['write ext1ext1ext1', 'write ext3ext3ext3']);
     expect(records(calls)).toEqual([]);
     expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(true);
+  });
+
+  it('counts a failure that only one event has toward its attempts, and still writes the events behind it (#2163)', async () => {
+    const e3 = { ...upsert, eventId: 'e3', externalId: 'ext3ext3ext3' };
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, e3, remove] });
+    const a = adapter({
+      writeEvent: async (_secret, event) => {
+        a.writes.push(`write ${event.externalId}`);
+        return event.externalId === 'ext1ext1ext1' ? { failed: 'backendError', transient: true } : { ok: true };
+      },
+    });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(a.writes).toEqual(['write ext1ext1ext1', 'write ext3ext3ext3', 'remove ext2ext2ext2']);
+    // The failed event is recorded as an error once the next one has answered, before that one's own record.
+    expect(records(calls)).toEqual([
+      { eventId: 'e1', state: 'error', hash: 'sha256:aaa', error: 'backendError' },
+      { eventId: 'e3', state: 'written', hash: 'sha256:aaa', error: undefined },
+      { eventId: 'e2', state: 'removed', hash: 'deleted', error: undefined },
+    ]);
+  });
+
+  it('leaves a lone failure of the last event unrecorded: nothing shows it is that event\'s own', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert] });
+    const a = adapter({ writeEvent: async () => ({ failed: 'backendError', transient: true }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(records(calls)).toEqual([]);
   });
 
   it('reads the busy times even when the write-back step itself throws', async () => {
@@ -374,12 +401,41 @@ describe('write-back in the sweep', () => {
     expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(true);
   });
 
-  it('stops writing when the grant lacks the events permission, and the busy read goes on', async () => {
-    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, remove] });
-    const a = adapter({ writeEvent: async () => ({ scope: true }) });
+  it('counts a forbidden answer as an error of its event and goes on with the others (#2163)', async () => {
+    const e3 = { ...upsert, eventId: 'e3', externalId: 'ext3ext3ext3' };
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, e3, remove] });
+    const a = adapter({
+      writeEvent: async (_secret, event) => {
+        a.writes.push(`write ${event.externalId}`);
+        return event.externalId === 'ext1ext1ext1' ? { scope: true } : { ok: true };
+      },
+    });
     expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
-    expect(a.writes).toEqual([]);
-    expect(records(calls)).toEqual([]);
+    expect(a.writes).toEqual(['write ext1ext1ext1', 'write ext3ext3ext3', 'remove ext2ext2ext2']);
+    expect(records(calls)).toEqual([
+      { eventId: 'e1', state: 'error', hash: 'sha256:aaa', error: 'forbidden' },
+      { eventId: 'e3', state: 'written', hash: 'sha256:aaa', error: undefined },
+      { eventId: 'e2', state: 'removed', hash: 'deleted', error: undefined },
+    ]);
+  });
+
+  it('stops writing after three forbidden answers in a row: the member took the permission away, and the busy read goes on', async () => {
+    const more = ['e3', 'e4', 'e5'].map((eventId) => ({ ...upsert, eventId, externalId: `ext${eventId}${eventId}${eventId}` }));
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, ...more] });
+    const a = adapter({
+      writeEvent: async (_secret, event) => {
+        a.writes.push(`write ${event.externalId}`);
+        return { scope: true };
+      },
+    });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(a.writes).toHaveLength(3);
+    expect(records(calls).map((r) => [r.eventId, r.state, r.error])).toEqual([
+      ['e1', 'error', 'forbidden'],
+      ['e3', 'error', 'forbidden'],
+      ['e4', 'error', 'forbidden'],
+    ]);
+    expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(true);
   });
 });
 
