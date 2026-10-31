@@ -194,7 +194,6 @@ function AccountRow({
           variant="ghost"
           size="sm"
           className="mt-1"
-
           onClick={() => unmap.mutate({ feedAccountId: mapped.id, idempotencyKey: crypto.randomUUID() })}
           aria-label={t('unmapOf', { name: row.displayName })}
         >

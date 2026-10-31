@@ -622,6 +622,12 @@ export function InboxPage() {
               {t('bulk.selectAll', { count: selectable.length })}
             </Label>
             {chosen.length > 0 && <span className="text-sm text-subtle-foreground">{t('bulk.selected', { count: chosen.length })}</span>}
+            {/* The button keeps its label and width while it works, so the batch it is on is said beside it. */}
+            {sending && bulk && (
+              <span role="status" className="text-sm text-muted-foreground">
+                {t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })}
+              </span>
+            )}
             <div className="ml-auto flex gap-2">
               {chosen.length > 0 && !sending && (
                 <Button variant="ghost" size="lg" onClick={() => setSelected(new Set())}>
@@ -629,9 +635,7 @@ export function InboxPage() {
                 </Button>
               )}
               <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
-                {sending && bulk
-                  ? t('bulk.sending', { done: Math.min(bulk.progress.next + 1, bulk.batches.length), total: bulk.batches.length })
-                  : t('bulk.approve', { count: chosen.length })}
+                {t('bulk.approve', { count: chosen.length })}
               </Button>
             </div>
             {unverifiedChosen > 0 && (

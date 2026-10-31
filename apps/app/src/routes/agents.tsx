@@ -130,7 +130,6 @@ export function StopAi() {
         <Button
           loading={stop.isPending}
           variant="destructive"
-
           onClick={() =>
             stop.mutate(
               { scope: 'org', target: '*', ...(reason.trim() ? { reason: reason.trim() } : {}), idempotencyKey: key },

@@ -98,7 +98,7 @@ export function ExternalCalendars({ canEdit }: { canEdit: boolean }) {
       {canEdit && offered.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-2">
           {offered.map((p) => (
-            <Button loading={start.isPending && start.variables?.provider === p} key={p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p })}>
+            <Button key={p} loading={start.isPending && start.variables?.provider === p} type="button" variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate({ provider: p })}>
               {t('externalConnect', { provider: t(`externalProviders.${p}`) })}
             </Button>
           ))}

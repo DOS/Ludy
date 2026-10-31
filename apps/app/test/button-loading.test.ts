@@ -18,7 +18,7 @@ function sources(dir: string): string[] {
 }
 
 // The elements whose children end up inside a button: the button itself, and the dialog triggers that render one
-// (`ConfirmDialog` and `DialogTrigger` hand their children to the button in `render`), matched by the regular
+// (`ConfirmDialog`, `DialogTrigger` and `DialogClose` hand their children to the button in `render`), matched by the regular
 // expression in `spinnersInButtons`.
 
 // The index just past the `>` that ends the opening tag starting at `from`: attribute values in braces and quotes
@@ -42,11 +42,11 @@ function openingEnd(text: string, from: number): number {
 function spinnersInButtons(path: string): number {
   const text = readFileSync(path, 'utf8');
   let count = 0;
-  for (const open of text.matchAll(/<(Button|ConfirmDialog|DialogTrigger)\b/g)) {
+  for (const open of text.matchAll(/<(Button|ConfirmDialog|DialogTrigger|DialogClose)\b/g)) {
     const end = openingEnd(text, open.index + open[0].length);
     if (end < 0 || text.charAt(end - 2) === '/') continue;
     const close = text.indexOf(`</${open[1]}>`, end);
-    count += (text.slice(end, close < 0 ? text.length : close).match(/<Spinner\b/g) ?? []).length;
+    count += (text.slice(end, close < 0 ? text.length : close).match(/<(?:Spinner\w*|Loader2Icon)\b|animate-spin/g) ?? []).length;
   }
   return count;
 }

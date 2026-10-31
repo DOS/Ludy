@@ -66,7 +66,7 @@ function Button({
       data-loading={loading ? "" : undefined}
       aria-busy={loading || undefined}
       disabled={disabled || loading}
-      className={cn(buttonVariants({ variant, size, className }), loading && "relative")}
+      className={cn(loading && "relative", buttonVariants({ variant, size, className }))}
       {...props}
     >
       {loading ? (
@@ -74,7 +74,7 @@ function Button({
           <span data-slot="button-label" className="inline-flex items-center justify-center gap-[inherit] opacity-0">
             {children}
           </span>
-          <Loader2Icon data-slot="button-spinner" aria-hidden="true" className="absolute animate-spin" />
+          <Loader2Icon data-slot="button-spinner" aria-hidden="true" className="absolute inset-0 m-auto animate-spin" />
         </>
       ) : (
         children
