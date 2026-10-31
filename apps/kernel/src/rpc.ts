@@ -1966,6 +1966,21 @@ export function createRpcHandler(
         }),
       ),
     },
+    bankAccountNumbers: {
+      list: os.bankAccountNumbers.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.bank_account_number.list', {}, { actor, orgId }))),
+      set: os.bankAccountNumbers.set.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_account_number.set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      clear: os.bankAccountNumbers.clear.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.bank_account_number.clear', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
     // AI agents (ADR-0029). The kernel module owns them; a template of a module that is off answers MODULE_DISABLED.
     chart: {
       get: os.chart.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.chart.get', {}, { actor, orgId }))),

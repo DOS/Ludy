@@ -838,6 +838,25 @@ export const vi = {
     parent: 'Trực thuộc',
     noParent: 'Không trực thuộc pháp nhân nào',
   },
+  bankAccountNumbers: {
+    title: 'Số tài khoản ngân hàng',
+    intro:
+      'Ghi số tài khoản mà ngân hàng in trên sao kê vào tài khoản ngân hàng tương ứng của sổ sách. Sao kê gửi vào hộp thư nhận chứng từ hoặc tải vào Hộp thư đến sẽ tự tìm đúng tài khoản qua số này, không cần nguồn giao dịch ngân hàng; sao kê vẫn chờ một thành viên xem và nhập. Một số chỉ thuộc một tài khoản ngân hàng của tổ chức.',
+    none: 'Chưa ghi số tài khoản nào.',
+    form: 'Ghi số tài khoản ngân hàng',
+    bankAccount: 'Tài khoản ngân hàng',
+    chooseBankAccount: 'Chọn tài khoản ngân hàng',
+    bankAccountNeeded: 'Hãy chọn tài khoản ngân hàng',
+    legalEntity: 'Pháp nhân',
+    number: 'Số tài khoản',
+    numberPlaceholder: 'Số tài khoản, ví dụ 0123 456 789',
+    numberNeeded: 'Hãy nhập số tài khoản',
+    add: 'Ghi số',
+    on: 'ở tài khoản {account}',
+    remove: 'Gỡ',
+    removeOf: 'Gỡ số tài khoản {number}',
+    noBankAccounts: 'Chưa có tài khoản ngân hàng (112) nào đang dùng; hãy tạo ở Hệ thống tài khoản.',
+  },
   bankFeeds: {
     title: 'Nguồn giao dịch ngân hàng',
     intro:
@@ -5697,6 +5716,9 @@ export const vi = {
       STATEMENT_IMPORTED: 'Sao kê này đã được nhập nên không đọc lại được',
       STATEMENT_TOO_LARGE: 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng',
       STATEMENT_MAPPING_CHANGED: 'Số tài khoản của sao kê không còn liên kết với tài khoản ngân hàng này; hãy kiểm tra Cài đặt rồi đọc lại tệp',
+      BANK_ACCOUNT_NUMBER_TAKEN: 'Số tài khoản này đã gắn với một tài khoản ngân hàng khác của tổ chức; hãy gỡ số đó ở tài khoản kia trước',
+      BANK_ACCOUNT_NUMBER_INVALID: 'Số tài khoản chỉ gồm chữ số (6 đến 20 chữ số); khoảng trắng, dấu chấm và dấu gạch ngang giữa các nhóm số được bỏ qua',
+      BANK_ACCOUNT_NUMBER_NOT_FOUND: 'Không tìm thấy số tài khoản này',
       BANK_FEED_NOT_FOUND: 'Không tìm thấy kết nối nguồn giao dịch ngân hàng',
       BANK_FEED_INACTIVE: 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại',
       BANK_FEED_ACCOUNT_MAPPED: 'Tài khoản này đã gắn với một pháp nhân khác; hãy gỡ liên kết trước',
@@ -6084,6 +6106,11 @@ export const vi = {
         statement_reject: 'Bỏ qua sao kê ngân hàng đã đọc từ tệp',
         statement_stage: 'Chuẩn bị sao kê ngân hàng đọc từ tệp để thành viên xem và nhập',
         suggestions: 'Xem gợi ý đối chiếu sao kê',
+      },
+      bank_account_number: {
+        set: 'Ghi số tài khoản của một tài khoản ngân hàng',
+        clear: 'Gỡ số tài khoản của một tài khoản ngân hàng',
+        list: 'Xem các số tài khoản ngân hàng đã ghi',
       },
       bank_feed: {
         connection: 'Xem trạng thái của kết nối nguồn giao dịch ngân hàng',

@@ -228,7 +228,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1521,6 +1521,15 @@ export const contract = {
       .output(z.array(z.object({ externalAccountId: z.string(), displayName: z.string(), listedAt: z.string() }))),
     map: oc.input(zBankFeedMap.extend({ idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
     unmap: oc.input(z.object({ feedAccountId: zId, idempotencyKey: zId })).output(z.object({ feedAccountId: zId })),
+  },
+  // The numbers of the org's bank accounts (#2183): owners and admins record the digits a bank statement names on a bank
+  // account of an entity (set), list them and remove one (clear), so a statement that arrives by email or in the Inbox
+  // finds its account without a bank feed. A number belongs to one bank account of an org: BANK_ACCOUNT_NUMBER_TAKEN
+  // (409) when it is on another one, here or as a bank feed mapping, whether or not the caller may read that row.
+  bankAccountNumbers: {
+    list: oc.output(z.array(zBankAccountNumberView)),
+    set: oc.input(zBankAccountNumberSet.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
+    clear: oc.input(z.object({ id: zId, idempotencyKey: zId })).output(z.object({ id: zId })),
   },
   // The org chart (ADR-0029): positions shared by members and AI agents. Every member reads it; changing it is the
   // owner's (R3: role keys, holders and reporting lines decide what agents may do). A retry with the same

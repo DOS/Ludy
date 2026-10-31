@@ -15,6 +15,7 @@ import { ChartOfAccountsCard } from './accounts.tsx';
 import { MisaGoodsCodesCard } from './misa-goods-codes.tsx';
 import { AccountRulesCard } from './account-rules.tsx';
 import { ApprovalPresetCard, MEMBERS_CARD_ID } from './approval-preset.tsx';
+import { BankAccountNumbersCard } from './bank-account-numbers.tsx';
 import { BankFeedsCard } from './bank-feeds.tsx';
 import { LegalEntitiesCard } from './legal-entities.tsx';
 import { MemberRolesRow } from './member-roles.tsx';
@@ -1161,6 +1162,8 @@ export function SettingsPage() {
         )}
         {/* The legal entities the books are kept for (#1278), with the finance module; owners and admins only. */}
         {getConfig().modules.includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
+        {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}
+        {getConfig().modules.includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
         {/* Bank feeds (ADR-0039, #2099): with the finance module, and only where the deployment offers one. */}
         {showsBankFeeds(getConfig()) && org.data && <BankFeedsCard key={`bank-feeds:${org.data.slug}`} role={org.data.role} />}
         {/* The chart of accounts belongs to the finance module (#319). */}
