@@ -50,8 +50,9 @@ turn on `sprint_review` with `line_scopes`.
 | Social Management (`modules/social`) | `line:social-management` | `735657ce` | `Social Management Product Owner` |
 | Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
 
-- Social is paused (decision D5): its PO starts work only once JOY reopens
-  it (the open question on #236).
+- Social was paused under decision D5. On 2026-11-01 JOY reopened it for the
+  Facebook Page and Zalo OA slice only ("Mở lại, làm FB + Zalo", #236). The
+  rest of Social stays paused until JOY reopens it.
 - Platform owns what every line builds on, not the features: a line's own
   feature stays with that line even when it adds a migration or a kernel
   command. Platform owns the shared core itself, the architecture (ADRs),
