@@ -269,6 +269,27 @@ describe('configuration guards', () => {
     expect(await config({ SUPPORT_URL: 'mailto:support@example.com' })).toBe('mailto:support@example.com');
   });
 
+  // #2192: a store without browser transfers (R2) can still sign a read for the platforms that fetch media by URL, and the
+  // app learns it, so the composer does not hold Zalo OA, Instagram and Threads images back as if the files were local.
+  it('tells the app whether the store can sign a media URL for a platform, apart from how uploads go', async () => {
+    const read = async (store: Partial<BlobStore>) => {
+      const app = createHttpApp({
+        config: loadConfig({ ...base, WEB_DIST: '/nonexistent' }),
+        runtime: { installed: () => true, modules: () => ['kernel'] } as unknown as Runtime,
+        store: store as BlobStore,
+        authenticate: async () => {
+          throw new Error('not used');
+        },
+        pool: {} as pg.Pool,
+        aiEnabled: false,
+      });
+      return (await (await app.request('/api/config')).json()) as { uploads: unknown; platformMediaUrls: unknown };
+    };
+    expect(await read({})).toMatchObject({ uploads: 'direct', platformMediaUrls: false });
+    expect(await read({ fetchUrls: { presign: async () => 'https://files.example.test/x' } })).toMatchObject({ uploads: 'direct', platformMediaUrls: true });
+    expect(await read({ direct: {} as BlobStore['direct'], fetchUrls: { presign: async () => 'https://files.example.test/x' } })).toMatchObject({ uploads: 'presigned', platformMediaUrls: true });
+  });
+
   // #688: the terms of service and privacy notice linked at sign-up and invite acceptance are https: pages.
   it('accepts https: TERMS_URL and PRIVACY_URL only, and hands them to the app or null', async () => {
     for (const name of ['TERMS_URL', 'PRIVACY_URL'] as const) {

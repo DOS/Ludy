@@ -304,7 +304,7 @@ export class S3BlobStore implements BlobStore {
         }
       : undefined;
     const fetchSigner = options.fetchSigner;
-    this.fetchUrls = fetchSigner ? { presign: (ref, file) => this.presignFetch(fetchSigner, ref, file) } : undefined;
+    this.fetchUrls = fetchSigner ? { presign: (ref, file, signal) => this.presignFetch(fetchSigner, ref, file, signal) } : undefined;
     this.holds = { available: () => this.holdsAvailable(), hold: (ref, retainUntil) => this.hold(ref, retainUntil) };
   }
 
@@ -619,12 +619,12 @@ export class S3BlobStore implements BlobStore {
   // change under it. An unpinned one (versioning off, a content: generation, a row from before ADR-0013) is streamed
   // through sha256 first and signed only when the bytes are the recorded ones; on a versioned bucket the version just
   // read is then pinned, and with versioning off (R2 refuses a version on reads) the 60 second URL is the whole window.
-  private async presignFetch(signer: S3Client, ref: BlobRef, file: { filename: string; contentType: string }): Promise<string> {
+  private async presignFetch(signer: S3Client, ref: BlobRef, file: { filename: string; contentType: string }, callerSignal?: AbortSignal): Promise<string> {
     assertStorageKey(ref.key);
     if (!ref.key.startsWith('org/')) throw new Error('only org files are signed for a platform');
     let versionId = this.pinned(ref.generation);
     if (!versionId) {
-      const read = await this.digestCurrent(ref.key, FETCH_VERIFY_MAX_BYTES);
+      const read = await this.digestCurrent(ref.key, FETCH_VERIFY_MAX_BYTES, callerSignal);
       if (read.sha256 !== ref.sha256) throw new BlobIntegrityError(ref);
       if (this.versioning !== 'off' && read.versionId && read.versionId !== 'null') versionId = read.versionId;
     }
@@ -643,9 +643,11 @@ export class S3BlobStore implements BlobStore {
   }
 
   // The sha256 of the object now under the key, streamed so it is never held whole, refusing one over maxBytes.
-  private async digestCurrent(key: string, maxBytes: number): Promise<{ sha256: string; versionId: string | undefined }> {
-    // One deadline for the request and the whole stream: past it the request is aborted, so nothing keeps reading.
-    const signal = AbortSignal.timeout(FETCH_VERIFY_TIMEOUT_MS);
+  private async digestCurrent(key: string, maxBytes: number, callerSignal?: AbortSignal): Promise<{ sha256: string; versionId: string | undefined }> {
+    // One deadline for the request and the whole stream, the store's own or the caller's if that comes first: past it the
+    // request is aborted, so nothing keeps reading.
+    const own = AbortSignal.timeout(FETCH_VERIFY_TIMEOUT_MS);
+    const signal = callerSignal ? AbortSignal.any([own, callerSignal]) : own;
     let out;
     try {
       out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }), { abortSignal: signal });

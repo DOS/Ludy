@@ -1624,7 +1624,7 @@ suite('social publishing on PostgreSQL (S4)', () => {
       const url = await input.mediaUrl(input.content.media[0]?.fileId as string).catch(() => null);
       return url ? publish(input) : { kind: 'rejected', error: 'bad_request', code: 'MEDIA_URL_UNAVAILABLE' };
     };
-    const runWith = (id: string, presign: () => Promise<string>) => {
+    const runWith = (id: string, presign: (ref: unknown, file: unknown, signal?: AbortSignal) => Promise<string>) => {
       const store = { get: async (key: string) => stored.get(key) as Uint8Array, fetchUrls: { presign } } as unknown as BlobStore;
       return runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: platform }, store, callTimeoutMs: 2_000 }, o.orgId, id, 'sandbox');
     };
@@ -1635,6 +1635,16 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const retried = await variant(o, outage.postId);
     expect([retried.status, retried.attempt, retried.error?.kind, retried.error?.code]).toEqual(['scheduled', 2, 'transient', 'MEDIA_URL_UNAVAILABLE']);
     expect(platform.posts).toHaveLength(0);
+
+    // Half the call's time (1 s of 2 s here) is all the checking of files may take: a read that is still going then is cut
+    // short with the signal it was given, and the post is a new attempt instead of a timeout of the whole call.
+    const slow = await due();
+    const hang = (_ref: unknown, _file: unknown, signal?: AbortSignal) => new Promise<string>((_, reject) => signal?.addEventListener('abort', () => reject(signal.reason as Error)));
+    const started = Date.now();
+    expect(await runWith(slow.id, hang)).toEqual({ action: 'call', status: 'scheduled' });
+    expect(Date.now() - started).toBeLessThan(1_900);
+    const late = await variant(o, slow.postId);
+    expect([late.status, late.attempt, late.error?.kind, late.error?.code]).toEqual(['scheduled', 2, 'transient', 'MEDIA_URL_UNAVAILABLE']);
 
     const swapped = await due();
     expect(await runWith(swapped.id, async () => Promise.reject(new BlobIntegrityError({ key: 'org/x/y', generation: null, sha256: 'z' })))).toEqual({ action: 'call', status: 'failed' });

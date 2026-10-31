@@ -131,14 +131,18 @@ function mediaFileOf(deps: PublishDeps, orgId: string, work: Pick<PublishWork, '
 
 // A short-lived signed GET of the recorded bytes, where the store hands them out (S3, also with browser transfers off,
 // as on R2: #2192); valid briefly, enough for the platform to fetch it right after the call that names it.
-function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>, onOutage?: () => void) {
+// budget: the instant (ms since the epoch) by which every read that checks a file must be done, so that a post of many
+// images cannot spend the whole provider call on them: past it a read is cut short and counts as the store's bad moment.
+function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>, onOutage?: () => void, budget?: number) {
   return async (fileId: string): Promise<string | null> => {
     const urls = deps.store?.fetchUrls;
     if (!urls) return null;
     const file = await mediaFile(fileId);
+    const left = budget === undefined ? undefined : budget - Date.now();
     // Reading the file back to check it can fail (a store outage, the 100 MB cap, bytes that are not the approved ones):
     // the adapter takes any throw as "no URL" and says so on the post, so the cause is named here, in the log only.
-    return urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType }).catch((error: unknown) => {
+    const signed = left !== undefined && left <= 0 ? Promise.reject(new DOMException('the time for media URLs of this call is used up', 'TimeoutError')) : urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType }, left === undefined ? undefined : AbortSignal.timeout(left));
+    return signed.catch((error: unknown) => {
       console.warn(`[social-publish] no signed media URL for file ${fileId.slice(0, 8)}: ${error instanceof Error ? error.name : typeof error}`);
       // A file that is missing, too big, refused by the store or not the approved bytes will not be different next time;
       // anything else (a 5xx, a network error, the read's deadline) is the store's bad moment.
@@ -155,9 +159,10 @@ async function provide(deps: PublishDeps, orgId: string, publisher: Publisher, w
   const mediaFile = mediaFileOf(deps, orgId, work);
   // Set when a media URL could not be made because the store failed for the moment (see mediaUrlOf).
   let storeOutage = false;
+  // Half the call's time at most goes to checking files before they are signed for; the rest is the platform's.
   const mediaUrl = mediaUrlOf(deps, mediaFile, () => {
     storeOutage = true;
-  });
+  }, Date.now() + Math.floor(timeout / 2));
   const readMedia = async (fileId: string): Promise<Uint8Array> => {
     if (!deps.store) throw new Error('media storage not available');
     const file = await mediaFile(fileId);

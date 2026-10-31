@@ -828,6 +828,20 @@ describe('platform fetch URLs (#2192), signed offline', () => {
     await expect(outage.store.fetchUrls?.presign({ key, generation: null, sha256 }, file)).rejects.toMatchObject({ name: 'ServiceUnavailable' });
   });
 
+  it('ends the read when the caller’s own signal fires, and cancels the stream', async () => {
+    let cancelled = 0;
+    const slow = {
+      transformToWebStream: () => new ReadableStream<Uint8Array>({ pull: (c) => c.enqueue(bytes), cancel: () => void (cancelled += 1) }),
+      transformToByteArray: async () => bytes,
+    };
+    const { store, sent } = fakeStore(() => ({ Body: slow }), { versioning: 'off', fetchSigner: signer() });
+    const call = new AbortController();
+    call.abort(new DOMException('the call is over', 'TimeoutError'));
+    await expect(store.fetchUrls?.presign({ key, generation: null, sha256 }, file, call.signal)).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(cancelled).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it('cancels the stream when the read is cut short, by the cap or the deadline', async () => {
     let cancelled = 0;
     const chunk = new Uint8Array(1024 * 1024);

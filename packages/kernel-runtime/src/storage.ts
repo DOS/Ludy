@@ -115,8 +115,9 @@ export interface FetchUrls {
   // reference pinned to an object version is signed for that version. One that cannot be pinned (S3_VERSIONING=off, a
   // content: generation, a row from before ADR-0013) is first read through sha256 and signed only when the bytes are
   // the recorded ones (BlobIntegrityError otherwise), so an object swapped after approval is never handed out; what
-  // remains is the signing window itself.
-  presign(ref: BlobRef, file: { filename: string; contentType: string }): Promise<string>;
+  // remains is the signing window itself. `signal` ends the check early (the caller's own deadline); the store has one
+  // of its own as well.
+  presign(ref: BlobRef, file: { filename: string; contentType: string }, signal?: AbortSignal): Promise<string>;
 }
 
 // Presigned uploads live 5 minutes (plan §7.6); presigned downloads 60 seconds.
