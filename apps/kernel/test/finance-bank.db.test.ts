@@ -1108,6 +1108,110 @@ suite('bank statement import (#326)', () => {
       expect(await status(fileId)).toMatchObject({ status: 'staged', statement: { origin: { channel: 'email', by: null }, conflictLines: 0 } });
     });
 
+    // #2183: the number of a bank account recorded by an owner or admin, so a statement matches without a bank feed.
+    describe('with the number of a bank account recorded instead of a bank feed', () => {
+      const NO_FEED = '0123456789';
+      const numbers = async (who: Account = owner, org = slug) => rpc('bankAccountNumbers/list', await tokenFor(who), undefined, org);
+      const setNumber = async (bankAccount: string, accountNumber: string, who: Account = owner, org = slug) =>
+        rpc('bankAccountNumbers/set', await tokenFor(who), { bankAccount, accountNumber, idempotencyKey: randomUUID() }, org);
+      const clearNumber = async (id: string, who: Account = owner, org = slug) => rpc('bankAccountNumbers/clear', await tokenFor(who), { id, idempotencyKey: randomUUID() }, org);
+      // A second org of the owner's, made once: its numbers are its own.
+      let second = '';
+      const secondOrg = async () => {
+        if (!second) second = String((await rpc('org/create', await tokenFor(owner), { name: 'Công ty thứ hai', idempotencyKey: randomUUID() }, null)).body?.slug);
+        return second;
+      };
+      const stageFor = (accountNumber: string) => stage(rowsOf(`NUM-${randomUUID().slice(0, 8)}`), accountNumber);
+
+      it('stages a statement for a number recorded on bank account 1121, whatever grouping it was typed with, and stores nothing until a member imports it', async () => {
+        // Nothing records 0123456789 yet: the statement has no account.
+        expect(await stageFor(NO_FEED)).toEqual({ outcome: 'unmapped', accountNumber: NO_FEED });
+        const set = await setNumber('1121', '0123 456 789');
+        expect(set.status).toBe(200);
+        expect(await numbers()).toMatchObject({ status: 200, body: [{ id: set.body.id, bankAccount: '1121', accountNumber: NO_FEED }] });
+        // The same statement now goes to 1121, as a pending import: nothing is stored.
+        const before = await lineCount();
+        const outcome = await stageFor(NO_FEED);
+        expect(outcome).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121', accountNumber: NO_FEED, accountMask: '******6789', lines: 3, newLines: 3 } });
+        expect(await lineCount()).toBe(before);
+        // A member imports it: the lines land on 1121.
+        const rows = rowsOf('NUMBERED');
+        const fileId = await (async () => {
+          const staged = await stage(rows, NO_FEED);
+          if (staged.outcome !== 'staged') throw new Error(`not staged: ${staged.outcome}`);
+          const id = await ingestZip();
+          await recordRead(id, { status: 'done', statement: true, result: { kind: 'bank_statement', summary: staged.summary, rows }, summary: 'Sao kê chờ nhập' });
+          return id;
+        })();
+        expect((await confirm(fileId)).status).toBe(200);
+        expect((await stored('1121')).filter((l) => l.bank_ref?.startsWith('FT-NUMBERED-'))).toHaveLength(3);
+      });
+
+      it('keeps a number on one bank account of the org, and says so the same way for a number a bank feed already maps', async () => {
+        const first = await setNumber('1121', NO_FEED);
+        // The same number on the same account (typed differently) is the same record; on another account it is refused.
+        expect((await setNumber('1121', '0123.456.789')).body.id).toBe(first.body.id);
+        expect(await setNumber('1121.VCB', NO_FEED)).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
+        // The number of a bank feed mapping (19880001234 on 1121.VCB) cannot go on another account either.
+        expect(await setNumber('1121', '1988 0001 234')).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
+        // A bank account may hold several numbers.
+        expect((await setNumber('1121', '9876543210')).status).toBe(200);
+        // Another org's number is its own: the same digits there are fine and hold no sway here.
+        expect(await setNumber('1121', NO_FEED, owner, await secondOrg())).toMatchObject({ status: 200 });
+        expect(await stageFor(NO_FEED)).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121' } });
+      });
+
+      it('refuses what is not a number, a bank account the org does not use, and any role but owner or admin', async () => {
+        for (const bad of ['12345', '0123 abc 789', '123456789012345678901']) {
+          expect(await setNumber('1121', bad), bad).toMatchObject({ status: 422, body: { code: 'BANK_ACCOUNT_NUMBER_INVALID' } });
+        }
+        // Nothing at all is refused at the door.
+        expect((await setNumber('1121', '')).status).toBe(400);
+        expect(await setNumber('5111', '5550001111')).toMatchObject({ status: 422, body: { code: 'NOT_A_BANK_ACCOUNT' } });
+        expect(await setNumber('1121.OLD', '5550002222')).toMatchObject({ status: 422, body: { code: 'ACCOUNT_INACTIVE' } });
+        for (const who of [member, viewer]) {
+          expect((await setNumber('1121', '5550003333', who)).status, who.email).toBe(403);
+          expect((await numbers(who)).status, who.email).toBe(403);
+        }
+      });
+
+      it('answers ambiguous for a number a bank feed and a recording put on two different bank accounts, and stages nothing', async () => {
+        // The set command refuses this; raw rows (a mapping made after the number, say) are what the statement path guards against.
+        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));
+        try {
+          expect(await stage(rowsOf('AMBIG'), '19880001234')).toEqual({ outcome: 'ambiguous', accountNumber: '19880001234' });
+        } finally {
+          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
+        }
+        // The same account named by both is one place.
+        await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121.VCB', '19880001234')`, [orgId]));
+        try {
+          expect(await stage(rowsOf('SAME'), '19880001234')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121.VCB' } });
+        } finally {
+          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND account_number = '19880001234'`, [orgId]));
+        }
+      });
+
+      it('removes a number, audits both changes with the number masked, and leaves a statement for it unmapped again', async () => {
+        const set = await setNumber('1121', '5550004444');
+        expect(await stageFor('5550004444')).toMatchObject({ outcome: 'staged' });
+        // Only the org's managers clear it; another org cannot reach it.
+        expect((await clearNumber(String(set.body.id), member)).status).toBe(403);
+        expect(await clearNumber(String(set.body.id), owner, await secondOrg())).toMatchObject({ status: 404, body: { code: 'BANK_ACCOUNT_NUMBER_NOT_FOUND' } });
+        expect((await clearNumber(String(set.body.id))).status).toBe(200);
+        expect(await clearNumber(String(set.body.id))).toMatchObject({ status: 404, body: { code: 'BANK_ACCOUNT_NUMBER_NOT_FOUND' } });
+        expect(await stageFor('5550004444')).toEqual({ outcome: 'unmapped', accountNumber: '5550004444' });
+        const audits = await admin(
+          async (c) =>
+            (await c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.bank_account_number.%' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
+        );
+        const mine = audits.filter((a) => a.detail['accountMask'] === '******4444');
+        expect(mine.map((a) => a.command)).toEqual(['finance.bank_account_number.set', 'finance.bank_account_number.clear']);
+        // The whole number is in no audit row.
+        expect(JSON.stringify(audits)).not.toContain('5550004444');
+      });
+    });
+
     it('is decided by users alone: the worker cannot import or skip a statement', async () => {
       const fileId = await stagedFile(rowsOf('WORKER'));
       await expect(worker.execute('finance.bank.statement_confirm', { fileId }, { actor: WORKER, orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
