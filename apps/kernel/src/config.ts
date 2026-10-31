@@ -127,6 +127,10 @@ const schema = z.object({
   // Presigned upload grants (kernel.file.upload.begin) one user may open per org in any rolling minute, counted in the
   // database across API instances (issue #223). Bounds the staging objects an abandoned upload loop leaves behind.
   UPLOAD_BEGIN_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1000).default(20),
+  // Excel and XML exports of the books (GET /api/export/*) one API process runs at once (#2121): each holds its rows and
+  // the finished file in memory and compresses it. Past it, and past two for one user, an export answers 503
+  // EXPORT_BUSY with Retry-After. Per process, like UPLOAD_COMPLETE_CONCURRENCY.
+  EXPORT_CONCURRENCY: z.coerce.number().int().min(1).max(64).default(4),
   // Org exports (issue #212, plan §7.9): kept EXPORT_RETENTION_DAYS (35 to 90) after they are made, then deleted by the
   // worker's daily retention job.
   EXPORT_RETENTION_DAYS: z.coerce.number().int().min(35).max(90).default(35),

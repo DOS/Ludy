@@ -43,6 +43,26 @@ function amountOf(cell: ExcelJS.Cell): { type: 'number' | 'text'; value: Decimal
   throw new Error(`unexpected cell type ${cell.type}`);
 }
 
+// #2121: the journal is written as a stream, so the largest export (the 50,000 entries the HTTP limit allows) is never held
+// as cell objects, and the file reads back the same as before.
+describe('buildJournalWorkbook as a stream', () => {
+  it('writes the largest export, header and frozen row as before, and every row in order', async () => {
+    const entries = Array.from({ length: 50_000 }, (_, i) => entry(`e${i}`, String(1000 + i), { description: `Bút toán ${i}` }));
+    const bytes = await buildJournalWorkbook(entries, 'demo');
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const sheet = workbook.getWorksheet('Bút toán');
+    if (!sheet) throw new Error('sheet missing');
+    // Header plus one row per debit line (each entry has one debit paired with its single credit).
+    expect(sheet.rowCount).toBe(50_001);
+    expect(sheet.getRow(1).font?.bold).toBe(true);
+    expect(sheet.views[0]).toMatchObject({ state: 'frozen', ySplit: 1 });
+    expect(sheet.getRow(2).getCell(7).value).toBe('Bút toán 0');
+    expect(sheet.getRow(50_001).getCell(7).value).toBe('Bút toán 49999');
+    expect(Number(sheet.getRow(50_001).getCell(AMOUNT_COLUMN).value)).toBe(1000 + 49_999);
+  }, 120_000);
+});
+
 describe('moneyCell', () => {
   it('keeps amounts Excel can hold exactly as numbers', () => {
     expect(moneyCell('1500000')).toEqual({ kind: 'number', value: 1500000, numFmt: '#,##0' });
