@@ -105,17 +105,41 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   [`${QUEUES.extract} handler`]: { reason: 'the same file again, once its org is back under its daily limit' },
 };
 
-// Events that feed a queue with egress and that no command emits: a definer writes them for a request without one. An entry
-// may be listed before an event feeds such a queue (the assertion below only requires that every fed event without a command
-// is listed), so the feature that adds the feed can land after the entry.
+// Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
 const NO_COMMAND: Readonly<Record<string, string>> = {
   // A client's answer on a review link (crove_social review link definers, run by the public link's route).
   'social.review.answered': 'the review link definers',
-  // A visitor's booking request and a visitor's ask from a manage link (crove_crm.booking_request and booking_manage_request,
-  // run by the public booking page's route): the worker decides them, and #2139 checks the slot at the host's connected calendar first.
-  'crm.booking.requested': 'the booking request definer',
-  'crm.booking.manage_requested': 'the booking manage request definer',
 };
+
+// Events that no command writes and that will feed a queue with egress once the change that adds the feed lands, listed
+// before it (the PENDING_TABLES pattern of the RLS matrix, so the two steps of an invariant change can land apart). NO_COMMAND
+// above stays an exact match of what is fed; an entry here may be absent from the feeds, but it fails the test once its
+// event feeds a queue with egress (move it to NO_COMMAND then), if any command emits it, or if it is also in NO_COMMAND.
+// Each entry names its reason and the issue.
+const NO_COMMAND_PENDING: Readonly<Record<string, string>> = {
+  // The booking request definers (crove_crm.booking_request and booking_manage_request, run by the public booking page's route):
+  // #2139 checks the slot at the hosts' connected calendars in a queue handler before the worker decides them.
+  'crm.booking.requested': 'the booking request definer, fed to a queue with egress by #2139',
+  'crm.booking.manage_requested': 'the booking manage request definer, fed to a queue with egress by #2139',
+};
+
+// What is wrong with the pending entries, given the events that feed a queue with egress now and the commands that emit each.
+function pendingProblems(
+  pending: Readonly<Record<string, string>>,
+  noCommand: Readonly<Record<string, string>>,
+  fed: readonly string[],
+  emitters: ReadonlyMap<string, ReadonlySet<string>>,
+): string[] {
+  const out: string[] = [];
+  for (const [event, why] of Object.entries(pending)) {
+    if (!/#\d+/.test(why)) out.push(`${event}: the reason names no issue (#<number>)`);
+    if (Object.hasOwn(noCommand, event)) out.push(`${event}: listed in NO_COMMAND and NO_COMMAND_PENDING`);
+    if (fed.includes(event)) out.push(`${event}: feeds a queue with egress now; move it from NO_COMMAND_PENDING to NO_COMMAND`);
+    const by = [...(emitters.get(event) ?? [])].sort();
+    if (by.length > 0) out.push(`${event}: emitted by ${by.join(', ')}; NO_COMMAND_PENDING names events no command writes`);
+  }
+  return out;
+}
 
 describe('job egress (#1653)', () => {
   const sources = new Sources();
@@ -283,9 +307,11 @@ describe('job egress (#1653)', () => {
 
     const { commands, runs, problems } = emittersOf(feeds, sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
     expect(problems).toEqual([]);
-    // Every fed event that no command emits is listed with its reason; a listed event that nothing feeds yet is allowed.
-    const noCommand = [...commands].filter(([, by]) => by.size === 0).map(([event]) => event);
-    expect(noCommand).toEqual(Object.keys(NO_COMMAND).filter((event) => noCommand.includes(event)).sort());
+    expect([...commands].filter(([, by]) => by.size === 0).map(([event]) => event)).toEqual(Object.keys(NO_COMMAND).sort());
+    // The pending entries: not fed yet, written by no command, and not also listed above.
+    const pendingEmitters = emittersOf(Object.keys(NO_COMMAND_PENDING), sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
+    expect(pendingEmitters.problems).toEqual([]);
+    expect(pendingProblems(NO_COMMAND_PENDING, NO_COMMAND, feeds, pendingEmitters.commands)).toEqual([]);
     // A command that runs one of the commands that decide the other sends, at any depth, declares an external effect.
     for (const [site, why] of Object.entries(OTHER_SENDS)) {
       if (!('command' in why)) continue;
@@ -314,6 +340,26 @@ describe('job egress (#1653)', () => {
     expect(belowR2(commands, external, fed)).toEqual(BELOW_R2);
   });
 
+  it('fails a pending no-command event that is fed, emitted by a command, listed twice or without an issue', () => {
+    const reasons = { 'planted.fed': 'a definer, #1', 'planted.emitted': 'a definer, #1', 'planted.both': 'a definer, #1', 'planted.quiet': 'a definer, #1', 'planted.noissue': 'a definer' };
+    const emitters = new Map<string, ReadonlySet<string>>([
+      ['planted.fed', new Set()],
+      ['planted.emitted', new Set(['planted.emit', 'planted.other'])],
+    ]);
+    expect(pendingProblems(reasons, { 'planted.both': 'x' }, ['planted.fed'], emitters)).toEqual([
+      'planted.fed: feeds a queue with egress now; move it from NO_COMMAND_PENDING to NO_COMMAND',
+      'planted.emitted: emitted by planted.emit, planted.other; NO_COMMAND_PENDING names events no command writes',
+      'planted.both: listed in NO_COMMAND and NO_COMMAND_PENDING',
+      'planted.noissue: the reason names no issue (#<number>)',
+    ]);
+    // An entry nothing feeds and no command emits is fine, which is what lets it land before its feed.
+    expect(pendingProblems({ 'planted.quiet': 'a definer, #1' }, {}, [], new Map())).toEqual([]);
+    // The planted emitter is seen in a source the way the real ones are: a command that emits a pending event.
+    const planted = new Sources({ 'modules/planted/src/a.ts': "export const emitter = defineCommand({ name: 'planted.emit', risk: 'R2', sideEffect: 'external', handler: async (ctx) => ctx.emit('planted.emitted', {}) });" });
+    const seen = emittersOf(['planted.emitted', 'planted.quiet'], planted, known, ['modules/planted']);
+    expect(seen.problems).toEqual([]);
+    expect(pendingProblems(reasons, {}, [], seen.commands)).toContain('planted.emitted: emitted by planted.emit; NO_COMMAND_PENDING names events no command writes');
+  });
   it('follows nested runs to the command that runs them, and fails a planted R1 command that runs an emitter (#1698)', () => {
     const planted = new Sources({
       'modules/planted/src/a.ts': `
