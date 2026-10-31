@@ -180,13 +180,8 @@ export const bankPreview = defineQuery({
 // Checks a statement file against the account and stores its new and ambiguous lines as one import, under the account's
 // lock, refusing a file with an invalid row (BANK_IMPORT_INVALID, before anything is written). The browser import
 // (finance.bank.import) and a statement read from a forwarded or dropped file (finance.bank.statement_file, #2142) store
-// through here, so both keep the same lines and the same keys. `audit` adds to the audit row (where the file came from).
-export async function importStatement(
-  ctx: CommandContext,
-  input: BankStatementImport,
-  legalEntityId: string,
-  audit: Record<string, unknown> = {},
-): Promise<BankImportResult> {
+// through here, so both keep the same lines and the same keys. `fileId`, for a file received, is named in the audit row.
+export async function importStatement(ctx: CommandContext, input: BankStatementImport, legalEntityId: string, fileId?: string): Promise<BankImportResult> {
   await bankAccount(ctx, input.bankAccount, true);
   await lockAccount(ctx, legalEntityId, input.bankAccount);
   const { preview, lines } = await check(ctx, input, legalEntityId);
@@ -197,7 +192,16 @@ export async function importStatement(
   }
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, lines);
   const result = { importId, counts: preview.counts, breaks: preview.breaks };
-  ctx.audit({ bankAccount: input.bankAccount, importId, filename: input.filename, from: preview.from, to: preview.to, ...preview.counts, breaks: preview.breaks.length, ...audit });
+  ctx.audit({
+    bankAccount: input.bankAccount,
+    importId,
+    filename: input.filename,
+    from: preview.from,
+    to: preview.to,
+    ...preview.counts,
+    breaks: preview.breaks.length,
+    ...(fileId ? { fileId, source: 'file' } : {}),
+  });
   await ctx.activity(
     'finance.bank_account',
     importId,

@@ -66,6 +66,7 @@ export const EXCEPTIONS = [
     rule: 'no-deep-import',
     from: [
       'apps/kernel/test/archive.db.test.ts',
+      'apps/kernel/test/bank-statement-file.test.ts',
       'apps/kernel/test/finance-late-invoice.db.test.ts',
       'apps/kernel/test/finance-missing-invoices.db.test.ts',
       'apps/kernel/test/finance-portal-list.db.test.ts',
@@ -74,9 +75,9 @@ export const EXCEPTIONS = [
       'apps/kernel/test/tax-portal.test.ts',
       'e2e/tests/bulk-intake.spec.ts',
     ],
-    to: '^(apps/extract/test/(zip|xlsx)-fixture\\.ts|e2e/fake-tax-portal/server\\.ts)$',
+    to: '^(apps/extract/test/(zip|xlsx|statement)-fixture\\.ts|e2e/fake-tax-portal/server\\.ts)$',
     reason:
-      'Test fixtures shared by the tests of several packages: the zip and xlsx builders of apps/extract and the fake tax portal of e2e. Test code that never ships; copies would drift.',
+      'Test fixtures shared by the tests of several packages: the zip and xlsx builders and the made-up bank statement of apps/extract, and the fake tax portal of e2e. Test code that never ships; copies would drift.',
   },
   {
     rule: 'no-deep-import',

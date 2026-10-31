@@ -767,7 +767,7 @@ suite('bank statement import (#326)', () => {
   // #2142: a statement that arrives as a file is stored as the lines of the account its own account number names through
   // the bank feed mappings, on the import's path (the same keys), and an unmapped number writes nothing.
   describe('a statement read from a forwarded or dropped file (#2142)', () => {
-    const NUMBER = '001100000123';
+    const NUMBER = '19880001234';
     const FILE_ACTOR = { type: 'system' as const, component: 'finance.bank_statement' };
     const statementFile = (rows: BankStatementRow[], accountNumber: string | null = NUMBER) =>
       worker.execute<StatementFileOutcome>('finance.bank.statement_file', { fileId: randomUUID(), filename: 'sao-ke.xlsx', accountNumber, rows }, { actor: FILE_ACTOR, orgId });
@@ -781,9 +781,9 @@ suite('bank statement import (#326)', () => {
       const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng sao kê tệp' })).body.connectionId);
       // The account is listed with the spaces a bank prints; the file's number is its digits.
       await admin((c) =>
-        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '0011 0000 0123', 'TK thử']),
+        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '1988 0001 234', 'TK thử']),
       );
-      const mapped = await feed('map', owner, { connectionId, externalAccountId: '0011 0000 0123', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: '1988 0001 234', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
       expect(mapped.status).toBe(200);
       const before = (await stored('1121.VCB')).length;
       const first = await statementFile(fileRows());

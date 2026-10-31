@@ -6,6 +6,8 @@ import { EXTRACT_LIMITS, zExtractResponse } from '@crove/extract-contract';
 import { readBankStatement } from '../src/bank-statement.ts';
 import { parse } from '../src/parse.ts';
 import { runSandboxed } from '../src/sandbox.ts';
+import { createExtractApp } from '../src/server.ts';
+import { readFirstSheet } from '../src/xlsx.ts';
 import { STATEMENT_ACCOUNT, STATEMENT_HEADER, STATEMENT_LINES, statementCsv, statementRows, statementXlsx, type StatementLineSpec } from './statement-fixture.ts';
 import { buildXlsx } from './xlsx-fixture.ts';
 import { buildZip } from './zip-fixture.ts';
@@ -68,6 +70,93 @@ describe('readBankStatement', () => {
       reference: `FT${i}`,
     }));
     expect(readBankStatement(statementXlsx({ lines }))).toEqual({ recognized: true, accountNumber: STATEMENT_ACCOUNT, tooMany: true, rows: [] });
+  });
+});
+
+// The probe reads a ZIP that may be anything (an .xlsx arrives as a ZIP, so does an archive of invoices, so can a hostile
+// file), with the limits the workbook reader and the archive reader already have (#465, #314): none is loosened here. Every
+// one of these ends as an answer "this is no statement" and never as a thrown error, a hang or an expanded entity.
+describe('a file that is hostile or only pretends to be a statement', () => {
+  const NONE = { recognized: false, accountNumber: null, tooMany: false, rows: [] };
+  const MiB = 1024 * 1024;
+
+  it('refuses an XML entity in any part it reads: an external one, and a billion laughs', () => {
+    const external = '<!DOCTYPE worksheet [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>&xxe;</t></is></c></row></sheetData></worksheet>';
+    const laughs =
+      '<!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">]><worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>&lol3;</t></is></c></row></sheetData></worksheet>';
+    for (const sheet of [external, laughs]) {
+      const workbook = buildXlsx(statementRows(), { override: { 'xl/worksheets/sheet1.xml': sheet } });
+      // The reader itself says why (no entity is declared, so none is expanded), and the probe answers "no statement".
+      expect(() => readFirstSheet(workbook)).toThrow(/DOCTYPE\/ENTITY/);
+      expect(readBankStatement(workbook)).toEqual(NONE);
+    }
+    // The same in the workbook, the shared strings and the styles.
+    const entity = '<!DOCTYPE x [<!ENTITY a "b">]><x/>';
+    for (const part of ['xl/workbook.xml', 'xl/sharedStrings.xml', 'xl/styles.xml']) {
+      expect(readBankStatement(buildXlsx(statementRows(), { override: { [part]: entity } }))).toEqual(NONE);
+    }
+  });
+
+  it('caps what a part inflates to, so a zip bomb is refused without being inflated', () => {
+    // 40 MiB of one character deflates to a few KB: its declared size is over the 32 MiB a part may be.
+    const bomb = `<worksheet><sheetData>${' '.repeat(40 * MiB)}</sheetData></worksheet>`;
+    const started = performance.now();
+    expect(readBankStatement(buildXlsx(statementRows(), { override: { 'xl/worksheets/sheet1.xml': bomb } }))).toEqual(NONE);
+    // An entry that lies about its size is refused too, not read to the end.
+    const lying = buildZip([{ name: 'xl/worksheets/sheet1.xml', data: 'x'.repeat(1000), size: 1 }]);
+    expect(readBankStatement(lying)).toEqual(NONE);
+    expect(performance.now() - started).toBeLessThan(10_000);
+  });
+
+  it('refuses a ZIP with more entries than an archive may have', () => {
+    const extra = Array.from({ length: EXTRACT_LIMITS.maxArchiveEntries + 1 }, (_, i) => ({ name: `junk/${i}.txt`, data: 'x' }));
+    expect(readBankStatement(buildXlsx(statementRows(), { extra }))).toEqual(NONE);
+  });
+
+  it('answers "no statement" for a malformed file instead of failing', () => {
+    const good = statementXlsx();
+    const damaged = [
+      good.slice(0, 120),
+      good.slice(0, good.length - 30),
+      Uint8Array.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0]),
+      Uint8Array.from([...good.slice(0, 60), ...new Uint8Array(200).fill(0xff)]),
+      buildZip([{ name: '../../evil.txt', data: 'x' }]),
+      buildZip([{ name: 'a.txt', data: 'x', encrypted: true }]),
+      buildZip([{ name: 'xl/worksheets/sheet1.xml', data: 'x', method: 99 }]),
+    ];
+    for (const bytes of damaged) expect(readBankStatement(bytes)).toEqual(NONE);
+  });
+
+  it('answers "no statement" for a ZIP that has the parts of a workbook but not a sheet that reads as one', () => {
+    // The names of an .xlsx, with a sheet that is not a statement, a missing sheet and a sheet outside the archive.
+    expect(readBankStatement(buildXlsx([['Tên', 'Giá'], ['Bút', 5000]]))).toEqual(NONE);
+    expect(readBankStatement(buildXlsx(statementRows(), { override: { 'xl/_rels/workbook.xml.rels': '<Relationships/>' } }))).toEqual(NONE);
+    expect(readBankStatement(buildXlsx(statementRows(), { override: { 'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="http://evil.test/sheet.xml"/></Relationships>' } }))).toEqual(NONE);
+    // Old .xls (OLE) is not a workbook the reader takes.
+    expect(readBankStatement(Uint8Array.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0, 0, 0, 0]))).toEqual(NONE);
+  });
+
+  it('never loads a hostile file into the sandbox answer: a flood of lines is cut at the cap, and text is bounded', () => {
+    const long = 'x'.repeat(5000);
+    const statement = readBankStatement(statementXlsx({ lines: [{ date: '01/09/2026', description: long, moneyIn: 1, reference: long }] }));
+    expect(statement.rows[0]?.description.length).toBeLessThanOrEqual(1000);
+    expect(statement.rows[0]?.reference.length).toBeLessThanOrEqual(100);
+    expect(() => zExtractResponse.parse({ ok: true, kind: 'bank_statement', statement })).not.toThrow();
+  });
+
+  it('is refused at the door over the size cap, before a byte is read', async () => {
+    const app = createExtractApp();
+    const over = new Uint8Array(EXTRACT_LIMITS.maxStatementBytes + 1);
+    const response = await app.fetch(new Request('http://crove-extract.test/extract?kind=bank_statement', { method: 'POST', body: over, headers: { 'content-type': 'application/octet-stream' } }));
+    expect(response.status).toBe(413);
+    expect(zExtractResponse.parse(await response.json())).toMatchObject({ ok: false, code: 'too_large' });
+  });
+
+  it('keeps a hostile file inside the sandbox process: the parser process answers, whatever it is sent', async () => {
+    const bomb = `<worksheet><sheetData>${' '.repeat(40 * MiB)}</sheetData></worksheet>`;
+    for (const bytes of [buildXlsx(statementRows(), { override: { 'xl/worksheets/sheet1.xml': bomb } }), statementXlsx().slice(0, 150)]) {
+      expect(await runSandboxed('bank_statement', bytes)).toMatchObject({ ok: true, kind: 'bank_statement', statement: { recognized: false } });
+    }
   });
 });
 

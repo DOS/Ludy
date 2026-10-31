@@ -3,11 +3,11 @@
 // runtime records what the worker asks of the finance module. What the command does with the lines (the mapping, the
 // dedupe keys, nothing written for an unmapped account) is covered on PostgreSQL in bank-statement-file.db.test.ts.
 import { describe, expect, it } from 'vitest';
-import type { ExtractClient } from '@crove/extract-contract';
+import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
 import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import { readStatementFile, statementFileRows, type StatementFileOutcome } from '@crove/mod-finance';
 import { inProcessExtract } from './extract-service.ts';
-import { STATEMENT_ACCOUNT, statementCsv, statementXlsx } from '../../extract/test/statement-fixture.ts';
+import { STATEMENT_ACCOUNT, statementCsv, statementRows, statementXlsx } from '../../extract/test/statement-fixture.ts';
 import { buildXlsx } from '../../extract/test/xlsx-fixture.ts';
 import { buildZip } from '../../extract/test/zip-fixture.ts';
 
@@ -86,7 +86,7 @@ describe('readStatementFile', () => {
       proposal: null,
       error: null,
       result: { kind: 'bank_statement', summary: { bankAccount: '1121', newLines: 3, duplicateLines: 0 } },
-      note: 'Đã nhập sao kê tài khoản 1121: 3 dòng mới, 0 dòng đã có',
+      summary: 'Đã nhập sao kê tài khoản 1121: 3 dòng mới, 0 dòng đã có',
     });
   });
 
@@ -131,6 +131,45 @@ describe('readStatementFile', () => {
     // An invoice or a photo is never offered to the sandbox as a statement.
     const xml = harness(new TextEncoder().encode('<HDon/>'), 'application/xml', imported, { extract: { extract: async () => Promise.reject(new Error('not called')) } });
     expect(await xml.run()).toEqual({ handled: false });
+  });
+
+  it('takes exactly the archive path for a ZIP that only pretends to be a statement: a bomb, an entity, a damaged or oversized file (#2142)', async () => {
+    const bomb = buildXlsx(statementRows(), { override: { 'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${' '.repeat(40 * 1024 * 1024)}</sheetData></worksheet>` } });
+    const entity = buildXlsx(statementRows(), { override: { 'xl/worksheets/sheet1.xml': '<!DOCTYPE x [<!ENTITY a "b">]><worksheet/>' } });
+    const damaged = statementXlsx().slice(0, 200);
+    for (const bytes of [bomb, entity, damaged]) {
+      const h = harness(bytes, ZIP, imported);
+      expect(await h.run()).toEqual({ handled: false });
+      // Nothing was stored and nothing recorded: the caller opens it as an archive, with the limits it always had.
+      expect(h.calls).toEqual([]);
+    }
+    // A ZIP past the statement size cap (the sandbox refuses it at the door), or one that keeps timing out after its
+    // retries, is an archive's too; before the retries run out a timeout is retried like any other sandbox failure.
+    const refuse = (code: 'too_large' | 'timeout' | 'memory'): ExtractClient => ({ extract: async () => ({ ok: false, code, message: 'x' }) as never });
+    for (const code of ['too_large', 'timeout', 'memory'] as const) {
+      expect(await harness(statementXlsx(), ZIP, imported, { extract: refuse(code) }).run(EXTRACT_LIMIT_RETRIES)).toEqual({ handled: false });
+    }
+    // Over the statement cap the sandbox is not even asked: a big ZIP is an archive, a big CSV is refused as too large.
+    const never: ExtractClient = { extract: async () => Promise.reject(new Error('not called')) };
+    const big = new Uint8Array(EXTRACT_LIMITS.maxStatementBytes + 1);
+    big.set([0x50, 0x4b, 0x03, 0x04]);
+    expect(await harness(big, ZIP, imported, { extract: never }).run()).toEqual({ handled: false });
+    const bigCsv = harness(big, CSV, imported, { extract: never });
+    expect(await bigCsv.run()).toEqual({ handled: true });
+    expect(String(bigCsv.calls[0]?.input['error'])).toContain('10 MB');
+    await expect(harness(statementXlsx(), ZIP, imported, { extract: refuse('timeout') }).run(0)).rejects.toThrow(/limit/);
+    await expect(harness(statementXlsx(), ZIP, imported, { extract: { extract: async () => Promise.reject(new Error('sandbox down')) } }).run()).rejects.toThrow('sandbox down');
+  });
+
+  it('ends a CSV the sandbox cannot read as a clear refusal in the Inbox, never as a crash', async () => {
+    const binary = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0x01, 0x02, 0xff, 0xfe, 0x0a, 0x2c]);
+    const h = harness(binary, CSV, imported);
+    expect(await h.run()).toEqual({ handled: true });
+    expect(h.calls[0]?.input).toMatchObject({ status: 'failed', proposal: null });
+    expect(String(h.calls[0]?.input['error'])).toContain('Không nhận ra sao kê');
+    const tooLarge = harness(statementCsv(), CSV, imported, { extract: { extract: async () => ({ ok: false, code: 'too_large', message: 'x' }) as never } });
+    expect(await tooLarge.run()).toEqual({ handled: true });
+    expect(String(tooLarge.calls[0]?.input['error'])).toContain('10 MB');
   });
 
   it('fails a CSV that is no statement with the reason, since nothing else would read it', async () => {

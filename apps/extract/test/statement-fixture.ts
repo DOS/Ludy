@@ -4,8 +4,9 @@
 // and every amount are invented. Node built-ins only (through xlsx-fixture), so the kernel tests import it too.
 import { buildXlsx, type XlsxCell } from './xlsx-fixture.ts';
 
-// A made-up account number (12 digits), as the bank feed mappings name an account.
-export const STATEMENT_ACCOUNT = '001100000123';
+// A made-up account number (11 digits, none of a person's identity card or a real bank's), as the bank feed mappings name
+// an account.
+export const STATEMENT_ACCOUNT = '19880001234';
 
 export interface StatementLineSpec {
   // dd/mm/yyyy, as a bank prints it.

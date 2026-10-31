@@ -337,7 +337,7 @@ export const recordExtraction = defineCommand({
     // (the default) when the document could not be read. A code in kernel.file.read_failed, which the prober counts.
     failure: z.enum(['service', 'document']).optional(),
     // What a done run with no proposal says in the file's history (#2142), for example how many bank lines a statement brought.
-    note: z.string().max(500).optional(),
+    summary: z.string().max(500).optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -417,7 +417,7 @@ export const recordExtraction = defineCommand({
       // A run that is done with no proposal read a file into something else than an invoice (a bank statement into bank
       // lines, #2142): its own account of it, not a failure.
       if (input.status === 'done') {
-        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.note ?? 'Đã đọc tệp');
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
         return { extractionId: run.id, proposalId: null, duplicate: false };
       }
       await ctx.activity('kernel.file', input.fileId, 'extraction.failed', input.error ?? 'Không đọc được chứng từ');

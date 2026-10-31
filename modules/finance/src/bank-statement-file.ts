@@ -68,7 +68,7 @@ export const bankStatementFile = defineCommand({
         ctx,
         { bankAccount: place.bank_account, filename: input.filename, rows: input.rows, legalEntityId: place.legal_entity_id },
         place.legal_entity_id,
-        { fileId: input.fileId, source: 'file' },
+        input.fileId,
       );
       return { outcome: 'imported', importId: result.importId, bankAccount: place.bank_account, legalEntityId: place.legal_entity_id, counts: result.counts };
     } catch (error) {
@@ -149,13 +149,20 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
   // Already read (a retried job, or an archive opened before): the caller's own checks decide, as they always did.
   if (file.hasExtraction) return { handled: true };
   const asCsv = file.content_type === CSV;
-  const record = (status: 'done' | 'failed', fields: { error: string | null; result?: unknown; note?: string }) =>
+  const record = (status: 'done' | 'failed', fields: { error: string | null; result?: unknown; summary?: string }) =>
     deps.runtime.execute(
       'kernel.extraction.record',
-      { fileId, method: 'unsupported', status, result: fields.result ?? null, checks: [], error: fields.error, proposal: null, ...(fields.note ? { note: fields.note } : {}) },
+      { fileId, method: 'unsupported', status, result: fields.result ?? null, checks: [], error: fields.error, proposal: null, ...(fields.summary ? { summary: fields.summary } : {}) },
       { actor, orgId },
     );
   const bytes = await readVerified(deps.store, { key: file.storage_key, generation: file.generation, sha256: file.sha256 });
+  // Over the sandbox's statement cap the sandbox would refuse the body at its door: a big ZIP is an archive of invoices
+  // (opened as before, with its own caps), a big CSV is too large to read.
+  if (bytes.byteLength > EXTRACT_LIMITS.maxStatementBytes) {
+    if (!asCsv) return { handled: false };
+    await record('failed', { error: TOO_LARGE });
+    return { handled: true };
+  }
   const read = await deps.extract.extract('bank_statement', bytes);
   if (!read.ok) {
     const limitHit = read.code === 'timeout' || read.code === 'memory';
@@ -189,7 +196,7 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
   await record('done', {
     error: null,
     result: { kind: 'bank_statement', summary: { bankAccount: outcome.bankAccount, importId: outcome.importId, newLines, duplicateLines: counts.duplicate } },
-    note: `Đã nhập sao kê tài khoản ${outcome.bankAccount}: ${newLines} dòng mới, ${counts.duplicate} dòng đã có`,
+    summary: `Đã nhập sao kê tài khoản ${outcome.bankAccount}: ${newLines} dòng mới, ${counts.duplicate} dòng đã có`,
   });
   return { handled: true };
 }
