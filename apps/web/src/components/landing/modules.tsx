@@ -156,45 +156,33 @@ export function Modules({ dict }: { dict: Dictionary }) {
               </figure>
             </div>
           </div>
-          <figure className="mt-4 min-w-0 rounded-md border border-line bg-bg">
-            <figcaption className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-line px-3 py-2.5">
+          <figure className="mt-4 min-w-0 rounded-md border border-line bg-bg p-3">
+            <figcaption className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
               <span className="text-sm font-semibold">{finance.sales.title}</span>
               <span className="text-xs text-subtle">{finance.sales.sub}</span>
             </figcaption>
-            <div className="grid min-w-0 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-              <div className="min-w-0">
-                <ul className="divide-y divide-line">
-                  {finance.sales.rows.map((row) => (
-                    <li key={row.number} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2.5 text-[13px]">
-                      <span className="num truncate font-medium">
-                        <span className="sr-only">{finance.sales.seriesLabel} </span>1C26TPT / {row.number}
-                      </span>
-                      <span className="num text-right">{row.amount}</span>
-                      <span className="col-span-2 flex min-w-0 items-center">
-                        <Chip tone={toneOf(row.tone)} wrap>
-                          {row.tone === 'ok' ? <Check className="size-3" strokeWidth={3} aria-hidden="true" /> : null}
-                          {row.label}
-                        </Chip>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                <p className="border-t border-line px-3 py-2.5 text-xs text-subtle">{finance.sales.foot}</p>
-              </div>
-              <div className="min-w-0 border-t border-line px-3 py-2.5 text-xs md:border-t-0 md:border-l">
-                <div className="text-sm font-semibold">{finance.sales.gapsTitle}</div>
-                <div className="mt-0.5 text-subtle">{finance.sales.gapsSeries}</div>
-                <ul className="mt-3 flex flex-wrap gap-2">
-                  {finance.sales.gaps.map((gap) => (
-                    <li key={gap} className="num rounded-sm border border-dashed border-warn/70 px-1.5 py-1 text-warn">
-                      {gap}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-3 text-subtle">{finance.sales.gapsRange}</p>
-              </div>
-            </div>
+            <ol className="mt-3 grid grid-cols-5 gap-1.5 sm:grid-cols-10" aria-label={finance.sales.summary}>
+              {Array.from({ length: finance.sales.last - finance.sales.first + 1 }, (_, k) => {
+                const n = finance.sales.first + k;
+                const gap = finance.sales.gaps.includes(n);
+                return (
+                  <li
+                    key={n}
+                    className={`num rounded-sm border px-1 py-1 text-center text-xs ${gap ? 'border-dashed border-warn/70 bg-warn-soft font-semibold text-warn' : 'border-line bg-surface text-muted'}`}
+                  >
+                    {String(n).padStart(8, '0').slice(-5)}
+                    <span className="sr-only">, {gap ? finance.sales.gapLabel : finance.sales.okLabel}</span>
+                  </li>
+                );
+              })}
+            </ol>
+            <p className="mt-3 text-xs text-muted">{finance.sales.summary}</p>
+            <p className="mt-1 text-xs text-subtle">{finance.sales.hint}</p>
           </figure>
+          <p className="mt-4 flex items-center gap-2 text-xs text-subtle">
+            <Chip tone="neutral">{finance.soonLabel}</Chip>
+            <span>{finance.soon}</span>
+          </p>
         </Card>
 
         <Card>
