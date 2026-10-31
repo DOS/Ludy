@@ -2007,7 +2007,9 @@ export const vi = {
       unsupported: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP, ZIP, hoặc sao kê ngân hàng dạng XLSX, CSV',
       progress: 'Đã xong {settled, number}/{total, number} tệp',
       done: 'Đã nhận {total, number} tệp',
-      counts: '{proposed, number} đề xuất · {imported, number} sao kê · {duplicate, number} trùng · {failed, number} lỗi',
+      counts: '{proposed, number} đề xuất · {duplicate, number} trùng · {failed, number} lỗi',
+      // The same with the bank statements imported (#2142), used only when a batch has one.
+      countsStatements: '{proposed, number} đề xuất · {imported, number} sao kê đã nhập · {duplicate, number} trùng · {failed, number} lỗi',
       close: 'Đóng',
       alreadyReceived: 'Tệp này đã nhận trước đó',
       expandedCount: 'ZIP: {count, number} tệp',

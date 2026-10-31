@@ -2009,7 +2009,9 @@ export const en = {
       unsupported: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files, or a bank statement as XLSX or CSV, are accepted.',
       progress: '{settled, number} of {total, number} files done',
       done: '{total, plural, one {# file received} other {# files received}}',
-      counts: '{proposed, number} proposals · {imported, number} statements · {duplicate, number} duplicates · {failed, number} failed',
+      counts: '{proposed, number} proposals · {duplicate, number} duplicates · {failed, number} failed',
+      // The same with the bank statements imported (#2142), used only when a batch has one.
+      countsStatements: '{proposed, number} proposals · {imported, number} statements imported · {duplicate, number} duplicates · {failed, number} failed',
       close: 'Close',
       alreadyReceived: 'Already received earlier',
       expandedCount: '{count, plural, one {ZIP: # file} other {ZIP: # files}}',
