@@ -434,6 +434,16 @@ export const inboxGet = defineQuery({
   },
 });
 
+// The bank statements read from files that wait for a member to import or skip them (#2142), however many files came since:
+// the Inbox lists them apart from the recent files, which show only the newest.
+export const STAGED_STATEMENTS_LIMIT = 100;
+export const filesStaged = defineQuery({
+  name: 'kernel.files.staged',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx) => (await fileStatuses(ctx, { staged: STAGED_STATEMENTS_LIMIT })).map((row) => row.status),
+});
+
 export const filesRecent = defineQuery({
   name: 'kernel.files.recent',
   input: z.object({}),
@@ -553,5 +563,5 @@ export const streamCheck = defineQuery({
 
 // overview: the home screen's figures of the modules this deployment enables (#1261), from the composition root.
 export function kernelQueries(options: OrgDetailOptions & { overview?: readonly OverviewContribution[] }) {
-  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), streamCheck, inboxList, inboxGet, filesRecent, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...usageQueries];
+  return [orgDetailQuery(options), orgOverviewQuery({ contributions: options.overview ?? [] }), streamCheck, inboxList, inboxGet, filesRecent, filesStaged, inboundRecent, inboundText, fileGet, ...archiveQueries, sessionsList, ...inviteQueries, ...offboardingQueries, ...agentQueries, ...channelQueries, ...mailQueries, ...proposalReminderQueries, ...taxCalendarQueries, ...legalEntityQueries, ...numberingQueries, ...roleQueries, ...calendarQueries, ...timelineQueries, ...auditLogQueries, ...partyQueries, ...notificationQueries, ...inboxItemQueries, ...usageQueries];
 }

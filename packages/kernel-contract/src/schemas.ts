@@ -635,15 +635,38 @@ export const zInboxDetail = zInboxItem.extend({
   canReextract: z.boolean(),
 });
 
+// What the Inbox shows of a bank statement read from a file (#2142): the bank account its account number is mapped to, the
+// lines it holds (newLines and duplicateLines as checked against the account when it was read, then as stored when a member
+// imported it), its period and its totals. state: staged (waiting for a member), imported, rejected (skipped).
+export const zStatementSummary = z.object({
+  state: z.enum(['staged', 'imported', 'rejected']),
+  bankAccount: z.string(),
+  filename: z.string(),
+  lines: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  duplicateLines: z.number().int().nonnegative(),
+  from: zLocalDate.nullable(),
+  to: zLocalDate.nullable(),
+  totalIn: zMoney,
+  totalOut: zMoney,
+});
+export type StatementSummary = z.infer<typeof zStatementSummary>;
+
 export const zFileStatus = z.object({
   id: zId,
   filename: z.string(),
   contentType: z.string(),
   // expanded: a ZIP archive whose entries were filed as documents of their own (#314). waiting: kept unread because
   // the org used its daily extraction limit (#675); it is read once the org is back under it.
-  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded']),
+  // A bank statement read from a file (#2142) has no proposal: staged is a statement waiting for a member to import it
+  // (nothing is stored until then), imported one whose lines were stored, dismissed one a member skipped.
+  status: z.enum(['processing', 'waiting', 'proposed', 'failed', 'duplicate', 'expanded', 'staged', 'imported', 'dismissed']),
   // The newest run's error, when that run failed.
   error: z.string().nullable(),
+  // The bank statement of a staged, imported or dismissed file (#2142), null for any other file.
+  // decidedBy: who imported or skipped it and when, from the audit row of the decision (null while it waits, or when the
+  // row is not visible to the reader); name is null for a person who is no longer a member.
+  statement: zStatementSummary.extend({ decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable() }).nullable(),
   proposalId: zId.nullable(),
   // That proposal's status (#2009): a proposed file waiting for a person, posted or rejected, so the Inbox tells them
   // apart (DESIGN.md principle 2). Null when the file has no proposal.

@@ -25,6 +25,7 @@ const status = (id: string, value: FileStatus['status'], error: string | null = 
   contentType: 'application/xml',
   status: value,
   error,
+  statement: null,
   proposalId: null,
   proposalStatus: null,
   voided: false,
@@ -43,7 +44,10 @@ describe('bulk intake state', () => {
   it('prechecks size and extension; the server still decides by content', () => {
     expect(precheck({ name: 'hd.XML', size: 10 })).toBe('ok');
     expect(precheck({ name: 'thang-10.zip', size: 10 })).toBe('ok');
-    expect(precheck({ name: 'bang-ke.xlsx', size: 10 })).toBe('unsupported');
+    // A bank statement (#2142): Excel or CSV.
+    expect(precheck({ name: 'bang-ke.xlsx', size: 10 })).toBe('ok');
+    expect(precheck({ name: 'sao-ke.CSV', size: 10 })).toBe('ok');
+    expect(precheck({ name: 'sao-ke.xls', size: 10 })).toBe('unsupported');
     expect(precheck({ name: 'noextension', size: 10 })).toBe('unsupported');
     expect(precheck({ name: 'big.pdf', size: 25 * 1024 * 1024 + 1 })).toBe('too_large');
     expect(MAX_INTAKE_FILES).toBe(500);
@@ -63,7 +67,19 @@ describe('bulk intake state', () => {
     expect(isSettled(items)).toBe(true);
     // A later answer that leaves a settled file out does not undo it.
     expect(applyBatch(items, []).map((i) => i.state)).toEqual(['proposed', 'duplicate', 'upload_failed']);
-    expect(summarize(items)).toEqual({ total: 3, settled: 3, proposed: 1, duplicate: 1, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 3, settled: 3, proposed: 1, imported: 0, duplicate: 1, failed: 1 });
+  });
+
+  it('settles a bank statement waiting for a member, one imported and one skipped, apart from the proposals (#2142)', () => {
+    let items = [newItem('a', 'sao-ke-t9.xlsx'), newItem('b', 'hd.xml'), newItem('c', 'sao-ke-t10.csv'), newItem('d', 'sao-ke-t11.csv')];
+    items = items.map((item, i) => uploaded(item, { fileId: ID(i + 1), duplicate: false }));
+    expect(pendingIds(items)).toEqual([ID(1), ID(2), ID(3), ID(4)]);
+    items = applyBatch(items, [batchFile(ID(1), 'imported'), batchFile(ID(2), 'proposed'), batchFile(ID(3), 'staged'), batchFile(ID(4), 'dismissed')]);
+    expect(items.map((i) => i.state)).toEqual(['imported', 'proposed', 'staged', 'dismissed']);
+    expect(pendingIds(items)).toEqual([]);
+    expect(isSettled(items)).toBe(true);
+    // A statement waiting for a member waits for a decision, as a proposal does.
+    expect(summarize(items)).toEqual({ total: 4, settled: 4, proposed: 2, imported: 1, duplicate: 0, failed: 0 });
   });
 
   it("carries a proposed file's proposal status, so its chip tells posted from waiting (#2009)", () => {
@@ -145,7 +161,7 @@ describe('bulk intake state', () => {
       ['inner.zip', 'rejected'],
     ]);
     expect(items[0]?.entries[3]?.reason).toBe('nested_archive');
-    expect(summarize(items)).toEqual({ total: 4, settled: 3, proposed: 1, duplicate: 1, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 4, settled: 3, proposed: 1, imported: 0, duplicate: 1, failed: 1 });
     expect(pendingIds(items)).toEqual([ID(10)]);
 
     items = applyBatch(items, [
@@ -164,7 +180,7 @@ describe('bulk intake state', () => {
   it('counts an archive the sandbox refused as one failed file', () => {
     const items = applyBatch([uploaded(newItem('z', 'bad.zip'), { fileId: ID(20), duplicate: false })], [{ ...batchFile(ID(20), 'failed'), error: 'Tệp ZIP có đường dẫn không an toàn: ../x' }]);
     expect(items[0]).toMatchObject({ state: 'failed', error: 'Tệp ZIP có đường dẫn không an toàn: ../x' });
-    expect(summarize(items)).toEqual({ total: 1, settled: 1, proposed: 0, duplicate: 0, failed: 1 });
+    expect(summarize(items)).toEqual({ total: 1, settled: 1, proposed: 0, imported: 0, duplicate: 0, failed: 1 });
   });
 
   it('polls archives a few at a time so their entries always fit one answer, and caps the files in flight', () => {

@@ -9,7 +9,9 @@ import { z } from 'zod';
 // portal_invoice_list: the purchase-invoice list exported from the tax authority's e-invoice portal as .xlsx (#465);
 // the rows come back read and normalized, and the worker checks them again before they are stored.
 // feed: a blog's RSS or Atom feed (#708); its newest items come back read and capped.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed'] as const;
+// bank_statement: a bank's statement as .xlsx or CSV (#2142), forwarded by email or dropped in the Inbox; the account
+// number above the lines and the lines come back read, cells as text, and the worker checks them again.
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -57,6 +59,11 @@ export const EXTRACT_LIMITS = {
   maxFeedSummaryChars: 1000,
   // Rows of the sheet that were not read as invoices (a totals row, a row without a number), reported by number.
   maxPortalListSkipped: 1000,
+  // A bank statement (#2142): a file of at most this size, with at most this many lines (a month of a busy account has a
+  // few thousand; the finance module takes the same number from the browser import, BANK_IMPORT_MAX_ROWS).
+  maxStatementBytes: 10 * MiB,
+  maxStatementRows: 5000,
+  maxStatementCellChars: 1000,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -68,6 +75,7 @@ export type ArchiveRejection = (typeof ARCHIVE_REJECTIONS)[number];
 export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
+  if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
   if (kind === 'html_meta') return EXTRACT_LIMITS.maxHtmlBytes;
   if (kind === 'feed') return EXTRACT_LIMITS.maxFeedBytes;
   return EXTRACT_LIMITS.maxFileBytes;
@@ -321,6 +329,35 @@ export const zExtractedPortalList = z.strictObject({
 });
 export type ExtractedPortalList = z.infer<typeof zExtractedPortalList>;
 
+// A bank statement as the sandbox read it (#2142). recognized is false when the file is no statement: not a workbook or
+// text, or no row names a date and an amount; the other fields are then empty. A statement has its lines as cells of
+// text (a number cell as stored, a date cell as its calendar day), which the module judges as it does the browser
+// import's. tooMany: more lines than maxStatementRows; rows is then empty and nothing is read.
+const zStatementCell = z.strictObject({
+  kind: z.enum(['number', 'text']),
+  value: z.string().max(EXTRACT_LIMITS.maxStatementCellChars),
+});
+export const zExtractedBankStatement = z.strictObject({
+  recognized: z.boolean(),
+  // The digits of the account number named above the lines, or null when none is.
+  accountNumber: z.string().regex(/^\d{6,20}$/).nullable(),
+  tooMany: z.boolean(),
+  rows: z
+    .array(
+      z.strictObject({
+        rowNo: z.number().int().positive().max(1_048_576),
+        date: z.string().max(40),
+        description: z.string().max(1000),
+        reference: z.string().max(100),
+        moneyIn: zStatementCell.nullable(),
+        moneyOut: zStatementCell.nullable(),
+        balance: zStatementCell.nullable(),
+      }),
+    )
+    .max(EXTRACT_LIMITS.maxStatementRows),
+});
+export type ExtractedBankStatement = z.infer<typeof zExtractedBankStatement>;
+
 export const zExtractFailure = z.strictObject({
   ok: z.literal(false),
   code: z.enum(EXTRACT_ERROR_CODES),
@@ -342,6 +379,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('dsn'), report: zExtractedDsn }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('html_meta'), page: zExtractedPage }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('feed'), feed: zExtractedFeed }),
+  z.strictObject({ ok: z.literal(true), kind: z.literal('bank_statement'), statement: zExtractedBankStatement }),
 ]);
 export type ExtractSuccess = z.infer<typeof zExtractSuccess>;
 

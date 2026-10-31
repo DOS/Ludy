@@ -13,7 +13,7 @@ import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, extractAndPropose, importPortalList, recordExtractionFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, extractAndPropose, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -544,6 +544,13 @@ export async function recordLastAttemptFailure(
 ): Promise<void> {
   const known = archive === undefined ? await archiveSource(runtime, orgId, fileId).catch(() => undefined) : archive;
   const failArchive = () => recordArchiveFailure(runtime, orgId, fileId, 'Không mở được tệp ZIP sau nhiều lần thử; hãy tải lại tệp');
+  // A re-read someone asked for (#2142) that never ended belongs to a bank statement (only a statement's ZIP is read
+  // again): its pending run is failed, on its own version, never answered as the opening of an archive, which would find
+  // the earlier run and leave this one pending until it goes stale.
+  if (known && version !== undefined) {
+    await recordStatementReadFailure(runtime, orgId, fileId, version, 'Không đọc lại được sao kê sau nhiều lần thử; hãy bấm Đọc lại sau ít phút');
+    return;
+  }
   if (known) {
     await failArchive();
     return;
@@ -606,8 +613,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     // undefined until it is known; a lookup that fails is retried with the job like any other step.
     let archive: ArchiveSource | null | undefined;
     try {
+      // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
+      // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
+      // named an account no one had mapped yet) comes with its version and is read the same way.
+      const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (statement.handled) {
+        console.log(`[extract] file ${fileId}: bank statement`);
+        return;
+      }
       archive = await archiveSource(deps.runtime, orgId, fileId);
-      if (archive && version !== undefined) return;
+      if (archive && version !== undefined) {
+        // A re-read asked for on a ZIP the sandbox no longer reads as a statement (#2142): its run ends here with the reason,
+        // not pending until it goes stale. An archive of documents is never read again, so none has a version.
+        await recordStatementReadFailure(deps.runtime, orgId, fileId, version, 'Tệp không còn được nhận ra là sao kê ngân hàng');
+        return;
+      }
       if (archive) {
         const { fileIds } = await expandArchive({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, archive, job.retryCount);
         console.log(`[extract] archive ${fileId}: ${fileIds.length} file(s)`);

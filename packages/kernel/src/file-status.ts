@@ -2,7 +2,7 @@
 // (#314), opened into files of its own. Shared by files.recent and files.batch.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { ARCHIVE_ENTRY_REASONS, zId, type FileStatus } from '@crove/kernel-contract';
+import { ARCHIVE_ENTRY_REASONS, zId, zStatementSummary, type FileStatus } from '@crove/kernel-contract';
 import type { QueryContext } from '@crove/kernel-runtime';
 import { EDITOR_ROLES } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, REEXTRACT_STALE_MINUTES, STALE_RUN_ERROR, voidedProposals } from './extraction.ts';
@@ -20,6 +20,46 @@ export const zStoredArchiveEntry = z.object({
 });
 export type StoredArchiveEntry = z.infer<typeof zStoredArchiveEntry>;
 
+// The summary a bank statement read from a file keeps in its run's result (#2142), read defensively; the run's rows and
+// the account number that named its account (the finance module's) stay out of what the Inbox is told.
+function statementOf(value: unknown, decisions: ReadonlyMap<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>, fileId: string): FileStatus['statement'] {
+  const parsed = zStatementSummary.safeParse(value);
+  return parsed.success ? { ...parsed.data, decidedBy: parsed.data.state === 'staged' ? null : (decisions.get(fileId) ?? null) } : null;
+}
+
+// Who decided each statement (imported or skipped) and when, from the audit row of the decision (#2142), newest first per
+// file; a person's name only while they are a member (member_profiles answers for members of the org alone). A decision
+// whose audit row the reader cannot see, or whose actor is gone, shows no name.
+async function statementDecisions(ctx: QueryContext, fileIds: readonly string[]): Promise<Map<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>> {
+  const out = new Map<string, NonNullable<NonNullable<FileStatus['statement']>['decidedBy']>>();
+  if (fileIds.length === 0) return out;
+  const rows = await ctx.trx
+    .selectFrom('crove_kernel.audit_event')
+    .select(['target_id', 'actor_id', 'occurred_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('command', '=', 'kernel.extraction.statement_state')
+    .where('outcome', '=', 'ok')
+    .where('target_type', '=', 'kernel.file')
+    .where('target_id', 'in', [...fileIds])
+    .orderBy('occurred_at', 'desc')
+    .orderBy('id', 'desc')
+    .execute();
+  const users = [...new Set(rows.flatMap((r) => (r.actor_id ? [r.actor_id] : [])))];
+  const names = new Map<string, string>();
+  if (users.length > 0) {
+    const { rows: people } = await sql<{ user_id: string; email: string; display_name: string | null }>`
+      SELECT user_id, email, display_name FROM crove_kernel.member_profiles(${users}::uuid[])`.execute(ctx.trx);
+    for (const p of people) names.set(p.user_id, p.display_name ?? p.email);
+  }
+  for (const r of rows) {
+    if (!r.target_id || out.has(r.target_id)) continue;
+    out.set(r.target_id, { name: r.actor_id ? (names.get(r.actor_id) ?? null) : null, at: new Date(r.occurred_at).toISOString() });
+  }
+  return out;
+}
+
+const STATEMENT_STATUS = { staged: 'staged', imported: 'imported', rejected: 'dismissed' } as const;
+
 export interface FileStatusRow {
   status: FileStatus;
   // How many entries an opened archive has; null for any other file, and for an archive not opened (yet, or at all).
@@ -27,7 +67,8 @@ export interface FileStatusRow {
   entryCount: number | null;
 }
 
-export type FileStatusFilter = { ids: readonly string[] } | { recent: number };
+// staged: the files whose newest run is a bank statement waiting for a member (#2142), however old, newest first.
+export type FileStatusFilter = { ids: readonly string[] } | { recent: number } | { staged: number };
 
 export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter): Promise<FileStatusRow[]> {
   if ('ids' in filter && filter.ids.length === 0) return [];
@@ -48,6 +89,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             // Only the size of an opened archive's entry list, from its own column (#432): neither the list nor an
             // invoice's result is loaded here.
             sql<number | null>`CASE WHEN x.method = 'archive' AND x.status = 'done' THEN x.entry_count END`.as('entry_count'),
+            // What a bank statement read into bank lines recorded as its result (#2142): only the small summary of a run of
+            // method 'unsupported' (the guard keeps an invoice's result from being read for every file).
+            sql<unknown>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'bank_statement' THEN x.result -> 'summary' END`.as('statement'),
             sql<boolean>`x.status = 'pending' AND x.created_at > pg_catalog.now() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int)`.as(
               'in_flight',
             ),
@@ -82,6 +126,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'e.version',
       'e.method',
       'e.entry_count',
+      'e.statement',
       'e.in_flight',
       'e.run_at',
       'p.id as proposal_id',
@@ -98,7 +143,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
     // uploaded as one and read.
     .where((eb) => eb.or([eb('f.source', 'not in', ['social', 'import']), eb('e.status', 'is not', null)]));
-  query = 'ids' in filter ? query.where('f.id', 'in', [...filter.ids]) : query.orderBy('f.created_at', 'desc').limit(filter.recent);
+  if ('ids' in filter) query = query.where('f.id', 'in', [...filter.ids]);
+  else if ('staged' in filter) query = query.where(sql<boolean>`(e.statement ->> 'state') = 'staged'`).orderBy('f.created_at', 'desc').limit(filter.staged);
+  else query = query.orderBy('f.created_at', 'desc').limit(filter.recent);
   const rows = await query.execute();
   // An executed purchase whose document was voided by a reversal (#165) may be read again.
   const voided = await voidedProposals(
@@ -106,6 +153,14 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     rows.flatMap((r) => (r.proposal_id && r.proposal_status === 'executed' ? [r.proposal_id] : [])),
   );
   const editor = ctx.actor.type === 'user' && ctx.role !== null && EDITOR_ROLES.includes(ctx.role);
+  // The statements read from files that were decided: who decided each, from its audit row (#2142).
+  const decisions = await statementDecisions(
+    ctx,
+    rows.flatMap((r) => {
+      const state = statementOf(r.statement, new Map(), r.id)?.state;
+      return state === 'imported' || state === 'rejected' ? [r.id] : [];
+    }),
+  );
   return rows.map((r) => {
     const archive = isArchiveType(r.content_type);
     const waiting = !r.extraction_status && r.waiting;
@@ -117,6 +172,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const lastRunFailed = r.extraction_status === 'failed' || (r.extraction_status === 'pending' && !r.in_flight);
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
+    const statement = statementOf(r.statement, decisions, r.id);
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight
@@ -125,11 +181,13 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           ? r.extraction_status === 'done'
             ? 'expanded'
             : 'failed'
-          : r.proposal_id && !failedSinceDecision
-            ? r.duplicate_of
-              ? 'duplicate'
-              : 'proposed'
-            : 'failed';
+          : statement
+            ? STATEMENT_STATUS[statement.state]
+            : r.proposal_id && !failedSinceDecision
+              ? r.duplicate_of
+                ? 'duplicate'
+                : 'proposed'
+              : 'failed';
     return {
       status: {
         id: r.id,
@@ -143,6 +201,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             : r.extraction_status === 'pending' && !r.in_flight
               ? STALE_RUN_ERROR
               : null,
+        statement,
         proposalId: r.proposal_id,
         proposalStatus: r.proposal_status ?? null,
         voided: isVoided,
@@ -150,7 +209,11 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
         // The same checks kernel.file.reextract makes; an archive is opened once and never read again.
         canReextract:
           editor &&
-          !archive &&
+          // An archive is opened once; a ZIP read as a bank statement (#2142) may be read again.
+          (!archive || r.method === 'unsupported') &&
+          // A statement imported is stored once: reading it again would only find its lines already there. One waiting or
+          // skipped may be read again (a corrected mapping, a second look).
+          statement?.state !== 'imported' &&
           Boolean(r.extraction_status) &&
           !r.in_flight &&
           (r.proposal_status !== 'executed' || isVoided) &&

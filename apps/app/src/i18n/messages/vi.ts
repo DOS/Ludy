@@ -1968,6 +1968,26 @@ export const vi = {
       rejected: 'Đã từ chối',
       expired: 'Hết hạn',
     },
+    // Bank statements that arrived as files and wait for a member (#2142).
+    staged: {
+      title: 'Sao kê ngân hàng chờ nhập',
+      hint: 'Chưa có dòng nào được lưu. Hãy xem lại tài khoản, kỳ và tổng tiền rồi chọn nhập hoặc bỏ qua; thư gửi đến không có gì chứng minh người gửi là ai.',
+      account: 'Tài khoản ngân hàng',
+      period: 'Kỳ sao kê',
+      range: 'Từ {from} đến {to}',
+      noPeriod: 'Không rõ',
+      lines: 'Số dòng',
+      linesValue: '{lines} dòng ({news} mới, {duplicates} đã có)',
+      totals: 'Tổng tiền',
+      totalsValue: 'Thu {moneyIn} · Chi {moneyOut}',
+      import: 'Nhập sao kê',
+      skip: 'Bỏ qua',
+      imported: '{count, number} dòng mới đã được nhập',
+      skipped: 'Đã bỏ qua sao kê; không có dòng nào được lưu',
+      needsMember: 'Chỉ chủ sở hữu, quản trị viên và thành viên nhập được sao kê.',
+      decidedBy: '{state, select, imported {Nhập bởi} other {Bỏ qua bởi}} {name} lúc {when}',
+      formerMember: 'một người không còn là thành viên',
+    },
     fileStatus: {
       processing: 'Đang đọc',
       waiting: 'Chờ hạn mức ngày mai',
@@ -1975,16 +1995,21 @@ export const vi = {
       duplicate: 'Trùng hóa đơn',
       failed: 'Không đọc được',
       expanded: 'Đã mở ZIP',
+      imported: 'Đã nhập sao kê',
+      staged: 'Sao kê chờ nhập',
+      dismissed: 'Đã bỏ qua sao kê',
       // A posted file whose entry was reversed (#2032).
       voided: 'Đã hủy (đảo bút toán)',
     },
-    formatsZip: 'Hoặc một tệp ZIP tối đa 500 tệp (40 MB khi giải nén), như cổng thuế xuất ra',
+    formatsZip: 'Hoặc một tệp ZIP tối đa 500 tệp (40 MB khi giải nén), như cổng thuế xuất ra. Sao kê ngân hàng dạng XLSX hoặc CSV chờ bạn xem rồi nhập thành dòng sao kê của tài khoản đã liên kết trong Cài đặt',
     intake: {
       tooMany: 'Tối đa {max, number} tệp mỗi lần. Hãy nén phần còn lại thành tệp ZIP.',
-      unsupported: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP hoặc ZIP',
+      unsupported: 'Chỉ nhận XML, PDF, JPG, PNG, WEBP, ZIP, hoặc sao kê ngân hàng dạng XLSX, CSV',
       progress: 'Đã xong {settled, number}/{total, number} tệp',
       done: 'Đã nhận {total, number} tệp',
       counts: '{proposed, number} đề xuất · {duplicate, number} trùng · {failed, number} lỗi',
+      // The same with the bank statements imported (#2142), used only when a batch has one.
+      countsStatements: '{proposed, number} đề xuất · {imported, number} sao kê đã nhập · {duplicate, number} trùng · {failed, number} lỗi',
       close: 'Đóng',
       alreadyReceived: 'Tệp này đã nhận trước đó',
       expandedCount: 'ZIP: {count, number} tệp',
@@ -1998,6 +2023,9 @@ export const vi = {
         duplicate: 'Trùng',
         failed: 'Không đọc được',
         expanded: 'Đã mở ZIP',
+        imported: 'Đã nhập sao kê',
+        staged: 'Sao kê chờ nhập',
+        dismissed: 'Đã bỏ qua sao kê',
         rejected: 'Bỏ qua',
       },
       reasons: {
@@ -5640,6 +5668,10 @@ export const vi = {
       ARCHIVE_PENDING: 'Gói lưu trữ của năm này đang được tạo; hãy đợi xong rồi xem lại',
       NOT_A_BANK_ACCOUNT: 'Tài khoản này không phải tài khoản tiền gửi ngân hàng (112) của tổ chức',
       BANK_IMPORT_INVALID: 'Sao kê có dòng không đọc được; hãy xem lại trước khi nhập',
+      STATEMENT_NOT_STAGED: 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách',
+      STATEMENT_IMPORTED: 'Sao kê này đã được nhập nên không đọc lại được',
+      STATEMENT_TOO_LARGE: 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng',
+      STATEMENT_MAPPING_CHANGED: 'Số tài khoản của sao kê không còn liên kết với tài khoản ngân hàng này; hãy kiểm tra Cài đặt rồi đọc lại tệp',
       BANK_FEED_NOT_FOUND: 'Không tìm thấy kết nối nguồn giao dịch ngân hàng',
       BANK_FEED_INACTIVE: 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại',
       BANK_FEED_ACCOUNT_MAPPED: 'Tài khoản này đã gắn với một pháp nhân khác; hãy gỡ liên kết trước',
@@ -6022,6 +6054,9 @@ export const vi = {
         lines: 'Xem các dòng sao kê',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
         preview: 'Xem trước sao kê ngân hàng',
+        statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Hộp thư đến)',
+        statement_reject: 'Bỏ qua sao kê ngân hàng đã đọc từ tệp',
+        statement_stage: 'Chuẩn bị sao kê ngân hàng đọc từ tệp để thành viên xem và nhập',
         suggestions: 'Xem gợi ý đối chiếu sao kê',
       },
       bank_feed: {
@@ -6254,6 +6289,7 @@ export const vi = {
       },
       extraction: {
         record: 'Ghi kết quả đọc tệp',
+        statement_state: 'Ghi sao kê ngân hàng đã được nhập hoặc bỏ qua',
       },
       file: {
         archive: {
@@ -6277,6 +6313,7 @@ export const vi = {
       files: {
         batch: 'Xem các tệp của một lần tải lên',
         recent: 'Xem các tệp gần đây',
+        staged: 'Xem các sao kê ngân hàng đang chờ nhập',
       },
       inbound: {
         receive: 'Nhận thư gửi đến',

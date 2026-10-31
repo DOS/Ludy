@@ -217,6 +217,21 @@ export function normalizeStatementAmount(text: string): string {
   return compact;
 }
 
+// A statement read from a file waits for a member with its rows kept in the run's result (#2142): at most this many UTF-8
+// bytes of rows (as JSON), so a file cannot park an unbounded amount in the database. Over it the file is refused with the reason
+// (BANK_IMPORT_MAX_ROWS caps the count: a month of a busy account is far below both).
+export const STAGED_STATEMENT_MAX_BYTES = 4 * 1024 * 1024;
+
+// A statement's amount cell as the text the module judges: a number cell's stored value as it is (it may carry an
+// exponent, Excel writes 1E+16), a typed text made plain by normalizeStatementAmount. A text with an exponent ("1e3")
+// is sent as a value the module refuses instead of 1000. Used by the browser import and by a file a statement came in.
+export function statementAmountText(cell: { kind: string; value: string } | undefined): string {
+  if (!cell) return '';
+  if (cell.kind === 'number') return cell.value;
+  const text = normalizeStatementAmount(cell.value);
+  return /[eE]/.test(text) ? '?' : text;
+}
+
 // A bank feed provider's id as its channel connections name it (ADR-0039): `bank_` and the adapter (`bank_sandbox`),
 // under the channel layer's provider pattern. The Social screens leave these connections out.
 const BANK_FEED_PROVIDER_ID = /^bank_[a-z0-9_]{1,27}$/;

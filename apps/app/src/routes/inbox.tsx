@@ -14,6 +14,7 @@ import { cn } from '@crove/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
+import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
@@ -429,7 +430,7 @@ export function InboxPage() {
         type="file"
         multiple
         hidden
-        accept=".xml,.pdf,.zip,application/zip,image/jpeg,image/png,image/webp"
+        accept=".xml,.pdf,.zip,.xlsx,.csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,image/jpeg,image/png,image/webp"
         onChange={(e) => {
           const chosen = [...(e.target.files ?? [])];
           if (chosen.length) intake.start(chosen);
@@ -499,6 +500,7 @@ export function InboxPage() {
       )}
 
       <IntakePanel intake={intake} />
+      {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
       {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
       {config.modules.includes('social') && <SocialAttention slug={slug} />}
@@ -524,6 +526,16 @@ export function InboxPage() {
                 <Badge variant={isFileStatus(file.status) ? fileChipVariant(file.status, file.proposalStatus, file.voided) : 'secondary'}>
                   {fileWords(file)}
                 </Badge>
+                {/* A bank statement a member imported or skipped (#2142) says who did, from the audit row of the decision. */}
+                {file.statement?.decidedBy && (
+                  <span className="text-subtle-foreground" data-testid="statement-decided-by">
+                    {t('staged.decidedBy', {
+                      state: file.statement.state,
+                      name: file.statement.decidedBy.name ?? t('staged.formerMember'),
+                      when: f.dateTime(file.statement.decidedBy.at),
+                    })}
+                  </span>
+                )}
                 {/* A file not read, or a posting voided by a reversal (#2032), may be read again from here. */}
                 {(file.status === 'failed' || file.voided) && file.canReextract && (
                   <button

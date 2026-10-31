@@ -1970,6 +1970,26 @@ export const en = {
       rejected: 'Rejected',
       expired: 'Expired',
     },
+    // Bank statements that arrived as files and wait for a member (#2142).
+    staged: {
+      title: 'Bank statements waiting to be imported',
+      hint: 'No line is stored yet. Check the account, the period and the totals, then import or skip: nothing in an email proves who sent it.',
+      account: 'Bank account',
+      period: 'Statement period',
+      range: 'From {from} to {to}',
+      noPeriod: 'Unknown',
+      lines: 'Lines',
+      linesValue: '{lines} lines ({news} new, {duplicates} already there)',
+      totals: 'Totals',
+      totalsValue: 'In {moneyIn} · Out {moneyOut}',
+      import: 'Import statement',
+      skip: 'Skip',
+      imported: '{count, number} new lines imported',
+      skipped: 'Statement skipped; no line was stored',
+      needsMember: 'Only owners, admins and members can import a statement.',
+      decidedBy: '{state, select, imported {Imported by} other {Skipped by}} {name} at {when}',
+      formerMember: 'someone who is no longer a member',
+    },
     fileStatus: {
       processing: 'Reading',
       waiting: "Waiting for tomorrow's limit",
@@ -1977,16 +1997,21 @@ export const en = {
       duplicate: 'Duplicate invoice',
       failed: 'Could not read',
       expanded: 'ZIP opened',
+      imported: 'Statement imported',
+      staged: 'Statement waiting',
+      dismissed: 'Statement skipped',
       // A posted file whose entry was reversed (#2032).
       voided: 'Voided (entry reversed)',
     },
-    formatsZip: 'Or a ZIP of up to 500 files (40 MB unpacked), as the tax portal exports them',
+    formatsZip: 'Or a ZIP of up to 500 files (40 MB unpacked), as the tax portal exports them. A bank statement as XLSX or CSV waits for you to check it, then becomes the statement lines of the account mapped in Settings',
     intake: {
       tooMany: 'At most {max, number} files at once. Put the rest in a ZIP file.',
-      unsupported: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files are accepted.',
+      unsupported: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files, or a bank statement as XLSX or CSV, are accepted.',
       progress: '{settled, number} of {total, number} files done',
       done: '{total, plural, one {# file received} other {# files received}}',
       counts: '{proposed, number} proposals · {duplicate, number} duplicates · {failed, number} failed',
+      // The same with the bank statements imported (#2142), used only when a batch has one.
+      countsStatements: '{proposed, number} proposals · {imported, number} statements imported · {duplicate, number} duplicates · {failed, number} failed',
       close: 'Close',
       alreadyReceived: 'Already received earlier',
       expandedCount: '{count, plural, one {ZIP: # file} other {ZIP: # files}}',
@@ -2000,6 +2025,9 @@ export const en = {
         duplicate: 'Duplicate',
         failed: 'Could not read',
         expanded: 'ZIP opened',
+        imported: 'Statement imported',
+        staged: 'Statement waiting',
+        dismissed: 'Statement skipped',
         rejected: 'Skipped',
       },
       reasons: {
@@ -5640,6 +5668,10 @@ export const en = {
       ARCHIVE_PENDING: 'The archive package of this year is being built. Wait for it to finish, then check again.',
       NOT_A_BANK_ACCOUNT: 'This is not a bank account (112) of the organization.',
       BANK_IMPORT_INVALID: 'Some lines of the statement could not be read. Check them before importing.',
+      STATEMENT_NOT_STAGED: 'This statement was already dealt with or was read again; reload the list.',
+      STATEMENT_IMPORTED: 'This statement was already imported, so it cannot be read again.',
+      STATEMENT_TOO_LARGE: 'The statement holds too much data to wait for import; split it into files by month.',
+      STATEMENT_MAPPING_CHANGED: "The statement's account number is no longer mapped to this bank account; check Settings, then read the file again.",
       BANK_FEED_NOT_FOUND: 'This bank feed connection was not found.',
       BANK_FEED_INACTIVE: 'This bank feed connection no longer works; connect it again.',
       BANK_FEED_ACCOUNT_MAPPED: 'This account is already mapped to another legal entity; unmap it first.',
@@ -6022,6 +6054,9 @@ export const en = {
         lines: 'List bank statement lines',
         open_lines: 'List unmatched bank statement lines',
         preview: 'Preview a bank statement',
+        statement_confirm: 'Import a bank statement read from a file (sent by email or dropped in the Inbox)',
+        statement_reject: 'Skip a bank statement read from a file',
+        statement_stage: 'Prepare a bank statement read from a file for a member to check and import',
         suggestions: 'Read bank matching suggestions',
       },
       bank_feed: {
@@ -6254,6 +6289,7 @@ export const en = {
       },
       extraction: {
         record: "Record a file's extraction",
+        statement_state: 'Record that a bank statement was imported or skipped',
       },
       file: {
         archive: {
@@ -6277,6 +6313,7 @@ export const en = {
       files: {
         batch: 'Read the files of an upload',
         recent: 'List recent files',
+        staged: 'List bank statements waiting to be imported',
       },
       inbound: {
         receive: 'Receive an email',

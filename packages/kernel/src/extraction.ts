@@ -8,7 +8,7 @@
 // A pending run is at most one per file (partial UNIQUE index), and the database numbers versions.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zCheck, zId } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zCheck, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { actorRef, addAuthor, eligibleApprovers, parseAuthors, type ActorRef } from './approval.ts';
@@ -143,7 +143,8 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
   return rows[0]?.entity ?? null;
 }
 
-async function lockFile(ctx: CommandContext, fileId: string) {
+// `statement`: the run is of a bank statement (#2142), whose .xlsx arrives stored as a ZIP, so a ZIP is let through.
+async function lockFile(ctx: CommandContext, fileId: string, statement = false) {
   const file = await ctx.trx
     .selectFrom('crove_kernel.file')
     .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id'])
@@ -153,8 +154,37 @@ async function lockFile(ctx: CommandContext, fileId: string) {
     .executeTakeFirst();
   if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
   // A ZIP archive (#314) is opened once by kernel.file.archive.record; it is never read as a document.
-  if (isArchiveType(file.content_type)) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+  if (isArchiveType(file.content_type) && !statement) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
   return file;
+}
+
+// Whether the file's newest run is a bank statement a member imported (#2142).
+async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const run = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('result')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .orderBy('version', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  const result = run?.result as { kind?: unknown; summary?: { state?: unknown } } | null | undefined;
+  return result?.kind === 'bank_statement' && result.summary?.state === 'imported';
+}
+
+// Whether a read of the file was a bank statement's (#2142): an .xlsx stored as a ZIP that the worker read as a statement
+// records a run of method 'unsupported' (an archive records 'archive'), and may be read again, for instance once the
+// account it names is mapped.
+async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .where('method', '=', 'unsupported')
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 // The file's newest proposal, locked. A file has one proposal unless an earlier one was rejected and the file was
@@ -196,9 +226,16 @@ export const reextractFile = defineCommand({
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới yêu cầu đọc lại được');
-    await lockFile(ctx, input.fileId);
+    const file = await lockFile(ctx, input.fileId, true);
+    // A ZIP is read again only when it was read as a bank statement (#2142); an archive of documents is never read again.
+    if (isArchiveType(file.content_type) && !(await readAsStatement(ctx, input.fileId))) {
+      throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+    }
     const latest = await latestExtraction(ctx, input.fileId);
     if (!latest) throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lần đầu; hãy chờ kết quả');
+    // A bank statement already imported is read no more (#2142): its lines are stored, and a second reading could only
+    // stage them again, perhaps into another account.
+    if (await statementImported(ctx, input.fileId)) throw new DomainError('STATEMENT_IMPORTED', 409, 'Sao kê này đã được nhập nên không đọc lại được');
     if (latest.inFlight) {
       throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lại; hãy chờ kết quả', { version: latest.version });
     }
@@ -336,13 +373,28 @@ export const recordExtraction = defineCommand({
     // or did not answer, the parser sandbox was down) after every retry, which the operator must see; `document`
     // (the default) when the document could not be read. A code in kernel.file.read_failed, which the prober counts.
     failure: z.enum(['service', 'document']).optional(),
+    // What a done run with no proposal says in the file's history (#2142), for example how many bank lines a statement brought.
+    summary: z.string().max(500).optional(),
+    // The run is of a bank statement (#2142), which may be an .xlsx stored as a ZIP: with no proposal, method 'unsupported'.
+    statement: z.boolean().optional(),
+    // The legal entity a staged statement's run belongs to (#2142): the one its account is mapped to, so only members who
+    // see that entity see the statement's account, lines and totals. A statement run only; the first run of a file.
+    legalEntityId: zId.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, original) => {
-    const file = await lockFile(ctx, original.fileId);
+    // A run of a bank statement (#2142) has no proposal and the method 'unsupported'; only such a run may name a ZIP.
+    if (original.statement === true && (original.proposal !== null || original.method !== 'unsupported')) {
+      throw new DomainError('INVALID', 422, 'Lần đọc sao kê không có đề xuất');
+    }
+    // The rows a staged statement keeps in the run's result are bounded (#2142): the staging checks it, and so does this.
+    if (original.statement === true && Buffer.byteLength(JSON.stringify(original.result ?? null), 'utf8') > STAGED_STATEMENT_MAX_BYTES + 64 * 1024) {
+      throw new DomainError('STATEMENT_TOO_LARGE', 422, 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng');
+    }
+    const file = await lockFile(ctx, original.fileId, original.statement === true);
     const input = await withDuplicateGuard(ctx, original);
     const outcome = {
       method: input.method,
@@ -367,7 +419,7 @@ export const recordExtraction = defineCommand({
         .executeTakeFirst();
       if (existing) return { extractionId: existing.id, proposalId: null, duplicate: true };
       // The entity the upload named (#1764), else the uploader's own.
-      const entity = file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
+      const entity = (original.statement === true ? original.legalEntityId : undefined) ?? file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
       run = await ctx.trx
         .insertInto('crove_kernel.extraction')
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
@@ -377,13 +429,38 @@ export const recordExtraction = defineCommand({
     } else {
       const pending = await ctx.trx
         .selectFrom('crove_kernel.extraction')
-        .select(['id', 'version', 'status', 'requested_by'])
+        .select(['id', 'version', 'status', 'requested_by', 'legal_entity_id'])
         .where('org_id', '=', ctx.orgId)
         .where('file_id', '=', input.fileId)
         .where('version', '=', input.version)
         .forUpdate()
         .executeTakeFirst();
       if (!pending || pending.status !== 'pending') return { extractionId: pending?.id ?? null, proposalId: null, duplicate: true };
+      // A re-read of a bank statement whose account is now mapped in another legal entity than the run's (#2142). A run
+      // keeps its entity and the statement's account and totals must not reach members of the run's entity, so this run is
+      // closed as failed, with nothing of the statement, and the reading is recorded as a new run in the account's entity.
+      if (
+        original.statement === true &&
+        input.status === 'done' &&
+        original.legalEntityId !== undefined &&
+        pending.legal_entity_id !== null &&
+        pending.legal_entity_id !== original.legalEntityId.toLowerCase()
+      ) {
+        await ctx.trx
+          .updateTable('crove_kernel.extraction')
+          .set({ method: 'unsupported', status: 'failed', result: null, checks: '[]', error: 'Sao kê thuộc sổ của pháp nhân khác; hãy xem lần đọc mới nhất', completed_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', pending.id)
+          .execute();
+        const moved = await ctx.trx
+          .insertInto('crove_kernel.extraction')
+          .values({ org_id: ctx.orgId, file_id: input.fileId, legal_entity_id: original.legalEntityId, ...outcome })
+          .returning(['id', 'version'])
+          .executeTakeFirstOrThrow();
+        ctx.audit({ version: moved.version, status: input.status, applied: true, moved_from_version: pending.version });
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
+        return { extractionId: moved.id, proposalId: null, duplicate: false };
+      }
       // The proposal is locked before the run's age is read, and the age is read on the clock at this moment
       // (clock_timestamp()), not at the start of the transaction: a decision that went through because the run was
       // stale either committed before this lock, and then the run is older still here, or waits for this command
@@ -412,6 +489,12 @@ export const recordExtraction = defineCommand({
     const withReaders = (authors: ActorRef[]) => readers.reduce(addAuthor, authors);
 
     if (!input.proposal) {
+      // A run that is done with no proposal read a file into something else than an invoice (a bank statement into bank
+      // lines, #2142): its own account of it, not a failure.
+      if (input.status === 'done') {
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', input.summary ?? 'Đã đọc tệp');
+        return { extractionId: run.id, proposalId: null, duplicate: false };
+      }
       await ctx.activity('kernel.file', input.fileId, 'extraction.failed', input.error ?? 'Không đọc được chứng từ');
       // Whoever is waiting for this reading is told (#671, kernel.notification.dispatch).
       if (input.status === 'failed') await ctx.emit('kernel.file.read_failed', { fileId: input.fileId, version: run.version, reason: input.failure ?? 'document' });
@@ -479,4 +562,72 @@ export const recordExtraction = defineCommand({
   },
 });
 
-export const extractionCommands = [reextractFile, recordExtraction];
+// A staged bank statement (#2142) is decided: imported (the finance module stored its lines in this same transaction) or
+// rejected (skipped, nothing stored). A finished run never changes (extraction_guard), so the decision is a NEW run of the
+// file, with the staged summary in its new state and no rows: it is the file's newest run, the one the Inbox shows and the
+// one a second decision finds, so a statement is decided once; its audit row names the member who decided (a run inserted
+// already finished has no requester). The staged run keeps its rows, like any run keeps its
+// result. Run by finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes
+// a lock on the file first, so two members cannot both decide it.
+export const statementState = defineCommand({
+  name: 'kernel.extraction.statement_state',
+  input: z.object({
+    fileId: zId,
+    state: z.enum(['imported', 'rejected']),
+    // What an import stored: the lines new to the account, the lines it already had, and the import.
+    newLines: z.number().int().nonnegative().optional(),
+    duplicateLines: z.number().int().nonnegative().optional(),
+    importId: zId.optional(),
+  }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: REEXTRACT_ROLES,
+  target: (input) => ({ type: 'kernel.file', id: input.fileId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới quyết định được sao kê');
+    await lockFile(ctx, input.fileId, true);
+    const run = await ctx.trx
+      .selectFrom('crove_kernel.extraction')
+      .select(['id', 'status', 'result', 'legal_entity_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('file_id', '=', input.fileId)
+      .orderBy('version', 'desc')
+      .limit(1)
+      .forUpdate()
+      .executeTakeFirst();
+    const result = run?.result as { kind?: unknown; summary?: { state?: unknown } & Record<string, unknown> } | null | undefined;
+    if (!run || run.status !== 'done' || result?.kind !== 'bank_statement' || result.summary?.state !== 'staged') {
+      throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
+    }
+    const summary = {
+      ...result.summary,
+      state: input.state,
+      ...(input.newLines !== undefined ? { newLines: input.newLines } : {}),
+      ...(input.duplicateLines !== undefined ? { duplicateLines: input.duplicateLines } : {}),
+      ...(input.importId !== undefined ? { importId: input.importId } : {}),
+    };
+    await ctx.trx
+      .insertInto('crove_kernel.extraction')
+      .values({
+        org_id: ctx.orgId,
+        file_id: input.fileId,
+        ...(run.legal_entity_id ? { legal_entity_id: run.legal_entity_id } : {}),
+        method: 'unsupported',
+        status: 'done',
+        result: JSON.stringify({ kind: 'bank_statement', summary }),
+        checks: '[]',
+        completed_at: ctx.now,
+      })
+      .execute();
+    ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
+    await ctx.activity(
+      'kernel.file',
+      input.fileId,
+      input.state === 'imported' ? 'statement.imported' : 'statement.rejected',
+      input.state === 'imported' ? `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có` : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
+    );
+    return { fileId: input.fileId, state: input.state };
+  },
+});
+
+export const extractionCommands = [reextractFile, recordExtraction, statementState];

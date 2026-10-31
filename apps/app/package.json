@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@crove/kernel-contract": "workspace:*",
+    "@crove/l10n-vn": "workspace:*",
     "@crove/mod-social": "workspace:*",
     "@crove/ui": "workspace:*",
     "@orpc/client": "catalog:",
