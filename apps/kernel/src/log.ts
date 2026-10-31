@@ -27,8 +27,12 @@ const store = new AsyncLocalStorage<LogContext>();
 
 /** Runs `fn` with these ids on every log line it (and what it awaits) prints; an enclosing context's ids are kept. */
 export function runWithLogContext<T>(context: LogContext, fn: () => T): T {
-  // AsyncLocalStorage's `run`, named as a string: the job-egress invariant (#1653) reads every `<x>.run(` call as a
-  // possible nested command run, and this one is no command.
+  // AsyncLocalStorage's `run`, named as a string on purpose (a deliberate deviation, see
+  // https://github.com/DOS/Ludy/issues/2181): the job-egress invariant (#1653, test/invariant/job-egress.ts) reads every
+  // `<x>.run(` call as a possible nested command run, and this one is no command. A plain `store.run(` would turn the
+  // invariant suite red; the analyzer already ignores computed members, so this does not weaken it. The two-step fix is
+  // in #2181: list this call under NOT_RUNS (a change in test/invariant/ that takes effect after merge), then call
+  // `store.run` plainly.
   return store['run']({ ...store.getStore(), ...context }, fn);
 }
 
@@ -59,6 +63,25 @@ const REDACTIONS: Array<[RegExp, string]> = [
   // The password of a URL with credentials (a connection string in a driver's error message).
   [/\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:/@]{1,256}):[^\s@/]{1,256}@/gi, '$1:[redacted]@'],
 ];
+
+// An Error argument, field by field (JSON mode). Printed whole, a database error carries the row it refused: pg's
+// `detail` ("Key (email)=(a@example.com) already exists."), `where`, `internalQuery` and `hint` hold tenant values and
+// personal data, and every line is now stamped with the org. So an Error becomes its stack (which starts with name and
+// message) and a fixed list of fields that name a place, never a value: `code`, `constraint`, `table`, `schema`,
+// `column`. A `cause` is written the same way, a few levels deep. Anything else on the error is dropped.
+const ERROR_FIELDS = ['code', 'constraint', 'table', 'schema', 'column'] as const;
+const MAX_CAUSE_DEPTH = 3;
+
+export function describeError(error: Error, depth = 0): string {
+  const record = error as unknown as Record<string, unknown>;
+  const fields = ERROR_FIELDS.flatMap((key) => {
+    const value = record[key];
+    return typeof value === 'string' || typeof value === 'number' ? [`${key}: ${String(value)}`] : [];
+  });
+  const head = typeof error.stack === 'string' && error.stack !== '' ? error.stack : `${error.name}: ${error.message}`;
+  const cause = error.cause instanceof Error && depth < MAX_CAUSE_DEPTH ? `\n[cause] ${describeError(error.cause, depth + 1)}` : '';
+  return `${head}${fields.length > 0 ? ` { ${fields.join(', ')} }` : ''}${cause}`;
+}
 
 export function redact(message: string): string {
   let out = message.length > MAX_MESSAGE_CHARS ? `${message.slice(0, MAX_MESSAGE_CHARS)}...[${message.length - MAX_MESSAGE_CHARS} more characters]` : message;
@@ -109,7 +132,8 @@ export function installJsonLogs(options: JsonLogOptions): () => void {
   const now = options.now ?? (() => new Date());
   installed = { role: options.role, write, now };
   const patch = (method: keyof typeof original, level: LogLevel) => {
-    console[method] = (...args: unknown[]) => write(level, jsonLine(level, options.role, format(...args), {}, now()));
+    console[method] = (...args: unknown[]) =>
+      write(level, jsonLine(level, options.role, format(...args.map((arg) => (arg instanceof Error ? describeError(arg) : arg))), {}, now()));
   };
   patch('log', 'info');
   patch('info', 'info');

@@ -4,14 +4,14 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type pg from 'pg';
+import pg from 'pg';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ORG_HEADER } from '@crove/kernel-contract';
 import type { BlobStore, Runtime } from '@crove/kernel-runtime';
 import type { AuthUser } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
-import { installJsonLogs, orgIdOf, parseLogFormat, redact, runWithLogContext, setLogContext, withJobLogContext, type LogLevel } from '../src/log.ts';
+import { describeError, installJsonLogs, orgIdOf, parseLogFormat, redact, runWithLogContext, setLogContext, withJobLogContext, type LogLevel } from '../src/log.ts';
 
 const SECRET = 'x'.repeat(32);
 const NOW = new Date('2026-10-31T12:34:56.789Z');
@@ -104,6 +104,53 @@ describe('JSON log lines', () => {
     console.error(`[db] failed for ${jwt} at postgres://u:pw@h/x`);
     expect(log.raw[0]).not.toContain('pw@');
     expect(log.raw[0]).not.toContain(jwt);
+  });
+
+  // A database error carries the row it refused in `detail`, `where`, `internalQuery` and `hint`: tenant values and personal
+  // data. In JSON mode an Error argument is written field by field, and those four never reach a line.
+  it('writes an Error argument without the row values a database error carries', () => {
+    const log = capture();
+    const failure = Object.assign(new pg.DatabaseError('duplicate key value violates unique constraint "users_email_key"', 0, 'error'), {
+      code: '23505',
+      constraint: 'users_email_key',
+      table: 'users',
+      schema: 'public',
+      column: 'email',
+      detail: 'Key (email)=(private.person@example.com) already exists.',
+      where: 'SQL statement "INSERT INTO users VALUES (\'private.person@example.com\')"',
+      internalQuery: 'SELECT private-internal-query',
+      hint: 'private-hint-text',
+    });
+    runWithLogContext({ requestId: 'r-1', orgId: 'o-1' }, () => {
+      console.error('[http]', failure);
+      console.error('failed for %s:', 'the org', failure);
+    });
+    const [first, second] = log.lines();
+    expect(first).toMatchObject({ level: 'error', requestId: 'r-1', orgId: 'o-1' });
+    expect(first?.msg).toContain('duplicate key value violates unique constraint "users_email_key"');
+    expect(first?.msg).toContain('{ code: 23505, constraint: users_email_key, table: users, schema: public, column: email }');
+    expect(second?.msg).toContain('failed for the org:');
+    for (const line of log.raw) {
+      for (const value of ['private.person@example.com', 'private-internal-query', 'private-hint-text', 'INSERT INTO users']) expect(line, value).not.toContain(value);
+    }
+  });
+
+  it('writes an Error and its causes by name, message, stack and the fixed place fields, a few levels deep', () => {
+    const inner = Object.assign(new Error('inner failure'), { detail: 'inner-secret-detail', table: 'orders' });
+    const outer = new Error('outer failure', { cause: inner });
+    const described = describeError(outer);
+    expect(described).toContain('Error: outer failure');
+    expect(described).toContain('[cause] Error: inner failure');
+    expect(described).toContain('{ table: orders }');
+    expect(described).not.toContain('inner-secret-detail');
+    // A cause chain longer than three levels stops there.
+    let chain = new Error('level 0');
+    for (let level = 1; level <= 6; level++) chain = new Error(`level ${level}`, { cause: chain });
+    expect(describeError(chain)).not.toContain('level 0');
+    // An error with no stack still reads.
+    const bare = new Error('no stack here');
+    bare.stack = '';
+    expect(describeError(bare)).toBe('Error: no stack here');
   });
 
   it('stays fast on a long message that echoes attacker-chosen text (no quadratic scan), and cuts an enormous one', () => {
