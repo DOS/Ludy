@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 -- The mail a stored attachment came in (issue #2196, after #2191). Idempotent; applied files stay untouched.
 --
 -- crove_kernel.file.inbound_message_id  the mail (crove_kernel.inbound_message) whose attachment this file was when it
