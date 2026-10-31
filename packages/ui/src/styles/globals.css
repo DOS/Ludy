@@ -55,7 +55,11 @@
   --color-subtle-foreground: var(--subtle-foreground);
   --color-link: var(--link);
   --color-brand: var(--brand);
+  --color-brand-lip: var(--brand-lip);
+  --color-brand-ink: var(--brand-ink);
   --color-brand-spark: var(--brand-spark);
+  --color-brand-spark-lip: var(--brand-spark-lip);
+  --color-brand-spark-ink: var(--brand-spark-ink);
   --color-success: var(--success);
   --color-warning: var(--warning);
   /* AI-proposed data that no one has approved yet (DESIGN.md 3.1, principle 2): outline and chip color. */
@@ -102,7 +106,11 @@
   --warning: oklch(0.52 0.12 62);
   --link: oklch(0.46 0.2 290);
   --brand: oklch(0.475 0.233 288.7);
-  --brand-spark: oklch(0.655 0.12 174.8);
+  --brand-lip: oklch(0.379 0.181 287.8);
+  --brand-ink: oklch(1 0 0);
+  --brand-spark: oklch(0.583 0.105 177.1);
+  --brand-spark-lip: oklch(0.47 0.084 178.1);
+  --brand-spark-ink: oklch(1 0 0);
   --border: oklch(0.915 0.007 290);
   --input: oklch(0.88 0.008 290);
   --field-border: oklch(0.62 0.01 290);
@@ -156,7 +164,11 @@
   --warning: oklch(0.83 0.13 80);
   --link: oklch(0.8 0.11 293);
   --brand: oklch(0.562 0.224 291.1);
+  --brand-lip: oklch(0.45 0.192 290.2);
+  --brand-ink: oklch(1 0 0);
   --brand-spark: oklch(0.774 0.13 174.6);
+  --brand-spark-lip: oklch(0.624 0.107 173.7);
+  --brand-spark-ink: oklch(0.262 0.035 180);
   --border: oklch(0.285 0.012 285);
   --input: oklch(0.32 0.014 285);
   --field-border: oklch(0.54 0.014 285);

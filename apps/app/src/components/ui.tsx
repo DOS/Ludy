@@ -405,10 +405,15 @@ export function DataTable({ head, numeric = [], foot, children }: { head: string
 export function Logo() {
   return (
     <span className="inline-flex items-center gap-2 font-semibold tracking-tight text-foreground">
-      {/* The Ludy mark (three tiles in an L and Vy's spark), the same as on the marketing site and in favicon.svg. */}
+      {/* The Ludy mark (four keys that spell L, U, D and y, the y key teal with its accent), the same as on the marketing site. */}
       <svg viewBox="0 0 92 92" className="h-6 w-6" aria-hidden="true">
-        <path className="fill-brand" d="M0 11A11 11 0 0 1 11 0H31A11 11 0 0 1 42 11V31A11 11 0 0 1 31 42H11A11 11 0 0 1 0 31ZM0 61A11 11 0 0 1 11 50H31A11 11 0 0 1 42 61V81A11 11 0 0 1 31 92H11A11 11 0 0 1 0 81ZM50 61A11 11 0 0 1 61 50H81A11 11 0 0 1 92 61V81A11 11 0 0 1 81 92H61A11 11 0 0 1 50 81Z" />
-        <path className="fill-brand-spark" d="M71 0C73.27 15.5 76.5 18.73 92 21C76.5 23.27 73.27 26.5 71 42C68.73 26.5 65.5 23.27 50 21C65.5 18.73 68.73 15.5 71 0Z" />
+        <path className="fill-brand-lip" d="M0 15A11 11 0 0 1 11 4H32A11 11 0 0 1 43 15V32A11 11 0 0 1 32 43H11A11 11 0 0 1 0 32ZM49 15A11 11 0 0 1 60 4H81A11 11 0 0 1 92 15V32A11 11 0 0 1 81 43H60A11 11 0 0 1 49 32ZM0 64A11 11 0 0 1 11 53H32A11 11 0 0 1 43 64V81A11 11 0 0 1 32 92H11A11 11 0 0 1 0 81Z" />
+        <path className="fill-brand-spark-lip" d="M49 64A11 11 0 0 1 60 53H81A11 11 0 0 1 92 64V81A11 11 0 0 1 81 92H60A11 11 0 0 1 49 81Z" />
+        <path className="fill-brand" d="M0 11A11 11 0 0 1 11 0H32A11 11 0 0 1 43 11V28A11 11 0 0 1 32 39H11A11 11 0 0 1 0 28ZM49 11A11 11 0 0 1 60 0H81A11 11 0 0 1 92 11V28A11 11 0 0 1 81 39H60A11 11 0 0 1 49 28ZM0 60A11 11 0 0 1 11 49H32A11 11 0 0 1 43 60V77A11 11 0 0 1 32 88H11A11 11 0 0 1 0 77Z" />
+        <path className="fill-brand-spark" d="M49 60A11 11 0 0 1 60 49H81A11 11 0 0 1 92 60V77A11 11 0 0 1 81 88H60A11 11 0 0 1 49 77Z" />
+        <path className="fill-none stroke-brand-ink" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" d="M14.85 8.1V30.9H28.15M61.95 8.1V22.35A8.55 8.55 0 0 0 79.05 22.35V8.1M12 57.1H19.6A11.4 11.4 0 0 1 19.6 79.9H12Z" />
+        <path className="fill-none stroke-brand-spark-ink" strokeWidth="6.4" strokeLinecap="round" strokeLinejoin="round" d="M61.04 62.94L69.64 74.98M79.96 60.36L63.96 83.02" />
+        <path className="fill-none stroke-brand-spark-ink" strokeWidth="5.4" strokeLinecap="round" strokeLinejoin="round" d="M72.9 58.6L77.5 52.4" />
       </svg>
       {brandName()}
     </span>

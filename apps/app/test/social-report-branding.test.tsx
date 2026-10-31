@@ -36,8 +36,8 @@ const t = viMessages.social.reportBranding;
 const TOKEN = 'a'.repeat(43);
 // A PNG signature and a few bytes: what the page checks before it shows a logo.
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
-// The spark of the Ludy mark, which only the Ludy logo draws.
-const LUDY_MARK = 'M71 0C73.27 15.5';
+// The y of the Ludy mark, which only the Ludy logo draws.
+const LUDY_MARK = 'M61.04 62.94L69.64 74.98';
 
 const report = (brand: unknown) => ({
   org: 'Công ty Truyền thông Sao Mai',
