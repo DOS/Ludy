@@ -1067,6 +1067,27 @@ suite('bank statement import (#326)', () => {
       expect((await stored('1121.VCB')).filter((l) => l.bank_ref === 'FT-LATE-1')).toHaveLength(2);
     });
 
+    it('refuses to import a statement the books made conflict with after its card was shown, and counts conflicts in the imported summary', async () => {
+      // Staged while the books hold nothing under FT-SHIFT-1: the card shows no conflict.
+      const fileId = await stagedFile([row('05/09/2026', '9000000', '', '', 'FT-SHIFT-1', 'Chuyển khoản lạ')]);
+      expect(await status(fileId)).toMatchObject({ statement: { conflictLines: 0 } });
+      // The real line arrives from the feed meanwhile, with another amount.
+      await feedOne(feedLine('2026-09-05', '3000000', 'FT-SHIFT-1', null, 'Khách trả tiền thật'));
+      const before = await lineCount();
+      // Importing is refused, nothing is stored, and the lines show the conflict as the books have it now.
+      expect(await confirm(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_CONFLICTS_CHANGED' } });
+      expect(await lineCount()).toBe(before);
+      expect(await status(fileId)).toMatchObject({ status: 'staged' });
+      expect(await rpc('bank/statementLines', await tokenFor(member), { fileId })).toMatchObject({ status: 200, body: { conflicts: 1 } });
+      // Read again, the file is staged afresh with the conflict counted, and a member who has seen it may import.
+      const rows = [row('05/09/2026', '9000000', '', '', 'FT-SHIFT-1', 'Chuyển khoản lạ')];
+      const again = await stagedFile(rows);
+      expect(await status(again)).toMatchObject({ statement: { conflictLines: 1, newLines: 1 } });
+      expect((await confirm(again)).body.counts).toMatchObject({ new: 0, conflict: 1 });
+      // The imported summary counts the stored conflict line.
+      expect(await status(again)).toMatchObject({ status: 'imported', statement: { state: 'imported', newLines: 1 } });
+    });
+
     it('tells the member a statement came by email, and who uploaded one that did not', async () => {
       // An email attachment is stored by the worker with no uploader (a file never changes, so it is stored so from the start).
       const rows = rowsOf('EMAIL');

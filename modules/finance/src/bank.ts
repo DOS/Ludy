@@ -71,35 +71,32 @@ async function storedAround(
   const from = dates[0];
   const to = dates.at(-1);
   const batchKeys = keys.filter((k): k is string => k !== null);
-  const storedKeys =
-    batchKeys.length === 0
-      ? []
-      : await ctx.trx
-          .selectFrom('crove_finance.bank_line')
-          .select('dedupe_key')
-          .where('org_id', '=', ctx.orgId)
-          .where('legal_entity_id', '=', legalEntityId)
-          .where('bank_account', '=', bankAccountCode)
-          .where('dedupe_key', 'in', batchKeys)
-          .execute();
-  // The lines the account holds under the batch's references, with the key or without (a line stored as a conflict has
-  // none), so a reference that comes again with another date or amount is a conflict, never a silent duplicate (#2191).
+  // The lines the account holds under the batch's keys, and under its references with no key: a line stored as a conflict
+  // has none (#2191), so a reference that comes again with another date or amount is a conflict, never a silent
+  // duplicate. The keys go through the unique index; only a keyless, flagged line is looked for by its reference, so the
+  // lookup stays bounded by the batch and the conflicts, not the account's whole history.
   const batchRefs = [...new Set(lines.flatMap((l) => (l.reference ? [l.reference] : [])))];
-  const refRows =
-    batchRefs.length === 0
+  const storedRows =
+    batchKeys.length === 0 && batchRefs.length === 0
       ? []
       : await ctx.trx
           .selectFrom('crove_finance.bank_line')
-          .select(['bank_ref', 'value_date', 'amount'])
+          .select(['dedupe_key', 'bank_ref', 'value_date', 'amount'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', legalEntityId)
           .where('bank_account', '=', bankAccountCode)
-          .where('bank_ref', 'in', batchRefs)
+          .where((eb) =>
+            eb.or([
+              ...(batchKeys.length > 0 ? [eb('dedupe_key', 'in', batchKeys)] : []),
+              ...(batchRefs.length > 0 ? [eb.and([eb('dedupe_key', 'is', null), eb('ambiguous', '=', true), eb('bank_ref', 'in', batchRefs)])] : []),
+            ]),
+          )
           .orderBy('import_id')
           .orderBy('position')
           .execute();
+  const storedKeys = storedRows.filter((r) => r.dedupe_key !== null);
   const refs = new Map<string, StoredDateAmount[]>();
-  for (const r of refRows) {
+  for (const r of storedRows) {
     if (r.bank_ref === null) continue;
     refs.set(r.bank_ref, [...(refs.get(r.bank_ref) ?? []), { date: r.value_date, amount: new Decimal(r.amount).toFixed() }]);
   }
@@ -213,13 +210,22 @@ export async function previewStatement(ctx: QueryContext, input: BankStatementIm
 // lock, refusing a file with an invalid row (BANK_IMPORT_INVALID, before anything is written). The browser import
 // (finance.bank.import) and a statement read from a forwarded or dropped file (finance.bank.statement_file, #2142) store
 // through here, so both keep the same lines and the same keys. `fileId`, for a file received, is named in the audit row.
-export async function importStatement(ctx: CommandContext, input: BankStatementImport, legalEntityId: string, fileId?: string): Promise<BankImportResult> {
+// `shownConflicts`, for a statement a member decides from a card (#2191): the file rows whose conflicts the card told
+// them about. A conflict on any other row (a line the books took since the file was read) refuses the import, before
+// anything is written, so the member never imports a conflict they were not shown. Compared by row, not by count: a
+// conflict that went away while another appeared leaves the count as it was.
+export async function importStatement(ctx: CommandContext, input: BankStatementImport, legalEntityId: string, fileId?: string, shownConflicts?: ReadonlySet<number>): Promise<BankImportResult> {
   await bankAccount(ctx, input.bankAccount, true);
   await lockAccount(ctx, legalEntityId, input.bankAccount);
   const { preview, lines } = await check(ctx, input, legalEntityId);
   if (!preview.ok) {
     throw new DomainError('BANK_IMPORT_INVALID', 422, 'Sao kê có dòng không đọc được; hãy xem lại trước khi nhập', {
       rows: preview.rows.filter((r) => r.errors.length > 0).map((r) => r.rowNo),
+    });
+  }
+  if (shownConflicts !== undefined && preview.rows.some((r) => r.status === 'conflict' && !shownConflicts.has(r.rowNo))) {
+    throw new DomainError('STATEMENT_CONFLICTS_CHANGED', 409, 'Sổ vừa có thêm dòng trùng mã tham chiếu với sao kê này nhưng khác ngày hoặc số tiền; hãy xem lại các dòng, bấm Đọc lại ở tệp này rồi nhập', {
+      conflicts: preview.counts.conflict,
     });
   }
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, lines);

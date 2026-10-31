@@ -169,8 +169,16 @@ export interface LineVerdict {
 // date and amount). Identical lines without a key inside one file are all new: each has its own place in the file.
 // A line with a reference (#2191, ADR-0021 section 6 keeps the key `ref:<reference>`, without the amount, so that a
 // transaction seen from a feed and again in a file is one line) is a duplicate only when the account or the file holds
-// that reference with the same date and amount; with another date or amount it is a conflict, never silently dropped
-// as a duplicate, which is what let a forged statement keep a real transaction out of the books under its reference.
+// that reference with the same amount on the same day or within SAME_TRANSACTION_DAYS of it; with another amount, or a
+// date further off, it is a conflict, never silently dropped as a duplicate, which is what let a forged statement keep a
+// real transaction out of the books under its reference.
+// The days a bank's own dates for one transaction may differ by (a feed reports the booking day, a statement the value
+// day, and a weekend sits between them): within it, the same reference and amount is the same transaction.
+export const SAME_TRANSACTION_DAYS = 3;
+const dayNumber = (iso: string) => Math.floor(Date.parse(`${iso}T00:00:00Z`) / DAY_MS);
+const sameTransaction = (held: StoredDateAmount, line: { date: string; amount: Money }) =>
+  held.amount === line.amount && Math.abs(dayNumber(held.date) - dayNumber(line.date)) <= SAME_TRANSACTION_DAYS;
+
 export function judge(lines: readonly Line[], keys: ReadonlyArray<string | null>, stored: StoredFacts): LineVerdict[] {
   const inFile = new Set<string>();
   const refsInFile = new Map<string, StoredDateAmount[]>();
@@ -178,7 +186,7 @@ export function judge(lines: readonly Line[], keys: ReadonlyArray<string | null>
     const key = keys[i] ?? null;
     if (key !== null && line.reference) {
       const held = [...(stored.refs?.get(line.reference) ?? []), ...(refsInFile.get(line.reference) ?? [])];
-      if (held.some((h) => h.date === line.date && h.amount === line.amount)) return { status: 'duplicate', clash: null };
+      if (held.some((h) => sameTransaction(h, line))) return { status: 'duplicate', clash: null };
       const [first] = held;
       if (first) {
         refsInFile.set(line.reference, [...(refsInFile.get(line.reference) ?? []), { date: line.date, amount: line.amount }]);

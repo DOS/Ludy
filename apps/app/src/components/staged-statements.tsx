@@ -21,15 +21,21 @@ import { CardSkeleton, DataTable, ErrorText, Spinner } from './ui.tsx';
 type Statement = NonNullable<FileStatus['statement']>;
 
 // One staged statement's lines, asked for when the member opens them.
-function StatementLines({ fileId }: { fileId: string }) {
+function StatementLines({ fileId, shownConflicts }: { fileId: string; shownConflicts: number }) {
   const t = useTranslations('inbox.staged');
   const f = useFormat();
   const lines = useQuery(orpc.bank.statementLines.queryOptions({ input: { fileId } }));
   if (lines.isPending) return <Spinner />;
   if (lines.isError) return <ErrorText>{errorMessage(lines.error)}</ErrorText>;
-  const { lines: rows, total } = lines.data;
+  const { lines: rows, total, conflicts } = lines.data;
   return (
     <div className="mt-3 space-y-2" data-testid="staged-statement-lines">
+      {/* The lines are checked against the books as they are now: a conflict the card's own count did not know of is said here. */}
+      {conflicts > shownConflicts && (
+        <Alert className="border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-new-conflicts">
+          <AlertDescription className="text-warning">{t('conflictsNow', { count: conflicts })}</AlertDescription>
+        </Alert>
+      )}
       {total > rows.length && <p className="text-xs text-subtle-foreground">{t('linesTruncated', { shown: rows.length, total })}</p>}
       <DataTable numeric={[4]} head={[t('colRow'), t('colDate'), t('colReference'), t('colDescription'), t('colAmount')]}>
         {rows.map((row) => (
@@ -97,6 +103,16 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
       },
     }),
   );
+  // The file is read again, against the books as they are now (a re-read stages it afresh, with its conflicts counted anew).
+  const reread = useMutation(
+    orpc.files.reextract.mutationOptions({
+      onSuccess: settle,
+      onError: (error) => {
+        settle();
+        toast(errorMessage(error), 'error');
+      },
+    }),
+  );
   // A failed list must not look like no statement waiting, and a list on its way shows the shape of a card.
   if (listed.isError) return <ErrorText>{errorMessage(listed.error)}</ErrorText>;
   if (listed.isPending) return <CardSkeleton className="mt-6" />;
@@ -156,12 +172,15 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
                     <AlertDescription className="text-warning">{t('conflicts', { count: file.statement.conflictLines })}</AlertDescription>
                   </Alert>
                 )}
-                <div className="mt-3">
-                  <Button size="sm" variant="ghost" aria-expanded={shown} onClick={() => setOpen(shown ? null : file.id)}>
-                    {shown ? t('hideLines') : t('showLines', { lines: file.statement.lines })}
-                  </Button>
-                  {shown && <StatementLines fileId={file.id} />}
-                </div>
+                {/* Only those who may decide may read the lines (the query is theirs). */}
+                {canDecide && (
+                  <div className="mt-3">
+                    <Button size="sm" variant="ghost" aria-expanded={shown} onClick={() => setOpen(shown ? null : file.id)}>
+                      {shown ? t('hideLines') : t('showLines', { lines: file.statement.lines })}
+                    </Button>
+                    {shown && <StatementLines fileId={file.id} shownConflicts={file.statement.conflictLines} />}
+                  </div>
+                )}
                 {canDecide ? (
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button size="sm" disabled={busy} onClick={() => confirm.mutate({ fileId: file.id, idempotencyKey: crypto.randomUUID() })}>
@@ -170,6 +189,11 @@ export function StagedStatements({ canDecide, refetchMs }: { canDecide: boolean;
                     <Button size="sm" variant="outline" disabled={busy} onClick={() => reject.mutate({ fileId: file.id, idempotencyKey: crypto.randomUUID() })}>
                       {t('skip')}
                     </Button>
+                    {file.canReextract && (
+                      <Button size="sm" variant="ghost" disabled={busy || reread.isPending} onClick={() => reread.mutate({ fileId: file.id, idempotencyKey: crypto.randomUUID() })}>
+                        {t('reread')}
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <p className="mt-3 text-xs text-subtle-foreground">{t('needsMember')}</p>

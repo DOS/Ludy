@@ -114,17 +114,20 @@ describe('reading a statement', () => {
         row('01/09/2026', '1000', '', '', 'FT2'),
         // A forged line: FT3's reference with another amount, and FT4's with another date.
         row('02/09/2026', '5000', '', '', 'FT3'),
-        row('03/09/2026', '700', '', '', 'FT4'),
+        row('12/09/2026', '700', '', '', 'FT4'),
         row('02/09/2026', '700', '', '', 'FT5'),
+        // The same amount a weekend later: the bank's booking day against its value day, the same transaction.
+        row('05/09/2026', '400', '', '', 'FT6'),
       ]),
     );
     const refs = new Map([
       ['FT2', [{ date: '2026-09-01', amount: '1000' }]],
       ['FT3', [{ date: '2026-09-02', amount: '3000' }]],
       ['FT4', [{ date: '2026-09-02', amount: '700' }]],
+      ['FT6', [{ date: '2026-09-02', amount: '400' }]],
     ]);
-    const verdicts = judge(lines, keys, { keys: new Set(['ref:FT2', 'ref:FT3', 'ref:FT4']), dateAmounts: new Set(), refs });
-    expect(verdicts.map((v) => v.status)).toEqual(['new', 'duplicate', 'conflict', 'conflict', 'new']);
+    const verdicts = judge(lines, keys, { keys: new Set(['ref:FT2', 'ref:FT3', 'ref:FT4', 'ref:FT6']), dateAmounts: new Set(), refs });
+    expect(verdicts.map((v) => v.status)).toEqual(['new', 'duplicate', 'conflict', 'conflict', 'new', 'duplicate']);
     expect(verdicts[2]?.clash).toEqual({ date: '2026-09-02', amount: '3000' });
     expect(verdicts[3]?.clash).toEqual({ date: '2026-09-02', amount: '700' });
   });

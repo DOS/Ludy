@@ -45,7 +45,8 @@ const zStatementFile = z.strictObject({
 
 // What the stage keeps with the file's read, next to the summary the Inbox shows: where the lines go when a member
 // imports them, and the number that named the account, so the mapping is looked at again then.
-const zStagedSummary = zStatementSummary.extend({ accountNumber: z.string(), legalEntityId: zId, importId: zId.optional() });
+// conflictRows: the file rows the card showed as conflicts, so an import refuses a conflict it did not show (#2191).
+const zStagedSummary = zStatementSummary.extend({ accountNumber: z.string(), legalEntityId: zId, importId: zId.optional(), conflictRows: z.array(z.number().int().positive()).default([]) });
 type StagedSummary = z.infer<typeof zStagedSummary>;
 const zStagedResult = z.object({ kind: z.literal('bank_statement'), summary: zStagedSummary, rows: z.array(zBankStatementRow).optional() });
 
@@ -76,7 +77,11 @@ async function mappedPlace(ctx: QueryContext, accountNumber: string): Promise<Pl
 }
 
 // The account number with all but its last four digits hidden (#2191): enough to tell which account a file says it is for.
-export const maskAccountNumber = (digits: string): string => `${'*'.repeat(Math.min(digits.length - 4, 8))}${digits.slice(-4)}`;
+export function maskAccountNumber(digits: string): string {
+  // Four digits, or fewer for a short number, so most of it is always hidden.
+  const shown = Math.min(4, digits.length - 2);
+  return `${'*'.repeat(Math.min(digits.length - shown, 8))}${digits.slice(-shown)}`;
+}
 
 // Refusals the file can be told about; anything else is a fault and the job is retried.
 const REFUSED_CODES: ReadonlySet<string> = new Set(['NOT_A_BANK_ACCOUNT', 'ACCOUNT_INACTIVE']);
@@ -120,6 +125,7 @@ export const bankStatementStage = defineQuery({
           newLines: preview.counts.new + preview.counts.ambiguous + preview.counts.conflict,
           duplicateLines: preview.counts.duplicate,
           conflictLines: preview.counts.conflict,
+          conflictRows: preview.rows.filter((r) => r.status === 'conflict').map((r) => r.rowNo),
           from: preview.from,
           to: preview.to,
           totalIn: totalIn.toFixed(),
@@ -182,11 +188,11 @@ export const bankStatementConfirm = defineCommand({
       throw new DomainError('STATEMENT_MAPPING_CHANGED', 409, 'Số tài khoản của sao kê không còn liên kết với tài khoản ngân hàng này; hãy kiểm tra Cài đặt rồi đọc lại tệp');
     }
     const legalEntityId = await resolveLegalEntity(ctx, place.legalEntityId);
-    const result = await importStatement(ctx, { bankAccount: place.bankAccount, filename: staged.summary.filename, rows: staged.rows, legalEntityId }, legalEntityId, input.fileId);
+    const result = await importStatement(ctx, { bankAccount: place.bankAccount, filename: staged.summary.filename, rows: staged.rows, legalEntityId }, legalEntityId, input.fileId, new Set(staged.summary.conflictRows));
     await ctx.run('kernel.extraction.statement_state', {
       fileId: input.fileId,
       state: 'imported',
-      newLines: result.counts.new + result.counts.ambiguous,
+      newLines: result.counts.new + result.counts.ambiguous + result.counts.conflict,
       duplicateLines: result.counts.duplicate,
       importId: result.importId,
     });
