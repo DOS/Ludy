@@ -178,12 +178,12 @@ export function findAccountNumber(rows: StatementGrid, headerRow: number): strin
 
 // CSV as banks export it: comma, semicolon or tab separated (the one the first lines use most), double quotes around
 // cells that hold one, "" for a quote inside. Every cell is text. Rows are numbered from 1, like a sheet.
-export function parseCsv(text: string): Map<number, Map<number, StatementCell>> {
+export function parseCsv(text: string): Map<number, Map<number, { kind: 'text'; value: string }>> {
   const body = text.replace(/^﻿/, '');
   const sample = body.split(/\r?\n/).slice(0, 10).join('\n');
   const delimiter = [',', ';', '\t'].reduce((best, d) => (sample.split(d).length > sample.split(best).length ? d : best), ',');
-  const rows = new Map<number, Map<number, StatementCell>>();
-  let row = new Map<number, StatementCell>();
+  const rows = new Map<number, Map<number, { kind: 'text'; value: string }>>();
+  let row = new Map<number, { kind: 'text'; value: string }>();
   let col = 0;
   let value = '';
   let quoted = false;
