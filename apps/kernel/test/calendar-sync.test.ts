@@ -426,7 +426,7 @@ describe('write-back in the sweep', () => {
     expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(true);
   });
 
-  it('counts a forbidden answer as an error of its event and goes on with the others (#2163)', async () => {
+  it('skips a forbidden answer of one event without counting it, and goes on with the others (#2163)', async () => {
     const e3 = { ...upsert, eventId: 'e3', externalId: 'ext3ext3ext3' };
     const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [upsert, e3, remove] });
     const a = adapter({
@@ -437,8 +437,8 @@ describe('write-back in the sweep', () => {
     });
     expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
     expect(a.writes).toEqual(['write ext1ext1ext1', 'write ext3ext3ext3', 'remove ext2ext2ext2']);
+    // Nothing is recorded for the forbidden one: reconnecting does not reset the attempts a lost permission would burn.
     expect(records(calls)).toEqual([
-      { eventId: 'e1', state: 'error', hash: 'sha256:aaa', error: 'forbidden' },
       { eventId: 'e3', state: 'written', hash: 'sha256:aaa', error: undefined },
       { eventId: 'e2', state: 'removed', hash: 'deleted', error: undefined },
     ]);
@@ -454,7 +454,7 @@ describe('write-back in the sweep', () => {
     const a = adapter({ writeEvent: async () => answers[n++] as { scope: true } | { ok: true } });
     expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
     expect(n).toBe(4);
-    expect(records(calls).map((r) => r.state)).toEqual(['error', 'written', 'error', 'error']);
+    expect(records(calls).map((r) => r.state)).toEqual(['written']);
   });
 
   it('stops writing after three forbidden answers in a row: the member took the permission away, and the busy read goes on', async () => {
@@ -468,11 +468,7 @@ describe('write-back in the sweep', () => {
     });
     expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
     expect(a.writes).toHaveLength(3);
-    expect(records(calls).map((r) => [r.eventId, r.state, r.error])).toEqual([
-      ['e1', 'error', 'forbidden'],
-      ['e3', 'error', 'forbidden'],
-      ['e4', 'error', 'forbidden'],
-    ]);
+    expect(records(calls)).toEqual([]);
     expect(calls.some((c) => c.name === 'kernel.calendar.busy_replace')).toBe(true);
   });
 });

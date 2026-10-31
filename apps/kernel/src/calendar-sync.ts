@@ -351,16 +351,19 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
       unsettled = null;
     }
     // "Forbidden" while the stored grant carries the events permission (the plan checked it): it is about this event, or the
-    // member took the permission away at Google. Either way it is an error on this link, counted toward its six attempts, and
-    // the batch goes on, so one event never keeps the ones behind it from running. Three in a row mean the permission is
-    // gone: stop.
-    const forbidden = 'scope' in result;
-    forbiddenRun = forbidden ? forbiddenRun + 1 : 0;
+    // member took the permission away at Google. Nothing is recorded: a count would burn the links' six attempts during a
+    // lost permission and, since reconnecting does not reset them, keep them from writing once it is back. The batch goes on,
+    // so one event never keeps the ones behind it from running; three in a row mean the permission is gone: stop.
+    if ('scope' in result) {
+      forbiddenRun += 1;
+      if (forbiddenRun >= 3) return null;
+      continue;
+    }
+    forbiddenRun = 0;
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone
     // until its booking changes.
-    await record(a, written ? (a.kind === 'delete' || 'gone' in result ? 'removed' : 'written') : 'error', forbidden ? 'forbidden' : 'failed' in result ? result.failed : 'failed');
-    if (forbiddenRun >= 3) return null;
+    await record(a, written ? (a.kind === 'delete' || 'gone' in result ? 'removed' : 'written') : 'error', 'failed' in result ? result.failed : 'failed');
   }
   // A failure with nothing after it to compare with (the last event of the plan) is left unrecorded and tried again.
   return null;
