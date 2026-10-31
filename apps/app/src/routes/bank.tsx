@@ -107,6 +107,9 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
 
   const data = preview.data;
   const toStore = data ? data.counts.new + data.counts.ambiguous + data.counts.conflict : 0;
+  // Every conflict row is listed (#2191), whatever the cap: an import stores them all, so none may go unseen. The other
+  // rows fill what is left of the cap, in the file's order.
+  const shownRows = data ? [...data.rows.filter((r) => r.status === 'conflict'), ...data.rows.filter((r) => r.status !== 'conflict')].slice(0, Math.max(PREVIEW_ROWS, data.counts.conflict)) : [];
 
   return (
     <Card className="mb-6 block space-y-4 p-4">
@@ -147,7 +150,11 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                 {data.order === 'newest_first' && ` ${t('newestFirst')}`}
               </p>
               {data.counts.ambiguous > 0 && <Notice>{t('ambiguousNote')}</Notice>}
-              {data.counts.conflict > 0 && <Notice>{t('conflictNote')}</Notice>}
+              {data.counts.conflict > 0 && (
+                <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
+                  <AlertDescription className="text-warning">{t('conflictNote', { count: data.counts.conflict })}</AlertDescription>
+                </Alert>
+              )}
               {data.breaks.length > 0 && (
                 <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                   <AlertDescription className="text-warning">
@@ -156,7 +163,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                 </Alert>
               )}
               <DataTable numeric={[4, 5, 6]} head={[t('columns.row'), t('columns.date'), t('columns.reference'), t('columns.description'), t('columns.moneyIn'), t('columns.moneyOut'), t('columns.balance'), t('columns.status')]}>
-                {data.rows.slice(0, PREVIEW_ROWS).map((row) => {
+                {shownRows.map((row) => {
                   const out = row.amount?.startsWith('-') ?? false;
                   return (
                     <TableRow key={row.rowNo}>
@@ -181,7 +188,7 @@ function StatementImport({ bankAccount, onImported }: { bankAccount: string; onI
                   );
                 })}
               </DataTable>
-              {data.rows.length > PREVIEW_ROWS && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - PREVIEW_ROWS })}</p>}
+              {data.rows.length > shownRows.length && <p className="text-xs text-subtle-foreground">{t('moreRows', { count: data.rows.length - shownRows.length })}</p>}
               <Button loading={imported.isPending} size="lg" disabled={!data.ok || toStore === 0 || imported.isPending} onClick={() => input && imported.mutate({ ...input, idempotencyKey })}>
                 {t('import', { count: toStore })}
               </Button>

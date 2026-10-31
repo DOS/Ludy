@@ -235,7 +235,9 @@ export const bankStatementLines = defineQuery({
     );
     const conflicts = preview.rows.filter((r) => r.status === 'conflict');
     const others = preview.rows.filter((r) => r.status !== 'conflict');
-    return { lines: [...conflicts, ...others].slice(0, STATEMENT_LINES_SHOWN), total: preview.rows.length, conflicts: conflicts.length };
+    // Every conflict is listed, whatever the cap: importing stores them all, so none may go unseen. The other lines fill
+    // what is left of the cap.
+    return { lines: [...conflicts, ...others].slice(0, Math.max(STATEMENT_LINES_SHOWN, conflicts.length)), total: preview.rows.length, conflicts: conflicts.length };
   },
 });
 

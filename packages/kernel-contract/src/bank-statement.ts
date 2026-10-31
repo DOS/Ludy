@@ -97,7 +97,8 @@ export const zBankImportPreview = z.object({
 export type BankImportPreview = z.infer<typeof zBankImportPreview>;
 
 // The lines of a staged statement (#2191), as they stand against the account now: what the member who decides sees before
-// importing. Conflicts come first, then the file's order; at most STATEMENT_LINES_SHOWN lines come back, `total` being all.
+// importing. Every conflict comes first, then the file's order; about STATEMENT_LINES_SHOWN lines come back (more when
+// there are more conflicts than that), `total` being all.
 export const STATEMENT_LINES_SHOWN = 300;
 export const zStatementLines = z.object({
   lines: zBankImportPreview.shape.rows,
