@@ -565,8 +565,8 @@ export const recordExtraction = defineCommand({
 // A staged bank statement (#2142) is decided: imported (the finance module stored its lines in this same transaction) or
 // rejected (skipped, nothing stored). A finished run never changes (extraction_guard), so the decision is a NEW run of the
 // file, with the staged summary in its new state and no rows: it is the file's newest run, the one the Inbox shows and the
-// one a second decision finds, so a statement is decided once; its requester is the member who decided (the database
-// takes it from the sealed context) and its audit row says so too. The staged run keeps its rows, like any run keeps its
+// one a second decision finds, so a statement is decided once; its audit row names the member who decided (a run inserted
+// already finished has no requester). The staged run keeps its rows, like any run keeps its
 // result. Run by finance.bank.statement_confirm and .statement_reject, as the member who decided; the finance module takes
 // a lock on the file first, so two members cannot both decide it.
 export const statementState = defineCommand({

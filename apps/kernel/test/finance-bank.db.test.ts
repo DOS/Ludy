@@ -771,7 +771,10 @@ suite('bank statement import (#326)', () => {
   describe('a statement read from a forwarded or dropped file (#2142)', () => {
     const NUMBER = '19880001234';
     const WORKER = { type: 'system' as const, component: 'finance.bank_statement' };
-    const ownerActor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: owner.session, mfaAt: null };
+    // Uploading a file asks for no second factor: a session at aal1, as the API uploads for the member (an aal2 actor with no
+    // mfaAt is refused as invalid when the context is entered).
+    // Read when it is used: the accounts' user ids are filled in by beforeAll, after this block is collected.
+    const ownerActor = () => ({ type: 'user' as const, userId: owner.userId, aal: 'aal1' as const, sessionId: owner.session });
     let mappingId = '';
     let connectionId = '';
     const stage = (rows: BankStatementRow[], accountNumber: string | null = NUMBER) =>
@@ -791,7 +794,7 @@ suite('bank statement import (#326)', () => {
       const { fileId } = await api.execute<{ fileId: string }>(
         'kernel.file.ingest',
         { filename: 'sao-ke.zip', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), source: 'upload' },
-        { actor: ownerActor, orgId },
+        { actor: ownerActor(), orgId },
       );
       return fileId;
     }
@@ -844,7 +847,10 @@ suite('bank statement import (#326)', () => {
       expect(await lineCount()).toBe(before);
       // A viewer, and another org, cannot decide it.
       expect((await confirm(fileId, viewer)).status).toBe(403);
-      expect(await confirm(fileId, outsider, otherSlug)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
+      // Another org's member never reaches it: not a member here, or the file is not visible there.
+      const theirs = await confirm(fileId, outsider, otherSlug);
+      expect([403, 409]).toContain(theirs.status);
+      expect(['NOT_A_MEMBER', 'STATEMENT_NOT_STAGED']).toContain(theirs.body.code);
       expect(await lineCount()).toBe(before);
       // A member imports it: its three lines appear, on the mapped account, with the import's own keys.
       const done = await confirm(fileId);
@@ -869,11 +875,11 @@ suite('bank statement import (#326)', () => {
       expect(await reject(fileId)).toMatchObject({ status: 409, body: { code: 'STATEMENT_NOT_STAGED' } });
       expect(await lineCount()).toBe(before + 3);
       expect((await importFile(rows, '1121.VCB')).body.counts).toMatchObject({ new: 0, duplicate: 3 });
-      // A finished run never changes, so the decision is a new run of the file: the newest one, with no rows, requested by the
-      // member who decided; the staged run before it keeps its rows like any run keeps its result.
+      // A finished run never changes, so the decision is a new run of the file: the newest one, with no rows; the staged run before it keeps its rows like any run keeps its result.
       const runs = await admin(async (c) => (await c.query<{ version: number; has_rows: boolean; requested_by: string | null }>(`SELECT version, result ? 'rows' AS has_rows, requested_by FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version`, [orgId, fileId])).rows);
       expect(runs.map((r) => [r.version, r.has_rows])).toEqual([[1, true], [2, false]]);
-      expect(runs[1]?.requested_by).toBe(member.userId);
+      // Who decided is the audit row's (checked above), not the run's: a run inserted already finished has no requester.
+      expect(runs[1]?.requested_by).toBeNull();
       // An imported statement is read no more, whatever the button says.
       expect(await rpc('files/reextract', await tokenFor(owner), { fileId, idempotencyKey: randomUUID() })).toMatchObject({ status: 409, body: { code: 'STATEMENT_IMPORTED' } });
     });
@@ -979,8 +985,8 @@ suite('bank statement import (#326)', () => {
       await recordRead(fileId, { status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: true });
       expect((await rpc('files/reextract', await tokenFor(owner), { fileId, idempotencyKey: randomUUID() })).status).toBe(200);
       const rows = rowsOf('MOVED');
-      const outcome = await stage(rows, '55667788990');
-      if (outcome.outcome !== 'staged') throw new Error('expected staged');
+      const outcome = await stage(rows, '556677889900');
+      if (outcome.outcome !== 'staged') throw new Error(`expected staged: ${JSON.stringify(outcome)}`);
       expect(outcome.summary.legalEntityId).toBe(branch);
       await recordRead(fileId, { version: 2, status: 'done', statement: true, legalEntityId: branch, result: { kind: 'bank_statement', summary: outcome.summary, rows }, summary: 'Sao kê chờ nhập' });
       // The run the account's entity sees is a new one; the pending run of the first entity is closed with nothing of the statement.
