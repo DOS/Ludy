@@ -122,7 +122,9 @@ export function takesTitle(provider: string, settings: Readonly<Record<string, u
 function uploadsDirect(): boolean {
   try {
     const config = getConfig();
-    return config.uploads === 'direct' && config.platformMediaUrls !== true;
+    // What the server says it can sign for a platform, when it says; an older server says nothing, and direct uploads then
+    // mean local disk, as they always did.
+    return config.platformMediaUrls === undefined ? config.uploads === 'direct' : !config.platformMediaUrls;
   } catch {
     return false;
   }

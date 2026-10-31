@@ -1646,6 +1646,20 @@ suite('social publishing on PostgreSQL (S4)', () => {
     const late = await variant(o, slow.postId);
     expect([late.status, late.attempt, late.error?.kind, late.error?.code]).toEqual(['scheduled', 2, 'transient', 'MEDIA_URL_UNAVAILABLE']);
 
+    // Only the time spent checking files counts against that half, not what the adapter does before it asks for a URL (a
+    // video's upload and processing): a URL asked for after 1.2 s of other work is still signed.
+    const lateAsk = await due();
+    const lateBird = new FakePlatform();
+    const lateBirdPublish = lateBird.publish.bind(lateBird);
+    lateBird.publish = async (input) => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      const url = await input.mediaUrl(input.content.media[0]?.fileId as string).catch(() => null);
+      return url ? lateBirdPublish(input) : { kind: 'rejected', error: 'bad_request', code: 'MEDIA_URL_UNAVAILABLE' };
+    };
+    const lateStore = { get: async (key: string) => stored.get(key) as Uint8Array, fetchUrls: { presign: async () => 'https://files.example.test/late' } } as unknown as BlobStore;
+    expect(await runPublishJob({ runtime: worker, broker: vault, publishers: { sandbox: lateBird }, store: lateStore, callTimeoutMs: 2_000 }, o.orgId, lateAsk.id, 'sandbox')).toEqual({ action: 'call', status: 'published' });
+    expect(lateBird.posts).toHaveLength(1);
+
     const swapped = await due();
     expect(await runWith(swapped.id, async () => Promise.reject(new BlobIntegrityError({ key: 'org/x/y', generation: null, sha256: 'z' })))).toEqual({ action: 'call', status: 'failed' });
     const failed = await variant(o, swapped.postId);

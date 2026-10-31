@@ -39,6 +39,15 @@ describe('a video on a Zalo OA channel', () => {
     expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
     config.platformMediaUrls = undefined;
     expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+    // What the server says wins over how uploads go: presigned browser transfers to an http MinIO sign nothing a platform
+    // can fetch, and a server that can sign does so whatever the uploads.
+    config.uploads = 'presigned';
+    config.platformMediaUrls = false;
+    expect(draft([clip()])).toEqual(['MEDIA_NEEDS_PUBLIC_STORAGE']);
+    config.platformMediaUrls = true;
+    expect(draft([clip()])).toEqual([]);
+    config.platformMediaUrls = undefined;
+    expect(draft([clip()])).toEqual([]);
   });
 
   it('says the cover and size rules in Vietnamese and in English', () => {
