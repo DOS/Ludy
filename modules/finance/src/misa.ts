@@ -14,7 +14,6 @@
 //
 // Values follow the same safety rules as the journal export (export.ts): amounts are exact (`decimalCell`) and
 // text is written as inert string cells.
-import ExcelJS from 'exceljs';
 import {
   PAYABLE_ACCOUNT,
   VAT_INPUT_ASSETS,
@@ -29,6 +28,7 @@ import {
 import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes } from '@crove/kernel-contract';
 import { canonical, roundToCurrency } from './domain/money.ts';
 import { decimalCell, textCell } from './export.ts';
+import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Inputs
@@ -608,15 +608,22 @@ function excelDate(value: string): Date {
 
 /** One sheet named as MISA's template, its header row, then one row per voucher line. */
 // brand: the product name users see (BRAND_NAME, #1045), as the file's creator.
-export async function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: readonly Row[], brand = 'Ludy'): Promise<Uint8Array> {
-  const workbook = new ExcelJS.Workbook();
+// Written as a stream (#2121), like the journal: a voucher export holds up to 50,000 vouchers.
+export function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: readonly Row[], brand = 'Ludy'): Promise<Uint8Array> {
+  return streamWorkbook((workbook) => writeMisa(workbook, template, rows, brand));
+}
+
+async function writeMisa<Row>(workbook: StreamedWorkbook, template: MisaTemplate<Row>, rows: readonly Row[], brand: string): Promise<void> {
   workbook.creator = brand;
-  const sheet = workbook.addWorksheet(template.sheetName);
-  sheet.addRow(template.columns.map((c) => c.header));
-  sheet.getRow(1).font = { bold: true };
+  const sheet = workbook.addWorksheet(template.sheetName, { views: [{ state: 'frozen', ySplit: 1 }] });
+  // Column widths come before the first row: a streamed row is written as soon as it is committed.
   template.columns.forEach((c, i) => {
     sheet.getColumn(i + 1).width = Math.min(Math.max(c.header.length + 2, 12), 40);
   });
+  const header = sheet.addRow(template.columns.map((c) => c.header));
+  header.font = { bold: true };
+  header.commit();
+  let written = 0;
   for (const row of rows) {
     const excelRow = sheet.addRow([]);
     template.columns.forEach((column, i) => {
@@ -639,7 +646,8 @@ export async function buildMisaWorkbook<Row>(template: MisaTemplate<Row>, rows: 
         }
       }
     });
+    excelRow.commit();
+    await pace(++written);
   }
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  return new Uint8Array(await workbook.xlsx.writeBuffer());
+  sheet.commit();
 }

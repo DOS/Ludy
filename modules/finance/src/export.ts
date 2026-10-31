@@ -15,6 +15,7 @@
 import ExcelJS from 'exceljs';
 import { Decimal, money, toMoney } from '@crove/l10n-vn';
 import type { JournalEntryView } from './queries.ts';
+import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 
 // Excel keeps 15 significant digits of a number; anything longer is silently changed on entry.
 const EXCEL_SIGNIFICANT_DIGITS = 15;
@@ -86,10 +87,14 @@ export function setTextCell(cell: ExcelJS.Cell, value: string | null | undefined
 }
 
 // brand: the product name users see (BRAND_NAME, #1045), as the file's creator.
-export async function buildJournalWorkbook(entries: JournalEntryView[], orgName: string, brand = 'Ludy'): Promise<Uint8Array> {
-  const workbook = new ExcelJS.Workbook();
+// Written as a stream (#2121): up to 50,000 entries, so the workbook is never held as cell objects.
+export function buildJournalWorkbook(entries: JournalEntryView[], orgName: string, brand = 'Ludy'): Promise<Uint8Array> {
+  return streamWorkbook((workbook) => writeJournal(workbook, entries, orgName, brand));
+}
+
+async function writeJournal(workbook: StreamedWorkbook, entries: JournalEntryView[], orgName: string, brand: string): Promise<void> {
   workbook.creator = brand;
-  const sheet = workbook.addWorksheet('Bút toán');
+  const sheet = workbook.addWorksheet('Bút toán', { views: [{ state: 'frozen', ySplit: 1 }] });
   sheet.columns = [
     { header: 'Ngày hạch toán', key: 'entryDate', width: 14 },
     { header: 'Ngày hóa đơn', key: 'invoiceDate', width: 14 },
@@ -103,7 +108,9 @@ export async function buildJournalWorkbook(entries: JournalEntryView[], orgName:
     { header: 'Số tiền', key: 'amount', width: 22 },
   ];
   const textKeys = ['entryDate', 'invoiceDate', 'series', 'number', 'taxCode', 'partyName', 'memo', 'debitAccount', 'creditAccount'];
+  sheet.getRow(1).font = { bold: true };
 
+  let written = 0;
   for (const entry of entries) {
     const credits = entry.lines.filter((l) => !money(l.credit).isZero());
     const debits = entry.lines.filter((l) => !money(l.debit).isZero());
@@ -139,10 +146,10 @@ export async function buildJournalWorkbook(entries: JournalEntryView[], orgName:
         amountCell.numFmt = TEXT_FORMAT;
         amountCell.alignment = { horizontal: 'right' };
       }
+      row.commit();
+      await pace(++written);
     }
   }
-  sheet.getRow(1).font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 1 }];
   workbook.title = `Bút toán ${orgName}`;
-  return new Uint8Array(await workbook.xlsx.writeBuffer());
+  sheet.commit();
 }

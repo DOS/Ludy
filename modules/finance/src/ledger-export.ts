@@ -2,11 +2,12 @@
 // general ledger of every top-level account (each with its sub-accounts), then receivables and payables per party.
 // Same cell rules as the journal export (export.ts): amounts exact through moneyCell, text never read as a formula.
 // Headers and labels stay Vietnamese in every locale: the file goes to Vietnamese accountants and their software.
-import ExcelJS from 'exceljs';
+import type ExcelJS from 'exceljs';
 import { money } from '@crove/l10n-vn';
 import { setMoneyCell as setMoney, setTextCell as setText } from './export.ts';
 import type { PartyLedger } from './domain/ledger-reports.ts';
 import type { LedgerBook } from './ledger-reports.ts';
+import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
 
 const NO_PARTY = 'Chưa gắn đối tượng';
 
@@ -18,14 +19,15 @@ function balanceCells(row: ExcelJS.Row, debitKey: string, creditKey: string, bal
   else setMoney(row.getCell(debitKey), value.toFixed());
 }
 
-function heading(sheet: ExcelJS.Worksheet, key: string, text: string): void {
+function heading(sheet: ExcelJS.Worksheet, key: string, text: string): ExcelJS.Row {
   const row = sheet.addRow([]);
   setText(row.getCell(key), text);
   row.font = { bold: true };
+  return row;
 }
 
-function trialBalanceSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range: string): void {
-  const sheet = workbook.addWorksheet('Cân đối phát sinh');
+function trialBalanceSheet(workbook: StreamedWorkbook, book: LedgerBook, range: string): void {
+  const sheet = workbook.addWorksheet('Cân đối phát sinh', { views: [{ state: 'frozen', ySplit: 2 }] });
   sheet.columns = [
     { key: 'code', width: 12 },
     { key: 'name', width: 48 },
@@ -50,7 +52,6 @@ function trialBalanceSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range: 
   ];
   for (const [key, label] of labels) setText(head.getCell(key), label);
   head.font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 2 }];
   const amountKeys = ['openingDebit', 'openingCredit', 'debit', 'credit', 'closingDebit', 'closingCredit'] as const;
   for (const r of book.trialBalance.rows) {
     const row = sheet.addRow([]);
@@ -69,10 +70,12 @@ function trialBalanceSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range: 
     const note = sheet.addRow([]);
     setText(note.getCell('name'), 'Cảnh báo: tổng Nợ và tổng Có không bằng nhau');
   }
+  sheet.commit();
 }
 
-function generalLedgerSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range: string): void {
-  const sheet = workbook.addWorksheet('Sổ cái');
+// One row per ledger line, so the one sheet that grows with the books: every row is committed as it is written (#2121).
+async function generalLedgerSheet(workbook: StreamedWorkbook, book: LedgerBook, range: string): Promise<void> {
+  const sheet = workbook.addWorksheet('Sổ cái', { views: [{ state: 'frozen', ySplit: 2 }] });
   sheet.columns = [
     { key: 'date', width: 12 },
     { key: 'reference', width: 16 },
@@ -85,7 +88,7 @@ function generalLedgerSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range:
     { key: 'balanceDebit', width: 18 },
     { key: 'balanceCredit', width: 18 },
   ];
-  heading(sheet, 'description', `Sổ cái, ${range}`);
+  const title = heading(sheet, 'description', `Sổ cái, ${range}`);
   const head = sheet.addRow([]);
   const labels: Array<[string, string]> = [
     ['date', 'Ngày ghi sổ'],
@@ -101,13 +104,16 @@ function generalLedgerSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range:
   ];
   for (const [key, label] of labels) setText(head.getCell(key), label);
   head.font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 2 }];
+  title.commit();
+  head.commit();
+  let written = 0;
   for (const ledger of book.ledgers) {
-    sheet.addRow([]);
-    heading(sheet, 'description', `Tài khoản ${ledger.account.code}: ${ledger.account.name}`);
+    sheet.addRow([]).commit();
+    heading(sheet, 'description', `Tài khoản ${ledger.account.code}: ${ledger.account.name}`).commit();
     const opening = sheet.addRow([]);
     setText(opening.getCell('description'), 'Số dư đầu kỳ');
     balanceCells(opening, 'balanceDebit', 'balanceCredit', ledger.opening);
+    opening.commit();
     for (const line of ledger.lines) {
       const row = sheet.addRow([]);
       setText(row.getCell('date'), line.entryDate);
@@ -119,21 +125,26 @@ function generalLedgerSheet(workbook: ExcelJS.Workbook, book: LedgerBook, range:
       if (!money(line.debit).isZero()) setMoney(row.getCell('debit'), line.debit);
       if (!money(line.credit).isZero()) setMoney(row.getCell('credit'), line.credit);
       balanceCells(row, 'balanceDebit', 'balanceCredit', line.balance);
+      row.commit();
+      await pace(++written);
     }
     const turnover = sheet.addRow([]);
     setText(turnover.getCell('description'), 'Cộng phát sinh');
     setMoney(turnover.getCell('debit'), ledger.debit);
     setMoney(turnover.getCell('credit'), ledger.credit);
     turnover.font = { bold: true };
+    turnover.commit();
     const closing = sheet.addRow([]);
     setText(closing.getCell('description'), 'Số dư cuối kỳ');
     balanceCells(closing, 'balanceDebit', 'balanceCredit', ledger.closing);
     closing.font = { bold: true };
+    closing.commit();
   }
+  sheet.commit();
 }
 
-function partySheet(workbook: ExcelJS.Workbook, name: string, title: string, ledger: PartyLedger, partyHeader: string): void {
-  const sheet = workbook.addWorksheet(name);
+function partySheet(workbook: StreamedWorkbook, name: string, title: string, ledger: PartyLedger, partyHeader: string): void {
+  const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 2 }] });
   sheet.columns = [
     { key: 'taxCode', width: 16 },
     { key: 'party', width: 44 },
@@ -154,7 +165,6 @@ function partySheet(workbook: ExcelJS.Workbook, name: string, title: string, led
   ];
   for (const [key, label] of labels) setText(head.getCell(key), label);
   head.font = { bold: true };
-  sheet.views = [{ state: 'frozen', ySplit: 2 }];
   for (const r of ledger.rows) {
     const row = sheet.addRow([]);
     setText(row.getCell('taxCode'), r.partyTaxCode);
@@ -173,17 +183,19 @@ function partySheet(workbook: ExcelJS.Workbook, name: string, title: string, led
   total.font = { bold: true };
   const note = sheet.addRow([]);
   setText(note.getCell('party'), 'Số âm: khoản trả trước');
+  sheet.commit();
 }
 
 // brand: the product name users see (BRAND_NAME, #1045), as the file's creator.
-export async function buildLedgerWorkbook(book: LedgerBook, orgName: string, brand = 'Ludy'): Promise<Uint8Array> {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = brand;
-  workbook.title = `Sổ sách ${book.period.period} ${orgName}`;
-  const range = `kỳ ${book.period.period} (${book.period.from} đến ${book.period.to})`;
-  trialBalanceSheet(workbook, book, range);
-  generalLedgerSheet(workbook, book, range);
-  partySheet(workbook, 'Phải thu', `Công nợ phải thu khách hàng (TK 131), ${range}`, book.receivables, 'Khách hàng');
-  partySheet(workbook, 'Phải trả', `Công nợ phải trả người bán (TK 331), ${range}`, book.payables, 'Nhà cung cấp');
-  return new Uint8Array(await workbook.xlsx.writeBuffer());
+// Written as a stream (#2121): the general ledger has a row per posted line of the period.
+export function buildLedgerWorkbook(book: LedgerBook, orgName: string, brand = 'Ludy'): Promise<Uint8Array> {
+  return streamWorkbook(async (workbook) => {
+    workbook.creator = brand;
+    workbook.title = `Sổ sách ${book.period.period} ${orgName}`;
+    const range = `kỳ ${book.period.period} (${book.period.from} đến ${book.period.to})`;
+    trialBalanceSheet(workbook, book, range);
+    await generalLedgerSheet(workbook, book, range);
+    partySheet(workbook, 'Phải thu', `Công nợ phải thu khách hàng (TK 131), ${range}`, book.receivables, 'Khách hàng');
+    partySheet(workbook, 'Phải trả', `Công nợ phải trả người bán (TK 331), ${range}`, book.payables, 'Nhà cung cấp');
+  });
 }
