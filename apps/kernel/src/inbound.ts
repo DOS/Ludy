@@ -11,7 +11,7 @@ import { EXTRACT_LIMIT_RETRIES, type ExtractClient } from '@crove/extract-contra
 import { ACCEPTED_ARCHIVE_TYPES, ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVES, MAX_UPLOAD_BYTES } from '@crove/kernel-contract';
 import type { UsageLimits, UsageOver } from '@crove/kernel';
 import { DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { safeFilename, sniffType } from './sniff.ts';
+import { isCsvName, safeFilename, sniffType } from './sniff.ts';
 
 export const MAX_EMAIL_BYTES = 40 * 1024 * 1024;
 const TOKEN = /^[0-9a-f]{24}$/;
@@ -196,6 +196,9 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
       if (archives >= MAX_EMAIL_ARCHIVES) continue;
       archives += 1;
     } else if (!ACCEPTED_UPLOAD_TYPES.includes(contentType)) {
+      continue;
+    } else if (contentType === 'text/csv' && !isCsvName(attachment.filename ?? '')) {
+      // A bank statement as CSV (#2142), by its name too: a signature or a note with commas in it is no statement.
       continue;
     }
     const filename = safeFilename(attachment.filename ?? 'tep-dinh-kem', contentType);

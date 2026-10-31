@@ -16,7 +16,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { financeCommands, financeQueries, type StatementFileOutcome } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -762,5 +762,60 @@ suite('bank statement import (#326)', () => {
     const accounts = (await feed('accounts', owner)).body.filter((a: { connectionId: string }) => a.connectionId === connectionId);
     expect(accounts).toHaveLength(2);
     expect(accounts.find((a: { externalAccountId: string }) => a.externalAccountId === 'SBX-001').id).toBe(mapped.body.feedAccountId);
+  });
+
+  // #2142: a statement that arrives as a file is stored as the lines of the account its own account number names through
+  // the bank feed mappings, on the import's path (the same keys), and an unmapped number writes nothing.
+  describe('a statement read from a forwarded or dropped file (#2142)', () => {
+    const NUMBER = '001100000123';
+    const FILE_ACTOR = { type: 'system' as const, component: 'finance.bank_statement' };
+    const statementFile = (rows: BankStatementRow[], accountNumber: string | null = NUMBER) =>
+      worker.execute<StatementFileOutcome>('finance.bank.statement_file', { fileId: randomUUID(), filename: 'sao-ke.xlsx', accountNumber, rows }, { actor: FILE_ACTOR, orgId });
+    const fileRows = () => [
+      row('01/09/2026', '2000000', '', '12000000', 'FT26244000001'),
+      row('02/09/2026', '', '11000', '11989000', 'FT26245000002'),
+      row('03/09/2026', '', '850000', '11139000', 'FT26246000003'),
+    ];
+
+    it('stores the lines of the mapped account once, and a second file of the same lines adds none', async () => {
+      const connectionId = String((await feed('connectSandbox', owner, { displayName: 'Ngân hàng sao kê tệp' })).body.connectionId);
+      // The account is listed with the spaces a bank prints; the file's number is its digits.
+      await admin((c) =>
+        c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, '0011 0000 0123', 'TK thử']),
+      );
+      const mapped = await feed('map', owner, { connectionId, externalAccountId: '0011 0000 0123', bankAccount: '1121.VCB', idempotencyKey: randomUUID() });
+      expect(mapped.status).toBe(200);
+      const before = (await stored('1121.VCB')).length;
+      const first = await statementFile(fileRows());
+      expect(first).toMatchObject({ outcome: 'imported', bankAccount: '1121.VCB', counts: { new: 3, duplicate: 0 } });
+      const after = await stored('1121.VCB');
+      expect(after.length - before).toBe(3);
+      // The keys are the browser import's: the bank's reference.
+      expect(after.filter((l) => l.dedupe_key?.startsWith('ref:FT2624')).length).toBe(3);
+      // The same lines again, from another file or the same one sent twice, are all duplicates and store nothing.
+      expect(await statementFile(fileRows())).toMatchObject({ outcome: 'imported', counts: { new: 0, duplicate: 3 } });
+      expect((await stored('1121.VCB')).length).toBe(after.length);
+      // The browser import of the same lines finds them there too: one line whichever way it came.
+      expect((await importFile([row('01/09/2026', '2000000', '', '12000000', 'FT26244000001')], '1121.VCB')).body.counts).toMatchObject({ new: 0, duplicate: 1 });
+      // The file names no account number: nothing is stored.
+      expect(await statementFile(fileRows(), null)).toEqual({ outcome: 'unmapped', accountNumber: null });
+      expect((await stored('1121.VCB')).length).toBe(after.length);
+    });
+
+    it('writes nothing for an account number no one mapped, and nothing for a file with an unreadable row', async () => {
+      const before = (await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n)) as string;
+      const other = await statementFile([row('05/09/2026', '1000', '', '', 'FT-OTHER-1')], '009900000999');
+      expect(other).toEqual({ outcome: 'unmapped', accountNumber: '009900000999' });
+      // A mapped account, but a row whose date is no day: refused whole, with its row number.
+      const bad = await statementFile([row('05/09/2026', '1000', '', '', 'FT-BAD-1'), row('not a date', '1000', '', '', 'FT-BAD-2')]);
+      expect(bad).toMatchObject({ outcome: 'refused', code: 'BANK_IMPORT_INVALID', rows: [expect.any(Number)] });
+      expect((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n))).toBe(before);
+    });
+
+    it('is the worker command alone: no person, and no other org, can use it', async () => {
+      await expect(
+        api.execute('finance.bank.statement_file', { fileId: randomUUID(), filename: 'x.xlsx', accountNumber: NUMBER, rows: fileRows() }, { actor: { type: 'user', userId: owner.userId, aal: 'aal2', sessionId: owner.session, mfaAt: null }, orgId }),
+      ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    });
   });
 });

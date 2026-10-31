@@ -10,11 +10,30 @@ const EXTENSIONS: Record<string, string> = {
   'video/quicktime': 'mov',
   'application/zip': 'zip',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'text/csv': 'csv',
 };
 
 function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean {
   return signature.every((b, i) => bytes[offset + i] === b);
 }
+
+// CSV text, as a bank exports a statement (#2142): UTF-8 or UTF-16 with its byte order mark, no control characters, and at
+// least two lines in the first 4 KiB that each hold a comma, semicolon or tab. Plain text with commas passes too, so
+// where a name is known (an email attachment, an entry of a ZIP) the caller also asks for ".csv" (isCsvName); the file is
+// then read in the sandbox, which decides whether it is a statement at all.
+function looksLikeCsv(bytes: Uint8Array): boolean {
+  const head = bytes.subarray(0, 4096);
+  const utf16 = head[0] === 0xff && head[1] === 0xfe;
+  if (!utf16 && head.includes(0)) return false;
+  const text = utf16 ? new TextDecoder('utf-16le').decode(head.subarray(2)) : new TextDecoder('utf-8').decode(head);
+  // oxlint-disable-next-line no-control-regex
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return false;
+  const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
+  return lines.length >= 2 && lines.slice(0, 2).every((line) => /[,;\t]/.test(line));
+}
+
+// A name that says CSV; with the type text/csv it is what an attachment or an archive entry needs to be filed.
+export const isCsvName = (name: string): boolean => /\.csv$/i.test(name.trim());
 
 export function sniffType(bytes: Uint8Array): string | null {
   if (startsWith(bytes, [0x25, 0x50, 0x44, 0x46, 0x2d])) return 'application/pdf';
@@ -28,6 +47,7 @@ export function sniffType(bytes: Uint8Array): string | null {
   let i = startsWith(bytes, [0xef, 0xbb, 0xbf]) ? 3 : 0;
   while (i < bytes.length && i < 1024 && [0x20, 0x09, 0x0a, 0x0d].includes(bytes[i] ?? 0)) i += 1;
   if (bytes[i] === 0x3c) return 'application/xml';
+  if (looksLikeCsv(bytes)) return 'text/csv';
   return null;
 }
 

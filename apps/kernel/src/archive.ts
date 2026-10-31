@@ -7,7 +7,7 @@ import { EXTRACT_LIMITS, EXTRACT_LIMIT_RETRIES, type ExtractClient, type Extract
 import { ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVE_DOCUMENTS, MAX_UPLOAD_BYTES, type ArchiveEntryReason } from '@crove/kernel-contract';
 import type { ArchiveEntryInput } from '@crove/kernel';
 import { fileKey, putFile, readVerified, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
-import { safeFilename, sniffType } from './sniff.ts';
+import { isCsvName, safeFilename, sniffType } from './sniff.ts';
 
 export const ARCHIVE_ACTOR = { type: 'system' as const, component: 'kernel.archive' };
 type ArchiveEntry = ExtractedArchive['entries'][number];
@@ -102,6 +102,8 @@ function entryDocument(entry: ArchiveEntry): { content: Uint8Array; contentType:
   const contentType = sniffType(content);
   if (contentType === 'application/zip') return { reason: 'nested_archive' };
   if (!contentType || !ACCEPTED_UPLOAD_TYPES.includes(contentType)) return { reason: 'unsupported_type' };
+  // Text that looks like CSV is a bank statement (#2142) only by its name too: a note with commas in an archive is not.
+  if (contentType === 'text/csv' && !isCsvName(entry.name)) return { reason: 'unsupported_type' };
   return { content, contentType };
 }
 
