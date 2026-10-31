@@ -194,6 +194,9 @@ export interface HttpDeps {
   // Every other POST /api/files running at once (#432): each holds its body (up to MAX_FILES_PER_UPLOAD files, about
   // 26 MB) in memory. Default: twice UPLOAD_COMPLETE_CONCURRENCY, and half of that for one user.
   directUploads?: ConcurrencyLimiter;
+  // Exports of the books (GET /api/export/*) building at once in this process (#2121). Default: EXPORT_CONCURRENCY, and
+  // two of them for one user.
+  exports?: ConcurrencyLimiter;
   // Channel connections (ADR-0025): the broker that seals tokens, and whether the sandbox channel is on. Unset: no
   // channel can be connected through the API.
   channels?: RpcChannels;
@@ -358,6 +361,7 @@ const MAX_FILES_PER_UPLOAD = 5;
 const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
 // What a completion refused for lack of a slot tells the client to wait; the grant stays unused for 5 minutes.
 export const UPLOAD_BUSY_RETRY_SECONDS = 3;
+export const EXPORT_BUSY_RETRY_SECONDS = 5;
 // Cloudflare Turnstile's origin (#1353): its script and the iframe of its widget, on deployments that set the keys.
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 export function contentSecurityPolicy(authUrl: string, storageOrigin: string | null, turnstile = false): string {
@@ -1444,6 +1448,23 @@ export function createHttpApp(deps: HttpDeps) {
       const id = c.req.query('legalEntityId');
       return id ? { legalEntityId: id } : {};
     };
+    // A bounded number of exports at once in this process (#2121): each holds up to 50,000 rows and its finished file. A
+    // full limiter refuses at once (nothing queues up in memory) with 503 and Retry-After, and the person clicks again.
+    // One user may hold two slots, so the buttons of one page (the journal has four) do not refuse each other. The slot
+    // is held until the handler is done, the audit row included.
+    const exportSlots = deps.exports ?? new ConcurrencyLimiter({ total: config.EXPORT_CONCURRENCY, perKey: Math.min(2, config.EXPORT_CONCURRENCY) });
+    app.use('/api/export/*', async (c, next) => {
+      const release = exportSlots.tryAcquire(c.get('user').userId);
+      if (!release) {
+        c.header('retry-after', String(EXPORT_BUSY_RETRY_SECONDS));
+        return problem(c, new DomainError('EXPORT_BUSY', 503, 'Đang có nhiều lượt xuất sổ sách; hãy thử lại sau vài giây'));
+      }
+      try {
+        await next();
+      } finally {
+        release();
+      }
+    });
     app.get('/api/export/journal.xlsx', async (c) => {
       try {
         const user = c.get('user');

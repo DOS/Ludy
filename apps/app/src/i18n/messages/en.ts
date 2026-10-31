@@ -5678,6 +5678,7 @@ export const en = {
       UNSUPPORTED_TYPE: 'Only XML, PDF, JPG, PNG, WEBP and ZIP files are accepted.',
       NO_FILE: 'No file was chosen, or the file is empty.',
       UPLOAD_BUSY: 'The server is processing many files. Try again in a few seconds.',
+      EXPORT_BUSY: 'Other exports are running. Try again in a few seconds.',
       UPLOAD_EXPIRED: 'The upload expired. Upload the file again.',
       UPLOAD_MISSING: 'The file for this upload was not received.',
       UPLOAD_USED: 'This upload was already used.',

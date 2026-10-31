@@ -992,3 +992,88 @@ describe('uploads through the kernel (#432)', () => {
     expect(largeUploads.inUse + directUploads.inUse).toBe(0);
   });
 });
+
+// #2121: exports of the books are bounded per process; one past the limit is refused at once with 503 EXPORT_BUSY and
+// Retry-After, a slot is free again when the export is done (or failed), and one user cannot hold every slot.
+describe('export slots', () => {
+  const orgId = randomUUID();
+  const users: Record<string, AuthUser> = {
+    a: { userId: randomUUID(), email: 'a@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null },
+    b: { userId: randomUUID(), email: 'b@example.com', name: null, aal: 'aal1', sessionId: randomUUID(), mfaAt: null },
+  };
+  let gate: Promise<void> = Promise.resolve();
+  let failure: Error | null = null;
+  const exports = new ConcurrencyLimiter({ total: 2 });
+  const app = createHttpApp({
+    config: loadConfig({ DATABASE_URL: 'postgres://localhost/x', AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: 'crove-auth', WEB_DIST: '/nonexistent' }),
+    runtime: {
+      installed: () => true,
+      modules: () => ['kernel', 'finance'],
+      forUser: async () => [{ orgId, slug: 'acme', name: 'Acme', role: 'owner' }],
+      query: async () => {
+        await gate;
+        if (failure) throw failure;
+        return [];
+      },
+      execute: async () => ({}),
+    } as unknown as Runtime,
+    store: {} as BlobStore,
+    authenticate: async (header) => users[String(header).replace('Bearer ', '')] ?? users['a']!,
+    pool: {} as pg.Pool,
+    aiEnabled: false,
+    exports,
+  });
+  const journal = (who: 'a' | 'b') => app.request('/api/export/journal.xlsx', { headers: { authorization: `Bearer ${who}`, [ORG_HEADER]: 'acme' } });
+  const hold = () => {
+    let open!: () => void;
+    gate = new Promise<void>((resolve) => (open = resolve));
+    return open;
+  };
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
+
+  it('refuses an export past the limit with EXPORT_BUSY and Retry-After, and takes the next one when a slot is free', async () => {
+    expect(exports.perKey).toBe(1);
+    const open = hold();
+    const first = journal('a');
+    await settle();
+    expect(exports.inUse).toBe(1);
+
+    // The same user may not hold a second slot, though one is free.
+    const same = await journal('a');
+    expect(same.status).toBe(503);
+    expect(same.headers.get('retry-after')).toBe('5');
+    expect(await same.json()).toMatchObject({ code: 'EXPORT_BUSY' });
+
+    // Another user takes the other slot; a third export of anyone is refused.
+    const second = journal('b');
+    await settle();
+    expect(exports.inUse).toBe(2);
+    expect((await journal('a')).status).toBe(503);
+    expect((await journal('b')).status).toBe(503);
+    // Every export route is behind the same slots, not only the journal.
+    for (const path of ['/api/export/ledger.xlsx', '/api/export/vat.xlsx', '/api/export/misa/sales.xlsx', '/api/export/statements-htkk.xml']) {
+      const refused = await app.request(path, { headers: { authorization: 'Bearer b', [ORG_HEADER]: 'acme' } });
+      expect(refused.status, path).toBe(503);
+      expect(await refused.json(), path).toMatchObject({ code: 'EXPORT_BUSY' });
+    }
+
+    open();
+    for (const done of await Promise.all([first, second])) {
+      expect(done.status).toBe(200);
+      // A real xlsx: a zip.
+      expect(new Uint8Array(await done.arrayBuffer()).subarray(0, 2)).toEqual(new Uint8Array([0x50, 0x4b]));
+    }
+    expect(exports.inUse).toBe(0);
+    expect((await journal('a')).status).toBe(200);
+  });
+
+  it('gives the slot back when the export fails', async () => {
+    failure = new DomainError('LEGAL_ENTITY_NOT_ALLOWED', 403, 'no');
+    try {
+      expect((await journal('a')).status).toBe(403);
+      expect(exports.inUse).toBe(0);
+    } finally {
+      failure = null;
+    }
+  });
+});
