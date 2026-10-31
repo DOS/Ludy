@@ -11,15 +11,18 @@
 -- crove_kernel.file_guard               as before, a file reference never changes; the link joins the columns that never
 --                                       change, except that it goes to null (never to another mail) when its mail is
 --                                       deleted, which is the foreign key's own action (the org purge deletes mails).
+-- crove_kernel.file_link_guard          the link is named at insert only for a file whose source is email, and never in
+--                                       a member's own context (a member's upload has no mail), whatever the insert says.
 -- The key is (org_id, inbound_message_id) -> inbound_message (org_id, id), so a file can never name another org's mail.
--- ON DELETE SET NULL (inbound_message_id) clears only the link: org_id stays.
+-- ON DELETE SET NULL (inbound_message_id) clears only the link: org_id stays. Each cleared file is an update of the file
+-- row, which its stream hint notifies once (a purge of an org with many emailed files notifies for each).
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.file ADD COLUMN IF NOT EXISTS inbound_message_id uuid;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_kernel.file'::regclass AND conname = 'file_inbound_message_fk') THEN
-    -- NOT VALID: added without scanning the file table under its exclusive lock; validated below with a lighter one.
+    -- NOT VALID, then validated below: the new column is null in every existing row, which the key accepts.
     ALTER TABLE crove_kernel.file ADD CONSTRAINT file_inbound_message_fk
       FOREIGN KEY (org_id, inbound_message_id) REFERENCES crove_kernel.inbound_message (org_id, id) ON DELETE SET NULL (inbound_message_id) NOT VALID;
   END IF;
@@ -37,6 +40,7 @@ BEGIN
     RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'a file reference (key, generation, sha256) never changes';
   END IF;
   -- pg_trigger_depth() > 1: the update is the foreign key's own action (ON DELETE SET NULL), not a statement of a role.
+  -- Today no other trigger updates a file; one that did would get the same right to clear the link (never to set it).
   IF NEW.inbound_message_id IS DISTINCT FROM OLD.inbound_message_id
      AND NOT (NEW.inbound_message_id IS NULL AND pg_catalog.pg_trigger_depth() > 1) THEN
     RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'the mail a file came in is recorded once, and cleared only when the mail is deleted';
@@ -56,3 +60,19 @@ BEGIN
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.file_guard() FROM PUBLIC;
+
+-- The link is named at insert only for an email attachment, and never from a member's own context: the receive path is a
+-- system command, and a database owner's own insert has no context at all.
+CREATE OR REPLACE FUNCTION crove_kernel.file_link_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.inbound_message_id IS NOT NULL
+     AND (NEW.source IS DISTINCT FROM 'email' OR crove_kernel.ctx_actor_type() IS NOT DISTINCT FROM 'user') THEN
+    RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'only a file received by email names the mail it came in, and only the receive path sets it';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.file_link_guard() FROM PUBLIC;
+DROP TRIGGER IF EXISTS file_link_guard ON crove_kernel.file;
+CREATE TRIGGER file_link_guard BEFORE INSERT ON crove_kernel.file
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.file_link_guard();

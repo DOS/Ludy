@@ -323,6 +323,26 @@ suite('evidence integrity on PostgreSQL (ADR-0013, issue #109)', () => {
       );
     // A mail that does not exist (or is another org's: the key is (org_id, id)) cannot be named.
     await expect(insert(randomUUID())).rejects.toMatchObject({ code: '23503' });
+    // Only a file received by email names a mail, and never from a member's own context.
+    const other = sha256Hex(new TextEncoder().encode(`mail-upload-${randomUUID()}`));
+    await withAdmin(async (a) => {
+      await expect(
+        a.query(
+          `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, inbound_message_id)
+           VALUES ($1, $2, $3, $4, 'x.xlsx', 'application/zip', 10, 'upload', $5)`,
+          [orgA, other, fileKey(orgA, other), `content:${other}`, first],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'FILE_IMMUTABLE' });
+    });
+    await asApp(users.owner, async (c) => {
+      await expect(
+        c.query(
+          `INSERT INTO crove_kernel.file (org_id, sha256, storage_key, generation, filename, content_type, size_bytes, source, inbound_message_id)
+           VALUES ($1, $2, $3, $4, 'x.xlsx', 'application/zip', 10, 'email', $5)`,
+          [orgA, other, fileKey(orgA, other), `content:${other}`, first],
+        ),
+      ).rejects.toMatchObject({ code: '42501', message: 'FILE_IMMUTABLE' });
+    });
     await insert(first);
     // No role changes the link afterwards, to another mail or to none.
     for (const set of [`inbound_message_id = '${second}'`, 'inbound_message_id = NULL']) {
