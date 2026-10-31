@@ -375,7 +375,7 @@ export const vi = {
       },
       sales: {
         title: 'Hoá đơn bán ra, kiểm tra số hở',
-        sub: 'Ký hiệu 1C26TPT, năm 2026',
+        sub: 'Ký hiệu 1C26TGM, năm 2026',
         first: 401,
         last: 420,
         gaps: [412, 417],
@@ -408,9 +408,9 @@ export const vi = {
     },
     notes: {
       name: 'Ludy Notes',
-      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với cả tổ chức. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
+      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với các thành viên. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
       points: [
-        'Ghi chú riêng chỉ bạn đọc được, ghi chú dùng chung thì cả tổ chức cùng xem',
+        'Ghi chú riêng chỉ bạn đọc được, ghi chú dùng chung thì mọi thành viên của tổ chức, trừ người chỉ xem, cùng đọc',
         'Gắn vào nhà cung cấp, chứng từ, bút toán hoặc lịch hẹn, hiện ngay trên màn hình đó',
         'Tải ghi chú và việc của bạn về dưới dạng Markdown hoặc JSON',
       ],
@@ -441,7 +441,7 @@ export const vi = {
         {
           label: '7 ngày tới',
           tone: 'neutral',
-          items: [{ title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', meta: '22/10/2026', remind: false, note: 'Đã giao thành việc nhóm', steps: '' }],
+          items: [{ title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', meta: '20/10/2026', remind: false, note: 'Đã giao thành việc nhóm', steps: '' }],
         },
       ],
     },
@@ -469,8 +469,8 @@ export const vi = {
       body: 'Trang đặt lịch công khai cho từng loại cuộc hẹn. Khách tự chọn giờ trống, hai bên nhận email xác nhận kèm tệp lịch, lịch nhắc gửi tự động, và khách tự dời hoặc huỷ bằng liên kết dùng một lần.',
       points: [
         'Loại hẹn theo nhóm: luân phiên cho người rảnh, hoặc chỉ hiện giờ cả nhóm cùng rảnh',
-        'Giờ làm việc và ngày nghỉ của từng người, ngày lễ và Tết đã tính sẵn',
-        'Nối Google Calendar: giờ bận trên đó chặn giờ hẹn, và lịch hẹn mới có thể tự ghi vào lịch của bạn',
+        'Giờ làm việc và ngày nghỉ của từng người, ngày lễ và Tết đã tính sẵn đến năm 2028',
+        'Nối Google Calendar (người cài đặt cấu hình khoá Google): giờ bận trên đó chặn giờ hẹn, và lịch hẹn mới có thể tự ghi vào lịch của bạn',
         'Địa chỉ đăng ký để xem lịch hẹn trong Google Calendar, Outlook hoặc Lịch của Apple',
       ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
@@ -565,7 +565,7 @@ export const vi = {
       },
       {
         q: 'Ludy CRM và Ludy Notes làm được gì hôm nay?',
-        a: 'Ludy CRM hiện là lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
+        a: 'Ludy CRM hiện là lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
       },
       {
         q: 'Dữ liệu của tôi nằm ở đâu?',
@@ -573,7 +573,7 @@ export const vi = {
       },
       {
         q: 'Kế toán dịch vụ bên ngoài làm việc cùng thế nào?',
-        a: 'Mời họ làm thành viên với vai trò phù hợp, hoặc xuất Excel sổ nhật ký, chứng từ và nhà cung cấp gửi cho họ.',
+        a: 'Mời họ làm thành viên với vai trò phù hợp, hoặc xuất Excel sổ nhật ký và sổ cái gửi cho họ.',
       },
     ],
   },

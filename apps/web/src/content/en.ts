@@ -375,7 +375,7 @@ export const en: Dictionary = {
       },
       sales: {
         title: 'Sales invoices, gap check',
-        sub: 'Series 1C26TPT, year 2026',
+        sub: 'Series 1C26TGM, year 2026',
         first: 401,
         last: 420,
         gaps: [412, 417],
@@ -408,9 +408,9 @@ export const en: Dictionary = {
     },
     notes: {
       name: 'Ludy Notes',
-      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the whole organization. Write in Markdown, add tags, pin, and search without typing the tone marks. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
+      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the other members. Write in Markdown, add tags, pin, and search without typing the tone marks. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
       points: [
-        'A private note is readable by you alone; a shared note is read by the whole organization',
+        'A private note is readable by you alone; a shared note is read by every member of the organization except viewers',
         'Attach it to a vendor, a document, a journal entry or a booking and it shows right on that screen',
         'Download your notes and to-dos as Markdown or JSON',
       ],
@@ -441,7 +441,7 @@ export const en: Dictionary = {
         {
           label: 'Next 7 days',
           tone: 'neutral',
-          items: [{ title: 'Reconcile payables with Bao Bì Phú Thịnh', meta: '22/10/2026', remind: false, note: 'Handed over as a team task', steps: '' }],
+          items: [{ title: 'Reconcile payables with Bao Bì Phú Thịnh', meta: '20/10/2026', remind: false, note: 'Handed over as a team task', steps: '' }],
         },
       ],
     },
@@ -469,8 +469,8 @@ export const en: Dictionary = {
       body: 'A public booking page for each kind of meeting. Clients pick a free time, both sides get a confirmation email with a calendar file, reminders go out on their own, and clients move or cancel with a link that works once.',
       points: [
         'Team meeting types: round robin to whoever is free, or only the times the whole team is free',
-        'Working hours and days off for each person, with public holidays and Tet already counted',
-        'Connect Google Calendar: busy times there block bookings, and new bookings can be written into your calendar',
+        'Working hours and days off for each person, with public holidays and Tet already counted up to 2028',
+        'Connect Google Calendar (whoever installs Ludy sets up the Google keys): busy times there block bookings, and new bookings can be written into your calendar',
         'A subscription address to see your bookings in Google Calendar, Outlook or Apple Calendar',
       ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
@@ -565,7 +565,7 @@ export const en: Dictionary = {
       },
       {
         q: 'What do Ludy CRM and Ludy Notes do today?',
-        a: 'Ludy CRM is bookings for now: a public booking page, team meeting types and Google Calendar. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
+        a: 'Ludy CRM is bookings for now: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
       },
       {
         q: 'Where is my data?',
@@ -573,7 +573,7 @@ export const en: Dictionary = {
       },
       {
         q: 'How does an outside accountant work with it?',
-        a: 'Invite them as a member with the right role, or export the journal, documents and vendors to Excel and send them over.',
+        a: 'Invite them as a member with the right role, or export the journal and the ledger to Excel and send them over.',
       },
     ],
   },
