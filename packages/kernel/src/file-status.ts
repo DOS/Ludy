@@ -166,7 +166,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
         // The same checks kernel.file.reextract makes; an archive is opened once and never read again.
         canReextract:
           editor &&
-          !archive &&
+          // An archive is opened once; a ZIP read as a bank statement (#2142) may be read again.
+          (!archive || r.method === 'unsupported') &&
           // A statement is stored once: reading it again would only find its lines already there.
           !statement &&
           Boolean(r.extraction_status) &&

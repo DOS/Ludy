@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // A bank statement that arrives as a file (#2142), on the worker's side: the real sandbox reads made-up statements, a fake
 // runtime records what the worker asks of the finance module. What the command does with the lines (the mapping, the
-// dedupe keys, nothing written for an unmapped account) is covered on PostgreSQL in bank-statement-file.db.test.ts.
+// dedupe keys, nothing written for an unmapped account) is covered on PostgreSQL in finance-bank.db.test.ts.
 import { describe, expect, it } from 'vitest';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, type ExtractClient } from '@crove/extract-contract';
 import { sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
@@ -39,23 +39,33 @@ interface Call {
 
 // A runtime that answers finance.extraction.file with the file, finance.bank.statement_file with `outcome`, and keeps
 // every execute it was asked for.
-function harness(bytes: Uint8Array, contentType: string, outcome: StatementFileOutcome, options: { hasExtraction?: boolean; extract?: ExtractClient } = {}) {
+function harness(
+  bytes: Uint8Array,
+  contentType: string,
+  outcome: StatementFileOutcome,
+  options: { hasExtraction?: boolean; extract?: ExtractClient; version?: number; due?: boolean } = {},
+) {
   const store = new MemoryStore();
   const sha256 = sha256Hex(bytes);
   store.blobs.set('k', bytes);
   const calls: Call[] = [];
+  const queries: Array<Record<string, unknown>> = [];
+  const executeOptions: Array<Record<string, unknown>> = [];
   const runtime = {
-    query: async (name: string) => {
+    query: async (name: string, input: Record<string, unknown>) => {
       if (name !== 'finance.extraction.file') throw new Error(`unexpected query ${name}`);
-      return { id: FILE, filename: 'sao-ke.xlsx', content_type: contentType, storage_key: 'k', generation: null, sha256, hasExtraction: options.hasExtraction ?? false, due: true, aiStopped: false };
+      queries.push(input);
+      // With a version the file has a (pending) run; without one, whether it was read already.
+      return { id: FILE, filename: 'sao-ke.xlsx', content_type: contentType, storage_key: 'k', generation: null, sha256, hasExtraction: options.hasExtraction ?? options.version !== undefined, due: options.due ?? true, aiStopped: false };
     },
-    execute: async (name: string, input: Record<string, unknown>) => {
+    execute: async (name: string, input: Record<string, unknown>, executeOption: Record<string, unknown>) => {
       calls.push({ name, input });
+      if (name === 'finance.bank.statement_file') executeOptions.push(executeOption);
       return name === 'finance.bank.statement_file' ? outcome : {};
     },
   } as unknown as Runtime;
   const extract = options.extract ?? inProcessExtract();
-  return { calls, run: (attempt = 0) => readStatementFile({ runtime, store, extract }, ORG, FILE, attempt) };
+  return { calls, queries, options: executeOptions, run: (attempt = 0, version?: number) => readStatementFile({ runtime, store, extract }, ORG, FILE, attempt, version) };
 }
 
 const imported: StatementFileOutcome = {
@@ -88,6 +98,29 @@ describe('readStatementFile', () => {
       result: { kind: 'bank_statement', summary: { bankAccount: '1121', newLines: 3, duplicateLines: 0 } },
       summary: 'Đã nhập sao kê tài khoản 1121: 3 dòng mới, 0 dòng đã có',
     });
+  });
+
+  it('records the read of a statement stored as a ZIP as a statement run, and asks the command once per run of the file', async () => {
+    const h = harness(statementXlsx(), ZIP, imported);
+    await h.run();
+    // kernel.extraction.record lets a ZIP through only for a statement run (flag, method unsupported, no proposal).
+    expect(h.calls.at(-1)?.input).toMatchObject({ statement: true, method: 'unsupported', proposal: null });
+    expect(h.calls.at(-1)?.input).not.toHaveProperty('version');
+    // One idempotency key per run: a job that stored the lines and failed before recording finds the answer, not a second import.
+    expect(h.options[0]).toMatchObject({ idempotencyKey: `bank-statement-file:${FILE}:0` });
+  });
+
+  it('reads again a statement whose account was unmapped when it was read, on the run that was asked for (#2142)', async () => {
+    const h = harness(statementXlsx(), ZIP, imported, { version: 2 });
+    expect(await h.run(0, 2)).toEqual({ handled: true });
+    expect(h.queries.at(-1)).toMatchObject({ fileId: FILE, version: 2 });
+    expect(h.calls.at(-1)?.input).toMatchObject({ fileId: FILE, version: 2, status: 'done', statement: true });
+    // Its own key: the earlier run's stored answer (unmapped) is not replayed.
+    expect(h.options[0]).toMatchObject({ idempotencyKey: `bank-statement-file:${FILE}:2` });
+    // A re-read that is no longer pending (another job answered it) is left alone.
+    const gone = harness(statementXlsx(), ZIP, imported, { version: 2, due: false });
+    expect(await gone.run(0, 2)).toEqual({ handled: true });
+    expect(gone.calls).toEqual([]);
   });
 
   it('reads a CSV statement the same way', async () => {

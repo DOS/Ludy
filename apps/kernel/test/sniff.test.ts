@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isCsvName, safeFilename, sniffType } from '../src/sniff.ts';
+import { statementCsv } from '../../extract/test/statement-fixture.ts';
 
 const bytes = (...values: number[]) => new Uint8Array(values);
 const text = (value: string) => new TextEncoder().encode(value);
@@ -16,15 +17,18 @@ describe('upload type detection', () => {
     expect(sniffType(text('PK\x05\x06'))).toBe('application/zip');
   });
 
-  it('recognises CSV text by its content: two lines with a delimiter, no control characters (#2142)', () => {
+  it('recognises CSV text by its content: two table lines with a delimiter, no control characters (#2142)', () => {
     expect(sniffType(text('Ngày giao dịch,Diễn giải,Ghi có\r\n01/09/2026,Thu tiền,100000\r\n'))).toBe('text/csv');
-    expect(sniffType(new Uint8Array([0xef, 0xbb, 0xbf, ...text('Date;Amount\n01/09/2026;100000\n')]))).toBe('text/csv');
+    expect(sniffType(new Uint8Array([0xef, 0xbb, 0xbf, ...text('Date;Amount;Ref\n01/09/2026;100000;FT1\n')]))).toBe('text/csv');
     // UTF-16 with its byte order mark, as Excel saves "Unicode text".
-    const utf16 = new Uint8Array([0xff, 0xfe, ...[...'Date\tAmount\n01/09/2026\t100000\n'].flatMap((c) => [c.charCodeAt(0), 0])]);
+    const utf16 = new Uint8Array([0xff, 0xfe, ...[...'Date\tAmount\tRef\n01/09/2026\t100000\tFT1\n'].flatMap((c) => [c.charCodeAt(0), 0])]);
     expect(sniffType(utf16)).toBe('text/csv');
+    // A statement as banks write it: a title and the account above the table, which have no delimiter.
+    expect(sniffType(statementCsv())).toBe('text/csv');
     // Prose, a single line, and binary bytes are no CSV.
     expect(sniffType(text('Xin chào\nĐây là một thư\n'))).toBeNull();
     expect(sniffType(text('a,b,c\n'))).toBeNull();
+    expect(sniffType(text('Xin chào,\nCảm ơn bạn, hẹn gặp lại\n'))).toBeNull();
     expect(sniffType(bytes(0x61, 0x2c, 0x62, 0x0a, 0x01, 0x2c, 0x02, 0x0a))).toBeNull();
     expect(isCsvName('Sao-ke.CSV')).toBe(true);
     expect(isCsvName('sao-ke.csv.exe')).toBe(false);

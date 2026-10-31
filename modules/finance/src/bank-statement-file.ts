@@ -90,6 +90,8 @@ interface StatementFileSource {
   generation: string | null;
   sha256: string;
   hasExtraction: boolean;
+  // With a version: that re-read is still pending.
+  due: boolean;
 }
 
 export interface StatementFileDeps {
@@ -108,7 +110,7 @@ const TOO_MANY = `Sao kê có hơn ${vnNumber(EXTRACT_LIMITS.maxStatementRows)} 
 export function unmappedMessage(accountNumber: string | null): string {
   return accountNumber === null
     ? 'Không tìm thấy số tài khoản trong sao kê (dòng "Số tài khoản" phía trên bảng); hãy nhập sao kê ở màn Ngân hàng và chọn tài khoản'
-    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; hãy liên kết trong Cài đặt, mục nguồn giao dịch ngân hàng, rồi gửi lại sao kê`;
+    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; hãy liên kết trong Cài đặt, mục nguồn giao dịch ngân hàng, rồi bấm Đọc lại ở tệp này`;
 }
 
 function failureMessage(outcome: Exclude<StatementFileOutcome, { outcome: 'imported' }>): string {
@@ -116,7 +118,7 @@ function failureMessage(outcome: Exclude<StatementFileOutcome, { outcome: 'impor
     case 'unmapped':
       return unmappedMessage(outcome.accountNumber);
     case 'ambiguous':
-      return `Số tài khoản ${outcome.accountNumber} được liên kết với nhiều tài khoản ngân hàng; hãy gỡ liên kết thừa trong Cài đặt rồi gửi lại sao kê`;
+      return `Số tài khoản ${outcome.accountNumber} được liên kết với nhiều tài khoản ngân hàng; hãy gỡ liên kết thừa trong Cài đặt rồi bấm Đọc lại ở tệp này`;
     case 'refused':
       return outcome.code === 'BANK_IMPORT_INVALID'
         ? `Sao kê có dòng không đọc được${outcome.rows.length > 0 ? ` (dòng ${outcome.rows.join(', ')} của tệp)` : ''}; hãy nhập sao kê ở màn Ngân hàng để xem từng dòng`
@@ -141,18 +143,36 @@ export function statementFileRows(rows: ReadonlyArray<{ rowNo: number; date: str
 // arrives as a ZIP (its content is what tells it from an archive of invoices), a CSV with its own type. handled is true
 // when the file's read is recorded here (imported or the exception), false when it is no statement and the caller goes
 // on as before. `attempt` is the job's retry count: a sandbox that cannot answer throws and the job is retried; a
-// timeout or memory answer is retried EXTRACT_LIMIT_RETRIES times first.
-export async function readStatementFile(deps: StatementFileDeps, orgId: string, fileId: string, attempt = 0): Promise<{ handled: boolean }> {
+// timeout or memory answer is retried EXTRACT_LIMIT_RETRIES times first. `version` is a re-read someone asked for (the
+// "Đọc lại" button, for instance once the account is mapped): it runs only while that run is still pending, and its
+// outcome is recorded on that run.
+export async function readStatementFile(deps: StatementFileDeps, orgId: string, fileId: string, attempt = 0, version?: number): Promise<{ handled: boolean }> {
   const actor = BANK_STATEMENT_ACTOR;
-  const file = await deps.runtime.query<StatementFileSource | null>('finance.extraction.file', { fileId }, { actor: { type: 'system', component: 'finance.extract' }, orgId });
+  const file = await deps.runtime.query<StatementFileSource | null>(
+    'finance.extraction.file',
+    { fileId, ...(version === undefined ? {} : { version }) },
+    { actor: { type: 'system', component: 'finance.extract' }, orgId },
+  );
   if (!file || ![ZIP, XLSX, CSV].includes(file.content_type)) return { handled: false };
-  // Already read (a retried job, or an archive opened before): the caller's own checks decide, as they always did.
-  if (file.hasExtraction) return { handled: true };
+  // Already read (a retried job, or an archive opened before), or a re-read that is no longer pending: nothing to do, and
+  // the caller's own checks never run, as they never did for a file already read.
+  if (version === undefined ? file.hasExtraction : !file.due) return { handled: true };
   const asCsv = file.content_type === CSV;
   const record = (status: 'done' | 'failed', fields: { error: string | null; result?: unknown; summary?: string }) =>
     deps.runtime.execute(
       'kernel.extraction.record',
-      { fileId, method: 'unsupported', status, result: fields.result ?? null, checks: [], error: fields.error, proposal: null, ...(fields.summary ? { summary: fields.summary } : {}) },
+      {
+        fileId,
+        ...(version === undefined ? {} : { version }),
+        method: 'unsupported',
+        status,
+        result: fields.result ?? null,
+        checks: [],
+        error: fields.error,
+        proposal: null,
+        statement: true,
+        ...(fields.summary ? { summary: fields.summary } : {}),
+      },
       { actor, orgId },
     );
   const bytes = await readVerified(deps.store, { key: file.storage_key, generation: file.generation, sha256: file.sha256 });
@@ -185,7 +205,10 @@ export async function readStatementFile(deps: StatementFileDeps, orgId: string, 
   const outcome = await deps.runtime.execute<StatementFileOutcome>(
     'finance.bank.statement_file',
     { fileId, filename: file.filename.slice(0, 255), accountNumber: statement.accountNumber, rows: statementFileRows(statement.rows) },
-    { actor, orgId },
+    // One key per run of the file: a job that stored the lines and then failed before recording the read (or was killed)
+    // finds the stored answer instead of storing again, which lines with neither a reference nor a balance would not
+    // guard against (the import marks them ambiguous and stores them). A re-read is another run, so it asks afresh.
+    { actor, orgId, idempotencyKey: `bank-statement-file:${fileId}:${version ?? 0}` },
   );
   if (outcome.outcome !== 'imported') {
     await record('failed', { error: failureMessage(outcome).slice(0, 2000) });

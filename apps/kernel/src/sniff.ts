@@ -17,10 +17,11 @@ function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean
   return signature.every((b, i) => bytes[offset + i] === b);
 }
 
-// CSV text, as a bank exports a statement (#2142): UTF-8 or UTF-16 with its byte order mark, no control characters, and at
-// least two lines in the first 4 KiB that each hold a comma, semicolon or tab. Plain text with commas passes too, so
-// where a name is known (an email attachment, an entry of a ZIP) the caller also asks for ".csv" (isCsvName); the file is
-// then read in the sandbox, which decides whether it is a statement at all.
+// CSV text, as a bank exports a statement (#2142): UTF-8 or UTF-16 with its byte order mark, no control characters, and
+// at least two lines in the first 4 KiB with two or more of the same comma, semicolon or tab (a header and a line of a
+// table; the title and the account above them have none). Plain text with commas passes too, so where a name is known
+// (an email attachment, an entry of a ZIP) the caller also asks for ".csv" (isCsvName); the file is then read in the
+// sandbox, which decides whether it is a statement at all.
 function looksLikeCsv(bytes: Uint8Array): boolean {
   const head = bytes.subarray(0, 4096);
   const utf16 = head[0] === 0xff && head[1] === 0xfe;
@@ -29,7 +30,7 @@ function looksLikeCsv(bytes: Uint8Array): boolean {
   // oxlint-disable-next-line no-control-regex
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) return false;
   const lines = text.split(/\r?\n/).filter((line) => line.trim() !== '');
-  return lines.length >= 2 && lines.slice(0, 2).every((line) => /[,;\t]/.test(line));
+  return [',', ';', '\t'].some((delimiter) => lines.filter((line) => line.split(delimiter).length > 2).length >= 2);
 }
 
 // A name that says CSV; with the type text/csv it is what an attachment or an archive entry needs to be filed.

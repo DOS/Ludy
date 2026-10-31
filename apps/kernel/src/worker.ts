@@ -607,13 +607,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     let archive: ArchiveSource | null | undefined;
     try {
       // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
-      // account; a file the sandbox does not read as one goes on as before. Only a first read: a statement is read once.
-      if (version === undefined) {
-        const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount);
-        if (statement.handled) {
-          console.log(`[extract] file ${fileId}: bank statement`);
-          return;
-        }
+      // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
+      // named an account no one had mapped yet) comes with its version and is read the same way.
+      const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (statement.handled) {
+        console.log(`[extract] file ${fileId}: bank statement`);
+        return;
       }
       archive = await archiveSource(deps.runtime, orgId, fileId);
       if (archive && version !== undefined) return;

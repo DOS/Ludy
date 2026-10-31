@@ -15,7 +15,7 @@ import { normalizeStatementAmount, type BankFeedLine, type BankImportResult, typ
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
-import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { CredentialVault, contentGeneration, fileKey, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries, type StatementFileOutcome } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -810,6 +810,49 @@ suite('bank statement import (#326)', () => {
       const bad = await statementFile([row('05/09/2026', '1000', '', '', 'FT-BAD-1'), row('not a date', '1000', '', '', 'FT-BAD-2')]);
       expect(bad).toMatchObject({ outcome: 'refused', code: 'BANK_IMPORT_INVALID', rows: [expect.any(Number)] });
       expect((await admin(async (c) => (await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_finance.bank_line WHERE org_id = $1', [orgId])).rows[0]?.n))).toBe(before);
+    });
+
+    // An .xlsx statement is stored as a ZIP: its read is recorded with the statement flag, shows as imported, and a read
+    // that failed because the account was not mapped yet can be asked for again.
+    it('records the read of a statement stored as a ZIP, shows it as imported, and lets a failed read be asked for again', async () => {
+      const ownerActor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: owner.session, mfaAt: null };
+      const bytes = new TextEncoder().encode(`PK-sao-ke-${randomUUID()}`);
+      const sha256 = sha256Hex(bytes);
+      const { fileId } = await api.execute<{ fileId: string }>(
+        'kernel.file.ingest',
+        { filename: 'sao-ke.zip', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey: fileKey(orgId, sha256), generation: contentGeneration(sha256), source: 'upload' },
+        { actor: ownerActor, orgId },
+      );
+      const record = (fields: Record<string, unknown>) =>
+        worker.execute('kernel.extraction.record', { fileId, method: 'unsupported', checks: [], proposal: null, result: null, error: null, ...fields }, { actor: FILE_ACTOR, orgId });
+      const status = async () => ((await rpc('files/recent', await tokenFor(owner), {})).body as Array<{ id: string; status: string; error: string | null; statement: unknown; canReextract: boolean }>).find((f) => f.id === fileId);
+      // Without the statement flag a ZIP is still never read as a document; the flag is for a statement run alone.
+      await expect(record({ status: 'failed', error: 'x' })).rejects.toMatchObject({ code: 'ARCHIVE_NOT_READ' });
+      await expect(record({ status: 'failed', error: 'x', statement: true, method: 'archive' })).rejects.toThrow();
+      // Unmapped when first read: a failed read with the reason, which may be read again.
+      await record({ status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: true });
+      expect(await status()).toMatchObject({ status: 'failed', error: 'Số tài khoản chưa được liên kết', statement: null, canReextract: true });
+      const again = await rpc('files/reextract', await tokenFor(owner), { fileId, idempotencyKey: randomUUID() });
+      expect(again.status).toBe(200);
+      expect(again.body.version).toBe(2);
+      // The re-read lands on that run, and the file shows what it brought.
+      await record({
+        version: 2,
+        status: 'done',
+        statement: true,
+        result: { kind: 'bank_statement', summary: { bankAccount: '1121.VCB', importId: randomUUID(), newLines: 3, duplicateLines: 1 } },
+        summary: 'Đã nhập sao kê tài khoản 1121.VCB: 3 dòng mới, 1 dòng đã có',
+      });
+      expect(await status()).toMatchObject({ status: 'imported', error: null, statement: { bankAccount: '1121.VCB', newLines: 3, duplicateLines: 1 }, canReextract: false });
+      // A ZIP that was opened as an archive is still never read again.
+      const archiveBytes = new TextEncoder().encode(`PK-archive-${randomUUID()}`);
+      const archiveSha = sha256Hex(archiveBytes);
+      const archive = await api.execute<{ fileId: string }>(
+        'kernel.file.ingest',
+        { filename: 'hoa-don.zip', contentType: 'application/zip', sizeBytes: archiveBytes.byteLength, sha256: archiveSha, storageKey: fileKey(orgId, archiveSha), generation: contentGeneration(archiveSha), source: 'upload' },
+        { actor: ownerActor, orgId },
+      );
+      expect(await rpc('files/reextract', await tokenFor(owner), { fileId: archive.fileId, idempotencyKey: randomUUID() })).toMatchObject({ status: 409 });
     });
 
     it('is the worker command alone: no person, and no other org, can use it', async () => {

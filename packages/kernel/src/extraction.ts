@@ -143,7 +143,8 @@ export async function uploaderEntity(ctx: CommandContext, uploader: string | nul
   return rows[0]?.entity ?? null;
 }
 
-async function lockFile(ctx: CommandContext, fileId: string) {
+// `statement`: the run is of a bank statement (#2142), whose .xlsx arrives stored as a ZIP, so a ZIP is let through.
+async function lockFile(ctx: CommandContext, fileId: string, statement = false) {
   const file = await ctx.trx
     .selectFrom('crove_kernel.file')
     .select(['id', 'filename', 'created_by', 'content_type', 'upload_entity_id'])
@@ -153,8 +154,23 @@ async function lockFile(ctx: CommandContext, fileId: string) {
     .executeTakeFirst();
   if (!file) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy tệp');
   // A ZIP archive (#314) is opened once by kernel.file.archive.record; it is never read as a document.
-  if (isArchiveType(file.content_type)) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+  if (isArchiveType(file.content_type) && !statement) throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
   return file;
+}
+
+// Whether a read of the file was a bank statement's (#2142): an .xlsx stored as a ZIP that the worker read as a statement
+// records a run of method 'unsupported' (an archive records 'archive'), and may be read again, for instance once the
+// account it names is mapped.
+async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boolean> {
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.extraction')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('file_id', '=', fileId)
+    .where('method', '=', 'unsupported')
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 // The file's newest proposal, locked. A file has one proposal unless an earlier one was rejected and the file was
@@ -196,7 +212,11 @@ export const reextractFile = defineCommand({
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới yêu cầu đọc lại được');
-    await lockFile(ctx, input.fileId);
+    const file = await lockFile(ctx, input.fileId, true);
+    // A ZIP is read again only when it was read as a bank statement (#2142); an archive of documents is never read again.
+    if (isArchiveType(file.content_type) && !(await readAsStatement(ctx, input.fileId))) {
+      throw new DomainError('ARCHIVE_NOT_READ', 409, 'Tệp ZIP đã được mở thành từng chứng từ; hãy đọc lại từng chứng từ');
+    }
     const latest = await latestExtraction(ctx, input.fileId);
     if (!latest) throw new DomainError('EXTRACTION_PENDING', 409, 'Tệp đang được đọc lần đầu; hãy chờ kết quả');
     if (latest.inFlight) {
@@ -338,13 +358,19 @@ export const recordExtraction = defineCommand({
     failure: z.enum(['service', 'document']).optional(),
     // What a done run with no proposal says in the file's history (#2142), for example how many bank lines a statement brought.
     summary: z.string().max(500).optional(),
+    // The run is of a bank statement (#2142), which may be an .xlsx stored as a ZIP: with no proposal, method 'unsupported'.
+    statement: z.boolean().optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
   target: (input) => ({ type: 'kernel.file', id: input.fileId }),
   handler: async (ctx, original) => {
-    const file = await lockFile(ctx, original.fileId);
+    // A run of a bank statement (#2142) has no proposal and the method 'unsupported'; only such a run may name a ZIP.
+    if (original.statement === true && (original.proposal !== null || original.method !== 'unsupported')) {
+      throw new DomainError('INVALID', 422, 'Lần đọc sao kê không có đề xuất');
+    }
+    const file = await lockFile(ctx, original.fileId, original.statement === true);
     const input = await withDuplicateGuard(ctx, original);
     const outcome = {
       method: input.method,
