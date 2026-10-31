@@ -42,11 +42,7 @@ import { runYearArchive } from './year-archive.ts';
 import {
   ARCHIVE_VERIFY_CRON,
   ARCHIVE_WRITE_CRON,
-  ArchiveMismatchError,
-  restoreAckAlert,
-  restoreAckStoreAlert,
-  verifyArchive,
-  writeVerifyMarker,
+  runNightlyVerification,
   writeArchive,
   type ArchiveStore,
 } from './worm.ts';
@@ -833,37 +829,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (written > 0) console.log(`[archive] wrote ${written} batch(es)`);
     }));
     await boss.schedule(QUEUES.archiveWrite, ARCHIVE_WRITE_CRON, null, { tz: RETENTION_TZ });
-    await background.add(QUEUES.archiveVerify, () => boss.work(QUEUES.archiveVerify, { batchSize: 1 }, async () => {
-      // The verifier reads every batch and row, so its time grows with the archive: logged on every run.
-      const started = Date.now();
-      const elapsed = () => `${Math.round((Date.now() - started) / 1000)} s`;
-      const alertOptions = deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays };
-      try {
-        // First, from the store alone, before any database query: a run the database owner stops has alerted already.
-        const early = await restoreAckStoreAlert(store, alertOptions);
-        if (early) opsAlert(`[archive] ALERT ${early}`);
-        const result = await verifyArchive(deps.workerDb, store, alertOptions);
-        // An excuse is never silent (#2020): every run says what a restore acknowledgement excused, and a recent one, by
-        // the store's own write time, alerts on every run, passing or failing, so an operator matches it to a real
-        // restore and a webhook down for a night loses nothing.
-        const alert = restoreAckAlert(result);
-        if (alert) opsAlert(`[archive] ALERT ${alert}`);
-        if (!result.ok) throw new ArchiveMismatchError(result);
-        // The out-of-band heartbeat (#2082): a marker in the archive store, which the prober reads without the database.
-        try {
-          await writeVerifyMarker(store, result);
-        } catch (error) {
-          opsAlert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
-        }
-        const excused = result.restoreAck === null ? '' : `, excused ${result.excused} row(s) under restore acknowledgement #${result.restoreAck}`;
-        console.log(`[archive] verified ${result.batches} batch(es), ${result.rows} row(s)${excused} in ${elapsed()}`);
-      } catch (error) {
-        console.error(`[archive] ALERT after ${elapsed()}: ${error instanceof Error ? error.message : 'verification could not run'}`);
-        throw error;
-      }
+    await background.add(QUEUES.archiveVerify, () => boss.work<{ full?: boolean } | null>(QUEUES.archiveVerify, { batchSize: 1 }, async ([job]) => {
+      // A job queued by hand with {"full": true} reads every batch tonight (docs/runbooks/worm-archive.md): the
+      // conservative direction, so the payload needs no check beyond its value.
+      const forceFull = job?.data?.full === true;
+      // Each night reads only the batches after the last passing run, and about monthly every batch (#2121), so its time
+      // follows the new batches, not the archive: logged on every run (runNightlyVerification).
+      await runNightlyVerification({
+        db: deps.workerDb,
+        store,
+        ...(deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays }),
+        forceFull,
+        opsAlert,
+        log: (line) => console.log(line),
+        logFailure: (elapsed, message) => console.error(`[archive] ALERT after ${elapsed}: ${message}`),
+      });
     }));
-    // An hour before pg-boss counts the run as expired (its default is 15 minutes).
-    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 3600 });
+    // The nightly run is short now, but the monthly full pass reads the whole archive (a year is about 105,000 objects):
+    // pg-boss counts a run as expired after four hours (its default is 15 minutes) (#2121).
+    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 14400 });
   }
 
   // The period balance reconciliation (#1284): nightly, the deltas the posting definer appended compared with the
