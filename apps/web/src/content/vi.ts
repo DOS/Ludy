@@ -7,7 +7,7 @@ export const vi = {
   meta: {
     title: 'Ludy: hoá đơn về là có bút toán, bạn chỉ cần duyệt',
     description:
-      'Business OS mã nguồn mở cho người làm chủ và doanh nghiệp nhỏ. Ludy đọc hoá đơn điện tử, kiểm tra từng con số, đề xuất bút toán TT133 và chỉ ghi sổ khi có người duyệt.',
+      'Business OS mã nguồn mở cho người làm chủ và doanh nghiệp nhỏ. Ludy đọc hoá đơn điện tử, kiểm tra từng con số, đề xuất bút toán TT133 và chỉ ghi sổ khi có người duyệt. Có thêm ghi chú, việc cần làm và lịch hẹn.',
   },
   nav: {
     label: 'Điều hướng chính',
@@ -329,7 +329,13 @@ export const vi = {
     deptLabel: 'Phòng của',
     finance: {
       name: 'Ludy Kế toán',
-      body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng, tài sản, tờ khai GTGT xuất XML cho HTKK, xuất sang MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
+      body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tờ khai GTGT xuất XML cho HTKK, xuất sang MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
+      points: [
+        'Hoá đơn bán ra: số bị hở trong dãy, hoặc có trên cổng thuế mà sổ chưa có, được chỉ ra trước khi nộp tờ khai',
+        'Hoá đơn mua vào: lấy danh sách từ cổng thuế theo kỳ, hoặc gửi thư xin khách bổ sung hoá đơn còn thiếu',
+        'Hoá đơn thay thế và điều chỉnh được ghi theo hoá đơn gốc',
+        'Lịch thuế theo từng khách hàng, kết chuyển cuối năm sang 911 và 4212, gói lưu trữ năm tài chính',
+      ],
       people: [
         { name: 'Chị Lan', initials: 'L', agent: false },
         { name: 'Agent Kế toán', initials: '', agent: true },
@@ -365,6 +371,22 @@ export const vi = {
           { name: 'Viettel', amount: '80.000', pct: 3 },
         ],
       },
+      sales: {
+        title: 'Hoá đơn bán ra, tháng 10',
+        sub: 'So với danh sách tải từ cổng thuế',
+        seriesLabel: 'Ký hiệu',
+        rows: [
+          { number: '00000417', amount: '8.640.000 ₫', tone: 'warn', label: 'Cổng thuế có, sổ chưa có' },
+          { number: '00000409', amount: '21.600.000 ₫', tone: 'warn', label: 'Lệch tiền thuế' },
+          { number: '00000405', amount: '3.240.000 ₫', tone: 'warn', label: 'Đã huỷ, sổ vẫn giữ' },
+          { number: '00000402', amount: '15.120.000 ₫', tone: 'ok', label: 'Khớp' },
+        ],
+        foot: 'Danh sách này không tự ghi sổ gì cả.',
+        gapsTitle: 'Số hở trong dãy',
+        gapsSeries: '1C26TPT, năm 2026',
+        gaps: ['00000412', '00000417'],
+        gapsRange: 'Đã ghi từ số 00000401 đến 00000420, 18 số',
+      },
     },
     agents: {
       name: 'Agents',
@@ -385,6 +407,45 @@ export const vi = {
         { title: 'Bổ sung mã CQT phiếu HTX Tân Hồng', who: 'Chị Lan', initials: 'L', agent: false, due: '21/10/2026', done: false },
         { title: 'Chụp ảnh gạo ST25 cho bài đăng', who: 'Anh Minh', initials: 'M', agent: false, due: '18/10/2026', done: false },
         { title: 'Xuất sổ nhật ký chung tháng 9', who: 'Agent Kế toán', initials: '', agent: true, due: '15/10/2026', done: true },
+      ],
+    },
+    notes: {
+      name: 'Ludy Notes',
+      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với cả tổ chức. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
+      points: [
+        'Ghi chú riêng chỉ bạn đọc được, ghi chú dùng chung thì cả tổ chức cùng xem',
+        'Gắn vào nhà cung cấp, chứng từ, bút toán hoặc lịch hẹn, hiện ngay trên màn hình đó',
+        'Tải ghi chú và việc của bạn về dưới dạng Markdown hoặc JSON',
+      ],
+      people: [{ name: 'Chị Lan', initials: 'L', agent: false }],
+      listTitle: 'Ghi chú',
+      linkLabel: 'Gắn với',
+      pinned: 'Đã ghim',
+      private: 'Riêng tư',
+      shared: 'Dùng chung',
+      items: [
+        { title: 'Hoá đơn điện về trễ, nhắc bên khách ngày 5', tags: ['hoá đơn', 'nhắc việc'], link: 'Nhà cung cấp: EVN', pinned: true, shared: true },
+        { title: 'Chốt giá gạo ST25 với HTX Tân Hồng trước 25/10', tags: ['giá'], link: 'Nhà cung cấp: Hợp tác xã Tân Hồng', pinned: false, shared: false },
+        { title: 'Họp tư vấn mua gạo sỉ: khách muốn giao hàng hai đợt', tags: ['lịch hẹn'], link: 'Lịch hẹn: Gạo Sạch Miền Tây, 20/10', pinned: false, shared: true },
+      ],
+      todoTitle: 'Việc của tôi',
+      todoSub: 'Chỉ mình bạn thấy',
+      groups: [
+        {
+          label: 'Quá hạn',
+          tone: 'warn',
+          items: [{ title: 'Gọi HTX Tân Hồng xin mã CQT', meta: '16/10/2026', remind: false, note: '', steps: '' }],
+        },
+        {
+          label: 'Hôm nay',
+          tone: 'accent',
+          items: [{ title: 'Kiểm tra hoá đơn EVN tháng 9', meta: '16:00, nhắc lúc 15:30', remind: true, note: '', steps: 'Đã xong 1 trên 3 bước' }],
+        },
+        {
+          label: '7 ngày tới',
+          tone: 'neutral',
+          items: [{ title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', meta: '22/10/2026', remind: false, note: 'Đã giao thành việc nhóm', steps: '' }],
+        },
       ],
     },
     social: {
@@ -409,7 +470,23 @@ export const vi = {
     crm: {
       name: 'Ludy CRM',
       body: 'Trang đặt lịch công khai cho từng loại cuộc hẹn. Khách tự chọn giờ trống, hai bên nhận email xác nhận kèm tệp lịch, lịch nhắc gửi tự động, và khách tự dời hoặc huỷ bằng liên kết dùng một lần.',
+      points: [
+        'Loại hẹn theo nhóm: luân phiên cho người rảnh, hoặc chỉ hiện giờ cả nhóm cùng rảnh',
+        'Giờ làm việc và ngày nghỉ của từng người, ngày lễ và Tết đã tính sẵn',
+        'Nối Google Calendar: giờ bận trên đó chặn giờ hẹn, và lịch hẹn mới có thể tự ghi vào lịch của bạn',
+        'Địa chỉ đăng ký để xem lịch hẹn trong Google Calendar, Outlook hoặc Lịch của Apple',
+      ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
+      calendar: {
+        title: 'Lịch ngoài của Chị Hoa',
+        provider: 'Google Calendar',
+        state: 'Đã kết nối',
+        rows: [
+          ['Đọc giờ bận, không đọc tiêu đề', 'Có'],
+          ['Ghi lịch hẹn vào lịch này', 'Bật'],
+          ['Đồng bộ lần cuối', '14:05 18/10/2026'],
+        ],
+      },
       pageTitle: 'Tư vấn mua gạo sỉ',
       pageSub: '30 phút, tại kho Long An',
       slotsLabel: 'Giờ còn trống tuần 19/10',
@@ -488,6 +565,10 @@ export const vi = {
       {
         q: 'Ludy đọc được những loại hoá đơn nào?',
         a: 'Hoá đơn điện tử XML theo Nghị định 254/2026 và Thông tư 91/2026 (cả hoá đơn lập theo Nghị định 123/2020 trước đó) được đọc chính xác mà không cần AI. PDF và ảnh chụp dùng một model tương thích OpenAI do bạn cấu hình, kể cả model chạy trên máy như Ollama hay vLLM.',
+      },
+      {
+        q: 'Ludy CRM và Ludy Notes làm được gì hôm nay?',
+        a: 'Ludy CRM hiện là lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
       },
       {
         q: 'Dữ liệu của tôi nằm ở đâu?',

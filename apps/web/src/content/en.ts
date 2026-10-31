@@ -7,7 +7,7 @@ export const en: Dictionary = {
   meta: {
     title: 'Ludy: invoices in, journal entries ready for your approval',
     description:
-      'The open-source Business OS for solo founders and small businesses. Ludy reads e-invoices, checks every number, proposes a TT133 journal entry and posts it only after a person approves.',
+      'The open-source Business OS for solo founders and small businesses. Ludy reads e-invoices, checks every number, proposes a TT133 journal entry and posts it only after a person approves. Notes, to-dos and bookings come with it.',
   },
   nav: {
     label: 'Main navigation',
@@ -329,7 +329,13 @@ export const en: Dictionary = {
     deptLabel: 'Department of',
     finance: {
       name: 'Ludy Accounting',
-      body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, B01 and B02 statements, receipts and payments, bank statements, fixed assets, the VAT return as XML for HTKK, exports to MISA SME, books per legal entity and a monthly period lock.',
+      body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, the VAT return as XML for HTKK, exports to MISA SME, books per legal entity and a monthly period lock.',
+      points: [
+        'Sales invoices: numbers missing from the series, or on the tax portal but not in your books, are pointed out before you file the return',
+        'Purchase invoices: fetch the list from the tax portal by period, or email a client to ask for the invoices that are missing',
+        'Replacement and adjustment invoices are booked against the original',
+        'A tax calendar per client, the year-end close to 911 and 4212, and an archive package for each financial year',
+      ],
       people: [
         { name: 'Chị Lan', initials: 'L', agent: false },
         { name: 'Accounting agent', initials: '', agent: true },
@@ -365,6 +371,22 @@ export const en: Dictionary = {
           { name: 'Viettel', amount: '80,000', pct: 3 },
         ],
       },
+      sales: {
+        title: 'Sales invoices, October',
+        sub: 'Compared with the list downloaded from the tax portal',
+        seriesLabel: 'Series',
+        rows: [
+          { number: '00000417', amount: '₫8,640,000', tone: 'warn', label: 'On the portal, not in the books' },
+          { number: '00000409', amount: '₫21,600,000', tone: 'warn', label: 'Tax amount differs' },
+          { number: '00000405', amount: '₫3,240,000', tone: 'warn', label: 'Cancelled, still in the books' },
+          { number: '00000402', amount: '₫15,120,000', tone: 'ok', label: 'Matches' },
+        ],
+        foot: 'This list posts nothing by itself.',
+        gapsTitle: 'Numbers missing from the series',
+        gapsSeries: '1C26TPT, year 2026',
+        gaps: ['00000412', '00000417'],
+        gapsRange: 'Recorded from number 00000401 to 00000420, 18 numbers',
+      },
     },
     agents: {
       name: 'Agents',
@@ -385,6 +407,45 @@ export const en: Dictionary = {
         { title: 'Add the authority code to the HTX Tân Hồng voucher', who: 'Chị Lan', initials: 'L', agent: false, due: '21/10/2026', done: false },
         { title: 'Photograph the ST25 rice for the post', who: 'Anh Minh', initials: 'M', agent: false, due: '18/10/2026', done: false },
         { title: 'Export the September general journal', who: 'Accounting agent', initials: '', agent: true, due: '15/10/2026', done: true },
+      ],
+    },
+    notes: {
+      name: 'Ludy Notes',
+      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the whole organization. Write in Markdown, add tags, pin, and search without typing the tone marks. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
+      points: [
+        'A private note is readable by you alone; a shared note is read by the whole organization',
+        'Attach it to a vendor, a document, a journal entry or a booking and it shows right on that screen',
+        'Download your notes and to-dos as Markdown or JSON',
+      ],
+      people: [{ name: 'Chị Lan', initials: 'L', agent: false }],
+      listTitle: 'Notes',
+      linkLabel: 'Attached to',
+      pinned: 'Pinned',
+      private: 'Private',
+      shared: 'Shared',
+      items: [
+        { title: 'Power bills arrive late, remind the client on the 5th', tags: ['invoices', 'reminder'], link: 'Vendor: EVN', pinned: true, shared: true },
+        { title: 'Settle the ST25 rice price with HTX Tân Hồng before 25/10', tags: ['pricing'], link: 'Vendor: Hợp tác xã Tân Hồng', pinned: false, shared: false },
+        { title: 'Wholesale rice meeting: the client wants two deliveries', tags: ['booking'], link: 'Booking: Gạo Sạch Miền Tây, 20/10', pinned: false, shared: true },
+      ],
+      todoTitle: 'My work',
+      todoSub: 'Only you see this',
+      groups: [
+        {
+          label: 'Overdue',
+          tone: 'warn',
+          items: [{ title: 'Call HTX Tân Hồng for the authority code', meta: '16/10/2026', remind: false, note: '', steps: '' }],
+        },
+        {
+          label: 'Today',
+          tone: 'accent',
+          items: [{ title: 'Check the EVN invoice for September', meta: '16:00, reminder at 15:30', remind: true, note: '', steps: '1 of 3 steps done' }],
+        },
+        {
+          label: 'Next 7 days',
+          tone: 'neutral',
+          items: [{ title: 'Reconcile payables with Bao Bì Phú Thịnh', meta: '22/10/2026', remind: false, note: 'Handed over as a team task', steps: '' }],
+        },
       ],
     },
     social: {
@@ -409,7 +470,23 @@ export const en: Dictionary = {
     crm: {
       name: 'Ludy CRM',
       body: 'A public booking page for each kind of meeting. Clients pick a free time, both sides get a confirmation email with a calendar file, reminders go out on their own, and clients move or cancel with a link that works once.',
+      points: [
+        'Team meeting types: round robin to whoever is free, or only the times the whole team is free',
+        'Working hours and days off for each person, with public holidays and Tet already counted',
+        'Connect Google Calendar: busy times there block bookings, and new bookings can be written into your calendar',
+        'A subscription address to see your bookings in Google Calendar, Outlook or Apple Calendar',
+      ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
+      calendar: {
+        title: 'External calendar of Chị Hoa',
+        provider: 'Google Calendar',
+        state: 'Connected',
+        rows: [
+          ['Reads busy times, never titles', 'Yes'],
+          ['Write bookings into this calendar', 'On'],
+          ['Last synced', '14:05 18/10/2026'],
+        ],
+      },
       pageTitle: 'Wholesale rice consultation',
       pageSub: '30 minutes, at the Long An warehouse',
       slotsLabel: 'Free times, week of 19/10',
@@ -488,6 +565,10 @@ export const en: Dictionary = {
       {
         q: 'Which invoices can Ludy read?',
         a: 'XML e-invoices under Decree 254/2026 and Circular 91/2026 (and those issued under Decree 123/2020 before) are read exactly, without AI. PDFs and photos use an OpenAI-compatible model you configure, including models that run locally such as Ollama or vLLM.',
+      },
+      {
+        q: 'What do Ludy CRM and Ludy Notes do today?',
+        a: 'Ludy CRM is bookings for now: a public booking page, team meeting types and Google Calendar. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
       },
       {
         q: 'Where is my data?',
