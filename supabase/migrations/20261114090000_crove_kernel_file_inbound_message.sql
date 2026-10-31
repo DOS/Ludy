@@ -9,7 +9,7 @@
 --                                       from_address, which personal-data erasure clears with the mail.
 -- crove_kernel.file_guard               as before, a file reference never changes; the link joins the columns that never
 --                                       change, except that it goes to null (never to another mail) when its mail is
---                                       deleted, which only a system context does (the org purge).
+--                                       deleted, which is the foreign key's own action (the org purge deletes mails).
 -- The key is (org_id, inbound_message_id) -> inbound_message (org_id, id), so a file can never name another org's mail.
 -- ON DELETE SET NULL (inbound_message_id) clears only the link: org_id stays.
 SET LOCAL lock_timeout = '2s';
@@ -35,9 +35,10 @@ BEGIN
       OLD.source, OLD.created_by, OLD.created_at, OLD.duration_ms) THEN
     RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'a file reference (key, generation, sha256) never changes';
   END IF;
+  -- pg_trigger_depth() > 1: the update is the foreign key's own action (ON DELETE SET NULL), not a statement of a role.
   IF NEW.inbound_message_id IS DISTINCT FROM OLD.inbound_message_id
-     AND NOT (NEW.inbound_message_id IS NULL AND crove_kernel.ctx_actor_type() IS NOT DISTINCT FROM 'system') THEN
-    RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'the mail a file came in is recorded once, and cleared only by the system when the mail is deleted';
+     AND NOT (NEW.inbound_message_id IS NULL AND pg_catalog.pg_trigger_depth() > 1) THEN
+    RAISE EXCEPTION 'FILE_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'the mail a file came in is recorded once, and cleared only when the mail is deleted';
   END IF;
   IF (NEW.image_width, NEW.image_height) IS DISTINCT FROM (OLD.image_width, OLD.image_height)
      AND NOT (OLD.image_width IS NULL AND OLD.image_height IS NULL
