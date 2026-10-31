@@ -435,7 +435,9 @@ export async function runEditJob(deps: PublishDeps, orgId: string, variantId: st
     const settings = short ? shortenedSettings(begun.settings, short) : begun.settings;
     // For a platform whose edit sends the post whole and fetches its images again (Zalo, #1430): the variant's own
     // files only, each URL asked for by the adapter right before the call that names it.
-    const mediaUrl = mediaUrlOf(deps, mediaFileOf(deps, orgId, { content, settings }));
+    // The reads that check them get a sixth of the call between them: the edit itself (the update, the wait for Zalo to
+    // process it and the last check) takes most of the rest, and a read cut short refuses the edit before anything is sent.
+    const mediaUrl = mediaUrlOf(deps, mediaFileOf(deps, orgId, { content, settings }), undefined, Math.floor(timeout / 6));
     try {
       const r = await withTimeout(timeout, () => publisher.edit!({ ...credential, externalId: begun.externalId, content, settings, mediaUrl, scopes: begun.scopes, callKey: begun.callKey }));
       // What the record takes: codes and messages cut to their columns.
