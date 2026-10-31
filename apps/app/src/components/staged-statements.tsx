@@ -65,7 +65,8 @@ function Source({ file, statement }: { file: FileStatus; statement: Statement })
   const t = useTranslations('inbox.staged');
   const f = useFormat();
   const when = f.dateTime(file.createdAt);
-  if (statement.origin.channel === 'email') return <>{t('sourceEmail', { when })}</>;
+  // The sender is the address the mail said it came from, which nothing proves: the card says so with it.
+  if (statement.origin.channel === 'email') return <>{statement.origin.from === null ? t('sourceEmail', { when }) : t('sourceEmailFrom', { from: statement.origin.from, when })}</>;
   const by = statement.origin.by;
   return <>{by === null ? t('sourceUploadUnknown', { when }) : t('sourceUpload', { name: by, when })}</>;
 }

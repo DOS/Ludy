@@ -25,7 +25,7 @@ import { DomainError, defineQuery } from '@crove/kernel-runtime';
 import { EDITOR_ROLES, decideApproval, proposalEditable } from './approval.ts';
 import { MAX_EXTRACTION_VERSIONS, executedButVoided, latestExtraction, voidedProposals } from './extraction.ts';
 import { archiveQueries } from './archives.ts';
-import { fileStatuses } from './file-status.ts';
+import { fileStatuses, seesEveryEntity as unscoped } from './file-status.ts';
 import { agentQueries } from './agents.ts';
 import { channelQueries } from './channels.ts';
 import { inviteQueries } from './invites.ts';
@@ -457,8 +457,7 @@ export const filesRecent = defineQuery({
 // mail has no entity, so a member limited to some entities (an external accountant) gets no mail and no mail's text.
 const MAIL_READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 export const RECENT_MAILS = 20;
-// The caller's context sees every legal entity (the wildcard in enter_context's le_scope); fetched once per statement.
-const unscoped = sql<boolean>`coalesce('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]), false)`;
+// `unscoped`: the caller's context sees every legal entity (file-status.ts).
 export const inboundRecent = defineQuery({
   name: 'kernel.inbound.recent',
   input: z.object({}),
