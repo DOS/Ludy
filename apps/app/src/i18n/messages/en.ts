@@ -1098,12 +1098,12 @@ export const en = {
     reversalPendingLink: 'View the pending reversal proposal',
   },
   salesGaps: {
-    title: 'Sales invoices missing or cancelled ({count, plural, one {# number} other {# numbers}})',
+    title: 'Sales invoices missing or cancelled ({count})',
     hintPeriod:
       'Numbers between the lowest and the highest recorded of the same template, series and year that are not in the books, and may belong to this period. Each is a sales invoice not yet recorded, or one that was cancelled; check them before filing the return.',
     hint: 'Numbers between the lowest and the highest recorded of the same template, series and year that are not in the books. Each is a sales invoice not yet recorded, or one that was cancelled; open the VAT working of the period to check before filing the return.',
     columns: { series: 'Template and series', year: 'Year', missing: 'Missing or cancelled numbers', recorded: 'Recorded in the books', count: 'Count' },
-    recordedRange: 'Number {first} to number {last}, {recorded, plural, one {# number} other {# numbers}}',
+    recordedRange: 'From {first} to {last}, {recorded} recorded',
     more: 'and other runs',
     open: 'Open the VAT working',
   },
@@ -6147,6 +6147,7 @@ export const en = {
         payment_mark: 'Mark the VAT as paid',
         period: 'Read the VAT for a period',
         return_mark: 'Mark the VAT return as filed',
+        sales_number_gaps: 'Read the sales invoice numbers missing or cancelled',
       },
       vendor: {
         set_default_account: "Set a vendor's default account",

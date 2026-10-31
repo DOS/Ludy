@@ -85,11 +85,13 @@ describe('salesNumberGaps', () => {
       sale('1C26TAA', 4, '2026-04-04'),
       sale('2C26TAA', 1, '2026-04-01'),
       sale('2C26TAA', 2, '2026-04-02'),
-      // No template: counts as recorded in both, so number 2 and 3 of template 1 are covered only by what is there.
+      // No template: counts as recorded in both, so number 3 of template 1 is covered; its number 2 is not.
       sale('C26TAA', 3, '2026-04-03'),
       sale('C26TAA', 9, '2026-04-09'),
     ]);
     expect(result.groups.map((g) => [g.template, g.ranges.map((r) => `${r.from}-${r.to}`)])).toEqual([['1', ['2-2']]]);
+    // The number 3 without a template is one of the series' recorded numbers: 1, 3 and 4 are held, 2 is missing.
+    expect(result.groups[0]).toMatchObject({ recorded: 3, missingCount: 1, firstNumber: '1', lastNumber: '4' });
   });
 
   it('keeps leading zeros the way the invoices write them, and leaves out numbers that are not digits', () => {

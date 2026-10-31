@@ -274,6 +274,7 @@ export function OverviewPage() {
       {financeOn && (
         <SalesNumberGaps
           className="mt-8"
+          quiet
           fromYear={gapsFromYear(new Date())}
           legalEntityId={entity.legalEntityId}
           enabled={entity.ready}

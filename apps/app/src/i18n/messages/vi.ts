@@ -6147,6 +6147,7 @@ export const vi = {
         payment_mark: 'Đánh dấu đã nộp thuế GTGT',
         period: 'Xem thuế GTGT theo kỳ',
         return_mark: 'Đánh dấu đã nộp tờ khai thuế GTGT',
+        sales_number_gaps: 'Xem số hóa đơn bán ra còn thiếu hoặc đã hủy',
       },
       vendor: {
         set_default_account: 'Đặt tài khoản mặc định cho nhà cung cấp',

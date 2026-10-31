@@ -17,6 +17,8 @@ export interface SalesNumberGapsProps {
   legalEntityId?: string | undefined;
   enabled?: boolean;
   className?: string;
+  // Show nothing when the check fails, for a panel that is not the screen's purpose (the Overview).
+  quiet?: boolean;
   // Shown under the table, for a link to where the numbers are checked.
   action?: ReactNode;
 }
@@ -24,20 +26,20 @@ export interface SalesNumberGapsProps {
 // "3", or "5-11" for a run.
 export const gapRunLabel = (run: { from: string; to: string }) => (run.from === run.to ? run.from : `${run.from}-${run.to}`);
 
-export function SalesNumberGaps({ period, fromYear, legalEntityId, enabled = true, className, action }: SalesNumberGapsProps) {
+export function SalesNumberGaps({ period, fromYear, legalEntityId, enabled = true, className, quiet = false, action }: SalesNumberGapsProps) {
   const t = useTranslations('salesGaps');
   const f = useFormat();
   const gaps = useQuery({
     ...orpc.vat.salesNumberGaps.queryOptions({ input: { ...(period ? { period } : {}), ...(fromYear !== undefined ? { fromYear } : {}), ...(legalEntityId ? { legalEntityId } : {}) } }),
     enabled,
   });
-  if (gaps.error) return <ErrorText>{errorMessage(gaps.error)}</ErrorText>;
+  if (gaps.error) return quiet ? null : <ErrorText>{errorMessage(gaps.error)}</ErrorText>;
   const data = gaps.data;
   if (!data || data.groups.length === 0) return null;
   return (
     <section className={className} aria-labelledby="sales-number-gaps">
       <h2 id="sales-number-gaps" className="mb-1 text-base font-semibold text-foreground">
-        {t('title', { count: data.missingCount })}
+        {t('title', { count: f.number(data.missingCount) })}
       </h2>
       <p className="mb-2 text-xs text-subtle-foreground">{period ? t('hintPeriod') : t('hint')}</p>
       <DataTable numeric={[4]} head={[t('columns.series'), t('columns.year'), t('columns.missing'), t('columns.recorded'), t('columns.count')]}>
@@ -50,7 +52,7 @@ export function SalesNumberGaps({ period, fromYear, legalEntityId, enabled = tru
               {group.truncated ? ` ${t('more')}` : ''}
             </TableCell>
             <TableCell className="px-4 py-3 text-xs text-muted-foreground">
-              {t('recordedRange', { first: group.firstNumber, last: group.lastNumber, recorded: group.recorded })}
+              {t('recordedRange', { first: group.firstNumber, last: group.lastNumber, recorded: f.number(group.recorded) })}
             </TableCell>
             <TableCell className="px-4 py-3 text-right tabular-nums text-foreground">{f.number(group.missingCount)}</TableCell>
           </TableRow>

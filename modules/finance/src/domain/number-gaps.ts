@@ -6,8 +6,9 @@
 //
 // The year is the invoice date's. A recorded document keeps no template of its own: it shows only when the seller wrote
 // it in front of the series ("1C26TAA", see invoiceSymbol in portal-reconcile.ts). Documents of one series and year are
-// therefore one group, split by template only when two different templates are seen; a document with no template then
-// counts as recorded in each of them but never stretches their range, so it can hide a gap, never invent one. A number
+// therefore one group, split by template only when two different templates are seen. With up to one template every
+// document joins the group; with two or more, a document with no template counts as recorded in each of them but never
+// stretches their range, so it can hide a gap, never invent one. A number
 // that is not made of digits cannot be ordered and is left out.
 import { normalizeNumber } from '@crove/l10n-vn';
 import { invoiceSymbol } from './portal-reconcile.ts';
@@ -103,7 +104,7 @@ function groupGaps(template: string | null, series: string, year: number, own: E
   if (lowest === undefined || highest === undefined) return null;
   const extra = [...new Set(untemplated.map((e) => e.value))].sort((a, b) => a - b);
   const padded = own.some((e) => e.padded) || untemplated.some((e) => e.padded);
-  const width = Math.max(...own.map((e) => e.width), ...untemplated.map((e) => e.width));
+  const width = [...own, ...untemplated].reduce((widest, e) => Math.max(widest, e.width), 0);
   const ranges: NumberGapRange[] = [];
   let missing = 0;
   for (let i = 1; i < values.length; i += 1) {
@@ -124,7 +125,8 @@ function groupGaps(template: string | null, series: string, year: number, own: E
     year,
     firstNumber: pad(lowest, width, padded),
     lastNumber: pad(highest, width, padded),
-    recorded: first.size,
+    // Every distinct number held within the series' range, those of a document without a template included.
+    recorded: new Set([...values, ...extra.filter((n) => n > lowest && n < highest)]).size,
     missingCount: missing,
     ranges,
     truncated: false,
