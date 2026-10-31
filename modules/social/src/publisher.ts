@@ -9,7 +9,7 @@
 // - after the call, before record: the same, and that is the case the ledger exists for;
 // - record failing: the job throws, pg-boss retries it, and the retry's begin finds the variant in flight.
 import { withCallSignal, type Publisher, type PublishResult, type ReconcileResult } from '@crove/channel';
-import { DomainError, readVerified, type BlobStore, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { BlobIntegrityError, BlobNotFoundError, BlobStoreAccessError, BlobTooLargeError, DomainError, readVerified, type BlobStore, type CredentialBroker, type Runtime, type SystemActor } from '@crove/kernel-runtime';
 import { COVER_RULES, DOCUMENT_PROVIDERS, THREAD_PARTS_MAX, VIDEO_READY, YOUTUBE_PLAYLISTS_MAX, coverKind, coverOf, isProvider, linkCardThumbOf, mediaKindOf, scopeNeeded, type Provider } from './domain/channels.ts';
 import { PUBLISH_STALE_SECONDS, type BeginResult, type PublishRecord, type PublishWork } from './publishing.ts';
 import type { CommentWork } from './comments.ts';
@@ -131,7 +131,7 @@ function mediaFileOf(deps: PublishDeps, orgId: string, work: Pick<PublishWork, '
 
 // A short-lived signed GET of the recorded bytes, where the store hands them out (S3, also with browser transfers off,
 // as on R2: #2192); valid briefly, enough for the platform to fetch it right after the call that names it.
-function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>) {
+function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>, onOutage?: () => void) {
   return async (fileId: string): Promise<string | null> => {
     const urls = deps.store?.fetchUrls;
     if (!urls) return null;
@@ -140,6 +140,9 @@ function mediaUrlOf(deps: PublishDeps, mediaFile: ReturnType<typeof mediaFileOf>
     // the adapter takes any throw as "no URL" and says so on the post, so the cause is named here, in the log only.
     return urls.presign({ key: file.storageKey, generation: file.generation, sha256: file.sha256 }, { filename: file.filename, contentType: file.contentType }).catch((error: unknown) => {
       console.warn(`[social-publish] no signed media URL for file ${fileId.slice(0, 8)}: ${error instanceof Error ? error.name : typeof error}`);
+      // A file that is missing, too big, refused by the store or not the approved bytes will not be different next time;
+      // anything else (a 5xx, a network error, the read's deadline) is the store's bad moment.
+      if (!(error instanceof BlobNotFoundError || error instanceof BlobTooLargeError || error instanceof BlobIntegrityError || error instanceof BlobStoreAccessError)) onOutage?.();
       throw error;
     });
   };
@@ -150,7 +153,11 @@ async function provide(deps: PublishDeps, orgId: string, publisher: Publisher, w
   const timeout = deps.callTimeoutMs ?? publisher.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const cover = coverOf(work.settings);
   const mediaFile = mediaFileOf(deps, orgId, work);
-  const mediaUrl = mediaUrlOf(deps, mediaFile);
+  // Set when a media URL could not be made because the store failed for the moment (see mediaUrlOf).
+  let storeOutage = false;
+  const mediaUrl = mediaUrlOf(deps, mediaFile, () => {
+    storeOutage = true;
+  });
   const readMedia = async (fileId: string): Promise<Uint8Array> => {
     if (!deps.store) throw new Error('media storage not available');
     const file = await mediaFile(fileId);
@@ -187,11 +194,13 @@ async function provide(deps: PublishDeps, orgId: string, publisher: Publisher, w
         // Crove asked for video.upload): nothing is sent, and the variant waits paused for a reconnect.
         const scope = isProvider(publisher.provider) ? scopeNeeded(publisher.provider, work.settings) : null;
         if (scope && !work.scopes.includes(scope)) return { kind: 'blocked', code: 'CHANNEL_SCOPE_MISSING' };
-        return fromPublish(
-          await withTimeout(timeout, () =>
-            publisher.publish({ ...credential, content, readMedia, mediaUrl, mediaName, settings, callKey: work.callKey, contentHash: work.contentHash }),
-          ),
+        const result = await withTimeout(timeout, () =>
+          publisher.publish({ ...credential, content, readMedia, mediaUrl, mediaName, settings, callKey: work.callKey, contentHash: work.contentHash }),
         );
+        // The adapter refused for want of a media URL before anything was sent. If the store was only having a bad moment
+        // that is a new attempt later, like a rate limit (at most 5 automatic ones), not a failure for good.
+        const retry = storeOutage && result.kind === 'rejected' && result.error === 'bad_request' && result.code === 'MEDIA_URL_UNAVAILABLE';
+        return fromPublish(retry ? { ...result, error: 'transient' } : result);
       }
       case 'status':
         if (!publisher.status || !work.externalRef) return { kind: 'unknown', code: 'STATUS_UNAVAILABLE' };
