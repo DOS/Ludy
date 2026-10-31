@@ -18,7 +18,7 @@ function sources(dir: string): string[] {
   });
 }
 
-const NATIVE_DIALOG = /\bwindow\.(?:confirm|prompt|alert)\(/g;
+const NATIVE_DIALOG = /\b(?:window|globalThis)\s*\??\.\s*(?:confirm|prompt|alert)\s*\(/g;
 
 const SOCIAL_NATIVE_DIALOGS: Readonly<Record<string, number>> = {
   'components/social-bulk.tsx': 3,
