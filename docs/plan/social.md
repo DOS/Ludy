@@ -396,6 +396,8 @@ Checked against the platforms' docs on 2026-10-16; details, limits and links in 
 
 Open questions, settled by testing when the adapter is built: Instagram's daily limit (the docs say 100 and, for carousels, 50); whether YouTube still forces uploads from unverified projects to private; Zalo OA eligibility and quotas.
 
+Facebook Page and Zalo OA, reopened by the owner on 2026-11-01 (#236): the first live account check is [docs/runbooks/social-live-check.md](../runbooks/social-live-check.md). What the live run finds that differs from the docs is written into this section and §4 after the run.
+
 ## 7. Risks
 
 | Risk | Mitigation |
