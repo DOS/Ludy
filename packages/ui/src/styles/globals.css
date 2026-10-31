@@ -51,7 +51,7 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  /* Crove additions: a third text level, link text, the brand mark (its tiles and its spark) and status colors. */
+  /* Crove additions: a third text level, link text, the brand mark (its keys, their lips and its letters) and status colors. */
   --color-subtle-foreground: var(--subtle-foreground);
   --color-link: var(--link);
   --color-brand: var(--brand);

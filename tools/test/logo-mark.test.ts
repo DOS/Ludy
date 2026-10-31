@@ -42,6 +42,22 @@ const markPaths = (c: Palette) => [
   stroke(c.tInk, 5.4, PATH.accent),
 ];
 
+// An sRGB hex color as OKLCH, to compare the stylesheets' tokens with the hex colors of DESIGN.md.
+function oklch(hex: string): [number, number, number] {
+  const linear = (i: number) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const [r, g, b] = [linear(1), linear(3), linear(5)];
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const a = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+  const bb = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+  const hue = (Math.atan2(bb, a) * 180) / Math.PI;
+  return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s, Math.hypot(a, bb), hue < 0 ? hue + 360 : hue];
+}
+
 // Every file that draws the whole mark, and the two favicons that draw the keys alone (a tab is 16 px, too small for letters).
 const DRAWS_THE_MARK = [
   'apps/app/src/components/ui.tsx',
@@ -66,7 +82,7 @@ describe('the Ludy logo (#2200)', () => {
     expect(reference).toHaveLength(ROLES.length);
     expect(PATH.lips).toMatch(/^M0 15/);
     expect(PATH.keys).toMatch(/^M0 11/);
-    expect(PATH.accent).toMatch(/^M72\.9 58\.6/);
+    expect(PATH.accent).toMatch(/^M71\.95 59\.96/);
     for (const file of DRAWS_THE_MARK) {
       const text = read(file);
       for (const role of ROLES) expect(text, `${file}: ${role}`).toContain(PATH[role]);
@@ -94,6 +110,48 @@ describe('the Ludy logo (#2200)', () => {
     const text = read('apps/web/public/favicon.svg');
     expect(text).toContain(`<style>${classes(COLORS.light)}@media (prefers-color-scheme:dark){${classes(COLORS.dark)}}</style>`);
     expect(text).not.toContain('stroke=');
+  });
+
+  it('gives each path of the components and of the favicon the token or class of its role', () => {
+    const jsx = (className: string, d: string, width?: number) =>
+      width === undefined
+        ? `<path className="${className}" d="${d}" />`
+        : `<path className="${className}" strokeWidth="${width}" strokeLinecap="round" strokeLinejoin="round" d="${d}" />`;
+    const elements = [
+      jsx('fill-brand-lip', PATH.lips),
+      jsx('fill-brand-spark-lip', PATH.lipY),
+      jsx('fill-brand', PATH.keys),
+      jsx('fill-brand-spark', PATH.keyY),
+      jsx('fill-none stroke-brand-ink', PATH.lud, 7),
+      jsx('fill-none stroke-brand-spark-ink', PATH.y, 6.4),
+      jsx('fill-none stroke-brand-spark-ink', PATH.accent, 5.4),
+    ];
+    for (const file of ['apps/app/src/components/ui.tsx', 'apps/web/src/components/landing/ui.tsx']) {
+      const text = read(file);
+      for (const element of elements) expect(text, file).toContain(element);
+    }
+    const favicon = read('apps/web/public/favicon.svg');
+    for (const [className, role] of [['vl', 'lips'], ['tl', 'lipY'], ['v', 'keys'], ['t', 'keyY']] as const) {
+      expect(favicon, className).toContain(`<path class="${className}" d="${PATH[role]}"/>`);
+    }
+  });
+
+  it('has the hex colors of DESIGN.md as the OKLCH tokens, in the light and the dark theme', () => {
+    const roles = { brand: 'v', 'brand-lip': 'vl', 'brand-ink': 'ink', 'brand-spark': 't', 'brand-spark-lip': 'tl', 'brand-spark-ink': 'tInk' } as const;
+    const css = read('packages/ui/src/styles/globals.css');
+    for (const [token, role] of Object.entries(roles)) {
+      // The light value comes first in the file, the dark one second.
+      const values = [...css.matchAll(new RegExp(`^\\s*--${token}:\\s*oklch\\(([^)]+)\\);`, 'gm'))].map((m) => (m[1] ?? '').trim().split(/\s+/).map(Number));
+      expect(values, token).toHaveLength(2);
+      (['light', 'dark'] as const).forEach((scheme, i) => {
+        const [l, c, h] = oklch(COLORS[scheme][role]);
+        const [tl = NaN, tc = NaN, th = NaN] = values[i] ?? [];
+        expect(Math.abs(tl - l), `${token} ${scheme} lightness`).toBeLessThan(0.002);
+        expect(Math.abs(tc - c), `${token} ${scheme} chroma`).toBeLessThan(0.002);
+        // The hue means nothing for a color without chroma (white).
+        if (c > 0.02) expect(Math.abs(((th - h + 540) % 360) - 180), `${token} ${scheme} hue`).toBeLessThan(0.3);
+      });
+    }
   });
 
   it('letters "Ludy" the same in the light and the dark wordmark, the y in the teal of the y key, in a box as high as the mark (#2059)', () => {
