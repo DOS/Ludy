@@ -9,7 +9,7 @@ import { prepareReversal, reverseEntry } from './reversal.ts';
 import { openingBalancePost, openingBalancePreview } from './opening-balance.ts';
 import { fileForExtraction, purchaseLookup } from './extract.ts';
 import { accountsList, documentGet, documentsList, journalExport, journalGet, journalList, purchaseVouchers, salesVouchers, vendorsList, voidedProposals } from './queries.ts';
-import { vatDeclarationQuery, vatExport, vatPaymentMark, vatPeriodQuery, vatReturnMark } from './vat.ts';
+import { salesNumberGapsQuery, vatDeclarationQuery, vatExport, vatPaymentMark, vatPeriodQuery, vatReturnMark } from './vat.ts';
 import { ledgerAccountQuery, ledgerBookQuery, ledgerExport, ledgerPeriodQuery } from './ledger-reports.ts';
 import { portalListImport, portalListReconcile, portalListRecord, portalListRemove, portalListSource } from './portal-list.ts';
 import { portalSyncCommands, portalSyncQueries } from './portal-sync.ts';
@@ -109,6 +109,7 @@ export * from './domain/ledger.ts';
 export { postJournalEntry, postNewEntry, sourceRevisionError } from './ledger.ts';
 export * from './domain/tt133-reports.ts';
 export * from './domain/vat-return.ts';
+export * from './domain/number-gaps.ts';
 export * from './domain/vat-01gtgt-xml.ts';
 export * from './domain/ledger-reports.ts';
 export * from './domain/opening-balance.ts';
@@ -154,6 +155,7 @@ export const financeQueries = [
   purchaseVouchers,
   salesVouchers,
   vatPeriodQuery,
+  salesNumberGapsQuery,
   vatDeclarationQuery,
   ledgerPeriodQuery,
   ledgerAccountQuery,

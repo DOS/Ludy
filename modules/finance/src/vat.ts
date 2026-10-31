@@ -41,6 +41,7 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
 import { needsPaymentCheck, nonCashThreshold, paymentMethodKind, type PaymentMethodKind } from './domain/non-cash-payment.ts';
 import { HtkkAmountError, form01XmlValues } from './domain/vat-01gtgt-xml.ts';
+import { salesNumberGaps, type SalesNumberGaps } from './domain/number-gaps.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
@@ -406,6 +407,49 @@ export const vatPeriodQuery = defineQuery({
   handler: async (ctx, input): Promise<VatReport> => {
     const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     return { ...(await loadVatReport(ctx, input.period, legalEntityId)), filable: await mayFileVat(ctx, legalEntityId) };
+  },
+});
+
+// More recorded sales than this in the years a gap check reads is refused rather than cut short: a partial check would
+// miss a number or invent one.
+export const SALES_NUMBER_GAP_LIMIT = 50_000;
+
+// The numbers missing in the legal entity's own sales e-invoice series (#2140), for the VAT working of a period (period:
+// the runs that may fall in it) and the Overview (fromYear). Reads the recorded sales that are not voided, in every year
+// the check looks at, since a gap is found between two recorded numbers of one year. Writes nothing.
+export const salesNumberGapsQuery = defineQuery({
+  name: 'finance.vat.sales_number_gaps',
+  input: z.object({ period: zVatPeriod.optional(), fromYear: z.number().int().min(2000).max(2100).optional(), legalEntityId: zId.optional() }),
+  access: ALL,
+  handler: async (ctx, input): Promise<SalesNumberGaps> => {
+    const legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    const range = input.period ? vatPeriod(input.period) : null;
+    // A month or a quarter lies inside one year, which is all its gaps are read from.
+    const fromDate = range ? `${range.from.slice(0, 4)}-01-01` : input.fromYear !== undefined ? `${input.fromYear}-01-01` : null;
+    const toDate = range ? `${range.to.slice(0, 4)}-12-31` : null;
+    let query = ctx.trx
+      .selectFrom('crove_finance.purchase_document as d')
+      .select(['d.invoice_series', 'd.invoice_number', 'd.invoice_date'])
+      .where('d.org_id', '=', ctx.orgId)
+      .where('d.legal_entity_id', '=', legalEntityId)
+      .where('d.direction', '=', 'sale')
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'),
+          ),
+        ),
+      );
+    if (fromDate) query = query.where('d.invoice_date', '>=', fromDate);
+    if (toDate) query = query.where('d.invoice_date', '<=', toDate);
+    const docs = await query.orderBy('d.invoice_date').orderBy('d.id').limit(SALES_NUMBER_GAP_LIMIT + 1).execute();
+    if (docs.length > SALES_NUMBER_GAP_LIMIT) {
+      throw new DomainError('PERIOD_TOO_LARGE', 422, `Có hơn ${SALES_NUMBER_GAP_LIMIT} hóa đơn bán ra trong các năm cần kiểm tra; hệ thống chưa kiểm tra được số hóa đơn còn thiếu`);
+    }
+    return salesNumberGaps(
+      docs.map((d) => ({ series: d.invoice_series, number: d.invoice_number, issueDate: d.invoice_date })),
+      { ...(range ? { period: { from: range.from, to: range.to } } : {}), ...(input.fromYear !== undefined ? { fromYear: input.fromYear } : {}) },
+    );
   },
 });
 

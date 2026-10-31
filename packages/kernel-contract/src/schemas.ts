@@ -979,6 +979,31 @@ export const zVatReport = z.object({
   // accountant for the entity. Answered by finance.vat.period; the server checks again.
   filable: z.boolean().optional(),
 });
+// Gaps in the org's own sales e-invoice number series (#2140): per template, series and year, the runs of numbers missing
+// between the lowest and the highest recorded. Each run carries the invoice dates of the recorded numbers on either side
+// of it (the missing invoice was most likely issued between them). More than 100 runs in a series: ranges holds the first.
+export const zSalesNumberGapRange = z.object({
+  from: z.string(),
+  to: z.string(),
+  count: z.number().int().positive(),
+  afterDate: zLocalDate,
+  beforeDate: zLocalDate,
+});
+export const zSalesNumberGapGroup = z.object({
+  template: z.string().nullable(),
+  series: z.string(),
+  year: z.number().int(),
+  firstNumber: z.string(),
+  lastNumber: z.string(),
+  recorded: z.number().int().positive(),
+  missingCount: z.number().int().positive(),
+  ranges: z.array(zSalesNumberGapRange).min(1),
+  truncated: z.boolean(),
+});
+export const zSalesNumberGaps = z.object({
+  groups: z.array(zSalesNumberGapGroup),
+  missingCount: z.number().int().nonnegative(),
+});
 // Marks the period's VAT return filed (done) with its figures, or takes the mark back (#1400).
 export const zVatReturnMark = z.strictObject({
   period: zVatPeriod,

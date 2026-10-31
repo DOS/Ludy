@@ -1781,6 +1781,9 @@ export function createRpcHandler(
       period: os.vat.period.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.vat.period', input, { actor, orgId })),
       ),
+      salesNumberGaps: os.vat.salesNumberGaps.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.vat.sales_number_gaps', input, { actor, orgId })),
+      ),
       markPayment: os.vat.markPayment.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.execute('finance.vat.payment_mark', input, { actor, orgId })),
       ),

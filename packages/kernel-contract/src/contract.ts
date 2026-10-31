@@ -164,6 +164,7 @@ import {
   zVatPeriod,
   zVatFilingPeriod,
   zVatReport,
+  zSalesNumberGaps,
   zExchangeRate,
   zInputVatCheckOutcome,
   zVatReturnMark,
@@ -1375,6 +1376,12 @@ export const contract = {
   // when the voucher is not a báo Nợ of the org.
   vat: {
     period: oc.input(z.object({ period: zVatPeriod, legalEntityId: zId.optional() })).output(zVatReport),
+    // salesNumberGaps (every role; #2140): the numbers missing in the org's own sales e-invoice series, per template,
+    // series and year. With period, the runs that may fall in it (VAT working); with fromYear, the series of that year on
+    // (Overview); alone, every year. Read-only.
+    salesNumberGaps: oc
+      .input(z.object({ period: zVatPeriod.optional(), fromYear: z.number().int().min(2000).max(2100).optional(), legalEntityId: zId.optional() }))
+      .output(zSalesNumberGaps),
     markPayment: oc
       .input(
         z.object({
