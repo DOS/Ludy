@@ -43,12 +43,14 @@ import {
   ARCHIVE_VERIFY_CRON,
   ARCHIVE_WRITE_CRON,
   ArchiveMismatchError,
+  planVerification,
   restoreAckAlert,
   restoreAckStoreAlert,
   verifyArchive,
   writeVerifyMarker,
   writeArchive,
   type ArchiveStore,
+  type VerifyCheckpoint,
 } from './worm.ts';
 import type { SessionRevoker, SignOutTarget } from './sessions.ts';
 import { opsAlert } from './ops-alert.ts';
@@ -833,16 +835,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (written > 0) console.log(`[archive] wrote ${written} batch(es)`);
     }));
     await boss.schedule(QUEUES.archiveWrite, ARCHIVE_WRITE_CRON, null, { tz: RETENTION_TZ });
-    await background.add(QUEUES.archiveVerify, () => boss.work(QUEUES.archiveVerify, { batchSize: 1 }, async () => {
-      // The verifier reads every batch and row, so its time grows with the archive: logged on every run.
+    await background.add(QUEUES.archiveVerify, () => boss.work<{ full?: boolean } | null>(QUEUES.archiveVerify, { batchSize: 1 }, async ([job]) => {
+      // A job queued by hand with {"full": true} reads every batch tonight (docs/runbooks/worm-archive.md): the
+      // conservative direction, so the payload needs no check beyond its value.
+      const forceFull = job?.data?.full === true;
+      // Each night reads only the batches after the last passing run, and about monthly every batch (#2121), so its time
+      // follows the new batches, not the archive: logged on every run.
       const started = Date.now();
       const elapsed = () => `${Math.round((Date.now() - started) / 1000)} s`;
       const alertOptions = deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays };
-      try {
-        // First, from the store alone, before any database query: a run the database owner stops has alerted already.
-        const early = await restoreAckStoreAlert(store, alertOptions);
-        if (early) opsAlert(`[archive] ALERT ${early}`);
-        const result = await verifyArchive(deps.workerDb, store, alertOptions);
+      // One verification pass: records and alerts as before, and writes the marker of a pass that held.
+      const pass = async (from?: VerifyCheckpoint) => {
+        const result = await verifyArchive(deps.workerDb, store, from ? { ...alertOptions, from } : alertOptions);
         // An excuse is never silent (#2020): every run says what a restore acknowledgement excused, and a recent one, by
         // the store's own write time, alerts on every run, passing or failing, so an operator matches it to a real
         // restore and a webhook down for a night loses nothing.
@@ -856,14 +860,32 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           opsAlert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
         }
         const excused = result.restoreAck === null ? '' : `, excused ${result.excused} row(s) under restore acknowledgement #${result.restoreAck}`;
-        console.log(`[archive] verified ${result.batches} batch(es), ${result.rows} row(s)${excused} in ${elapsed()}`);
+        console.log(`[archive] verified (${result.mode}) ${result.batchesRead} of ${result.batches} batch(es), ${result.rows} row(s)${excused} in ${elapsed()}`);
+        return result;
+      };
+      try {
+        // First, from the store alone, before any database query: a run the database owner stops has alerted already.
+        const early = await restoreAckStoreAlert(store, alertOptions);
+        if (early) opsAlert(`[archive] ALERT ${early}`);
+        const plan = forceFull ? { mode: 'full' as const, checkpoint: null, reason: 'requested by the job' } : await planVerification(store);
+        if (plan.mode === 'incremental') {
+          await pass(plan.checkpoint ?? undefined);
+        } else {
+          console.log(`[archive] full verification: ${plan.reason}`);
+          // The full pass grows with the archive and can run for hours: the new batches first, so the heartbeat marker
+          // stays fresh while it runs (the prober alerts when the newest is about a day old). A restore acknowledgement
+          // in force makes that run full already, so it is not repeated.
+          const quick = plan.checkpoint ? await pass(plan.checkpoint) : null;
+          if (quick?.mode !== 'full') await pass();
+        }
       } catch (error) {
         console.error(`[archive] ALERT after ${elapsed()}: ${error instanceof Error ? error.message : 'verification could not run'}`);
         throw error;
       }
     }));
-    // An hour before pg-boss counts the run as expired (its default is 15 minutes).
-    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 3600 });
+    // The nightly run is short now, but the monthly full pass reads the whole archive (a year is about 105,000 objects):
+    // pg-boss counts a run as expired after four hours (its default is 15 minutes) (#2121).
+    await boss.schedule(QUEUES.archiveVerify, ARCHIVE_VERIFY_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0, expireInSeconds: 14400 });
   }
 
   // The period balance reconciliation (#1284): nightly, the deltas the posting definer appended compared with the

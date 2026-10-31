@@ -21,8 +21,11 @@
 //     (crove_kernel.archive_series_highs), so a restore can raise every series above the numbers the archive holds
 //     (restore-report.ts). Each batch verifies with the version it was written with; a batch of a lower version after a
 //     higher one means rows went unanchored.
-//   - verifyArchive, nightly: reads every batch back from the store, checks the chain, and recomputes every row hash
-//     from the database. After a restore, the rows the restore lost are named by an acknowledgement the restore check
+//   - verifyArchive, nightly: reads the batches back from the store, checks the chain, and recomputes every row hash
+//     from the database. Each night it reads only the batches after the last run that passed, chained from that run's
+//     head hash (#2121: the archive grows by about 105,000 objects a year, and a nightly run that read them all would
+//     outgrow its time limit); about monthly (FULL_VERIFY_DAYS), and whenever a restore acknowledgement is in force, it
+//     reads every batch, which alone shows an old batch rewritten (planVerification). After a restore, the rows the restore lost are named by an acknowledgement the restore check
 //     wrote to the store (restores/v1/, #2020): those rows, in those batches, are excused, and nothing else is. A changed, missing or added row, a broken chain, a window gap, or a store and database that
 //     disagree fail the run: the job fails without a retry, and the prober alerts on the dead letter. So does an
 //     anchored number series whose period key does not fit its reset (crove_kernel.archive_series_misfits, #1820): a
@@ -596,6 +599,18 @@ export interface ArchiveVerification {
   alertRestoreAck: boolean;
   // The chain hash of the newest batch the run read (null with none): what its verification marker names (#2082).
   headChainSha256: string | null;
+  // 'incremental' (#2121): the run started from the batch an earlier passing run ended on (options.from) and read only the
+  // batches after it; 'full' read every batch. `batches` is the archive's length either way, `batchesRead` the batches
+  // this run read back and re-hashed, `rows` the rows of those.
+  mode: 'full' | 'incremental';
+  batchesRead: number;
+}
+
+// Where an incremental run starts: the last batch of an earlier passing run, by sequence and chain hash (what that run's
+// verification marker names).
+export interface VerifyCheckpoint {
+  seq: number;
+  chainSha256: string;
 }
 
 // After a restore (#2020): the rows a restore lost, written to the archive store by the restore check
@@ -795,10 +810,15 @@ const comesBack = (ref: string) => ref.startsWith('number_series:') || ref.start
 // Days the worker alerts, on every run, about the restore acknowledgement in force after the store wrote it (#2020).
 const RESTORE_ACK_ALERT_DAYS = 14;
 
+// `from` (#2121) makes the run incremental: the batches up to `from.seq` are not read back; the batch at `from.seq` must
+// still carry `from.chainSha256` (else the history changed since the run that named it: chain_broken), and the batches
+// after it are checked, chain from that hash, in full. Without `from`, or while a restore acknowledgement is in force
+// (its excuses reach across batches), every batch is read: the full pass, which the worker runs monthly
+// (planVerification) and which alone catches an old batch rewritten.
 export async function verifyArchive(
   db: Db,
   store: ArchiveStore,
-  options: { restoreAlertDays?: number; now?: () => Date } = {},
+  options: { restoreAlertDays?: number; now?: () => Date; from?: VerifyCheckpoint } = {},
 ): Promise<ArchiveVerification> {
   const problems: ArchiveProblem[] = [];
   const note = (problem: ArchiveProblem) => {
@@ -832,13 +852,31 @@ export async function verifyArchive(
   const laterRefs = new Set<string>();
   let excused = 0;
   const isListed = (seq: number, ref: string) => excuses.has(`${seq} ${ref}`);
+  const start = options.from && !acks.ack ? options.from : null;
+  let batchesRead = 0;
   for (const key of keys) {
     seq += 1;
     if (key !== archiveKey(seq)) {
       note({ code: 'object_out_of_order', seq });
       break;
     }
+    if (start && seq < start.seq) continue;
     const bytes = await store.get(key);
+    if (start && seq === start.seq) {
+      // The last batch an earlier run verified: not checked again, only held to the chain hash that run recorded, and
+      // the chain goes on from it.
+      const seed = bytes ? parseBatch(bytes) : null;
+      if (!seed || seed.seq !== seq) {
+        note({ code: 'object_unreadable', seq });
+        break;
+      }
+      if (seed.chainSha256 !== start.chainSha256) note({ code: 'chain_broken', seq });
+      prev = seed.chainSha256;
+      prevTo = seed.window.to;
+      previous = seed;
+      continue;
+    }
+    batchesRead += 1;
     const batch = bytes ? parseBatch(bytes) : null;
     if (!batch || batch.seq !== seq) {
       note({ code: 'object_unreadable', seq });
@@ -927,6 +965,8 @@ export async function verifyArchive(
   }
   // Batches the database recorded that the store does not have.
   for (const recordedSeq of recorded.keys()) if (recordedSeq > seq) note({ code: 'object_missing', seq: recordedSeq });
+  // An incremental run starts from a batch an earlier run verified: the store lost it (and what followed) since.
+  if (start && seq < start.seq) note({ code: 'object_missing', seq: start.seq });
   // Anchored series whose period key does not fit the reset of their doc type (#1820). A series whose row already
   // differs from its batch is reported as that (its reset was switched after it was anchored); this is the one that
   // verifies as written, its reset switched and switched back before. A series not anchored yet is checked once a batch
@@ -958,6 +998,8 @@ export async function verifyArchive(
     restoreAckWrittenAt: ackWritten ? ackWritten.toISOString() : null,
     alertRestoreAck,
     headChainSha256: seq > 0 ? prev : null,
+    mode: start ? ('incremental' as const) : ('full' as const),
+    batchesRead,
   };
   return result;
 }
@@ -997,6 +1039,9 @@ export interface VerifyMarker {
   verifiedAt: string;
   batches: number;
   chainSha256: string | null;
+  // Present, and true, only on the marker of an incremental run (#2121): it vouches for the batches after the checkpoint
+  // it started from, and for the rest only as that run's own markers did. A marker without it is of a full pass.
+  incremental?: true;
 }
 
 export const verifyMarkerKey = (at: Date) => `${VERIFY_MARKER_PREFIX}${at.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}.json`;
@@ -1005,17 +1050,30 @@ export const verifyMarkerKey = (at: Date) => `${VERIFY_MARKER_PREFIX}${at.toISOS
 // lifecycle rule may have expired it, which leaves a delete marker, not a second version to report. A key that names no
 // time is never expired.
 export function verifyMarkerExpired(key: string, now: Date): boolean {
+  const at = verifyMarkerTime(key);
+  return at !== null && now.getTime() - at.getTime() > VERIFY_MARKER_RETENTION_DAYS * 86_400_000;
+}
+
+// The time a marker's key names (the worker's clock when it wrote it), or null for a key that names none.
+export function verifyMarkerTime(key: string): Date | null {
   const named = /^verify\/v1\/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z\.json$/.exec(key);
-  if (!named) return false;
+  if (!named) return null;
   const [year, month, day, hour, minute, second] = named.slice(1).map(Number) as [number, number, number, number, number, number];
-  return now.getTime() - Date.UTC(year, month - 1, day, hour, minute, second) > VERIFY_MARKER_RETENTION_DAYS * 86_400_000;
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
 }
 
 // Writes the marker of a run that passed; returns its key, or null for a run that did not pass (it writes none, so the
 // prober alerts once the newest marker grows old). A second run in the same second finds the key taken and writes none.
 export async function writeVerifyMarker(store: ArchiveStore, result: ArchiveVerification, now: Date = new Date()): Promise<string | null> {
   if (!result.ok) return null;
-  const marker: VerifyMarker = { format: 'crove-verify-marker', version: 1, verifiedAt: now.toISOString(), batches: result.batches, chainSha256: result.headChainSha256 };
+  const marker: VerifyMarker = {
+    format: 'crove-verify-marker',
+    version: 1,
+    verifiedAt: now.toISOString(),
+    batches: result.batches,
+    chainSha256: result.headChainSha256,
+    ...(result.mode === 'incremental' ? { incremental: true as const } : {}),
+  };
   const key = verifyMarkerKey(now);
   try {
     await store.put(key, new TextEncoder().encode(JSON.stringify(marker)), { retentionDays: VERIFY_MARKER_RETENTION_DAYS });
@@ -1032,10 +1090,51 @@ function parseVerifyMarker(bytes: Uint8Array): VerifyMarker | null {
     if (!value || value.format !== 'crove-verify-marker' || value.version !== 1 || typeof value.verifiedAt !== 'string') return null;
     if (!Number.isSafeInteger(value.batches) || value.batches < 0) return null;
     if (value.chainSha256 !== null && (typeof value.chainSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.chainSha256))) return null;
+    if (value.incremental !== undefined && value.incremental !== true) return null;
     return value;
   } catch {
     return null;
   }
+}
+
+// Days between full passes (#2121): the nightly run reads only the batches after the last passing run, and every this
+// many days (the schedule is nightly, so about monthly) reads every batch again, which alone shows an old batch rewritten.
+export const FULL_VERIFY_DAYS = 30;
+// Markers read at most to find the last full pass (a nightly marker a day: a month and a half).
+const PLAN_MAX_MARKERS = 45;
+
+export interface VerificationPlan {
+  // 'incremental': start from `checkpoint`. 'full': read every batch; `checkpoint`, when there is one, is where a quick
+  // incremental run can first refresh the heartbeat marker, so a long full pass leaves no gap the prober would alert on.
+  mode: 'full' | 'incremental';
+  checkpoint: VerifyCheckpoint | null;
+  // Why a full pass, for the log.
+  reason: string;
+}
+
+// Decides tonight's run from the verification markers in the store alone (no database): incremental from the newest
+// marker's batch while a full pass is recent, full when there is no marker, one does not read, a marker's time is not
+// credible, or the newest full pass is older than `fullEveryDays`. A full pass never depends on a marker, so a forged or
+// missing one can at worst delay the next full pass by the days it can hide, not turn a run into a pass.
+export async function planVerification(store: ArchiveStore, now: Date = new Date(), fullEveryDays: number = FULL_VERIFY_DAYS): Promise<VerificationPlan> {
+  const keys = (await store.list(VERIFY_MARKER_PREFIX)).filter((key) => !verifyMarkerExpired(key, now)).sort().reverse().slice(0, PLAN_MAX_MARKERS);
+  if (keys.length === 0) return { mode: 'full', checkpoint: null, reason: 'no verification marker yet' };
+  let checkpoint: VerifyCheckpoint | null = null;
+  for (const key of keys) {
+    const bytes = await store.get(key);
+    const marker = bytes ? parseVerifyMarker(bytes) : null;
+    if (!marker) return { mode: 'full', checkpoint, reason: `marker ${key} does not read as a verification marker` };
+    if (checkpoint === null) {
+      if (marker.batches === 0 || marker.chainSha256 === null) return { mode: 'full', checkpoint: null, reason: 'the newest marker has no batch to start from' };
+      checkpoint = { seq: marker.batches, chainSha256: marker.chainSha256 };
+    }
+    if (marker.incremental) continue;
+    const named = verifyMarkerTime(key);
+    if (!named || named.getTime() > now.getTime() + 3_600_000) return { mode: 'full', checkpoint, reason: `marker ${key} names no credible time` };
+    if (now.getTime() - named.getTime() >= fullEveryDays * 86_400_000) return { mode: 'full', checkpoint, reason: `the last full pass was on ${named.toISOString().slice(0, 10)}` };
+    return { mode: 'incremental', checkpoint, reason: '' };
+  }
+  return { mode: 'full', checkpoint, reason: 'no full pass among the newest markers' };
 }
 
 export interface VerifyMarkerState {

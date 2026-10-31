@@ -23,7 +23,7 @@ This runbook covers setting the archive up, reading its two alerts, and what to 
     - They are ids, a doc type, a period key and a number: no personal data.
     - Each value is checked against its row hash, which the chain covers. A value changed in the store fails the verification as `high_mismatch`.
 - **Where batches go.** Each batch is written once to `chain/v1/<sequence>.json` in the archive store, then recorded in `crove_kernel.archive_batch`.
-- **The nightly check.** At 03:10 Vietnam time the verifier reads every batch back from the store, checks the chain, and recomputes every row hash from the database. The result goes to `crove_kernel.archive_verification`. A run that passes also writes a marker to the store, `verify/v1/<UTC time>.json`, which the prober reads from the store alone ([The verification heartbeat](#the-verification-heartbeat-2082)).
+- **The nightly check.** At 03:10 Vietnam time the verifier reads the batches back from the store, checks the chain, and recomputes every row hash from the database. Each night it reads only the batches after the last run that passed (the checkpoint, the newest marker's batch and chain hash), chained from that hash; about monthly, when the newest full pass is 30 days old or more, and whenever a restore acknowledgement is in force, it reads every batch ([Incremental and full passes](#incremental-and-full-passes-2121)). The result goes to `crove_kernel.archive_verification`. A run that passes also writes a marker to the store, `verify/v1/<UTC time>.json`, which the prober reads from the store alone ([The verification heartbeat](#the-verification-heartbeat-2082)).
 - **Markers.** A marker holds only when the run passed, how many batches it read and the chain hash of the newest one: no tenant data. Like a batch it is written once (create-only); on `s3` it is locked for 400 days. Add a lifecycle rule for `verify/` that expires objects after 400 days; on a versioned Object Lock bucket an expiry only adds a delete marker, so the rule also needs `NoncurrentVersionExpiration` and the removal of expired delete markers. The worker holds no delete permission.
 - **How alerts reach you.** Both jobs fail loudly:
   - A batch write that keeps failing fails its job (`kernel-archive-write`) after its retries.
@@ -205,12 +205,25 @@ A restore brings the database back to its backup point. The archive store is not
   - Record the restore and its report in the incident.
   - **A restore whose check did not acknowledge** (it stopped on exit 3, and the stack was started anyway; or it ran with `RESTORE_ARCHIVE=skip`): the worker records the batches after the backup point on its next run, and the verification fails on the lost rows every night. Before the stack starts, run the check again with `--reseed --acknowledge --backup-point <SNAPSHOT_AT>` (and the floors). Once the worker has recorded those batches, the check finds nothing after the backup point and can no longer acknowledge them; raise it on #2020.
 
+## Incremental and full passes (#2121)
+
+The archive grows by about 105,000 objects a year, and a nightly run that read all of them would outgrow its time limit within a year or two and raise false alerts. So the nightly run is incremental and a full pass runs about monthly.
+
+- **Incremental (most nights).** The worker reads the verification markers in the store, takes the newest marker's batch count and chain hash as the checkpoint, reads that one batch to confirm it still carries the recorded hash, and then verifies every later batch in full: chain, window, batch hash, the database record and every row hash. Its log line says `verified (incremental) N of M batch(es)`, and its marker carries `"incremental": true`.
+- **Full (about monthly).** When the newest marker without that flag is 30 days old or more, the run first does an incremental pass, which writes a fresh marker so the heartbeat the prober watches does not go stale while the long pass runs, and then reads every batch. The log says `full verification:` with the reason, then `verified (full)`. Only a full pass sees an old batch rewritten (the chain and batch hash of a batch before the checkpoint are not read at night) or a row changed in the database under an old batch.
+- **Always full:** with no marker yet (first run, or every marker unreadable, empty or dated in the future), and while a restore acknowledgement is in force: its excuses reach across batches, so the run reads them all.
+- **What an incremental run catches by itself:** the checkpoint batch no longer carrying the recorded chain hash (`chain_broken` at its sequence), the store having lost batches since (`object_missing`), and anything wrong in the new batches. Number series anchored before the checkpoint get their period check (`series_period_mismatch`) in the full pass.
+- **If a night fails,** no marker is written, so the next night starts from the same checkpoint and covers those batches again.
+- **To force a full pass now** (after an incident, or when something looks wrong), queue the job with `{"full": true}` (the example under "Running the verifier by hand"). Markers are create-only and locked, so they are never deleted to force one.
+- **Time limit.** The job's limit is 4 hours (`expireInSeconds` 14400). If the monthly full pass ever nears it, split the pass by sequence range before raising the limit again.
+
 ## Running the verifier by hand
 
-The worker runs it every night. To run it now, queue one job. This is the row pg-boss itself would insert, and the queue's own table is the only thing it writes:
+The worker runs it every night. To run it now, queue one job. This is the row pg-boss itself would insert, and the queue's own table is the only thing it writes. The run plans itself like the nightly one (incremental, or full when one is due); to read every batch whatever the plan says, send `{"full": true}` as the data:
 
 ```sh
 docker compose exec db psql -U postgres -c "INSERT INTO crove_jobs.job (name, data, policy) VALUES ('kernel-archive-verify', '{}', 'standard')"
+docker compose exec db psql -U postgres -c "INSERT INTO crove_jobs.job (name, data, policy) VALUES ('kernel-archive-verify', '{\"full\": true}', 'standard')"
 ```
 
 The result appears in `crove_kernel.archive_verification` and in the worker log: `[archive] verified ...`, or `[archive] ALERT ARCHIVE_MISMATCH ...`.
