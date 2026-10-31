@@ -22,7 +22,7 @@ import pg from 'pg';
 import { z } from 'zod';
 import { isHostedSupabase, modulesSetting } from './config.ts';
 import { probeStatus, writeStatusFile } from './status-page.ts';
-import { LocalArchiveStore, S3ArchiveStore, readVerifyMarker, type ArchiveS3Sender, type ArchiveStore } from './worm.ts';
+import { FULL_VERIFY_ALERT_DAYS, LocalArchiveStore, S3ArchiveStore, readVerifyMarker, type ArchiveS3Sender, type ArchiveStore } from './worm.ts';
 import { effectiveRepeatSeconds, memoryAlertGate, pgAlertGate, problemKey, type AlertGate, type GateResult } from './alert-gate.ts';
 import {
   WEBHOOK_ENV,
@@ -966,7 +966,19 @@ export async function checkVerifyMarker(settings: NonNullable<ProberConfig['arch
   if (!from) return null;
   if (!state.key && deps.startedAt && now.getTime() - deps.startedAt.getTime() <= limit * 1000) return null;
   const age = Math.max(Math.floor((now.getTime() - from.getTime()) / 1000), 0);
-  if (age <= limit) return null;
+  if (age <= limit) {
+    // The newest marker is recent, but an incremental run's vouches only for the batches since its checkpoint: full passes
+    // must keep happening (#2121), or a full pass the database owner keeps stopping would hide behind the nightly runs.
+    if (!state.key || !state.incremental) return null;
+    const fullLimit = FULL_VERIFY_ALERT_DAYS * 86_400;
+    const fullAge = state.fullPassAt ? Math.max(Math.floor((now.getTime() - state.fullPassAt.getTime()) / 1000), 0) : null;
+    if (fullAge !== null && fullAge <= fullLimit) return null;
+    const message =
+      fullAge === null
+        ? `the newest WORM verification marker is an incremental run's and records no full pass: the monthly full verification has not passed lately, or never finished`
+        : `the last full WORM verification pass was ${Math.floor(fullAge / 86_400)} days ago (limit ${FULL_VERIFY_ALERT_DAYS}): the monthly full verification has not passed since, or never finished`;
+    return { check: 'archive_marker', value: fullAge, threshold: fullLimit, message: `${message} (docs/runbooks/worm-archive.md)` };
+  }
   return state.key
     ? finding(age, `the WORM archive store wrote the newest verification marker ${hours(age)} ago (limit ${hours(limit)}): the nightly verification has not passed since, or never finished`)
     : finding(age, `the WORM archive store holds no verification marker, and wrote its first batch ${hours(age)} ago (limit ${hours(limit)}): no nightly verification has passed`);

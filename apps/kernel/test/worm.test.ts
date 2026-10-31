@@ -25,6 +25,7 @@ import {
   restoreAckKey,
   restoreAckStoreAlert,
   restoreReport,
+  planVerification,
   readVerifyMarker,
   VERIFY_MARKER_PREFIX,
   verifyArchive,
@@ -38,7 +39,6 @@ import {
   type ArchiveS3Sender,
   type ArchiveStore,
 } from '../src/worm.ts';
-import { planVerification } from '../src/worm.ts';
 
 type Sent = { name: string; input: Record<string, unknown> };
 
@@ -1076,7 +1076,7 @@ describe('series highs and the restore report (#2007)', () => {
 
     // Before the first marker, the store says when it wrote its first batch, so the prober can tell a new deployment
     // from a verification that never passed.
-    expect(await readVerifyMarker(store)).toEqual({ key: null, writtenAt: null, problem: null, rewritten: [], firstBatchAt: await store.writtenAt!(archiveKey(1)) });
+    expect(await readVerifyMarker(store)).toEqual({ key: null, writtenAt: null, problem: null, rewritten: [], firstBatchAt: await store.writtenAt!(archiveKey(1)), incremental: false, fullPassAt: null });
 
     const now = new Date('2026-10-30T02:15:07.123Z');
     const key = await writeVerifyMarker(store, passed, now);
@@ -1094,7 +1094,7 @@ describe('series highs and the restore report (#2007)', () => {
 
     // The prober reads the newest marker and the store's own write time for it, not the time the marker states.
     const read = await readVerifyMarker(store);
-    expect(read).toEqual({ key, writtenAt: await store.writtenAt!(key!), problem: null, rewritten: [], firstBatchAt: null });
+    expect(read).toEqual({ key, writtenAt: await store.writtenAt!(key!), problem: null, rewritten: [], firstBatchAt: null, incremental: false, fullPassAt: await store.writtenAt!(key!) });
 
     // A newer marker that names a chain hash the store's batch does not hold, or that does not parse, is a problem.
     const forged = writableStore(batches, {
@@ -1283,22 +1283,22 @@ describe('series highs and the restore report (#2007)', () => {
       const planOf = (markers: Record<string, unknown>) => planVerification(writableStore(batches, markers), now);
 
       it('starts from the newest marker while a full pass is recent, and says full when there is none, or it is old', async () => {
-        expect(await planOf({})).toMatchObject({ mode: 'full', checkpoint: null, reason: 'no verification marker yet' });
+        expect(await planOf({})).toMatchObject({ mode: 'full', checkpoint: null, lastFullAt: null, reason: 'no verification marker yet' });
         // A marker of a full pass (no incremental flag, as every marker before #2121): the checkpoint and the full pass.
-        expect(await planOf({ [markerKey('2026-11-14')]: marker('2026-11-14') })).toEqual({ mode: 'incremental', checkpoint: checkpointOf(batches, 5), reason: '' });
+        expect(await planOf({ [markerKey('2026-11-14')]: marker('2026-11-14') })).toEqual({ mode: 'incremental', checkpoint: checkpointOf(batches, 5), lastFullAt: '2026-11-14T03:15:00.000Z', reason: '' });
         // Incremental markers after it move the checkpoint, not the full pass.
         const mixed = {
           [markerKey('2026-11-01')]: marker('2026-11-01', {}, 2),
           [markerKey('2026-11-13')]: marker('2026-11-13', { incremental: true }, 3),
           [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }, 4),
         };
-        expect(await planOf(mixed)).toMatchObject({ mode: 'incremental', checkpoint: checkpointOf(batches, 4) });
+        expect(await planOf(mixed)).toMatchObject({ mode: 'incremental', checkpoint: checkpointOf(batches, 4), lastFullAt: '2026-11-01T03:15:00.000Z' });
         // The last full pass 30 days ago or more: full, keeping the checkpoint for the heartbeat run.
         const stale = {
           [markerKey('2026-10-10')]: marker('2026-10-10', {}, 2),
           [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }, 4),
         };
-        expect(await planOf(stale)).toMatchObject({ mode: 'full', checkpoint: checkpointOf(batches, 4), reason: 'the last full pass was on 2026-10-10' });
+        expect(await planOf(stale)).toMatchObject({ mode: 'full', checkpoint: checkpointOf(batches, 4), lastFullAt: '2026-10-10T03:15:00.000Z', reason: 'the last full pass was on 2026-10-10' });
         expect(await planOf({ [markerKey('2026-11-14')]: marker('2026-11-14', { incremental: true }) })).toMatchObject({ mode: 'full', reason: 'no full pass among the newest markers' });
       });
 
@@ -1307,6 +1307,15 @@ describe('series highs and the restore report (#2007)', () => {
         expect(await planOf({ [markerKey('2026-11-14')]: { ...marker('2026-11-14'), incremental: false } })).toMatchObject({ mode: 'full' });
         expect(await planOf({ [markerKey('2026-11-14')]: { ...marker('2026-11-14'), batches: 0, chainSha256: null } })).toMatchObject({ mode: 'full', checkpoint: null });
         expect(await planOf({ [markerKey('2026-12-30')]: marker('2026-12-30') })).toMatchObject({ mode: 'full', reason: expect.stringContaining('no credible time') });
+        // An incremental marker dated in the future pins no checkpoint either.
+        expect(await planOf({ [markerKey('2026-11-01')]: marker('2026-11-01', {}, 2), [markerKey('2026-12-30')]: marker('2026-12-30', { incremental: true }) })).toMatchObject({ mode: 'full', reason: expect.stringContaining('no credible time') });
+      });
+
+      it('falls due after about 30 days, counted from the marker a run stamps when it ends', async () => {
+        // 03:15 on the 16th of October to 03:10 on the 15th of November: 29 days and 23 hours and 55 minutes.
+        const edge = { [markerKey('2026-10-16')]: marker('2026-10-16') };
+        expect(await planOf(edge)).toMatchObject({ mode: 'full', reason: 'the last full pass was on 2026-10-16' });
+        expect(await planOf({ [markerKey('2026-10-17')]: marker('2026-10-17') })).toMatchObject({ mode: 'incremental' });
       });
 
       it('writes the incremental flag on the marker of an incremental run, and nothing new on a full one', async () => {
@@ -1321,12 +1330,33 @@ describe('series highs and the restore report (#2007)', () => {
           batches: 5,
           chainSha256: batches[4]!.chainSha256,
           incremental: true,
+          lastFullAt: null,
         });
+        // It records the full pass the plan found, which the prober reads from the newest marker alone.
+        const noted = await writeVerifyMarker(store, nightly, new Date(now.getTime() + 3_600_000), { lastFullAt: '2026-11-01T03:15:00.000Z' });
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(noted!)!))).toMatchObject({ incremental: true, lastFullAt: '2026-11-01T03:15:00.000Z' });
+        expect(await readVerifyMarker(store, now)).toMatchObject({ key: noted, incremental: true, fullPassAt: new Date('2026-11-01T03:15:00.000Z') });
         // The prober reads it like any marker.
         expect((await readVerifyMarker(store, now)).problem).toBeNull();
         const full = await verifyArchive(db, writableStore(batches));
         const fullKey = await writeVerifyMarker(store, full, new Date(now.getTime() + 86_400_000));
         expect(Object.keys(JSON.parse(new TextDecoder().decode(store.objects.get(fullKey!)!)))).toEqual(['format', 'version', 'verifiedAt', 'batches', 'chainSha256']);
+      });
+
+      it('gives the full pass of a night its own marker even when the quick run ended in the same second', async () => {
+        const db = holding(batches, 5, [1, 2, 3, 4, 5]);
+        const store = writableStore(batches);
+        const quick = await verifyArchive(db, store, { from: checkpointOf(batches, 3) });
+        const full = await verifyArchive(db, store);
+        const first = await writeVerifyMarker(store, quick, now, { lastFullAt: null, distinct: true });
+        const second = await writeVerifyMarker(store, full, now, { distinct: true });
+        expect(first).toBe(verifyMarkerKey(now));
+        expect(second).toBe(verifyMarkerKey(new Date(now.getTime() + 1000)));
+        expect(JSON.parse(new TextDecoder().decode(store.objects.get(second!)!))).not.toHaveProperty('incremental');
+        // The newest by key is the full pass, so tomorrow's plan is incremental.
+        expect(await planVerification(store, new Date(now.getTime() + 86_400_000))).toMatchObject({ mode: 'incremental' });
+        // Without `distinct`, a run in the same second still writes nothing over the key.
+        expect(await writeVerifyMarker(store, full, now)).toBeNull();
       });
     });
   });

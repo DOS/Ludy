@@ -1046,6 +1046,30 @@ describe('WORM verification marker (#2082)', () => {
     });
   });
 
+  // #2121: nightly runs are incremental, so a recent marker no longer proves a full pass is still happening: the newest
+  // marker of an incremental run says when the last one was, and the prober alerts when it is past 37 days.
+  it('alerts when the nightly markers are incremental and the last full pass is too old, or on record nowhere', async () => {
+    const recent = new Date(now.getTime() - DAY / 2);
+    const incremental = (lastFullAt: Date | null | undefined) => ({ ...marker(recent), incremental: true, ...(lastFullAt === undefined ? {} : { lastFullAt: lastFullAt === null ? null : lastFullAt.toISOString() }) });
+    const check = (body: unknown) => checkVerifyMarker(settings, { archiveStore: storeOf({ 'verify/v1/20261030T020000Z.json': { body, at: recent } }) }, now);
+    // A full pass 20 days ago, or 37: quiet.
+    expect(await check(incremental(new Date(now.getTime() - 20 * DAY)))).toBeNull();
+    expect(await check(incremental(new Date(now.getTime() - 37 * DAY)))).toBeNull();
+    // 38 days: the monthly full pass has not passed, though the nightly runs keep the heartbeat fresh.
+    expect(await check(incremental(new Date(now.getTime() - 38 * DAY)))).toEqual({
+      check: 'archive_marker',
+      value: 38 * 86_400,
+      threshold: 37 * 86_400,
+      message: 'the last full WORM verification pass was 38 days ago (limit 37): the monthly full verification has not passed since, or never finished (docs/runbooks/worm-archive.md)',
+    });
+    // None on record (no full pass among the newest markers when the run planned).
+    expect(await check(incremental(null))).toMatchObject({ check: 'archive_marker', value: null, message: expect.stringContaining('records no full pass') });
+    expect(await check(incremental(undefined))).toMatchObject({ check: 'archive_marker', value: null });
+    // A marker of a full pass (as every one before #2121) is its own full pass; a lastFullAt that is no date does not read.
+    expect(await check(marker(recent))).toBeNull();
+    expect(await check({ ...incremental(null), lastFullAt: 'last tuesday' })).toMatchObject({ message: expect.stringContaining('cannot be trusted') });
+  });
+
   it('is quiet while the newest marker is recent by the store, and alerts once when it grows old, through a gate outside the database', async () => {
     const io = capture();
     const hook = webhook();

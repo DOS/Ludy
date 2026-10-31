@@ -845,7 +845,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const elapsed = () => `${Math.round((Date.now() - started) / 1000)} s`;
       const alertOptions = deps.archive?.restoreAlertDays === undefined ? {} : { restoreAlertDays: deps.archive.restoreAlertDays };
       // One verification pass: records and alerts as before, and writes the marker of a pass that held.
-      const pass = async (from?: VerifyCheckpoint) => {
+      const pass = async (from?: VerifyCheckpoint, lastFullAt?: string | null) => {
         const result = await verifyArchive(deps.workerDb, store, from ? { ...alertOptions, from } : alertOptions);
         // An excuse is never silent (#2020): every run says what a restore acknowledgement excused, and a recent one, by
         // the store's own write time, alerts on every run, passing or failing, so an operator matches it to a real
@@ -855,7 +855,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         if (!result.ok) throw new ArchiveMismatchError(result);
         // The out-of-band heartbeat (#2082): a marker in the archive store, which the prober reads without the database.
         try {
-          await writeVerifyMarker(store, result);
+          // `distinct`: the quick run and the full pass of one night can end in the same second.
+          await writeVerifyMarker(store, result, new Date(), { lastFullAt: lastFullAt ?? null, distinct: true });
         } catch (error) {
           opsAlert(`[archive] ALERT the verification passed, but its marker could not be written to the archive store: the prober will report it stale`, error);
         }
@@ -867,15 +868,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // First, from the store alone, before any database query: a run the database owner stops has alerted already.
         const early = await restoreAckStoreAlert(store, alertOptions);
         if (early) opsAlert(`[archive] ALERT ${early}`);
-        const plan = forceFull ? { mode: 'full' as const, checkpoint: null, reason: 'requested by the job' } : await planVerification(store);
+        const plan = forceFull ? { mode: 'full' as const, checkpoint: null, lastFullAt: null, reason: 'requested by the job' } : await planVerification(store);
         if (plan.mode === 'incremental') {
-          await pass(plan.checkpoint ?? undefined);
+          await pass(plan.checkpoint ?? undefined, plan.lastFullAt);
         } else {
           console.log(`[archive] full verification: ${plan.reason}`);
           // The full pass grows with the archive and can run for hours: the new batches first, so the heartbeat marker
           // stays fresh while it runs (the prober alerts when the newest is about a day old). A restore acknowledgement
           // in force makes that run full already, so it is not repeated.
-          const quick = plan.checkpoint ? await pass(plan.checkpoint) : null;
+          const quick = plan.checkpoint ? await pass(plan.checkpoint, plan.lastFullAt) : null;
           if (quick?.mode !== 'full') await pass();
         }
       } catch (error) {

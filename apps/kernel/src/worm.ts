@@ -1042,6 +1042,9 @@ export interface VerifyMarker {
   // Present, and true, only on the marker of an incremental run (#2121): it vouches for the batches after the checkpoint
   // it started from, and for the rest only as that run's own markers did. A marker without it is of a full pass.
   incremental?: true;
+  // On an incremental marker: when the newest full pass the run knew of was done (null: it found none), so the prober
+  // can tell from the newest marker alone that full passes have stopped (#2121).
+  lastFullAt?: string | null;
 }
 
 export const verifyMarkerKey = (at: Date) => `${VERIFY_MARKER_PREFIX}${at.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}.json`;
@@ -1063,25 +1066,38 @@ export function verifyMarkerTime(key: string): Date | null {
 }
 
 // Writes the marker of a run that passed; returns its key, or null for a run that did not pass (it writes none, so the
-// prober alerts once the newest marker grows old). A second run in the same second finds the key taken and writes none.
-export async function writeVerifyMarker(store: ArchiveStore, result: ArchiveVerification, now: Date = new Date()): Promise<string | null> {
+// prober alerts once the newest marker grows old). A second run in the same second finds the key taken and writes none,
+// unless `distinct` is set: the worker's two runs of a full-pass night can end in the same second, and the full pass's
+// marker must not be the one dropped, so it takes the next free second instead (#2121). An incremental run records
+// `lastFullAt`, the time of the newest full pass the planner found (null: none on record), which the prober reads from
+// the newest marker alone and alerts on when it grows old (readVerifyMarker).
+export async function writeVerifyMarker(
+  store: ArchiveStore,
+  result: ArchiveVerification,
+  now: Date = new Date(),
+  options: { lastFullAt?: string | null; distinct?: boolean } = {},
+): Promise<string | null> {
   if (!result.ok) return null;
-  const marker: VerifyMarker = {
-    format: 'crove-verify-marker',
-    version: 1,
-    verifiedAt: now.toISOString(),
-    batches: result.batches,
-    chainSha256: result.headChainSha256,
-    ...(result.mode === 'incremental' ? { incremental: true as const } : {}),
-  };
-  const key = verifyMarkerKey(now);
-  try {
-    await store.put(key, new TextEncoder().encode(JSON.stringify(marker)), { retentionDays: VERIFY_MARKER_RETENTION_DAYS });
-  } catch (error) {
-    if (error instanceof ArchiveObjectExistsError) return null;
-    throw error;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const at = new Date(now.getTime() + attempt * 1000);
+    const marker: VerifyMarker = {
+      format: 'crove-verify-marker',
+      version: 1,
+      verifiedAt: at.toISOString(),
+      batches: result.batches,
+      chainSha256: result.headChainSha256,
+      ...(result.mode === 'incremental' ? { incremental: true as const, lastFullAt: options.lastFullAt ?? null } : {}),
+    };
+    const key = verifyMarkerKey(at);
+    try {
+      await store.put(key, new TextEncoder().encode(JSON.stringify(marker)), { retentionDays: VERIFY_MARKER_RETENTION_DAYS });
+      return key;
+    } catch (error) {
+      if (!(error instanceof ArchiveObjectExistsError)) throw error;
+      if (!options.distinct) return null;
+    }
   }
-  return key;
+  return null;
 }
 
 function parseVerifyMarker(bytes: Uint8Array): VerifyMarker | null {
@@ -1091,6 +1107,7 @@ function parseVerifyMarker(bytes: Uint8Array): VerifyMarker | null {
     if (!Number.isSafeInteger(value.batches) || value.batches < 0) return null;
     if (value.chainSha256 !== null && (typeof value.chainSha256 !== 'string' || !/^[0-9a-f]{64}$/.test(value.chainSha256))) return null;
     if (value.incremental !== undefined && value.incremental !== true) return null;
+    if (value.lastFullAt !== undefined && value.lastFullAt !== null && (typeof value.lastFullAt !== 'string' || Number.isNaN(Date.parse(value.lastFullAt)))) return null;
     return value;
   } catch {
     return null;
@@ -1103,11 +1120,17 @@ export const FULL_VERIFY_DAYS = 30;
 // Markers read at most to find the last full pass (a nightly marker a day: a month and a half).
 const PLAN_MAX_MARKERS = 45;
 
+// The prober alerts when the newest full pass is older than this (#2121): a full pass that never finishes (the database
+// owner can stop its queries) must not hide behind incremental runs that keep the heartbeat fresh.
+export const FULL_VERIFY_ALERT_DAYS = FULL_VERIFY_DAYS + 7;
+
 export interface VerificationPlan {
   // 'incremental': start from `checkpoint`. 'full': read every batch; `checkpoint`, when there is one, is where a quick
   // incremental run can first refresh the heartbeat marker, so a long full pass leaves no gap the prober would alert on.
   mode: 'full' | 'incremental';
   checkpoint: VerifyCheckpoint | null;
+  // When the newest full pass the plan found was done (ISO), null when there is none among the newest markers.
+  lastFullAt: string | null;
   // Why a full pass, for the log.
   reason: string;
 }
@@ -1118,23 +1141,26 @@ export interface VerificationPlan {
 // missing one can at worst delay the next full pass by the days it can hide, not turn a run into a pass.
 export async function planVerification(store: ArchiveStore, now: Date = new Date(), fullEveryDays: number = FULL_VERIFY_DAYS): Promise<VerificationPlan> {
   const keys = (await store.list(VERIFY_MARKER_PREFIX)).filter((key) => !verifyMarkerExpired(key, now)).sort().reverse().slice(0, PLAN_MAX_MARKERS);
-  if (keys.length === 0) return { mode: 'full', checkpoint: null, reason: 'no verification marker yet' };
+  if (keys.length === 0) return { mode: 'full', checkpoint: null, lastFullAt: null, reason: 'no verification marker yet' };
   let checkpoint: VerifyCheckpoint | null = null;
   for (const key of keys) {
     const bytes = await store.get(key);
     const marker = bytes ? parseVerifyMarker(bytes) : null;
-    if (!marker) return { mode: 'full', checkpoint, reason: `marker ${key} does not read as a verification marker` };
+    if (!marker) return { mode: 'full', checkpoint, lastFullAt: null, reason: `marker ${key} does not read as a verification marker` };
     if (checkpoint === null) {
-      if (marker.batches === 0 || marker.chainSha256 === null) return { mode: 'full', checkpoint: null, reason: 'the newest marker has no batch to start from' };
+      if (marker.batches === 0 || marker.chainSha256 === null) return { mode: 'full', checkpoint: null, lastFullAt: null, reason: 'the newest marker has no batch to start from' };
       checkpoint = { seq: marker.batches, chainSha256: marker.chainSha256 };
     }
-    if (marker.incremental) continue;
     const named = verifyMarkerTime(key);
-    if (!named || named.getTime() > now.getTime() + 3_600_000) return { mode: 'full', checkpoint, reason: `marker ${key} names no credible time` };
-    if (now.getTime() - named.getTime() >= fullEveryDays * 86_400_000) return { mode: 'full', checkpoint, reason: `the last full pass was on ${named.toISOString().slice(0, 10)}` };
-    return { mode: 'incremental', checkpoint, reason: '' };
+    if (!named || named.getTime() > now.getTime() + 3_600_000) return { mode: 'full', checkpoint, lastFullAt: null, reason: `marker ${key} names no credible time` };
+    if (marker.incremental) continue;
+    // A marker is stamped when its run ends, a little after the 03:10 start: a day short of the limit, so the full pass
+    // falls about every `fullEveryDays` days, not one more.
+    const lastFullAt = named.toISOString();
+    if (now.getTime() - named.getTime() >= (fullEveryDays - 1) * 86_400_000) return { mode: 'full', checkpoint, lastFullAt, reason: `the last full pass was on ${lastFullAt.slice(0, 10)}` };
+    return { mode: 'incremental', checkpoint, lastFullAt, reason: '' };
   }
-  return { mode: 'full', checkpoint, reason: 'no full pass among the newest markers' };
+  return { mode: 'full', checkpoint, lastFullAt: null, reason: 'no full pass among the newest markers' };
 }
 
 export interface VerifyMarkerState {
@@ -1150,6 +1176,11 @@ export interface VerifyMarkerState {
   // With no marker yet: when the store wrote its first batch (null with none), so a fresh deployment does not alert
   // before its first nightly run.
   firstBatchAt: Date | null;
+  // When the newest full pass was done, as the newest marker says (#2121): its own write time for a marker of a full
+  // pass, the time it records for an incremental one (null: none on record). With `incremental`, whether the newest
+  // marker is an incremental run's. The prober alerts when full passes have stopped (FULL_VERIFY_ALERT_DAYS).
+  incremental: boolean;
+  fullPassAt: Date | null;
 }
 
 // The newest verification marker in the store, read from the store alone (#2082): the prober's out-of-band check. Newest
@@ -1165,7 +1196,7 @@ export async function readVerifyMarker(store: ArchiveStore, now: Date = new Date
         .map(([key]) => key)
         .sort()
     : [];
-  if (keys.length === 0) return { key: null, writtenAt: null, problem: null, rewritten, firstBatchAt: await writtenAt(archiveKey(1)) };
+  if (keys.length === 0) return { key: null, writtenAt: null, problem: null, rewritten, firstBatchAt: await writtenAt(archiveKey(1)), incremental: false, fullPassAt: null };
   const times = new Map<string, Date>();
   if (store.writtenTimes) for (const [k, at] of await store.writtenTimes(VERIFY_MARKER_PREFIX)) times.set(k, at);
   else if (store.writtenAt) {
@@ -1189,7 +1220,9 @@ export async function readVerifyMarker(store: ArchiveStore, now: Date = new Date
     const batch = batchBytes ? parseBatch(batchBytes) : null;
     if (!batch || batch.chainSha256 !== marker.chainSha256) problem = `it names a chain hash that batch ${marker.batches} in the store does not hold`;
   }
-  return { key, writtenAt: newest, problem, rewritten, firstBatchAt: null };
+  const incremental = marker?.incremental === true;
+  const fullPassAt = incremental ? (marker?.lastFullAt ? new Date(marker.lastFullAt) : null) : newest;
+  return { key, writtenAt: newest, problem, rewritten, firstBatchAt: null, incremental, fullPassAt };
 }
 
 // What the worker alerts before a verification run reads the database (#2020): the newest object under restores/v1/, by
