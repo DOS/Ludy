@@ -7,6 +7,10 @@
 //   transaction-level advisory lock, so two at once cannot both store the same line: the second waits, then sees the
 //   first's lines (READ COMMITTED, the runtime's isolation for commands). The unique key on (account, dedupe_key)
 //   refuses a double from any writer anyway, and the insert skips a key already there rather than failing.
+//   A reference the account already holds with another date or amount (#2191) is a conflict, not a duplicate: the key
+//   `ref:<reference>` stays as ADR-0021 fixed it (so a transaction seen from a feed and in a file is one line, whichever
+//   date format each prints), the amount and date are compared on top of it, and a line that disagrees is stored
+//   keyless and flagged (ambiguous), as a line "to look at" is, instead of being dropped. Statements and feed pulls alike.
 // - finance.bank.lines: the stored lines of one account for a month, quarter or year, each with what became of it
 //   (stage 2a, bank-match.ts: open, proposed as a voucher, or settled by one).
 // - finance.bank.ingest (ADR-0039, #2044): the lines a bank feed reports, sent by the worker, checked and stored on the
@@ -31,7 +35,7 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { Decimal } from '@crove/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import { bankLineStates } from './bank-match.ts';
-import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredFacts } from './domain/bank-statement.ts';
+import { checkLines, checkStatement, readFeedLines, readStatement, type StatementCheck, type StoredChainLine, type StoredDateAmount, type StoredFacts } from './domain/bank-statement.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -60,24 +64,42 @@ async function storedAround(
   ctx: QueryContext,
   legalEntityId: string,
   bankAccountCode: string,
-  lines: ReadonlyArray<{ date: string }>,
+  lines: ReadonlyArray<{ date: string; reference: string | null }>,
   keys: ReadonlyArray<string | null>,
 ): Promise<{ stored: StoredFacts; chain: Chain }> {
   const dates = lines.map((l) => l.date).sort();
   const from = dates[0];
   const to = dates.at(-1);
   const batchKeys = keys.filter((k): k is string => k !== null);
-  const storedKeys =
-    batchKeys.length === 0
+  // The lines the account holds under the batch's keys, and under its references with no key: a line stored as a conflict
+  // has none (#2191), so a reference that comes again with another date or amount is a conflict, never a silent
+  // duplicate. The keys go through the unique index; only a keyless, flagged line is looked for by its reference, so the
+  // lookup stays bounded by the batch and the conflicts, not the account's whole history.
+  const batchRefs = [...new Set(lines.flatMap((l) => (l.reference ? [l.reference] : [])))];
+  const storedRows =
+    batchKeys.length === 0 && batchRefs.length === 0
       ? []
       : await ctx.trx
           .selectFrom('crove_finance.bank_line')
-          .select('dedupe_key')
+          .select(['dedupe_key', 'bank_ref', 'value_date', 'amount'])
           .where('org_id', '=', ctx.orgId)
           .where('legal_entity_id', '=', legalEntityId)
           .where('bank_account', '=', bankAccountCode)
-          .where('dedupe_key', 'in', batchKeys)
+          .where((eb) =>
+            eb.or([
+              ...(batchKeys.length > 0 ? [eb('dedupe_key', 'in', batchKeys)] : []),
+              ...(batchRefs.length > 0 ? [eb.and([eb('dedupe_key', 'is', null), eb('ambiguous', '=', true), eb('bank_ref', 'in', batchRefs)])] : []),
+            ]),
+          )
+          .orderBy('import_id')
+          .orderBy('position')
           .execute();
+  const storedKeys = storedRows.filter((r) => r.dedupe_key !== null);
+  const refs = new Map<string, StoredDateAmount[]>();
+  for (const r of storedRows) {
+    if (r.bank_ref === null) continue;
+    refs.set(r.bank_ref, [...(refs.get(r.bank_ref) ?? []), { date: r.value_date, amount: new Decimal(r.amount).toFixed() }]);
+  }
   let within: Array<StoredChainLine> = [];
   let before: StoredChainLine | null = null;
   if (from && to) {
@@ -108,7 +130,7 @@ async function storedAround(
   }
   const dateAmounts = new Set(within.map((l) => `${l.date}|${new Decimal(l.amount).toFixed()}`));
   return {
-    stored: { keys: new Set(storedKeys.map((k) => k.dedupe_key as string)), dateAmounts },
+    stored: { keys: new Set(storedKeys.map((k) => k.dedupe_key as string)), dateAmounts, refs },
     chain: {
       before: before && { ...before, amount: new Decimal(before.amount).toFixed(), balance: before.balance === null ? null : new Decimal(before.balance).toFixed() },
       within: within.map((l) => ({ ...l, amount: new Decimal(l.amount).toFixed(), balance: l.balance === null ? null : new Decimal(l.balance).toFixed() })),
@@ -188,13 +210,22 @@ export async function previewStatement(ctx: QueryContext, input: BankStatementIm
 // lock, refusing a file with an invalid row (BANK_IMPORT_INVALID, before anything is written). The browser import
 // (finance.bank.import) and a statement read from a forwarded or dropped file (finance.bank.statement_file, #2142) store
 // through here, so both keep the same lines and the same keys. `fileId`, for a file received, is named in the audit row.
-export async function importStatement(ctx: CommandContext, input: BankStatementImport, legalEntityId: string, fileId?: string): Promise<BankImportResult> {
+// `shownConflicts`, for a statement a member decides from a card (#2191): the file rows whose conflicts the card told
+// them about. A conflict on any other row (a line the books took since the file was read) refuses the import, before
+// anything is written, so the member never imports a conflict they were not shown. Compared by row, not by count: a
+// conflict that went away while another appeared leaves the count as it was.
+export async function importStatement(ctx: CommandContext, input: BankStatementImport, legalEntityId: string, fileId?: string, shownConflicts?: ReadonlySet<number>): Promise<BankImportResult> {
   await bankAccount(ctx, input.bankAccount, true);
   await lockAccount(ctx, legalEntityId, input.bankAccount);
   const { preview, lines } = await check(ctx, input, legalEntityId);
   if (!preview.ok) {
     throw new DomainError('BANK_IMPORT_INVALID', 422, 'Sao kê có dòng không đọc được; hãy xem lại trước khi nhập', {
       rows: preview.rows.filter((r) => r.errors.length > 0).map((r) => r.rowNo),
+    });
+  }
+  if (shownConflicts !== undefined && preview.rows.some((r) => r.status === 'conflict' && !shownConflicts.has(r.rowNo))) {
+    throw new DomainError('STATEMENT_CONFLICTS_CHANGED', 409, 'Sổ vừa có thêm dòng trùng mã tham chiếu với sao kê này nhưng khác ngày hoặc số tiền; hãy xem lại các dòng, bấm Đọc lại ở tệp này rồi nhập', {
+      conflicts: preview.counts.conflict,
     });
   }
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, lines);
@@ -213,12 +244,13 @@ export async function importStatement(ctx: CommandContext, input: BankStatementI
     'finance.bank_account',
     importId,
     'bank.statement_imported',
-    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous} dòng mới, ${preview.counts.duplicate} dòng đã có`,
+    `Nhập sao kê ${input.bankAccount}: ${preview.counts.new + preview.counts.ambiguous + preview.counts.conflict} dòng mới, ${preview.counts.duplicate} dòng đã có${preview.counts.conflict > 0 ? `, ${preview.counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
     // An import with no new line stores no bank_line to take the entity from (#1728).
     { legalEntityId },
   );
-  // Lines that need a look: the owners and admins are told (#671, finance.notification.dispatch).
-  if (preview.counts.ambiguous > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: preview.counts.ambiguous });
+  // Lines that need a look (a conflict is one too, #2191): the owners and admins are told (#671, finance.notification.dispatch).
+  const toLookAt = preview.counts.ambiguous + preview.counts.conflict;
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
   return result;
 }
 
@@ -255,22 +287,24 @@ export async function ingestFeedLines(ctx: CommandContext, input: BankFeedIngest
   const importId = await storeLines(ctx, legalEntityId, input.bankAccount, toStore);
   // A batch the account already has stores nothing; its importId then names no line, as an import of a known file.
   // The feed's lines were checked whole above, so none is invalid.
-  const counts = { new: 0, duplicate: 0, ambiguous: 0, invalid: 0 };
+  const counts = { new: 0, duplicate: 0, ambiguous: 0, conflict: 0, invalid: 0 };
   for (const status of statuses) counts[status]++;
   const dates = read.lines.map((l) => l.date);
   ctx.audit({ bankAccount: input.bankAccount, importId, source: input.source, from: dates[0], to: dates.at(-1), ...counts, breaks: breaks.length });
   // Only a pull that stored lines shows on the account's timeline (the import shows every file a person brought).
-  if (counts.new + counts.ambiguous > 0) {
+  const storedCount = counts.new + counts.ambiguous + counts.conflict;
+  if (storedCount > 0) {
     await ctx.activity(
       'finance.bank_account',
       importId,
       'bank.feed_received',
-      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${counts.new + counts.ambiguous} dòng mới, ${counts.duplicate} dòng đã có`,
+      `Nhận giao dịch ngân hàng ${input.bankAccount} (${input.source}): ${storedCount} dòng mới, ${counts.duplicate} dòng đã có${counts.conflict > 0 ? `, ${counts.conflict} dòng trùng mã tham chiếu nhưng khác ngày hoặc số tiền` : ''}`,
       { legalEntityId },
     );
   }
-  // Lines that need a look: the owners and admins are told, as for an import (#671).
-  if (counts.ambiguous > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: counts.ambiguous });
+  // Lines that need a look (a conflict is one too, #2191): the owners and admins are told, as for an import (#671).
+  const toLookAt = counts.ambiguous + counts.conflict;
+  if (toLookAt > 0) await ctx.emit('finance.bank.imported', { importId, bankAccount: input.bankAccount, ambiguous: toLookAt });
   return { importId, counts, breaks };
 }
 

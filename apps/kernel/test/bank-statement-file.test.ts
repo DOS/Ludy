@@ -76,12 +76,15 @@ const staged: StatementStageOutcome = {
   summary: {
     state: 'staged',
     accountNumber: STATEMENT_ACCOUNT,
+    accountMask: '*******1234',
     bankAccount: '1121',
     legalEntityId: '0190a000-0000-7000-8000-0000000000e1',
     filename: 'sao-ke.xlsx',
     lines: 3,
     newLines: 3,
     duplicateLines: 0,
+    conflictLines: 0,
+    conflictRows: [],
     from: '2026-09-01',
     to: '2026-09-03',
     totalIn: '2000000',
@@ -249,5 +252,13 @@ describe('statementFileRows', () => {
       // A typed text with an exponent is sent as a value the module refuses, never as 1000.
       { rowNo: 3, date: '02/09/2026', description: 'b', reference: '', moneyIn: '', moneyOut: '1.5', balance: '?' },
     ]);
+  });
+
+  it('refuses an amount text longer than the module takes, with its row, instead of cutting it (#2191)', () => {
+    const long = '1'.repeat(51);
+    expect(statementFileRows([{ rowNo: 4, date: '01/09/2026', description: 'a', reference: 'r', moneyIn: { kind: 'number', value: long }, moneyOut: null, balance: null }])).toEqual({ tooLongRow: 4 });
+    // Exactly the limit goes through whole.
+    const exact = statementFileRows([{ rowNo: 4, date: '01/09/2026', description: 'a', reference: 'r', moneyIn: { kind: 'number', value: '1'.repeat(50) }, moneyOut: null, balance: null }]);
+    expect(Array.isArray(exact) && exact[0]?.moneyIn).toBe('1'.repeat(50));
   });
 });
