@@ -667,6 +667,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
   // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
+    throw new Error('CROVE_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
+  }
+  // Supabase's transaction-mode pooler listens on port 6543 (its session mode and the direct connection on 5432): the one
+  // URL-level sign of the pooler the reset cannot work behind. Another pooler is the operator's to keep out (runbook).
+  if (config.CROVE_SHARED_DATABASE === 'true') {
+    for (const [name, url] of [['DATABASE_URL', config.DATABASE_URL], ['WORKER_DATABASE_URL', config.WORKER_DATABASE_URL]] as const) {
+      if (url !== undefined && URL.canParse(url) && new URL(url).port === '6543') {
+        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: CROVE_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
+      }
+    }
+  }
   if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
     throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }

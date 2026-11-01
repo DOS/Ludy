@@ -228,6 +228,11 @@ async function foreignPrivileges(client: pg.ClientBase): Promise<Array<{ schema:
 // Shared database (#2284): the roles of the host that can read and write every org's data whatever row-level security says, or
 // can make themselves able to. Ludy cannot stop them; the run reports them so the owner knows who they are (the runbook says
 // so too). Not a violation: a Supabase project's own admin roles are among them.
+// An SQL identifier for a message that shows a statement to run.
+function quoteIdent(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
 export async function sharedPrivilegedRoles(client: pg.ClientBase): Promise<Array<{ role: string; why: string }>> {
   const { rows } = await client.query<{ role: string; why: string }>(
     `SELECT r.rolname::text AS role,
@@ -238,7 +243,7 @@ export async function sharedPrivilegedRoles(client: pg.ClientBase): Promise<Arra
               CASE WHEN pg_catalog.pg_has_role(r.oid, 'pg_write_all_data', 'MEMBER') THEN 'pg_write_all_data' END,
               CASE WHEN r.rolcreaterole THEN 'CREATEROLE' END) AS why
      FROM pg_catalog.pg_roles r
-     WHERE r.rolname <> ALL ($1::text[]) AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> current_user
+     WHERE r.rolname <> ALL ($1::text[]) AND r.rolname NOT LIKE 'pg\\_%'
        AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole
             OR pg_catalog.pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER') OR pg_catalog.pg_has_role(r.oid, 'pg_write_all_data', 'MEMBER'))
      ORDER BY 1`,
@@ -1027,11 +1032,15 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       (r) =>
         `role ${r.rolname} may CREATE in schema crove_jobs, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA crove_jobs FROM ${r.rolname}`,
     ),
-    ...foreign.map(
-      (f) =>
-        `role ${f.role} holds privileges on objects of the Ludy schema ${f.schema} and is not a Ludy role (a shared database); fix: ` +
-        `REVOKE ALL ON ALL TABLES, ALL SEQUENCES, ALL ROUTINES IN SCHEMA ${f.schema} and ON SCHEMA ${f.schema} FROM ${f.role}, which migrate does on every run`,
-    ),
+    ...foreign.map((f) => {
+      const schema = quoteIdent(f.schema);
+      const role = quoteIdent(f.role);
+      return (
+        `role ${f.role} holds privileges on objects of the Ludy schema ${f.schema} and is not a Ludy role (a shared database); fix (migrate does it on every run): ` +
+        `REVOKE ALL ON ALL TABLES IN SCHEMA ${schema} FROM ${role}; REVOKE ALL ON ALL SEQUENCES IN SCHEMA ${schema} FROM ${role}; ` +
+        `REVOKE ALL ON ALL ROUTINES IN SCHEMA ${schema} FROM ${role}; REVOKE ALL ON SCHEMA ${schema} FROM ${role}`
+      );
+    }),
     ...actors.map(
       (r) =>
         `role ${r.rolname} is not a Ludy role but can act as ${r.via} (a shared database); fix as the owner of that membership: ` +

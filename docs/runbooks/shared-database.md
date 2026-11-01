@@ -45,7 +45,7 @@ Ludy does two things about them. Every `migrate` run logs the list (`warning: th
 
 - **A migration login of its own**, not the project's admin role (`postgres`, `supabase_admin`). Supabase sets default privileges for those roles that hand every new object to its API roles; `migrate` takes them back from Ludy's objects, but a dedicated role keeps Ludy's objects out of those defaults to begin with. The login needs `CREATEROLE` (it creates the `crove_*` roles) and `CREATE` on the database (it creates the `crove_*` schemas), is not a superuser, and owns what it creates. **It must be the one that creates the `crove_*` roles** (the first `migrate` run does): a role holds `ADMIN OPTION` on the roles it creates, and the guard fails the run when any other non-superuser role, `postgres` included, can act as a `crove_*` role. If the roles already exist, made by another login, that login revokes its memberships and gives the migration login `ADMIN OPTION` on each role first.
 - **The DDL watch needs a role that may create event triggers** (a superuser, or on hosted Supabase the privileged `postgres` role): `migrate` runs that step with the same URL and logs `DDL watch skipped` where the role may not, in which case Ludy runs without the watch (docs/runbooks/alerts.md). The event function must be owned by a superuser or by the role that attaches the triggers.
-- **A direct or session-mode connection** for the API, the worker and `migrate`, with `DB_RESET_ON_RELEASE=true` (the default): the pool clears each connection's temporary objects when it goes back, which a transaction-mode pooler (Supavisor's transaction mode, PgBouncer) cannot do, so the kernel refuses to start with the reset off in this mode.
+- **A direct or session-mode connection** for the API, the worker and `migrate` (on a Supabase project port 5432; the transaction-mode pooler on port 6543 is refused at start), with `DB_RESET_ON_RELEASE=true` (the default), and `AUTH_SESSION_CHECK=jwt` (`db` needs `auth-grants`, which is refused): the pool clears each connection's temporary objects when it goes back, which a transaction-mode pooler (Supavisor's transaction mode, PgBouncer) cannot do, so the kernel refuses to start with the reset off in this mode.
 - **Connections:** the pools are sized against the whole database's `max_connections`, which the other systems share (`DATABASE_POOL_MAX`, `WORKER_DATABASE_POOL_MAX`, docs/runbooks/observability.md).
 
 Check the schema and role names before the first run (both queries return no row):
@@ -67,7 +67,7 @@ The mode is locked to the database. `migrate` records it in `crove_meta.deployme
 
 The project's own backup covers the whole database and belongs to its owner; Ludy keeps its own logical backup of its schemas beside it, so Ludy can be restored without touching anyone else's data.
 
-- **Daily**, from a host that is not the database, as a login that can read every `crove_*` table: the migration login, or a role **named `crove_*`** (a reader named otherwise has its privileges taken back on every `migrate` run, and the next dump breaks). The secret comes from the password manager.
+- **Daily**, from a host that is not the database, as the **migration login**, or as one of Ludy's eight roles that can read every table. A separate reader login of any other name, whatever it is called, has its direct grants on Ludy's objects taken back on every `migrate` run (the revoke skips only superusers, the running role, built-in `pg_*` roles, object owners and PUBLIC), and the next dump would break. The secret comes from the password manager.
 
   ```bash
   pg_dump --format=custom --schema='crove_*' \
@@ -83,7 +83,22 @@ The project's own backup covers the whole database and belongs to its owner; Lud
 
 ## Restore
 
-Both routes replace Ludy's schemas and nothing else. Stop `api` and `worker` first, so nothing writes while the schemas are replaced, and start them last. Run the restore as the migration login: it holds the right to hand objects to the definer roles (the migrations grant it `SET` on them), which the restore needs to give each function back to its owner.
+Both routes replace Ludy's schemas, and only them once the check below passes. Stop `api` and `worker` first, so nothing writes while the schemas are replaced, and start them last. Run the restore as the migration login: it holds the right to hand objects to the definer roles (the migrations grant it `SET` on them), which the restore needs to give each function back to its owner.
+
+**Before the drop, look for objects outside `crove_*` that depend on a `crove_*` object** (a view of the other system over a Ludy table, say): `DROP SCHEMA ... CASCADE` would drop them too. Run this as the migration login; it must return no row (the DDL watch's two event triggers are Ludy's and are not listed):
+
+```sql
+SELECT DISTINCT pg_catalog.pg_describe_object(d.classid, d.objid, d.objsubid) AS dependent
+FROM pg_catalog.pg_depend d
+WHERE d.deptype IN ('n', 'a')
+  AND d.classid <> 'pg_catalog.pg_default_acl'::pg_catalog.regclass
+  AND d.refclassid IN ('pg_catalog.pg_class'::pg_catalog.regclass, 'pg_catalog.pg_proc'::pg_catalog.regclass,
+                       'pg_catalog.pg_type'::pg_catalog.regclass, 'pg_catalog.pg_namespace'::pg_catalog.regclass)
+  AND (pg_catalog.pg_identify_object_as_address(d.refclassid, d.refobjid, d.refobjsubid)).object_names[1] LIKE 'crove\_%'
+  AND NOT ((pg_catalog.pg_identify_object_as_address(d.classid, d.objid, d.objsubid)).object_names[1] LIKE 'crove\_%');
+```
+
+Stop and ask the project's owner when it returns anything; do not drop.
 
 How the schemas are replaced, in one transaction so that a failure leaves them as they were:
 

@@ -35,7 +35,9 @@ function as(url: string, user: string, password: string, database: string): stri
 }
 
 suite('shared-database mode beside a foreign schema and role (Supabase Postgres image)', () => {
-  const adminUrl = URL_ENV as string;
+  // The suite body also runs when it is skipped (vitest collects it), so the URLs below must build without CROVE_TEST_SUPABASE_URL:
+  // a placeholder stands in, and no hook or test runs against it.
+  const adminUrl = URL_ENV ?? 'postgres://postgres:unused@127.0.0.1:1/postgres';
   const sharedUrl = as(adminUrl, decodeURIComponent(new URL(adminUrl).username), decodeURIComponent(new URL(adminUrl).password), DB);
   const FOREIGN_PASSWORD = 'foreign-test-password-1';
   let admin: pg.Client;
