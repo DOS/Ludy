@@ -5,7 +5,7 @@
 // the card moves at once and goes back, with the reason, when the server refuses (a stale version, a removed stage).
 // Dropping on a lost stage asks for an optional reason first. Won and Lost show the deals closed in the last 30 days.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type DragEvent } from 'react';
+import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { BOARD_CLOSED_DAYS, DEAL_LOST_REASON_MAX, type Board, type BoardColumn, type Deal } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -90,6 +90,10 @@ function Card({
   );
 }
 
+// How close to an edge of the board a drag starts to scroll it, and how far each dragover scrolls.
+const EDGE = 80;
+const SCROLL_STEP = 24;
+
 export function DealBoard({ members, canEdit }: { members: readonly Member[]; canEdit: boolean }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
@@ -102,6 +106,16 @@ export function DealBoard({ members, canEdit }: { members: readonly Member[]; ca
   const [losing, setLosing] = useState<{ deal: Deal; drop: Drop } | null>(null);
   const [reason, setReason] = useState('');
   const [failure, setFailure] = useState<unknown>(null);
+  // Near either edge of the board the columns scroll by themselves, so a card can be dragged to a column out of sight. The
+  // snap points are off while dragging, or they would pull the scroll back.
+  const scroller = useRef<HTMLDivElement>(null);
+  const scrollNearEdge = (clientX: number) => {
+    const el = scroller.current;
+    if (!el || !dragging) return;
+    const box = el.getBoundingClientRect();
+    if (clientX > box.right - EDGE) el.scrollLeft += SCROLL_STEP;
+    else if (clientX < box.left + EDGE) el.scrollLeft -= SCROLL_STEP;
+  };
   const move = useMutation(
     orpc.crm.deals.move.mutationOptions({
       onMutate: async (input: MoveInput) => {
@@ -142,6 +156,7 @@ export function DealBoard({ members, canEdit }: { members: readonly Member[]; ca
   const onDragOverCard = (e: DragEvent<HTMLElement>, stageId: string, cards: readonly Deal[], card: Deal) => {
     e.preventDefault();
     e.stopPropagation();
+    scrollNearEdge(e.clientX);
     const box = e.currentTarget.getBoundingClientRect();
     const after = e.clientY > box.top + box.height / 2;
     const next = after ? cards[cards.findIndex((c) => c.id === card.id) + 1] : card;
@@ -185,7 +200,7 @@ export function DealBoard({ members, canEdit }: { members: readonly Member[]; ca
         </form>
       )}
       {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
-      <div className="flex snap-x gap-3 overflow-x-auto pb-3" data-testid="deal-board">
+      <div ref={scroller} className={`flex gap-3 overflow-x-auto pb-3 ${dragging ? '' : 'snap-x'}`} data-testid="deal-board" onDragOver={(e) => scrollNearEdge(e.clientX)}>
         {columns.map((column) => (
           <section
             key={column.stage.id}
