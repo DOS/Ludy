@@ -167,7 +167,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           .selectFrom('crove_kernel.proposal as q')
           .select(['q.id', 'q.status', 'q.duplicate_of', 'q.decided_at'])
           .whereRef('q.org_id', '=', 'f.org_id')
-          .whereRef('q.source_file_id', '=', 'f.id')
+          // The proposals read from the file, and the one revised from its reading (the original of a PDF's invoice, #2269):
+          // both files show the one proposal.
+          .where(sql<boolean>`(q.source_file_id = f.id OR q.extraction_id IN (SELECT xe.id FROM crove_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id))`)
           .orderBy('q.created_at', 'desc')
           .orderBy('q.id', 'desc')
           .limit(1)
