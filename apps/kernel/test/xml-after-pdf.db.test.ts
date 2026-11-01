@@ -193,6 +193,18 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     }
   });
 
+  it('makes a decision taken on the PDF reading stale: the approver who saw revision 1 must look again', async () => {
+    const pdf = await readPdf('5008');
+    const seen = await rt.query<{ revision: number }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.approver), orgId });
+    expect(seen.revision).toBe(1);
+    await readXml('5008');
+    await expect(
+      rt.execute('kernel.proposal.approve', { id: pdf.proposalId, revision: seen.revision, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId }),
+    ).rejects.toMatchObject({ code: 'STALE_REVISION' });
+    await expect(rt.execute('kernel.proposal.reject', { id: pdf.proposalId, reason: 'x' }, { actor: asUser(users.approver), orgId })).resolves.toEqual({ ok: true });
+    expect(((await proposals('5008')) as Row[])[0]).toMatchObject({ status: 'rejected', revision: 2 });
+  });
+
   it('does not let a re-reading of the PDF put the weaker reading back, and re-reads the XML instead', async () => {
     const pdf = await readPdf('5002');
     await readXml('5002');
@@ -200,6 +212,47 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     const [proposal] = (await proposals('5002')) as [Row];
     expect(proposal).toMatchObject({ revision: 2 });
     expect(proposal.payload.extractionMethod).toBe('einvoice_xml');
+  });
+
+  it('holds decisions while the original is read again, offers the re-read of the original and not the PDF one, and revises the proposal from it', async () => {
+    const pdf = await readPdf('5009');
+    const xml = await readXml('5009');
+    // After the upgrade only the original can be read again: the proposal's own reading is the XML's.
+    const detail = () => rt.query<{ canReextract: boolean; extraction: { inFlight: boolean } | null; revision: number }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.owner), orgId });
+    expect((await detail()).canReextract).toBe(false);
+    const rows = await rt.query<Array<{ id: string; canReextract: boolean }>>('kernel.files.recent', {}, { actor: asUser(users.owner), orgId });
+    expect(rows.find((f) => f.id === pdf.fileId)?.canReextract).toBe(false);
+    expect(rows.find((f) => f.id === xml.fileId)?.canReextract).toBe(true);
+    // The re-read of the original is in flight: the proposal it will revise can be neither rejected nor edited nor approved.
+    const asked = await rt.execute<{ version: number }>('kernel.file.reextract', { fileId: xml.fileId }, { actor: asUser(users.owner), orgId });
+    expect((await detail()).extraction?.inFlight).toBe(true);
+    await expect(rt.execute('kernel.proposal.reject', { id: pdf.proposalId, reason: 'x' }, { actor: asUser(users.approver), orgId })).rejects.toMatchObject({ code: 'EXTRACTION_PENDING' });
+    const seen = (await detail()).revision;
+    await expect(
+      rt.execute('kernel.proposal.approve', { id: pdf.proposalId, revision: seen, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId }),
+    ).rejects.toMatchObject({ code: 'EXTRACTION_PENDING' });
+    // It finishes: the same proposal, revision 3, from the original again; no second proposal.
+    const done = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, xml.fileId, asked.version);
+    expect(done.proposalId).toBe(pdf.proposalId);
+    const all = await proposals('5009');
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ status: 'pending', revision: 3 });
+    expect(all[0]?.payload.extractionMethod).toBe('einvoice_xml');
+  });
+
+  it('flags the original instead of replacing what a person chose on the PDF reading', async () => {
+    const pdf = await readPdf('5010');
+    const seen = await rt.query<{ revision: number }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.owner), orgId });
+    // The account the person picks for line 1: the other of the two the reading could have chosen, so the edit changes something.
+    const first = ((await proposals('5010'))[0] as unknown as { payload: { lines: Array<{ debitAccount: string }> } }).payload.lines[0]?.debitAccount;
+    const picked = first === '6421' ? '6422' : '6421';
+    await rt.execute('kernel.proposal.edit', { id: pdf.proposalId, revision: seen.revision, lineAccounts: [{ lineNo: 1, debitAccount: picked }] }, { actor: asUser(users.owner), orgId });
+    const xml = await readXml('5010');
+    expect(xml.proposalId).not.toBe(pdf.proposalId);
+    const all = await proposals('5010');
+    expect(all).toHaveLength(2);
+    expect(all.find((p) => p.id === pdf.proposalId)).toMatchObject({ status: 'pending', revision: 2 });
+    expect((all.find((p) => p.id === xml.proposalId) as Row).payload.checks.map((c) => c.code)).toContain('duplicate.found');
   });
 
   it('posts the revised proposal once, naming the XML as the source file of the document', async () => {

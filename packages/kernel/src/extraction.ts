@@ -109,14 +109,21 @@ export async function executedButVoided(ctx: QueryContext, proposal: { id: strin
 
 // Refuses a decision (approve, edit, reject) on a proposal whose file is being read again: the result would
 // replace the content being decided on. Called after the proposal row is locked, so a re-extraction requested
-// first is seen here, and one requested later finds the decided proposal.
-export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null): Promise<void> {
-  if (!fileId) return;
+// first is seen here, and one requested later finds the decided proposal. `extractionId` is the run the proposal's
+// current revision was read from: when it is of another file than the proposal's source file (the original XML of an
+// invoice first read from a PDF, #2269), that file's re-reading counts too.
+export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null, extractionId: string | null = null): Promise<void> {
+  const files = fileId ? [fileId] : [];
+  if (extractionId) {
+    const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', extractionId).executeTakeFirst();
+    if (read && !files.includes(read.file_id)) files.push(read.file_id);
+  }
+  if (files.length === 0) return;
   const pending = await ctx.trx
     .selectFrom('crove_kernel.extraction')
     .select('version')
     .where('org_id', '=', ctx.orgId)
-    .where('file_id', '=', fileId)
+    .where('file_id', 'in', files)
     .where('status', '=', 'pending')
     .where(pendingSince)
     .executeTakeFirst();
@@ -368,11 +375,24 @@ async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.in
   if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null };
   const upgrade =
     guard.upgrades === true && answer.value.duplicateProposalUpgradable === true && !answer.value.duplicateDocumentId ? (answer.value.duplicateProposalId ?? null) : null;
+  // The input without the duplicate flag the worker may have set from its own, earlier lookup: an original that takes a
+  // proposal's place is not its duplicate.
+  const unflag = (checks: Array<z.infer<typeof zCheck>>) => checks.filter((c) => c.code !== guard.check.code);
+  const payloadChecksIn = input.proposal.payload['checks'];
+  const clean: T = {
+    ...input,
+    checks: unflag(input.checks),
+    proposal: {
+      ...input.proposal,
+      duplicateOf: null,
+      payload: Array.isArray(payloadChecksIn) ? { ...input.proposal.payload, checks: unflag(payloadChecksIn as Array<z.infer<typeof zCheck>>) } : input.proposal.payload,
+    },
+  };
   ctx.audit({ duplicate_guard: upgrade ? 'upgrade' : 'found', duplicate_of: answer.value.duplicateProposalId });
   const flagged = (checks: Array<z.infer<typeof zCheck>>) => (checks.some((c) => c.code === guard.check.code) ? checks : [guard.check, ...checks]);
   const payloadChecks = input.proposal.payload['checks'];
   return {
-    input,
+    input: upgrade ? clean : input,
     upgrade,
     flagged: {
       ...input,
@@ -389,13 +409,18 @@ async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.in
 }
 
 // The pending proposal an original may take the place of (#2269), locked, or undefined when it cannot any more: a decision
-// or an edit came first (it is no longer pending), it is of another kind or command, it was not read from a PDF or a
-// photo, or it belongs to another legal entity than the original's (a proposal stays in its entity). The lock is taken
+// came first (it is no longer pending), a person changed it (an account, a rate or an entity they chose), it is of another
+// kind or command, it was not read from a PDF or a photo, or it belongs to another legal entity than the original's (a
+// proposal stays in its entity). The lock is taken
 // after the guard's, so a decision that went through first is seen here and one that comes later finds the new revision.
 async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.infer<typeof zProposalDraft>, file: { created_by: string | null; upload_entity_id: string | null }) {
   const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
   if (!row || row.status !== 'pending' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
-  if (!UPGRADABLE_METHODS.includes((row.payload as { extractionMethod?: unknown } | null)?.extractionMethod)) return undefined;
+  const payload = row.payload as { extractionMethod?: unknown; legalEntityId?: unknown; lines?: Array<{ accountRule?: { source?: unknown } }>; invoice?: { foreign?: { source?: unknown } } } | null;
+  if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
+  // What a person chose on the reading (an account for a line, an exchange rate, a legal entity) is theirs: the original
+  // does not replace it silently, it is flagged for them to decide, as before.
+  if (payload?.legalEntityId !== undefined || payload?.invoice?.foreign?.source === 'entered' || payload?.lines?.some((l) => l.accountRule?.source === 'user')) return undefined;
   const entity =
     file.upload_entity_id ??
     (await uploaderEntity(ctx, file.created_by)) ??

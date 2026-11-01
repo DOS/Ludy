@@ -172,7 +172,7 @@ export const resubmitProposal = defineCommand({
       if (newest?.id !== old.id) {
         throw new DomainError('PROPOSAL_SUPERSEDED', 409, 'Chứng từ này đã có đề xuất mới hơn; hãy mở đề xuất đó', { proposalId: newest?.id ?? null });
       }
-      await refuseWhileReextracting(ctx, old.source_file_id);
+      await refuseWhileReextracting(ctx, old.source_file_id, old.extraction_id);
       // A proposal moved to another entity before #1764 (its payload naming another entity than its own) is not asked
       // for again as it is: read the document again in the entity to book it in.
       const named = zId.safeParse((old.payload as { legalEntityId?: unknown } | null)?.legalEntityId);
