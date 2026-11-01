@@ -23,9 +23,11 @@ How to read the sources: every fact carries a source id (listed in section 10) a
 
 ## 2. What Ludy has today (checked in the repository on 2026-10-31)
 
+**Update 2026-11-02.** The owner opened CRM slice 1 on 2026-11-01 ([#2223](https://github.com/DOS/Ludy/issues/2223), plan `docs/plan/crm.md`, kernel Decision 21) and it is merged on `main`: deals (K1), one pipeline board (K2), kernel saved views and the Filter AST (K3), the contacts screen with search without diacritics, a phone key and views (K4), contact import from CSV with staging, duplicate check and preview (K5) and from Excel read in the browser (K6), and the close-out (K7). The shared conversation core and Zalo OA messages are being built ([#2213](https://github.com/DOS/Ludy/issues/2213)). The table below is the state on 2026-10-31; rows that slice 1 overtook say "now built".
+
 | Piece | State | Where |
 |---|---|---|
-| `party` | Built. `organization` or `person`, name, tax code (unique per org), address, email, phone, `source_trust`, `verified_at/by`. Duplicate hints and "mark duplicate" exist; there is no destructive merge and no CSV import. | `crove_kernel.party`, `packages/kernel/src/parties.ts` |
+| `party` | Built. `organization` or `person`, name, tax code (unique per org), address, email, phone, `source_trust`, `verified_at/by`. Duplicate hints and "mark duplicate" exist; there is no destructive merge. CSV import: now built (K5, K6). | `crove_kernel.party`, `packages/kernel/src/parties.ts` |
 | `activity` | Built. A record's timeline rows (`record_type`, `record_id`, summary), stamped with the agent that wrote them (`agent_id`). Summaries never carry classified values. | `crove_kernel.activity` |
 | One write path | Built. Every state change is a command through `Runtime.execute()`; each command declares risk, side effect and the columns it writes. | [AGENTS.md](../../AGENTS.md) "Rules" |
 | Proposals and approvals | Built. Pending proposal, edit as a new revision, four-eyes for R3, an Inbox. Agents may approve only clean, assessed R1 and R2 proposals within `max_risk`, and no command declares agent approvers yet. | [plan §8.3](../plan/crove-os-kernel.md), [ADR-0029](../adr/0029-agents-positions-and-org-chart.md), [agent-autonomy.md](../generated/agent-autonomy.md) |
@@ -34,9 +36,9 @@ How to read the sources: every fact carries a source id (listed in section 10) a
 | Notes and to-dos | Built (module `notes`). Notes link to a party, a booking or a document; a shared note on a party writes a fixed-text activity row. | [notes.md](../plan/notes.md) |
 | Channels | The `channel` layer exists (Facebook Page, Instagram, Zalo OA, TikTok connections) and is used by Social to publish. The Service inbox that would read messages is Phase 4 and is not built. | [social.md](../plan/social.md), [plan Phase 4](../plan/crove-os-kernel.md) |
 | Email | Plan exists (transactional mail and consent-based campaigns). The inbound mail route exists for forwarded e-invoices. No capture of customer mail onto a timeline. | [email.md](../plan/email.md) |
-| Saved views | Only inside Social (`crove_social.saved_view`: a member's named filters, shared or private, at most 20 per member). The kernel `saved_view` plus Filter AST in the plan is not built. | `supabase/migrations/20261030210000_crove_social_saved_view.sql` |
-| Search | The plan specifies trigram search on unaccented text (so "nguyen" finds "Nguyễn"). I found no `unaccent` in the migrations on 2026-10-31, so I treat it as not built. | [plan, Search v0](../plan/crove-os-kernel.md) |
-| Not built | Deals and pipelines, custom fields, `record_link`, `record_share`, `api_key`, `/v1`, `/mcp`, outbound webhooks. | plan "Kernel additions", Phase 3 |
+| Saved views | Only inside Social (`crove_social.saved_view`: a member's named filters, shared or private, at most 20 per member). The kernel `saved_view` plus Filter AST in the plan: now built (K3, K4). | `supabase/migrations/20261030210000_crove_social_saved_view.sql` |
+| Search | The plan specifies trigram search on unaccented text (so "nguyen" finds "Nguyễn"). I found no `unaccent` in the migrations on 2026-10-31, so I treated it as not built. Now built for contacts (K4: search without diacritics). | [plan, Search v0](../plan/crove-os-kernel.md) |
+| Not built (deals and pipelines are now built, K1 and K2) | Custom fields, `record_link`, `record_share`, `api_key`, `/v1`, `/mcp`, outbound webhooks. | plan "Kernel additions", Phase 3 |
 
 ## 3. Global CRMs compared
 
@@ -116,7 +118,7 @@ Vendor documentation was thin and several pages returned empty, so parts rest on
 | Pricing model | Credits, free tier, unlimited seats | Per user, then per workspace, no free | Per agent, no credits | Credits plus seats, free tier |
 | Mobile | No | No (browser) | No native app (vendor's own list, S-DY14) | Yes |
 | Self-host | No | UNVERIFIED | UNVERIFIED | No |
-| Funding (section 4.7) | Series A $15M, 2025-06-25, USVP-led (second lead disputed); $22.5M in total; Seam AI bought 2026-07 | Series A $47M, 2026-09-09, a16z-led; about $128M with Tome (my sum) | Seed $4M 2024-06 and Series A $20M 2026-02, both Sequoia-led; about $24M | Not in this deep dive |
+| Funding (section 4.7) | Announced 2025-06-25: Series A $15M and $22.5M in total per the press release body, though headlines say "raises $22.5M" (UNVERIFIED which is the round); USVP-led (second lead disputed); Seam AI bought 2026-07 | Series A $47M, 2026-09-09, a16z-led; about $128M with Tome (my sum) | Seed $4M 2024-06 and Series A $20M 2026-02, both Sequoia-led; about $24M | Not in this deep dive |
 | People (estimate) | 25 to 35, UNVERIFIED | about 40 (a16z job board) | 10 to 42, UNVERIFIED | Not in this deep dive |
 | Community rating | G2 4.9 (21, the vendor's blog; page not opened); Product Hunt 4.9 (10, opened) | G2 UNVERIFIED (4.9 from 10, or 5.0 from 2); Product Hunt 895 upvotes, no stars | No usable rating; reviews found are by competitors | Not in this deep dive |
 | Main complaint (attributed) | Unpredictable credit bills (MakerStack, competitors) | Price and credit opacity (competitors, a reviewer) | Weak pipeline and forecasting (competitors) | Not in this deep dive |
@@ -149,7 +151,7 @@ How to read it:
 
 **1. Company and money**
 - Seattle company founded January 2024. Founders named in the funding press release: Patrick Thompson (CEO) and Austin Hay (COO). Ascend and GeekWire also name Ondrej Hrebicek as CTO and co-founder; Ascend says Thompson and Hrebicek founded Iteratively, which Amplitude bought in 2021 (S-CL6, S-CL7, S-CL8 search summary).
-- Series A of $15M announced 2025-06-25, $22.5M raised in total (press release; GeekWire says $22M). Leads disagree between sources: the press release names USVP and Gradient, Ascend's own post says USVP and Madrona co-led. Only USVP is certain (S-CL6, S-CL7).
+- **Funding, announced 2025-06-25. Sources disagree on what the $22.5M is.** The body of the press release says a Series A of $15M and $22.5M raised in total, which implies about $7.5M earlier (my arithmetic; PitchBook shows a seed dated 2024-01-04 with no amount) (S-CL6, S-CL24 search summary). The headline of the same release and Clarify's own blog post say "raises $22.5M", which reads as if $22.5M were the round. The Notes & CRM PO reports that the Mergerlinks transaction page and Clarify's Product Hunt launch post also give a $22.5M round (S-CL24; I did not open those two pages). GeekWire says $22M (search summary). My reading: $22.5M is the cumulative total and the Series A alone is $15M; whether the round itself was $15M or $22.5M is UNVERIFIED until a primary filing is seen. Investors: USVP and Gradient (Ventures) are named as leads, with Madrona, Recall, Ascend, Essence, New Normal Fund and Fika taking part (press release and the PO's pages); Ascend's own post says USVP and Madrona co-led, so the second lead is disputed.
 - First acquisition: Seam AI, about 2026-07-21 (a search summary gives the date; CDP Institute dated its note 2026-07-25). Terms undisclosed. Clarify said it also took extra, undisclosed funding with the deal. It feeds a planned "Signals" product that the pricing page still marks "Coming" (S-CL9, S-CL2).
 - Headcount is not stated by the vendor and sources disagree: about 20 (Ascend), 24 (GeekWire, search summary), 29 (Built In), 31 (PitchBook, search summary). My estimate is 25 to 35 people plus 5 from Seam. LinkedIn was not reachable (UNVERIFIED) (S-CL7, S-CL20).
 - Customers the vendor names itself: Paramark, Sift and Volca (2025 press release). Ascend claims over 100 customers. The home page names none (S-CL6, S-CL7, S-CL1).
@@ -394,17 +396,17 @@ Each gap is a recommendation for the owner, not an issue. The plan's CRM scope (
 
 | Gap | State on 2026-10-31 | Recommendation |
 |---|---|---|
-| Deals and pipelines | Not built | First slice of CRM when demand pulls (decision 1) |
-| Kernel `saved_view` and Filter AST | Not built; Social has its own | Build once in the kernel and move Social onto it, to avoid two models |
+| Deals and pipelines | Built on 2026-11-02 (slice 1, K1 and K2) | Done; decision 1 was answered on 2026-11-01 |
+| Kernel `saved_view` and Filter AST | Built (K3); whether Social moves onto it was not checked | Check that Social does not keep a second model |
 | Custom fields | Not built | Later; each field needs a data class before agents may touch it |
 | `record_link` | Not built; notes has `crove_notes.link` | Decide with the deals slice whether notes' link moves onto it |
 | `record_share` | Not built | Later; a one-person company has no sharing need |
-| CSV or Excel import for parties | Not built; duplicate hints exist | Take, as a reviewed batch with phone and tax-code matching |
+| CSV or Excel import for parties | Built (K5, K6) with staging, duplicate check and preview | Done |
 | Shared timeline: email and chat | Only bookings, notes and calendar rows; mail and chat need Service Phase 4 and the capture rules | Later, as section 6.3 items 1 and 2 |
 | Shared timeline: invoices, contracts | Finance documents name a party; contracts belong to Sign (not built) | Take invoices as a link; contracts wait for Sign |
 | AI summaries and next steps for CRM | Not built for CRM; Social has a summary and scheduling has a message reader | Take as a read-only view |
 | AI email drafts for CRM | Email plan covers drafts; no CRM entry point | Take as drafts only |
-| Search without diacritics | Planned, no implementation found | Take |
+| Search without diacritics | Built for contacts (K4); other record types not checked | Extend where needed |
 | Agent pieces (section 6.3) | Capture rules, bulk approval, agent approvers, language-model runner and schedules, undo, agent timeline view, per-field provenance, budget meter | Take in the order of 6.3 |
 | `/mcp`, `/v1`, outbound webhooks | Not built; ADR-0032 pending | All four AI CRMs expose MCP; keep it on the plan and decide the order after deals |
 
@@ -412,7 +414,7 @@ Each gap is a recommendation for the owner, not an issue. The plan's CRM scope (
 
 One at a time, recommendation first. If there is no answer, nothing here starts.
 
-1. **Which CRM slice goes first when a wedge customer asks?** Recommendation: deals with one pipeline and a kanban board, kernel saved views with simple filters, and CSV or Excel import with duplicate checks. Skip custom objects and several pipelines until someone asks. Without an answer, CRM waits as Decision 2 already says.
+1. **Which CRM slice goes first when a wedge customer asks?** Recommendation: deals with one pipeline and a kanban board, kernel saved views with simple filters, and CSV or Excel import with duplicate checks. Skip custom objects and several pipelines until someone asks. Answered: the owner opened slice 1 on 2026-11-01 (#2223) and it is merged (section 2).
 2. **How fast may background agents go?** Recommendation: keep the rule that everything derived from outside content is a proposal a person approves, and build bulk approval plus selective capture to make it fast. Do not add an auto-accept exception (section 6.4) before the pilot shows bulk approval is too slow.
 3. **Is "capture customers from email and calendar" the flagship AI CRM feature?** Recommendation: yes, after deals exist, with Selective as the default, skip rules for auto-responders and personal domains, and a visible off switch. It is the feature all four AI CRMs lead with. Without an answer, the AI CRM stays at read-only summaries and drafts.
 4. **Which Vietnamese channel first?** Recommendation: Zalo OA messages on the customer's timeline (through the Service inbox), then a phone-number click-to-call and call note, then a sales-to-invoice request link with Accounting. Zalo personal accounts only after the owner or a lawyer checks Zalo's terms. Without an answer, Service and channels stay on the plan's order.
@@ -541,6 +543,7 @@ Exchange rate and Clarify
 - S-CL20 https://builtin.com/company/clarify-ai/jobs
 - S-CL21 https://www.thesignal.club/p/clarify (sponsored newsletter)
 - S-CL22 https://www.clarify.ai/blog/best-ai-crms (the vendor's own comparison)
+- S-CL24 https://www.clarify.ai/blog/series-a (search summary), https://pitchbook.com/profiles/company/571599-64 (search summary), https://dealroom.co/news/140153-clarify-buys-seam-ai-to-add-sales-signals-to-its-salesforce-challenger/ (search summary), plus the Mergerlinks transaction page and the Product Hunt launch post, reported by the Notes & CRM PO and not opened here
 - Changelog entries read through S-CL3: https://www.clarify.ai/changelog/new-in-clarify-april-2026 and https://www.clarify.ai/changelog/weekly-ship-notes-10-23
 
 Lightfield
