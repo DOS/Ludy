@@ -52,6 +52,34 @@ describe('the signature of a Zalo notice', () => {
   });
 });
 
+describe('what the parser refuses to date, name or carry', () => {
+  const events = (patch: Record<string, unknown>) => parseZaloNotice(bytes({ ...TEXT, ...patch })).events;
+
+  it('reads a timestamp of seconds as seconds, and refuses one outside a sane range', () => {
+    expect(events({ timestamp: '1788300000' })[0]?.at).toBe('2026-09-01T22:00:00.000Z');
+    expect(events({ timestamp: 1788300000000 })[0]?.at).toBe('2026-09-01T22:00:00.000Z');
+    expect(events({ timestamp: '1000000000' })).toEqual([]);
+    expect(events({ timestamp: '9'.repeat(18) })).toEqual([]);
+    expect(events({ timestamp: String(Date.now() + 3 * 86_400_000) })).toEqual([]);
+    expect(events({ timestamp: '0' })).toEqual([]);
+  });
+
+  it('takes an id as a string or a number a double holds exactly, never a rounded one, and none that is too long', () => {
+    expect(events({ sender: { id: 123456789 } })[0]?.threadId).toBe('123456789');
+    expect(events({ sender: { id: 12345678901234567890 } })).toEqual([]);
+    expect(events({ sender: { id: '' } })).toEqual([]);
+    expect(events({ sender: { id: 'u'.repeat(201) } })).toEqual([]);
+    expect(events({ message: { msg_id: 'm'.repeat(301), text: 'x' } })).toEqual([]);
+  });
+
+  it('strips a NUL character, cuts a text to what the core holds, and keeps an attachment beside its caption', () => {
+    expect(events({ message: { msg_id: 'm-1', text: 'có\u0000ký tự rỗng' } })[0]?.text).toBe('cóký tự rỗng');
+    expect(events({ message: { msg_id: 'm-1', text: 'a'.repeat(30_000) } })[0]?.text).toHaveLength(20_000);
+    expect(events({ event_name: 'user_send_image', message: { msg_id: 'm-1', text: 'Ảnh sản phẩm' } })[0]?.text).toBe('Ảnh sản phẩm\n[Khách gửi ảnh]');
+    expect(events({ message: { msg_id: 'm-1', text: '\u0000' } })[0]?.text).toBe('[Khách gửi một tệp đính kèm]');
+  });
+});
+
 describe('the events of a Zalo notice', () => {
   it('turns a customer text into a private message of the thread of that customer, with the OA as the account', () => {
     expect(parseZaloNotice(bytes(TEXT))).toEqual({
@@ -84,8 +112,8 @@ describe('the events of a Zalo notice', () => {
   });
 
   it('gives no event for what is not a message, or has no id or time, and refuses what is not an object', () => {
-    for (const name of ['follow', 'unfollow', 'user_received_message', 'user_seen_message', 'oa_send_unknown_future', '']) {
-      expect(parseZaloNotice(bytes({ ...TEXT, event_name: name })).events, name).toEqual(name.startsWith('oa_send_') ? expect.any(Array) : []);
+    for (const name of ['follow', 'unfollow', 'user_received_message', 'user_seen_message', 'something_new', '']) {
+      expect(parseZaloNotice(bytes({ ...TEXT, event_name: name })).events, name).toEqual([]);
     }
     expect(parseZaloNotice(bytes({ ...TEXT, message: { text: 'không có id' } })).events).toEqual([]);
     expect(parseZaloNotice(bytes({ ...TEXT, timestamp: 'x' })).events).toEqual([]);
@@ -141,6 +169,11 @@ describe('ZaloConversations.reply', () => {
     // A server error or a lost connection may have gone through: unclear, never repeated by the caller.
     expect(await answer(502, undefined)).toEqual({ kind: 'unknown', code: 'ZALO_5XX' });
     expect(await reply(new ZaloConversations(APP, zalo([{ throws: true }]).fetchImpl))).toEqual({ kind: 'unknown', code: 'ZALO_UNREACHABLE' });
+    // An answer that could not be read (not JSON, empty, a redirect, a cut-off body) is unclear too: Zalo may have taken the message.
+    const html = async () => reply(new ZaloConversations(APP, (async () => new Response('<html>bad gateway</html>', { status: 200 })) as Fetch));
+    expect(await html()).toEqual({ kind: 'unknown', code: 'ZALO_BAD_ANSWER' });
+    expect(await reply(new ZaloConversations(APP, (async () => new Response('', { status: 302 })) as Fetch))).toEqual({ kind: 'unknown', code: 'ZALO_BAD_ANSWER' });
+    expect(await reply(new ZaloConversations(APP, (async () => new Response('{}', { status: 408 })) as Fetch))).toEqual({ kind: 'unknown', code: 'ZALO_BAD_ANSWER' });
     // Success without an id is unclear too (the echo cannot be matched), and an answer is never the message or the token.
     expect(await reply(new ZaloConversations(APP, zalo([{ body: { error: 0, data: {} } }]).fetchImpl))).toEqual({ kind: 'unknown', code: 'ZALO_NO_MESSAGE_ID' });
   });

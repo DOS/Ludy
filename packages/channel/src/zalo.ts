@@ -47,6 +47,8 @@ const INVALID_PARAM = -201;
 // Errors of the OA or the app themselves (the OA disabled or missing, the app inactive, removed or not granted the
 // API, the OA unverified or without the service package, the OA's type): the article's presence cannot be read
 // through them, so a takedown refused with one is never taken for an article already gone.
+// (-223 is read as a quota by the conversation replies [S] and as an access error by the publishing calls below: the live check of the
+// conversation core settles which it is, row 9 of docs/runbooks/zalo-conversations-live-check.md.)
 const ACCESS_ERRORS = new Set([-204, -205, -209, -212, -219, -221, -223, -224, -235]);
 // An article id as Zalo gives it.
 const ARTICLE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -419,6 +421,9 @@ export class ZaloConversations implements ConversationAdapter {
 function conversationError(error: unknown): ConversationCallResult {
   if (!(error instanceof ZaloError)) return { kind: 'unknown', code: 'ZALO_UNREACHABLE' };
   const code = error.code;
+  // No Zalo error code and no failure status: the answer could not be read (an HTML page from a proxy, an empty body, a body cut off by the
+  // timeout, a redirect) after the request was sent. Zalo may have taken the message, so it is unclear, never a refusal.
+  if (code === undefined && (error.status < 400 || error.status === 408)) return { kind: 'unknown', code: 'ZALO_BAD_ANSWER' };
   if ((code !== undefined && TOKEN_ERRORS.has(code)) || error.status === 401) return { kind: 'rejected', error: 'token_expired', code: 'ZALO_TOKEN' };
   if (code === -223) return { kind: 'rejected', error: 'rate_limited', code: 'ZALO_QUOTA' };
   if (error.status === 429 || code === RATE_LIMITED) return { kind: 'rejected', error: 'rate_limited', code: 'ZALO_RATE_LIMIT' };

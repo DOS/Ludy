@@ -718,7 +718,9 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
   // body is capped before it is read, and a verified message is only parked for the worker (the org comes from the stored connection).
-  // Rate limited per client address first, which reads nothing. Every refusal of the signature is the same 401.
+  // The body is capped (a chunked one is cut at the cap), then rate limited per client address, which reads nothing more. Every refusal
+  // of the signature is the same 401. Zalo does not retry on an error status [S], so a wrong TRUSTED_PROXY_HOPS (one shared bucket behind
+  // a proxy) would cost real notices: set it as for every other public route.
   const zaloWebhook = deps.zaloWebhook;
   if (zaloWebhook) {
     const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });

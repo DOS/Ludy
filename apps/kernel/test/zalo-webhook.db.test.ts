@@ -29,6 +29,8 @@ const ISSUER = 'crove-auth';
 const APP_ID = '4318000000000000001';
 const OA_KEY = 'test-oa-secret-key-not-real';
 const PATH = '/api/channels/zalo/webhook';
+// The route's clock: the fixtures are dated within a day of it (a notice older than a day is not parked).
+const NOW = 1788300200000;
 
 class MemoryStore implements BlobStore {
   private readonly blobs = new Map<string, Uint8Array>();
@@ -106,7 +108,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     appConfig = config;
     appDb = db;
     const common = { config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
-    app = createHttpApp({ ...common, zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY } });
+    app = createHttpApp({ ...common, zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY, now: () => NOW } });
     bare = createHttpApp(common);
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
@@ -140,8 +142,10 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
 
   it('does not exist without the Zalo app and its OA secret key', async () => {
     const body = text('m-0', 'xin chào');
-    // Not a route: an /api path nobody registered goes to the account check (401), and nothing is parked.
-    expect([401, 404]).toContain((await post(bare, body, signed(body, '1788300000000'))).status);
+    // Not a route: it answers as a path nobody registered does, whatever the signature, and nothing is parked.
+    const unregistered = await bare.request('/api/channels/nobody/webhook', { method: 'POST', body });
+    const answer = await post(bare, body, signed(body, '1788300000000'));
+    expect([answer.status, await answer.text()]).toEqual([unregistered.status, await unregistered.text()]);
     expect(await waiting()).toBe(0);
   });
 
@@ -194,7 +198,7 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
   it('answers a replayed event without parking it again for an hour, and parks one whose first try was refused', async () => {
     let clock = Date.now();
     const replays = new ZaloReplayCache(() => clock);
-    const replaying = createHttpApp({ ...commonDeps(), zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY }, zaloReplays: replays });
+    const replaying = createHttpApp({ ...commonDeps(), zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY, now: () => NOW }, zaloReplays: replays });
     const body = text('m-replay', 'Gửi lại nhiều lần', '1788300090000');
     const send = () => post(replaying, body, signed(body, '1788300090000'));
     expect((await send()).status).toBe(200);
@@ -215,6 +219,22 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     const real = text('m-forged', 'Thật', '1788300092000');
     expect((await post(replaying, real, signed(real, '1788300092000', 'another-key'))).status).toBe(401);
     expect((await post(replaying, real, signed(real, '1788300092000'))).status).toBe(200);
+    expect(await waiting()).toBe(1);
+    await intake();
+  });
+
+  it('answers 200 and parks nothing for a verified notice older than a day, and says 503 past ten thousand waiting', async () => {
+    const old = text('m-old', 'Bản ghi bị phát lại', String(NOW - 25 * 3_600_000));
+    expect((await post(app, old, signed(old, String(NOW - 25 * 3_600_000)))).status).toBe(200);
+    expect(await waiting()).toBe(0);
+    // The definer refuses past 10000 waiting notices; Zalo does not retry an error status, so this is the loss the history read recovers.
+    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'zalo_oa', 'x'::bytea FROM generate_series(1, 10001)");
+    const fresh = text('m-full', 'Hàng đợi đầy', '1788300110000');
+    const response = await post(app, fresh, signed(fresh, '1788300110000'));
+    expect([response.status, await response.text()]).toEqual([503, '{"code":"BACKLOG"}']);
+    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    // Once there is room the same notice (Zalo's resend, or the next try) is parked: a refused one was not remembered as seen.
+    expect((await post(app, fresh, signed(fresh, '1788300110000'))).status).toBe(200);
     expect(await waiting()).toBe(1);
     await intake();
   });

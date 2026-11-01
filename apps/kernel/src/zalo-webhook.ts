@@ -8,7 +8,7 @@
 // answered 200 and not parked, so Zalo stops sending it and the queue holds messages only.
 import { sql } from 'kysely';
 import { ConversationNoticeError, parseZaloNotice, zaloSignatureOk } from '@crove/channel';
-import type { Runtime } from '@crove/kernel-runtime';
+import { DomainError, type Runtime } from '@crove/kernel-runtime';
 
 export const ZALO_WEBHOOK_PATH = '/api/channels/zalo/webhook';
 export const ZALO_SIGNATURE_HEADER = 'x-zevent-signature';
@@ -17,6 +17,8 @@ export interface ZaloWebhookConfig {
   appId: string;
   // The OA secret key: a credential, never logged or answered.
   oaSecretKey: string;
+  // The clock the age of a notice is read against; the real one when absent.
+  now?: (() => number) | undefined;
 }
 
 // Events seen lately, by their own id, so a signed notice replayed (by Zalo's resends or by anyone holding a captured one) is answered
@@ -49,6 +51,10 @@ export class ZaloReplayCache {
   }
 }
 
+// A verified notice older than a day is answered and not parked: Zalo's resends stop after an hour [S], so an older one is a captured body
+// replayed, and the unique message id alone must not be what keeps a purged or erased thread from coming back (CV6).
+export const ZALO_NOTICE_MAX_AGE_MS = 24 * 3_600_000;
+
 export type ZaloWebhookOutcome =
   | { status: 200; parked: boolean }
   | { status: 401; code: 'WEBHOOK_SIGNATURE' }
@@ -67,6 +73,7 @@ export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookCon
   if (notice.events.length === 0) return { status: 200, parked: false };
   // The id of the event: the OA, the platform's message id and which way it went. A replay inside the window is answered, not parked.
   const event = notice.events[0];
+  if (event && (config.now ?? Date.now)() - Date.parse(event.at) > ZALO_NOTICE_MAX_AGE_MS) return { status: 200, parked: false };
   const key = event ? `${notice.accountId}:${event.direction}:${event.messageId}` : null;
   if (key && replays?.has(key)) return { status: 200, parked: false };
   try {
@@ -74,8 +81,9 @@ export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookCon
       await sql`SELECT crove_kernel.conversation_inbound_enqueue('zalo_oa', ${Buffer.from(request.body)}::bytea)`.execute(db);
     });
   } catch (error) {
-    // The definer refuses past 10000 waiting notices (53400): Zalo is told to come back, and sends no more than it must.
-    if ((error as { code?: unknown } | null)?.code === '53400') return { status: 503, code: 'BACKLOG' };
+    // The definer refuses past 10000 waiting notices (53400), which the runtime maps to OVERLOADED. Zalo does not retry on an error status
+    // [S], so this one is lost: the history read of CV5b is what recovers it.
+    if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'BACKLOG' };
     throw error;
   }
   if (key) replays?.add(key);

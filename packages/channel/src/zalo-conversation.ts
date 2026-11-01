@@ -57,7 +57,22 @@ interface ZaloEvent {
   message?: { msg_id?: unknown; text?: unknown };
 }
 
-const idOf = (value: unknown): string | null => (typeof value === 'string' || typeof value === 'number' ? String(value) : null);
+// An id is a string, or a whole number a double holds exactly: a larger one was rounded by JSON.parse and would match no connection.
+const idOf = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null);
+// The most a message, an id or a name holds in the core's schema; text over it is cut, an id over it is no event.
+const TEXT_MAX = 20_000;
+const ID_MAX = 200;
+// PostgreSQL refuses a NUL character in text, which would fail the whole notice.
+const clean = (value: string): string => value.replaceAll('\u0000', '');
+// Zalo's timestamps are milliseconds [S]; a value of seconds is read as such, so a customer's message is not dated in 1970 (which would
+// close its reply window at once). Outside a sane range it is no event.
+function atOf(value: unknown): string | null {
+  let ms = Number(idOf(value));
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  if (ms < 1e11) ms *= 1000;
+  const date = new Date(ms);
+  return ms >= Date.UTC(2020, 0, 1) && ms <= Date.now() + 86_400_000 && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+}
 
 // The notice's events in the core's words. Events that are not a message (follow, unfollow, delivered, seen) give none: nothing to
 // store, and the route answers 200 so Zalo stops sending it. Malformed JSON is an error. A message without its id is dropped (the id is
@@ -79,17 +94,21 @@ export function parseZaloNotice(body: Uint8Array): ConversationNotice {
   const oa = idOf(fromCustomer ? e.recipient?.id : e.sender?.id);
   const customer = idOf(fromCustomer ? e.sender?.id : e.recipient?.id);
   const messageId = idOf(e.message?.msg_id);
-  const at = Number(idOf(e.timestamp));
-  if (!oa || !customer || !messageId || !Number.isFinite(at) || at <= 0) return { accountId: oa ?? '', events: [] };
-  const text = typeof e.message?.text === 'string' && e.message.text !== '' ? e.message.text : null;
+  const at = atOf(e.timestamp);
+  if (!oa || !customer || !messageId || !at || customer.length > ID_MAX || messageId.length > 300 || oa.length > ID_MAX) return { accountId: oa ?? '', events: [] };
+  const cleaned = typeof e.message?.text === 'string' ? clean(e.message.text).slice(0, TEXT_MAX) : '';
+  const text = cleaned !== '' ? cleaned : null;
+  // An attachment's own name, kept beside its caption when it has one.
+  const placeholder = fromCustomer ? (CUSTOMER_PLACEHOLDERS[name] ?? '[Khách gửi một tệp đính kèm]') : OA_PLACEHOLDER;
+  const attachment = name !== 'user_send_text' && name !== 'oa_send_text';
   const event: InboundConversationEvent = {
     kind: 'direct',
     threadId: customer,
     messageId,
     direction: fromCustomer ? 'in' : 'out',
     contact: { id: customer },
-    text: text ?? (fromCustomer ? (CUSTOMER_PLACEHOLDERS[name] ?? '[Khách gửi một tệp đính kèm]') : OA_PLACEHOLDER),
-    at: new Date(at).toISOString(),
+    text: text === null ? placeholder : attachment ? `${text}\n${placeholder}`.slice(0, TEXT_MAX) : text,
+    at,
   };
   return { accountId: oa, events: [event] };
 }
