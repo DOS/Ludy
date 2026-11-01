@@ -11,6 +11,7 @@ import { EXTRACT_LIMIT_RETRIES, type ExtractClient } from '@crove/extract-contra
 import { ACCEPTED_ARCHIVE_TYPES, ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVES, MAX_UPLOAD_BYTES } from '@crove/kernel-contract';
 import type { UsageLimits, UsageOver } from '@crove/kernel';
 import { DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { readLookupHints, type LookupHint } from '@crove/l10n-vn';
 import { isCsvName, safeFilename, sniffType } from './sniff.ts';
 
 export const MAX_EMAIL_BYTES = 40 * 1024 * 1024;
@@ -208,6 +209,10 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
     files.push({ filename, contentType, sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'email' as const });
   }
   const messageId = email.messageId ?? `sha256:${rawSha256}`;
+  // A mail with no invoice attachment whose text holds the seller's lookup link or code (#2286, plan
+  // docs/plan/einvoice-lookup.md): the reader is deterministic and follows no link; where finance does not run there is
+  // nobody to look the original up. A reader failure never loses the mail.
+  const lookupHints = files.length === 0 && deps.runtime.modules().includes('finance') && email.text ? safeLookupHints(email.text) : [];
   return deps.runtime.execute<{ duplicate: boolean; fileIds: string[] }>(
     'kernel.inbound.receive',
     {
@@ -218,10 +223,19 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
       // deployment runs Social, so one without it keeps no more of a mail than before; absent from an older extract
       // container's answer.
       text: deps.runtime.modules().includes('social') ? (email.text ?? null) : null,
+      ...(lookupHints.length > 0 ? { lookupHints } : {}),
       files,
     },
     { actor: { type: 'system', component: 'inbound.email' }, orgId },
   );
+}
+
+function safeLookupHints(text: string): LookupHint[] {
+  try {
+    return readLookupHints(text);
+  } catch {
+    return [];
+  }
 }
 
 // What a recipient's report does (#539): a permanent failure (status 5.x.x) is a hard bounce; a temporary one, or a

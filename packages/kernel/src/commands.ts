@@ -12,6 +12,7 @@ import {
   zExchangeRate,
   zId,
   zLocalDate,
+  zLookupHint,
   zProposalSignature,
   zPurchaseProposal,
   zRole,
@@ -22,6 +23,7 @@ import {
   DomainError,
   defineCommand,
   newStagingKey,
+  sha256Hex,
   type CommandContext,
   type Runtime,
   type UserActor,
@@ -410,6 +412,9 @@ export const receiveInbound = defineCommand({
     subject: z.string().max(500).nullable(),
     // The mail's text (#779); absent from a worker built before it.
     text: z.string().min(1).max(INBOUND_TEXT_MAX).nullable().optional(),
+    // The seller's lookup link and code read from the mail's text (#2286), at most three; the worker sends them only for a
+    // mail with no invoice attachment, and only where the finance module runs.
+    lookupHints: z.array(zLookupHint).max(3).optional(),
     // The link to the mail is set here, from the message this command inserts, never taken from the caller.
     files: z.array(zIngestFile.omit({ inboundMessageId: true })).max(20),
   }),
@@ -447,6 +452,13 @@ export const receiveInbound = defineCommand({
     for (const file of input.files) {
       const result = await ctx.run<{ fileId: string }>('kernel.file.ingest', { ...file, ...(file.source === 'email' ? { inboundMessageId: message.id } : {}) });
       fileIds.push(result.fileId);
+    }
+    // A mail with no invoice attachment but with the seller's lookup link or code (#2286): an Inbox item for each hint, so
+    // the mail is not lost. A mail with an attachment is read through its file; the hash is the item's key, so the
+    // Message-ID itself is not kept in it.
+    const hints = (input.lookupHints ?? []).filter((hint) => hint.url !== null || hint.code !== null);
+    if (input.files.length === 0 && hints.length > 0) {
+      await ctx.run('kernel.inbox.original_needed', { mailKey: sha256Hex(new TextEncoder().encode(input.messageId)), hints });
     }
     return { duplicate: false, fileIds };
   },

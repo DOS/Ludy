@@ -918,6 +918,15 @@ export const zRaisedInboxItem = z.object({
 export type RaisedInboxItem = z.infer<typeof zRaisedInboxItem>;
 export const zRaisedInboxItems = z.object({ items: z.array(zRaisedInboxItem), total: z.number().int().min(0) });
 
+// An Inbox item "the original invoice is needed" (#2286): a mail with no invoice attachment whose text held the seller's
+// lookup link or code. One item per hint; it carries the hint and nothing of the mail (no text, sender or subject). The
+// lookup code opens the invoice for anyone who has it, so only members of the org list these, and the code stays out of
+// audit events, logs and error texts. total counts every open item.
+export const ORIGINAL_NEEDED_KIND = 'finance.invoice.original_needed';
+export const zOriginalNeededItem = zLookupHint.extend({ id: zId, raisedAt: z.string() });
+export type OriginalNeededItem = z.infer<typeof zOriginalNeededItem>;
+export const zOriginalNeededItems = z.object({ items: z.array(zOriginalNeededItem), total: z.number().int().min(0) });
+
 // What the command palette's search found (#673): at most 8 rows per group. A party that is customerOnly (a customer of
 // sales that never sold to the org) is not among the vendors. A document's proposalId opens it in the Inbox.
 export const zSearchResult = z.object({
