@@ -27,6 +27,7 @@ const CONTROL_PLANE: ModuleManifest = {
     crove_kernel: {
       auth_email_send: columns(['id', 'client_hash', 'target_hash', 'reserved_at']),
       auth_session: columns(['user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason', 'evidence_at']),
+      conversation_inbound_pending: columns(['seq', 'provider', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
       inbound_address: columns(['org_id', 'id', 'created_at', 'retired_at'], { token: 'sensitive' }),
       inbound_pending: columns(['seq', 'blob_id', 'raw_sha256', 'size_bytes', 'received_at'], { recipient: 'sensitive' }),
@@ -239,9 +240,9 @@ suite('module manifests against the catalog (#1588, #1599)', () => {
     expect(problems).toEqual([]);
     // Every function and policy names its permissions in a form the scan attributes (#1641).
     expect(sqlProblems, 'database functions or policies that name a permission the manifest check cannot read').toEqual([]);
-    // The database names three permissions on main: unlock_period(), the accountant preset's chief accountant guard and
-    // vat_return_filed_guard (#1508).
-    expect([...new Set(sqlUses.map((u) => u.permission))].sort()).toEqual(['finance.period.unlock', 'finance.proposal.approve', 'finance.vat.file']);
+    // The database names four permissions on main: unlock_period(), the accountant preset's chief accountant guard,
+    // vat_return_filed_guard (#1508) and the conversation core's read of private messages (#2303).
+    expect([...new Set(sqlUses.map((u) => u.permission))].sort()).toEqual(['finance.period.unlock', 'finance.proposal.approve', 'finance.vat.file', 'kernel.conversation.direct.read']);
     expect(grants.length).toBeGreaterThan(0);
     expect(
       permissionProblems(MANIFESTS, { uses: [...uses, ...sqlUses], grants }),

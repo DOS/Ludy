@@ -233,7 +233,7 @@ suite('channel options on PostgreSQL (#1120)', () => {
     await expect(request(o, o.viewer, b.connectionId)).rejects.toMatchObject({ status: 403 });
     await expect(get(o, o.viewer, b.connectionId)).rejects.toMatchObject({ status: 403 });
     // The member is limited to the other board (#1081).
-    await admin((c) => c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, other.connectionId, o.owner]));
+    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, other.connectionId, o.owner]));
     await expect(request(o, o.member, b.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     await expect(get(o, o.member, b.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     expect((await request(o, o.member, other.connectionId)).status).toBe('pending');

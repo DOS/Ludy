@@ -54,16 +54,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_kernel.channel_access',
-  'crove_kernel.conversation',
-  'crove_kernel.conversation_identity',
-  'crove_kernel.conversation_message',
-  'crove_kernel.conversation_note',
-  'crove_kernel.conversation_read',
   'crove_kernel.conversation_setting',
   'crove_notes.link',
   'crove_notes.note',
-  'crove_social.channel_access',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -821,7 +814,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // here; only the vault in the worker opens a real one.
   // The conversation core (#2303, plan docs/plan/conversations.md section 5): a thread of comments or messages on a channel.
   // The factory's rows are comment threads, which the org's owner (the member context every probe enters as) reads and writes
-  // whatever the channel limits; a private message is read only with conversation.direct.read, and the thread's own channel
+  // whatever the channel limits; a private message is read only with kernel.conversation.direct.read, and the thread's own channel
   // and kind are copied onto its messages (composite foreign key), so every row below gets a fresh connection and thread.
   'crove_kernel.conversation': {
     make: (o) => {
@@ -1181,19 +1174,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_social.calendar_feed': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), token_sha256: hex64(), created_by: o.owner } }) },
   // A team's note on calendar dates (#794): a title over one day or a range, with a colour from the app's palette.
   'crove_social.calendar_note': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), starts_on: '2026-10-20', ends_on: '2026-10-22', title: 'RLS matrix note', created_by: o.owner, updated_by: o.owner } }) },
-  // A channel a limited member may work on (#1081): a member with rows is limited to those channels, a member with none
-  // is not limited. The member is the org's owner, the one member the fixture has (tenant roles cannot add members;
-  // only the commands skip owners and admins). One row per member and connection, so each row gets its own fresh
-  // connection however many rows an org gets.
-  'crove_social.channel_access': {
-    make: (o) => {
-      const connection = channelConnectionRow(o);
-      return {
-        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
-        row: { org_id: o.id, id: randomUUID(), user_id: o.owner, channel_connection_id: connection.id, created_by: o.owner },
-      };
-    },
-  },
   // A channel's options for the composer (#1120, a Pinterest board's sections), cached per connection and kind: asked
   // for by a member, filled in by the worker. One row per connection and kind, so each row gets its own fresh
   // connection however many rows an org gets.

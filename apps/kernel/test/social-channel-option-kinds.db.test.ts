@@ -254,7 +254,7 @@ suite('YouTube playlists and WordPress terms as channel options on PostgreSQL (#
       await expect(get(o, o.viewer, connectionId)).rejects.toMatchObject({ status: 403 });
     }
     // The member is limited to the site (#1081).
-    await admin((c) => c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, w.connectionId, o.owner]));
+    await admin((c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.member, w.connectionId, o.owner]));
     await expect(request(o, o.member, y.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     await expect(get(o, o.member, y.connectionId)).rejects.toMatchObject({ code: 'CHANNEL_NOT_ALLOWED' });
     expect((await request(o, o.member, w.connectionId)).status).toBe('pending');

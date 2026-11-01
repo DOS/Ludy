@@ -69,6 +69,8 @@ export const QUEUES = {
   bankFeedSync: 'finance-bank-feed-sync',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
+  // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
+  conversationsReply: 'kernel-conversation-reply',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -148,6 +150,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],
+  // The platform's reply and hide calls of the conversation core, through the publishers' conversation adapters (the offline sandbox reaches nothing).
+  [QUEUES.conversationsReply]: CHANNELS,
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

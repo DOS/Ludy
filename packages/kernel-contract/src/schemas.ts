@@ -1608,6 +1608,8 @@ export const zSocialVariant = z.object({
   queuePaused: z.boolean(),
   attempt: z.number().int(),
   externalUrl: z.string().nullable(),
+  // The platform's own id of the published post, which the conversation core's comment threads are under (#2303).
+  externalPostId: z.string().nullable(),
   publishedAt: z.string().nullable(),
   // Taken down from its platform (#860): when, who asked and why; removal: where an ask on a published channel stands.
   removedAt: z.string().nullable(),

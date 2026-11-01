@@ -202,7 +202,7 @@ suite('AI drafts from the post photos through the API (#1191)', () => {
     const connect = async (displayName: string) => String((await rpc('channels/connectSandbox', ownerToken, { displayName, key: randomUUID() })).body?.connectionId);
     channels = { mine: await connect('Trang của bạn'), hidden: await connect('Trang khác') };
     await admin((c) =>
-      c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.mine, owner.userId]),
+      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.mine, owner.userId]),
     );
     files = {
       jpeg: await file(org.orgId, { bytes: jpeg }),
