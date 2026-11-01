@@ -15,6 +15,7 @@ import {
   REBALANCE_AT,
   keyBetween,
   spreadKeys,
+  vietnamToday,
   zDealCreate,
   zDealListQuery,
   zDealMove,
@@ -26,12 +27,15 @@ import {
   type Deal,
   type DealPage,
   type DealStageKind,
+  type FilterAst,
   type PartyChoice,
   type PipelineStage,
 } from '@crove/kernel-contract';
+import { filterCondition, sortTerms } from '@crove/kernel';
 import type { MemberRole } from '@crove/db';
 import { z } from 'zod';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealsAfter } from './deal-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -402,6 +406,20 @@ export const dealList = defineQuery({
     if (input.partyId) q = q.where('d.party_id', '=', input.partyId);
     if (input.ownerUserId) q = q.where('d.owner_user_id', '=', input.ownerUserId);
     if (input.status) q = q.where('s.kind', '=', input.status);
+    // A saved view's filter and sort, or a page after a deal: the view's own order, the id as tie-breaker.
+    if (input.filters !== undefined || (input.sort ?? null) !== null || input.after !== undefined) {
+      const sort = input.sort ?? DEAL_DEFAULT_SORT;
+      // A query has no command clock: one read takes the process clock once, for "created within the last N days".
+      const now = new Date();
+      const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+      q = q.where(filterCondition('crm.deal', (input.filters as FilterAst | undefined) ?? { v: 1, all: [] }, dealFields(), { me, today: vietnamToday(now), now }));
+      if (input.after) q = q.where(await dealsAfter(ctx, sort, input.after));
+      for (const term of sortTerms('crm.deal', input.sort ?? null, dealSortColumns(), sql`d.id`, DEAL_DEFAULT_SORT)) q = q.orderBy(term);
+      const rows = await q.limit(limit + 1).execute();
+      const items = rows.slice(0, limit).map((r) => view(r, mayDelete(ctx, r.created_by)));
+      const last = items.at(-1);
+      return { items, next: rows.length > limit && last ? { createdAt: last.createdAt, id: last.id } : null };
+    }
     if (input.cursor) {
       const { createdAt, id } = input.cursor;
       q = q.where(sql<boolean>`(d.created_at, d.id) < (${new Date(createdAt)}::timestamptz, ${id}::uuid)`);

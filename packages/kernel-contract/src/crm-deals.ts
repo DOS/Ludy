@@ -3,6 +3,7 @@
 // ordered stages and the deals that sit in them. The amount is a decimal string, never a number; a deal's status is its
 // stage's kind.
 import { z } from 'zod';
+import { zFilterAstShape, zSavedViewSortShape } from './saved-view.ts';
 import { zId } from './schemas.ts';
 
 export const DEAL_STAGE_KINDS = ['open', 'won', 'lost'] as const;
@@ -113,6 +114,12 @@ export const zDealListQuery = z.strictObject({
   ownerUserId: zId.optional(),
   cursor: zDealCursor.nullable().optional(),
   limit: z.number().int().min(1).max(DEAL_PAGE_SIZE).optional(),
+  // A saved view's filter and sort (K3, #2227): a Filter AST of the `crm.deal` scope and one sort, checked against the
+  // registry (422 otherwise) and ANDed with the filters above. With a filter or a sort the list pages by `after`, the id
+  // of the last deal shown (the `next.id` of the previous page); without them `cursor` pages the newest-first list as before.
+  filters: zFilterAstShape.optional(),
+  sort: zSavedViewSortShape.nullable().optional(),
+  after: zId.optional(),
 });
 export type DealListQuery = z.infer<typeof zDealListQuery>;
 
