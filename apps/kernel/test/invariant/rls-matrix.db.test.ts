@@ -54,6 +54,11 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_account',
+  'crove_ads.ad_spend_day',
+  'crove_ads.ad_sync_run',
+  'crove_crm.deal',
+  'crove_crm.pipeline_stage',
   'crove_kernel.saved_view',
   'crove_notes.link',
   'crove_notes.note',
@@ -264,6 +269,8 @@ let legalEntityBooksYear = 2000;
 let calendarHour = 0;
 // A bank account number is unique per org (#2183): every factory row takes the next one.
 let bankAccountNumber = 0;
+// A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
+let stagePosition = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
 const portalListRow = (o: { id: string; file: string }) => ({
@@ -308,6 +315,49 @@ const journalEntry = (org: string, id: string): Row => ({
 // refused), so a denial cannot come from a malformed row. Kept in table-name order (plain string sort; the catalog
 // test checks it), so a new factory goes at its own place instead of at the end, where parallel PRs would conflict.
 const ROW_FACTORIES: Record<string, RowFactory> = {
+  // Ads (ADR-0040, #2217): an ad account of a connected ad platform, in an entity (the org's default, by its trigger b_legal_entity).
+  // One per connection, so every row has a connection of its own. Tenant roles update some columns only (a column grant), so
+  // the update probes assign the name to itself.
+  'crove_ads.ad_account': {
+    update: { set: 'name = name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' },
+      };
+    },
+  },
+  // A day of one object of an ad account, as its platform reported it: the entity is the account's (b_legal_entity, and the
+  // composite foreign key). Tenant roles update the figures only (a column grant), so the update probes assign the name to itself.
+  'crove_ads.ad_spend_day': {
+    update: { set: 'object_name = object_name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, level: 'account', external_object_id: connection.external_account_id, day: '2026-10-01', currency: 'VND', spend: '1000', impressions: 10, clicks: 1 },
+      };
+    },
+  },
+  // One sync of an ad account: written once, never changed or deleted by a tenant role (the worker's prune deletes it).
+  'crove_ads.ad_sync_run': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, status: 'ok' },
+      };
+    },
+  },
   // #1318: a visitor's booking of an event type, holding an event on the host's calendar.
   'crove_crm.booking': {
     make: (o) => {
@@ -340,9 +390,23 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1382: a member's booking feed address (the SHA-256 of its token); the member makes and revokes it.
   'crove_crm.booking_feed': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, token_sha256: hex64() } }) },
   // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
+  // A deal of the CRM pipeline (#2225): on a party of the org and in an open stage made for the row. Tenant roles write
+  // it whole but who created it and its ids, so the update probe assigns a column they may change.
+  'crove_crm.deal': {
+    make: (o) => {
+      const stage = randomUUID();
+      return {
+        setup: [{ table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner },
+      };
+    },
+    update: { set: 'title = title' },
+  },
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
   },
+  // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
+  'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
   // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.
