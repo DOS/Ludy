@@ -444,7 +444,9 @@ export const importCommit = defineCommand({
           if (Object.keys(set).length > 0) {
             await ctx.trx
               .updateTable('crove_kernel.party')
-              .set({ ...set, version: locked.version + 1, updated_at: ctx.now })
+              // What was written came from a spreadsheet: the party drops to 'external', the lowest trust (external < user <
+              // system), so a verified or invoice-sourced party does not keep a higher one. A party left unchanged keeps its trust.
+              .set({ ...set, source_trust: 'external', version: locked.version + 1, updated_at: ctx.now })
               .where('org_id', '=', ctx.orgId)
               .where('id', '=', locked.id)
               .execute();

@@ -53,10 +53,10 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const query = <T>(user: string, name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(user), orgId });
     const stage = (user: string, rows: ImportRowInput[], filename = 'lien-he.csv') => exec<ImportPreview>(user, 'crm.import.stage', { filename, rows });
     const commit = (user: string, batchId: string, onDuplicate: 'skip' | 'fill_empty' = 'skip') => exec<ImportCommitted>(user, 'crm.import.commit', { batchId, onDuplicate });
-    const party = (fields: { name: string; tax_code?: string; email?: string; phone?: string; address?: string }) =>
+    const party = (fields: { name: string; tax_code?: string; email?: string; phone?: string; address?: string; source_trust?: 'external' | 'user' | 'system' }) =>
       admin((c) =>
         c
-          .query<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, tax_code, email, phone, address) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id', [orgId, fields.name, fields.tax_code ?? null, fields.email ?? null, fields.phone ?? null, fields.address ?? null])
+          .query<{ id: string }>('INSERT INTO crove_kernel.party (org_id, name, tax_code, email, phone, address, source_trust) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id', [orgId, fields.name, fields.tax_code ?? null, fields.email ?? null, fields.phone ?? null, fields.address ?? null, fields.source_trust ?? 'user'])
           .then((r) => r.rows[0]!.id),
       );
     const parties = () => admin((c) => c.query<{ name: string; kind: string; tax_code: string | null; email: string | null; phone: string | null; source_trust: string }>('SELECT name, kind, tax_code, email, phone, source_trust FROM crove_kernel.party WHERE org_id = $1 ORDER BY name', [orgId]).then((r) => r.rows));
@@ -196,6 +196,30 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const skipped = await o.commit(o.owner, second.batch.id, 'skip');
     expect(skipped.batch).toMatchObject({ updatedRows: 0 });
     expect((await admin((c) => c.query<{ address: string | null }>('SELECT address FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rows[0]!.address).toBeNull();
+  });
+
+  it('lowers the trust of a party that fill_empty changes to external, and leaves the others as they are', async () => {
+    const o = await org();
+    const verified = await o.party({ name: 'Đã Kiểm', email: 'daky@khach.test', source_trust: 'system' });
+    const typed = await o.party({ name: 'Tự Nhập', email: 'tunhap@khach.test', source_trust: 'user' });
+    const full = await o.party({ name: 'Đủ Cả', email: 'du@khach.test', phone: '0900 000 333', address: 'Hà Nội', source_trust: 'system' });
+    const staged = await o.stage(o.owner, [
+      row({ name: 'Đã Kiểm', email: 'daky@khach.test', address: '1 Lê Lợi' }),
+      row({ name: 'Tự Nhập', email: 'tunhap@khach.test', phone: '0900 000 444' }),
+      // Nothing empty to fill: the party is left as it was.
+      row({ name: 'Đủ Cả', email: 'du@khach.test', phone: '0900 555 555', address: 'Đà Nẵng' }),
+      row({ name: 'Mới Hẳn', email: 'moi@khach.test' }),
+    ]);
+    const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
+    expect(done.batch).toMatchObject({ createdRows: 1, updatedRows: 2 });
+    const trust = await admin((c) => c.query<{ id: string; name: string; source_trust: string; version: number }>('SELECT id, name, source_trust, version FROM crove_kernel.party WHERE org_id = $1', [o.orgId]));
+    const by = new Map(trust.rows.map((r) => [r.name, r]));
+    expect(by.get('Đã Kiểm')).toMatchObject({ id: verified, source_trust: 'external' });
+    expect(by.get('Tự Nhập')).toMatchObject({ id: typed, source_trust: 'external' });
+    // Untouched: its trust and version stay.
+    expect(by.get('Đủ Cả')).toMatchObject({ id: full, source_trust: 'system', version: 1 });
+    // A party the import creates is external.
+    expect(by.get('Mới Hẳn')).toMatchObject({ source_trust: 'external' });
   });
 
   it('never gives a duplicate a tax code, email or phone that a row created in the same commit holds', async () => {
