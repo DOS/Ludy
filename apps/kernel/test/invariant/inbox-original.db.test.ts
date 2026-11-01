@@ -126,10 +126,10 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
   });
 
   it('lets owners, admins and members read an item of the kind, and only owners and admins the dead letters', async () => {
-    expect(await inContext(appUrl, asMember(users.owner), kindsRead)).toEqual([DEAD, ORIGINAL]);
-    expect(await inContext(appUrl, asMember(users.admin), kindsRead)).toEqual([DEAD, ORIGINAL]);
+    expect(await inContext(appUrl, asMember(users.owner), kindsRead)).toEqual([ORIGINAL, DEAD]);
+    expect(await inContext(appUrl, asMember(users.admin), kindsRead)).toEqual([ORIGINAL, DEAD]);
     expect(await inContext(appUrl, asMember(users.member), kindsRead)).toEqual([ORIGINAL]);
-    expect(await inContext(workerUrl, asSystem, kindsRead)).toEqual([DEAD, ORIGINAL]);
+    expect(await inContext(workerUrl, asSystem, kindsRead)).toEqual([ORIGINAL, DEAD]);
   });
 
   it('shows a viewer, a member limited to some legal entities and another org nothing', async () => {
