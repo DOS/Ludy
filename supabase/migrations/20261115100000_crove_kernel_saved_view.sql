@@ -74,8 +74,8 @@ CREATE POLICY saved_view_delete ON crove_kernel.saved_view AS RESTRICTIVE FOR DE
     OR ((SELECT crove_kernel.ctx_user_id()) IS NULL AND (SELECT crove_kernel.ctx_agent_id()) IS NULL));
 
 -- The org purge (#1024) deletes crove_kernel.saved_view with the org's other working rows, before the members it
--- references. The function is copied verbatim from 20261114100100_crove_kernel_org_purge_bank_account_number.sql (the
--- newest definition on main when this was written), with only this table added to v_kernel_first.
+-- references. The function is copied verbatim from 20261115090100_crove_kernel_org_purge_deals.sql (the newest definition
+-- on main when this was written, with the deal tables of K1), with only this table added to v_kernel_first.
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
 RETURNS TABLE (outcome text, counts jsonb, blob_keys text[])
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -110,7 +110,7 @@ DECLARE
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.calendar_credential',
     'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
-    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.event_type'];
+    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
     'crove_social.calendar_feed', 'crove_social.calendar_note', 'crove_social.channel_policy',
