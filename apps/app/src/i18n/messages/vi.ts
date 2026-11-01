@@ -6935,6 +6935,8 @@ export const vi = {
         dismiss: 'Ẩn một mục trong Chứng từ chờ duyệt',
         get: 'Xem một mục trong Chứng từ chờ duyệt',
         list: 'Xem danh sách chứng từ chờ duyệt',
+        original_dismiss: 'Bỏ qua một thư cần hóa đơn gốc',
+        originals: 'Xem các thư cần hóa đơn gốc',
         prune: 'Dọn các mục cũ hệ thống đưa vào Chứng từ chờ duyệt',
         raised: 'Xem các mục hệ thống đưa vào Chứng từ chờ duyệt',
       },

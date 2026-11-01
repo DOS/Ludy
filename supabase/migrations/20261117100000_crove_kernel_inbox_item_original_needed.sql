@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2286, part 2 of #2268; plan docs/plan/einvoice-lookup.md sections 3 and 5): an email with no invoice
 -- attachment but with the seller's lookup link or code becomes an Inbox item "the original invoice is needed". Idempotent;
 -- applied files stay untouched.

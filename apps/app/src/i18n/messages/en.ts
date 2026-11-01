@@ -6936,6 +6936,8 @@ export const en = {
         dismiss: 'Dismiss an Inbox item',
         get: 'Read a Document inbox item',
         list: 'List the Document inbox',
+        original_dismiss: 'Dismiss a mail that needs the original invoice',
+        originals: 'List the mails that need the original invoice',
         prune: 'Remove old Inbox items the system raised',
         raised: 'List the Inbox items the system raised',
       },
