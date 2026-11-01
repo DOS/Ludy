@@ -181,7 +181,7 @@ export function DealBoard({ members, canEdit }: { members: readonly Member[]; ca
           }}
         >
           <Field label={t('board.lostFor', { title: losing.deal.title })} className="min-w-64">
-            {(c) => <Input {...c} maxLength={DEAL_LOST_REASON_MAX} value={reason} onChange={(e) => setReason(e.target.value)} />}
+            {(c) => <Input {...c} autoFocus maxLength={DEAL_LOST_REASON_MAX} value={reason} onChange={(e) => setReason(e.target.value)} />}
           </Field>
           <Button type="submit" size="sm">
             {t('markLost')}

@@ -3,7 +3,7 @@
 // and remove the open ones. Won and Lost stay last and cannot be removed. A stage that still holds deals cannot be
 // removed; the server says so and the message shows here.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { PIPELINE_STAGE_MAX, PIPELINE_STAGE_NAME_MAX, type PipelineStage } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -15,12 +15,31 @@ import { refreshDeals } from './deal-form.tsx';
 
 const stagesKey = () => orpc.crm.pipeline.stages.queryKey({ input: {} });
 
-function StageRow({ stage, index, open, onChange, onError }: { stage: PipelineStage; index: number; open: readonly PipelineStage[]; onChange: (stages: PipelineStage[]) => void; onError: (error: unknown) => void }) {
+function StageRow({
+  stage,
+  index,
+  open,
+  busy,
+  setBusy,
+  onChange,
+  onError,
+}: {
+  stage: PipelineStage;
+  index: number;
+  open: readonly PipelineStage[];
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  onChange: (stages: PipelineStage[]) => void;
+  onError: (error: unknown) => void;
+}) {
   const t = useTranslations('deals.pipeline');
   const [name, setName] = useState(stage.name);
+  // The row keeps its place while stages move, so the name is read again when the server's one changes.
+  useEffect(() => setName(stage.name), [stage.name]);
   const done = { onSuccess: onChange, onError };
   const rename = useMutation(orpc.crm.pipeline.renameStage.mutationOptions(done));
-  const reorder = useMutation(orpc.crm.pipeline.reorderStages.mutationOptions(done));
+  // One reorder at a time across the rows: the next order is built from the list as it is now.
+  const reorder = useMutation(orpc.crm.pipeline.reorderStages.mutationOptions({ ...done, onMutate: () => setBusy(true), onSettled: () => setBusy(false) }));
   const remove = useMutation(orpc.crm.pipeline.removeStage.mutationOptions(done));
   const isOpen = stage.kind === 'open';
   const shift = (by: -1 | 1) => {
@@ -48,10 +67,10 @@ function StageRow({ stage, index, open, onChange, onError }: { stage: PipelineSt
       </form>
       {isOpen && (
         <>
-          <Button type="button" size="sm" variant="ghost" disabled={at <= 0 || reorder.isPending} aria-label={t('moveUp', { name: stage.name })} onClick={() => shift(-1)}>
+          <Button type="button" size="sm" variant="ghost" disabled={at <= 0 || busy} aria-label={t('moveUp', { name: stage.name })} onClick={() => shift(-1)}>
             ↑
           </Button>
-          <Button type="button" size="sm" variant="ghost" disabled={at >= open.length - 1 || reorder.isPending} aria-label={t('moveDown', { name: stage.name })} onClick={() => shift(1)}>
+          <Button type="button" size="sm" variant="ghost" disabled={at >= open.length - 1 || busy} aria-label={t('moveDown', { name: stage.name })} onClick={() => shift(1)}>
             ↓
           </Button>
           <ConfirmDialog
@@ -79,6 +98,7 @@ export function PipelineSettings() {
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   const [name, setName] = useState('');
   const [failure, setFailure] = useState<unknown>(null);
+  const [busy, setBusy] = useState(false);
   const changed = (next: PipelineStage[]) => {
     setFailure(null);
     queryClient.setQueryData(stagesKey(), next);
@@ -103,7 +123,7 @@ export function PipelineSettings() {
       </div>
       <ul className="space-y-3">
         {list.map((s, i) => (
-          <StageRow key={`${s.id}-${s.name}-${s.position}`} stage={s} index={i} open={open} onChange={changed} onError={setFailure} />
+          <StageRow key={s.id} stage={s} index={i} open={open} busy={busy} setBusy={setBusy} onChange={changed} onError={setFailure} />
         ))}
       </ul>
       <form
@@ -118,7 +138,7 @@ export function PipelineSettings() {
           {t('add')}
         </Button>
       </form>
-      {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
+      {(failure ?? stages.error) !== null && (failure ?? stages.error) !== undefined && <ErrorText>{errorMessage(failure ?? stages.error)}</ErrorText>}
     </section>
   );
 }
