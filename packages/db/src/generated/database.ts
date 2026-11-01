@@ -101,6 +101,7 @@ export interface CroveKernelSchema {
   'crove_kernel.role': KernelRoleTable;
   'crove_kernel.role_assignment': KernelRoleAssignmentTable;
   'crove_kernel.role_permission': KernelRolePermissionTable;
+  'crove_kernel.saved_view': KernelSavedViewTable;
   'crove_kernel.task': KernelTaskTable;
   'crove_kernel.task_comment': KernelTaskCommentTable;
   'crove_kernel.tax_obligation_done': KernelTaxObligationDoneTable;
@@ -1366,6 +1367,20 @@ export interface KernelRoleTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.saved_view */
+export interface KernelSavedViewTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  scope: ColumnType<string, string, NotGranted>;
+  name: string;
+  filters: ColumnType<unknown, string, string>;
+  sort: ColumnType<unknown, string | null | undefined, string | null>;
+  shared: Generated<boolean>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_kernel.task_comment */
