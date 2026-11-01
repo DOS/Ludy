@@ -22,20 +22,21 @@ import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
+import { WAITING_LINKS, allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
 
 
+// The icon of each card; where it opens is WAITING_LINKS (lib/overview.ts).
 const TARGET = {
-  proposals: { to: '/o/$slug/inbox', icon: 'inbox' },
-  socialReviews: { to: '/o/$slug/inbox', icon: 'social' },
-  failedFiles: { to: '/o/$slug/inbox', icon: 'documents' },
-  notifications: { to: '/o/$slug/notifications', icon: 'alerts' },
-  tasks: { to: '/o/$slug/tasks', icon: 'tasks' },
-  bankLines: { to: '/o/$slug/bank', icon: 'bank' },
-} as const satisfies Record<WaitingKey, { to: string; icon: NavIconName }>;
+  proposals: { icon: 'inbox' },
+  socialReviews: { icon: 'social' },
+  failedFiles: { icon: 'documents' },
+  notifications: { icon: 'alerts' },
+  tasks: { icon: 'tasks' },
+  bankLines: { icon: 'bank' },
+} as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
 const APP_CARD = {
   accounting: { to: '/o/$slug/vat', icon: 'appAccounting' },
@@ -239,8 +240,9 @@ export function OverviewPage() {
               {waiting.map(({ key, count }) => (
                 <li key={key}>
                   <Link
-                    to={TARGET[key].to}
+                    to={WAITING_LINKS[key].to}
                     params={{ slug }}
+                    search={'search' in WAITING_LINKS[key] ? WAITING_LINKS[key].search : undefined}
                     className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50"
                   >
                     <NavIcon name={TARGET[key].icon} className="text-muted-foreground" />

@@ -170,7 +170,7 @@ export const vi = {
       empty: 'Không có việc gì đang chờ bạn',
       emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán ở Chứng từ chờ duyệt, và hiện ở đây khi cần bạn xem.',
       proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
-      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt' },
+      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt bài' },
       failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
       notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
@@ -2368,13 +2368,6 @@ export const vi = {
       hint: 'Soạn bài đăng từ thư khách hàng hay đối tác gửi tới. {assistant} chỉ lấy thông tin trong thư, không làm theo lời dặn trong đó, và bài vẫn chờ bạn duyệt.',
       noSubject: 'Thư không có tiêu đề',
       draft: 'Soạn bài đăng từ thư này',
-    },
-    socialReviews: {
-      title: 'Bài đăng chờ bạn duyệt ({count, number})',
-      noText: 'Bài chưa có nội dung',
-      goesOut: 'dự kiến đăng {when}',
-      noTime: 'chưa hẹn giờ',
-      more: 'Xem thêm {count, number} bài trong Mạng xã hội',
     },
     bankLines: {
       title: 'Dòng sao kê ngân hàng chưa lập chứng từ',

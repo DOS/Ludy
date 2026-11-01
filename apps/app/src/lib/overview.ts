@@ -16,6 +16,17 @@ export interface WaitingCounts {
 
 const ORDER: readonly WaitingKey[] = ['proposals', 'socialReviews', 'failedFiles', 'notifications', 'tasks', 'bankLines'];
 
+// Where each card opens. Posts waiting for the user's review open Social's own review tab, not an accounting screen
+// (#2234): the reviewer may not read accounting at all.
+export const WAITING_LINKS = {
+  proposals: { to: '/o/$slug/inbox' },
+  socialReviews: { to: '/o/$slug/social', search: { tab: 'review' } },
+  failedFiles: { to: '/o/$slug/inbox' },
+  notifications: { to: '/o/$slug/notifications' },
+  tasks: { to: '/o/$slug/tasks' },
+  bankLines: { to: '/o/$slug/bank' },
+} as const satisfies Record<WaitingKey, { to: string; search?: Record<string, string> }>;
+
 export function waitingItems(counts: WaitingCounts): { key: WaitingKey; count: number }[] {
   return ORDER.flatMap((key) => {
     const count = counts[key];

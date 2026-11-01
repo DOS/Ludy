@@ -77,7 +77,9 @@ export function OrgLayout() {
     enabled: roleHere === 'owner' || roleHere === 'admin',
     refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS),
   });
-  const inboxCount = (pending.data?.length ?? 0) + (reviews.data?.total ?? 0) + (attention.data?.total ?? 0) + (failedJobs.data?.total ?? 0);
+  // Posts waiting for the viewer's review are counted on Social's own menu item, not on the accounting inbox (#2234).
+  const reviewCount = reviews.data?.total ?? 0;
+  const inboxCount = (pending.data?.length ?? 0) + (attention.data?.total ?? 0) + (failedJobs.data?.total ?? 0);
   // The member's unread notifications (#637), where Social runs.
   const notifications = useNotifications(NAV.some((n) => n.module === 'social'));
   const unread = unreadLabel(notifications.data?.unread ?? 0);
@@ -238,7 +240,7 @@ export function OrgLayout() {
       apps={apps}
       app={screenApp ?? lastApp}
       inApp={screenApp !== null}
-      badges={{ inbox: inboxCount > 0 ? inboxCount : null, alerts: workUnread, notifications: unread }}
+      badges={{ inbox: inboxCount > 0 ? inboxCount : null, social: reviewCount > 0 ? reviewCount : null, alerts: workUnread, notifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       onOpenPalette={() => {
