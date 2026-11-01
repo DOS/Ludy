@@ -25,6 +25,8 @@ const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // account code (112x) the number is recorded on, internal data as in bank-feed.ts, listed for this file in
 // apps/kernel/test/audit-facts.test.ts.
 const NUMBER = financeManifest.tables.crove_finance.bank_account_number;
+// The most numbers an org records: the Settings card lists them all, so every record stays visible and removable.
+export const BANK_ACCOUNT_NUMBER_MAX = 500;
 
 // One answer for a number that is on another bank account, whether the caller can read that row or row security hides it
 // (as #2079 did for a feed mapping): nothing says which entity or account holds it.
@@ -56,7 +58,9 @@ export const bankAccountNumberSet = defineCommand({
       if (existing.bank_account !== input.bankAccount || existing.legal_entity_id !== legalEntityId) throw taken();
       return { id: existing.id };
     }
-    // The same number as a bank feed mapping of another bank account would make a statement for it ambiguous.
+    // The same number as a bank feed mapping of another bank account would make a statement for it ambiguous. Owners and
+    // admins, the only callers, always hold the org-wide entity scope (enter_context seals '*' for them), so no mapping of
+    // another entity is hidden from this lookup.
     const fed = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account')
       .select(['bank_account', 'legal_entity_id'])
@@ -64,6 +68,17 @@ export const bankAccountNumberSet = defineCommand({
       .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${digits}`)
       .execute();
     if (fed.some((f) => f.bank_account !== input.bankAccount || f.legal_entity_id !== legalEntityId)) throw taken();
+    // A new record only while the card can still list them all (counted after the lookups, so the same number again is a
+    // no-op even at the limit; under the org's lock, so two records at once cannot both take the last place).
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_account_number:${ctx.orgId}`}, 0))`.execute(ctx.trx);
+    const held = await ctx.trx
+      .selectFrom('crove_finance.bank_account_number')
+      .select((eb) => eb.fn.countAll<string>().as('n'))
+      .where('org_id', '=', ctx.orgId)
+      .executeTakeFirstOrThrow();
+    if (Number(held.n) >= BANK_ACCOUNT_NUMBER_MAX) {
+      throw new DomainError('BANK_ACCOUNT_NUMBER_LIMIT', 422, `Tổ chức đã ghi đủ số tài khoản cho phép (${BANK_ACCOUNT_NUMBER_MAX}); hãy gỡ bớt số không dùng trước khi ghi thêm`);
+    }
     // Under the number's lock the lookups above have seen every row the caller may read. A conflict here is a row that
     // row security hides from the caller (another entity's): the same answer as a visible one.
     const inserted = await ctx.trx
@@ -108,7 +123,7 @@ export const bankAccountNumberList = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .orderBy('bank_account')
       .orderBy('account_number')
-      .limit(500)
+      .limit(BANK_ACCOUNT_NUMBER_MAX)
       .execute();
     return rows.map((r) => ({ id: r.id, bankAccount: r.bank_account, accountNumber: r.account_number, legalEntityId: r.legal_entity_id, createdAt: new Date(r.created_at).toISOString() }));
   },

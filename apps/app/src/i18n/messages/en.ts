@@ -5720,6 +5720,7 @@ export const en = {
       BANK_ACCOUNT_NUMBER_TAKEN: 'This account number is already on another bank account of the organization; remove it there first.',
       BANK_ACCOUNT_NUMBER_INVALID: 'An account number has digits only (6 to 20 of them); spaces, dots and dashes between groups are ignored.',
       BANK_ACCOUNT_NUMBER_NOT_FOUND: 'This account number was not found.',
+      BANK_ACCOUNT_NUMBER_LIMIT: 'The organization has recorded as many account numbers as allowed (500); remove the ones no longer used before adding more.',
       BANK_FEED_NOT_FOUND: 'This bank feed connection was not found.',
       BANK_FEED_INACTIVE: 'This bank feed connection no longer works; connect it again.',
       BANK_FEED_ACCOUNT_MAPPED: 'This account is already mapped to another legal entity; unmap it first.',

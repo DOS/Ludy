@@ -10,6 +10,13 @@ export function accountNumberDigits(raw: string): string | null {
   return /^\d{6,20}$/.test(digits) ? digits : null;
 }
 
+// The digits of a bank feed account's external id, as the statement path compares them (bank-statement-file.ts strips every
+// non-digit in SQL, so an id such as `SBX-7770001111` is the number 7770001111). Whatever it holds, never null: an id with
+// no digit gives ''.
+export function feedAccountDigits(externalAccountId: string): string {
+  return externalAccountId.replace(/[^0-9]/g, '');
+}
+
 // The number with all but its last digits hidden: enough to tell which account is meant, never the number itself. The
 // last four digits, or fewer for a short number (never more than half of it less one, at least two), so most of it is
 // always hidden.

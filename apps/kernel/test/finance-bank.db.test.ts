@@ -1252,6 +1252,46 @@ suite('bank statement import (#326)', () => {
         expect(await stageFor('7770001111')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121' } });
       });
 
+      it('reads the digits of a bank feed id as a statement does: an id with letters in it still may not take a recorded number', async () => {
+        // A statement for 7770002222 matches the feed account SBX-7770002222 (every non-digit is dropped), so the map is
+        // refused for another bank account than the one the number is on.
+        expect((await setNumber('1121', '7770002222')).status).toBe(200);
+        await admin((c) =>
+          c.query('INSERT INTO crove_finance.bank_feed_listed_account (org_id, channel_connection_id, external_account_id, display_name) VALUES ($1, $2, $3, $4)', [orgId, connectionId, 'SBX-7770002222', 'TK có chữ']),
+        );
+        expect(await feed('map', owner, { connectionId, externalAccountId: 'SBX-7770002222', bankAccount: '1121.VCB', idempotencyKey: randomUUID() })).toMatchObject({ status: 409, body: { code: 'BANK_ACCOUNT_NUMBER_TAKEN' } });
+        expect((await feed('map', owner, { connectionId, externalAccountId: 'SBX-7770002222', bankAccount: '1121', idempotencyKey: randomUUID() })).status).toBe(200);
+        expect(await stageFor('7770002222')).toMatchObject({ outcome: 'staged', summary: { bankAccount: '1121' } });
+      });
+
+      it('records at most 500 numbers an org, so the Settings card lists every one; the same number again is still a no-op', async () => {
+        const org = await secondOrg();
+        const first = await setNumber('1121', '8880001111', owner, org);
+        expect(first.status).toBe(200);
+        const orgOf = async () => (await admin((c) => c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.tenant WHERE slug = $1', [org]))).rows[0]?.org_id as string;
+        const secondOrgId = await orgOf();
+        // Fill the org to 500 by SQL (it may already hold numbers of the tests above).
+        await admin((c) =>
+          c.query(
+            `INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number)
+             SELECT $1::uuid, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', (900000000000 + g)::text
+             FROM generate_series(1, 500 - (SELECT count(*)::int FROM crove_finance.bank_account_number WHERE org_id = $1)) g`,
+            [secondOrgId],
+          ),
+        );
+        try {
+          expect(await setNumber('1121', '8880002222', owner, org)).toMatchObject({ status: 422, body: { code: 'BANK_ACCOUNT_NUMBER_LIMIT' } });
+          // A number already recorded on that account (typed differently) is not a new record.
+          expect((await setNumber('1121', '8880 001 111', owner, org)).body.id).toBe(first.body.id);
+          // Removing one makes room.
+          expect((await clearNumber(String(first.body.id), owner, org)).status).toBe(200);
+          expect((await setNumber('1121', '8880002222', owner, org)).status).toBe(200);
+          expect((await numbers(owner, org)).body).toHaveLength(500);
+        } finally {
+          await admin((c) => c.query(`DELETE FROM crove_finance.bank_account_number WHERE org_id = $1 AND (account_number::bigint BETWEEN 900000000001 AND 900000000500 OR account_number = '8880002222' OR account_number = '8880001111')`, [secondOrgId]));
+        }
+      });
+
       it('answers ambiguous for a number a bank feed and a recording put on two different bank accounts, and stages nothing', async () => {
         // The set command refuses this; raw rows (a mapping made after the number, say) are what the statement path guards against.
         await admin((c) => c.query(`INSERT INTO crove_finance.bank_account_number (org_id, legal_entity_id, bank_account, account_number) VALUES ($1, (SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default), '1121', '19880001234')`, [orgId]));

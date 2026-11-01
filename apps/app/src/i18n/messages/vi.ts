@@ -5720,6 +5720,7 @@ export const vi = {
       BANK_ACCOUNT_NUMBER_TAKEN: 'Số tài khoản này đã gắn với một tài khoản ngân hàng khác của tổ chức; hãy gỡ số đó ở tài khoản kia trước',
       BANK_ACCOUNT_NUMBER_INVALID: 'Số tài khoản chỉ gồm chữ số (6 đến 20 chữ số); khoảng trắng, dấu chấm và dấu gạch ngang giữa các nhóm số được bỏ qua',
       BANK_ACCOUNT_NUMBER_NOT_FOUND: 'Không tìm thấy số tài khoản này',
+      BANK_ACCOUNT_NUMBER_LIMIT: 'Tổ chức đã ghi đủ số tài khoản cho phép (500); hãy gỡ bớt số không dùng trước khi ghi thêm',
       BANK_FEED_NOT_FOUND: 'Không tìm thấy kết nối nguồn giao dịch ngân hàng',
       BANK_FEED_INACTIVE: 'Kết nối nguồn giao dịch ngân hàng không còn hoạt động; hãy kết nối lại',
       BANK_FEED_ACCOUNT_MAPPED: 'Tài khoản này đã gắn với một pháp nhân khác; hãy gỡ liên kết trước',
