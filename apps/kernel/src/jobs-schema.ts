@@ -143,7 +143,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',
   // The ad platform adapters (channels.adPlatforms): the offline sandbox reaches nothing. A real adapter (A2, #2218) adds its
-  // provider here, and to DEPS_REACH first (job-egress.ts, which already classifies the field as provider:ad_platform).
+  // provider here, and to DEPS_REACH first.
   [QUEUES.adsSync]: 'none',
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
