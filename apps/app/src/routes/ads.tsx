@@ -177,7 +177,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
 // which finishes the attempt for the org it was started in. Owners and admins only; the caller draws it where the
 // deployment has its Meta ads app (`meta_ads` among /api/config's channels.oauth). It says in plain words what Ludy asks
 // Meta for: only to read reports. `another` is the short form for an org that already has an ad account.
-export function ConnectMeta({ slug, another = false }: { slug: string; another?: boolean }) {
+export function ConnectMeta({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
   const start = useMutation({
@@ -198,7 +198,7 @@ export function ConnectMeta({ slug, another = false }: { slug: string; another?:
       <p className="text-xs text-subtle-foreground">{t('connectMeta.expiry')}</p>
       <div>
         <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
-          {another ? t('connectMeta.another') : t('connectMeta.action')}
+          {reconnect ? t('connectMeta.reconnect') : another ? t('connectMeta.another') : t('connectMeta.action')}
         </Button>
       </div>
       {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
@@ -273,7 +273,7 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
-          {t(`connectionHint.${account.connectionStatus}`)}
+          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince) }) : t(`connectionHint.${account.connectionStatus}`)}
         </p>
       )}
       {active && account.lastErrorKind && (
@@ -617,6 +617,44 @@ function DisconnectAction({ account }: { account: AdAccountView }) {
   );
 }
 
+// Deleting what Ads stored for the account (ads.deleteHistory, owners and admins; owner answer Q4 of #2214: the figures stay
+// after a disconnect, with this explicit action to delete them), asked first in a dialog. A connected account reads its 13
+// months again at the next update; one whose connection is closed also loses its row, so nothing of it is left.
+function DeleteHistoryAction({ account }: { account: AdAccountView }) {
+  const t = useTranslations('ads');
+  const attempt = useRef<KeyHolder | null>(null);
+  const closed = account.connectionStatus === 'revoked';
+  const remove = useMutation(
+    orpc.ads.deleteHistory.mutationOptions({
+      onSuccess: async (done) => {
+        attempt.current = null;
+        toast(done.removed ? t('settings.accountDeleted') : t('settings.historyDeleted', { days: String(done.days) }));
+        await Promise.all([refreshAccounts(), refreshFigures()]);
+      },
+    }),
+  );
+  return (
+    <div className="space-y-2 border-t pt-4">
+      <p className="text-sm text-muted-foreground">{t('settings.deleteHistoryHint')}</p>
+      <ConfirmDialog
+        render={<Button loading={remove.isPending} variant="outline" size="lg" />}
+        destructive
+        title={t('settings.deleteHistoryTitle')}
+        description={t(closed ? 'settings.deleteHistoryBodyClosed' : 'settings.deleteHistoryBody', { name: account.name })}
+        confirm={t('settings.deleteHistory')}
+        onConfirm={() => {
+          // A retry after a lost answer is the same request.
+          attempt.current = keyFor(attempt.current, account.id);
+          remove.mutate({ adAccountId: account.id, idempotencyKey: attempt.current.key });
+        }}
+      >
+        {t('settings.deleteHistory')}
+      </ConfirmDialog>
+      {remove.error && <ErrorText>{errorMessage(remove.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // The action that counts as a result, the expense account of the books to compare with, and the legal entity whose books
 // those are. Only what changed is sent. The card starts from the account as the server has it: the caller keys it by the
 // account's settings, so a change made elsewhere shows here.
@@ -709,6 +747,7 @@ export function AdsSettingsCard({ account, entities }: { account: AdAccountView;
       </form>
       {/* Outside the form: opening the dialog is not part of saving the settings. */}
       <DisconnectAction account={account} />
+      <DeleteHistoryAction account={account} />
     </Card>
   );
 }
@@ -734,6 +773,7 @@ function AccountPanel({
   role,
   entities,
   financeOn,
+  reconnect,
   onRequested,
 }: {
   account: AdAccountView;
@@ -742,6 +782,8 @@ function AccountPanel({
   role: string | undefined;
   entities: readonly LegalEntity[];
   financeOn: boolean;
+  // Where a paused Meta account is connected again: the org's address, when the deployment has its Meta ads app (#2219).
+  reconnect: { slug: string } | undefined;
   onRequested: () => void;
 }) {
   const t = useTranslations('ads');
@@ -758,6 +800,16 @@ function AccountPanel({
   return (
     <div className="space-y-8">
       <AccountHeader account={account} canRefresh={canRefresh} onRequested={onRequested} />
+      {reconnect && canManage && account.provider === 'meta_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
+        <Card className="block p-4">
+          <ConnectMeta slug={reconnect.slug} another reconnect />
+        </Card>
+      )}
+      {account.connectionStatus !== 'active' && !canManage && account.pausedReason !== 'platform_deletion' && (
+        <p className="text-sm text-muted-foreground" role="status">
+          {t('paused.noReconnect')}
+        </p>
+      )}
       {!ready ? (
         account.lastErrorKind === null && (
           <p className="text-sm text-muted-foreground" role="status">
@@ -886,6 +938,7 @@ export function AdsPage() {
             role={role}
             entities={entities.data ?? []}
             financeOn={financeOn}
+            reconnect={metaOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}
           />
         </div>

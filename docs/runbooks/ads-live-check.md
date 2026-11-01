@@ -86,11 +86,21 @@ The Limited tier has a low rate limit [C: score cap, a block of minutes]. Watch 
 
 ### 9. Expiry and reconnecting **[PERSON]**
 
-In the Facebook account's settings (Apps and Websites), remove the app, or wait for the token to end. At the next sync the connection shows as expired ("hết hạn"), the figures stay, and the screen says who must connect again. Connect again as in step 4: the same ad account returns with its history and settings, and the sync resumes with no day lost. Record how long the token lasted if the check ran long enough, against the about 60 days the adapter assumes.
+In the Facebook account's settings (Apps and Websites), remove the app, or wait for the token to end. At the next sync the connection shows as paused ("hết hạn"), with the reason and the day it stopped; the figures stay, and the owners and admins get a notice in the bell (Notifications) that opens the Ads screen. A member sees that an owner or admin must connect again. Connect again as in step 4 (the screen offers "Kết nối lại với Meta" on the paused account): the same ad account returns with its history and settings, and the sync resumes with no day lost. **[CHECK]** the days between the pause and the reconnect are all there after the next sync, in Ludy and in Ads Manager. Record how long the token lasted if the check ran long enough, against the about 60 days the adapter assumes.
 
 ### 10. Disconnect **[PERSON]**
 
 In the account's settings choose "Ngắt kết nối". The stored figures stay readable and the sync stops.
+
+### 11. Delete the stored history **[PERSON]**
+
+In the account's settings choose "Xóa lịch sử đã lưu" and confirm. Every stored figure and the update log of the account go: on a connected account the next sync reads the 13 months again; on a disconnected one the account itself is deleted too, so nothing of it stays. **[CHECK]** the account's figures are gone from the Ads screen, and the books (Kế toán) are unchanged.
+
+### 12. Meta's data deletion callback **[PERSON]** with **[PO]**
+
+In the Meta app's dashboard, Settings, Basic: set "Data Deletion Request URL" to `<PUBLIC_URL>/api/ads/meta/data-deletion` (it must be https and public; Meta also asks for it before App Review). The route exists only where `CHANNEL_META_ADS_APP_ID` and `_APP_SECRET` are set and the Ads module is on. With the app's own request tool (App Dashboard, "Test" for the callback, or removing the app from the Facebook account and asking for deletion of its data): **[CHECK]** Meta shows the confirmation code and a status link; the link opens a page that first says the request is being handled and, within a minute or so, that the ad data of the accounts the person granted was deleted; the person's ad accounts are gone from Ludy and their connections are closed. Record only the codes' presence, never the person's id.
+
+What the callback can and cannot do: it finds the accounts by a keyed hash of the Meta user who granted them, stored when the account was connected (since this slice). **An account connected before this slice has no hash**, so a request does not find it until it is connected again; the owner deletes its history by hand (step 11). With a **shared Meta app** (the same app also posts to Pages) the callback erases the ad data only: Social's data for the same person is not touched by it. Rotating the app secret leaves the stored hashes unmatched, so reconnect the accounts after a rotation.
 
 ## Results to record
 
@@ -110,7 +120,9 @@ Record in the issue (#2218) without any id, name or amount of a real account:
 | A day restated, followed by Ludy | |
 | A `rate_limited` run: Meta's error code and the next try set | |
 | Token lifetime seen | |
-| Expired then reconnected: history kept, no day lost | |
+| Expired then reconnected: history kept, no day lost; the owners were told in the bell | |
+| Stored history deleted: figures gone, books unchanged | |
+| Data deletion callback: Meta accepted the URL (U), showed a code and a status page, and the accounts of the test person were erased | |
 | Graph version used (`CHANNEL_META_GRAPH_VERSION`) | |
 | Anything Meta showed that the plan does not say | |
 

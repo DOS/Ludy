@@ -59,6 +59,8 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   id: 'a1',
   connectionId: 'c1',
   connectionStatus: 'active',
+  pausedSince: null,
+  pausedReason: null,
   extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',
@@ -276,10 +278,50 @@ describe('the settings of an ad account', () => {
   it('offers nothing to disconnect on an account that already is, and keeps its settings', () => {
     const html = settings(account({ connectionStatus: 'revoked', resultKind: 'lead' }));
     expect(html).not.toContain(`>${en.ads.settings.disconnect}<`);
-    expect(html).not.toContain('aria-haspopup="dialog"');
+    // The one dialog left is the deletion of the stored history (#2219).
+    expect(html.match(/aria-haspopup="dialog"/g)).toHaveLength(1);
     expect(html).not.toContain(en.ads.settings.disconnectHint);
     expect(html).toMatch(selectedOption('lead'));
     expect(buttonBefore(html, en.ads.settings.save)).toBeDefined();
+  });
+
+  it.each(['active', 'expired', 'revoked', 'error'] as const)('offers to delete the stored history of a %s account, behind a confirmation that is not open yet', (connectionStatus) => {
+    const html = settings(account({ connectionStatus }));
+    expect(html).toContain(en.ads.settings.deleteHistoryHint);
+    expect(buttonBefore(html, en.ads.settings.deleteHistory)).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain(en.ads.settings.deleteHistoryTitle);
+    // Outside the form of the settings: opening it is not saving them.
+    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf(`>${en.ads.settings.deleteHistory}<`));
+  });
+});
+
+describe('a paused ad account (#2219)', () => {
+  const header = (acc: AdAccountView) => render(<AccountHeader account={acc} canRefresh onRequested={() => undefined} />);
+
+  it.each([
+    ['token_expired', 'expired', 'no longer accepts this account’s access token'],
+    ['owner_left', 'expired', 'is no longer an owner or admin'],
+  ] as const)('says why a %s account stopped and since when, and that no day is lost', (pausedReason, connectionStatus, words) => {
+    const html = header(account({ connectionStatus, pausedReason, pausedSince: '2026-10-30T03:00:00.000Z' }));
+    expect(html.replaceAll('&#x27;', '’')).toContain(words);
+    expect(html).toContain('30');
+    // A line that tells the person what resumes it, not the old generic one.
+    expect(html).not.toContain(en.ads.connectionHint.expired);
+  });
+
+  it('keeps the quiet line of a disconnect the owner chose, whatever the reason recorded', () => {
+    const html = header(account({ connectionStatus: 'revoked', pausedReason: 'disconnected', pausedSince: '2026-10-30T03:00:00.000Z' }));
+    expect(html).toContain(en.ads.connectionHint.revoked);
+  });
+
+  it('falls back to the generic line for a connection with no recorded reason', () => {
+    expect(header(account({ connectionStatus: 'expired', pausedReason: null, pausedSince: null }))).toContain('The connection of this account has expired');
+  });
+
+  it('offers to connect Meta again, in words of its own', () => {
+    const html = render(<ConnectMeta slug="cong-ty" another reconnect />);
+    expect(html).toContain(`>${en.ads.connectMeta.reconnect}<`);
+    expect(html).not.toContain(`>${en.ads.connectMeta.another}<`);
   });
 });
 

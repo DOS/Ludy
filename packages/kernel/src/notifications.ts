@@ -13,7 +13,7 @@
 // and turn kinds off (kernel.notification.mute); a restrictive policy keeps each member to their own rows.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zNotificationKind } from '@crove/kernel-contract';
+import { isAdProviderId, zId, zNotificationKind } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { eligibleApprovers } from './approval.ts';
@@ -38,6 +38,10 @@ export const TASK_REROUTED = 'kernel.task_rerouted';
 // An owner's notice before a personal-data erasure (#1678, ADR-0037 section 5): how many of my private notes and
 // to-dos mention a person who asked to be erased. Not one a member can turn off: the erasure waits on it.
 export const PERSONAL_DATA_NOTICE = 'kernel.personal_data_notice';
+// An ad platform refused a connection's token, or the member who connected it left (#2219): the account's sync is paused
+// until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is
+// for the ad platforms' connections only.
+export const CHANNEL_EXPIRED = 'kernel.channel_expired';
 
 export interface NotifyInput {
   // '<module>.<kind>', for example 'finance.bank_attention'.
@@ -122,7 +126,7 @@ export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ev
 }
 
 // The events kernel.notification.dispatch handles.
-export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified'] as const;
+export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified', 'kernel.channel.expired'] as const;
 
 export const notificationDispatch = defineCommand({
   name: 'kernel.notification.dispatch',
@@ -220,6 +224,28 @@ export const notificationDispatch = defineCommand({
           detail: waiting.length === 1 && e.data.count === 1 ? {} : { count: String(waiting.length === e.data.taskIds.length ? e.data.count : waiting.length) },
           eventId: event.id,
           actor: event.actor,
+        });
+        return { sent };
+      }
+      case 'kernel.channel.expired': {
+        const e = z.object({ connection_id: zId, provider: z.string().max(32) }).safeParse(event.payload);
+        if (!e.success || !isAdProviderId(e.data.provider)) return { sent: 0 };
+        // Still expired: a connection connected again since is not waiting for anyone.
+        const connection = await ctx.trx
+          .selectFrom('crove_kernel.channel_connection')
+          .select('status')
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.connection_id)
+          .executeTakeFirst();
+        if (connection?.status !== 'expired') return { sent: 0 };
+        const sent = await notifyMembers(ctx, {
+          kind: CHANNEL_EXPIRED,
+          users: await ownersAndAdmins(ctx),
+          key: `channel_expired:${e.data.connection_id}:${event.id}`,
+          subject: { type: 'kernel.channel_connection', id: e.data.connection_id },
+          // The platform's id only: the account's name is read where the notice opens (the Ads screen).
+          detail: { provider: e.data.provider },
+          eventId: event.id,
         });
         return { sent };
       }

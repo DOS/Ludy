@@ -203,6 +203,7 @@ export interface AdsAdAccountTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  granted_by_hash: string | null;
 }
 
 /** crove_ads.ad_spend_day */
