@@ -7,7 +7,7 @@ import { zId } from './schemas.ts';
 
 export const DEAL_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export type DealStageKind = (typeof DEAL_STAGE_KINDS)[number];
-export const DEAL_STATUSES = DEAL_STAGE_KINDS;
+// A deal's status is its stage's kind.
 export type DealStatus = DealStageKind;
 
 // Most stages of the pipeline, the two closing ones included.
@@ -109,7 +109,7 @@ export const zDealDeleted = z.object({ dealId: zId, deleted: z.literal(true) });
 export const zDealListQuery = z.strictObject({
   stageId: zId.optional(),
   partyId: zId.optional(),
-  status: z.enum(DEAL_STATUSES).optional(),
+  status: z.enum(DEAL_STAGE_KINDS).optional(),
   ownerUserId: zId.optional(),
   cursor: zDealCursor.nullable().optional(),
   limit: z.number().int().min(1).max(DEAL_PAGE_SIZE).optional(),
