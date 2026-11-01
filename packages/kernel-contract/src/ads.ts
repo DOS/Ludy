@@ -60,8 +60,16 @@ export const zAdsAccountLink = z.strictObject({
   connectionId: zId,
   legalEntityId: zId.optional(),
   expenseAccountCode: zAccountCode.nullable().optional(),
+  // A keyed hash of the platform user who granted the connection (@crove/ad-platform platformUserHash), so the platform's data
+  // deletion callback can find the accounts that person granted without the id being stored (plan section 9).
+  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 });
 export type AdsAccountLink = z.infer<typeof zAdsAccountLink>;
+
+// An owner or admin deletes an account's stored figures and sync log (owner answer Q4 of #2214). A connected account reads its
+// 13 months again; one whose connection is closed also loses its row.
+export const zAdsAccountDeleteHistory = z.strictObject({ adAccountId: zId });
+export type AdsAccountDeleteHistory = z.infer<typeof zAdsAccountDeleteHistory>;
 
 export const zAdsAccountConfigure = z.strictObject({
   adAccountId: zId,
@@ -102,6 +110,11 @@ export const zAdAccountView = z.object({
   id: zId,
   connectionId: zId,
   connectionStatus: z.enum(['active', 'expired', 'revoked', 'error']),
+  // When the connection stopped being active, and why in one word: a paused account's screen says so and offers to connect it
+  // again (null while the connection is active). The platform refused the token, or the member who connected it left, or an
+  // owner or admin disconnected it, or the platform asked for its data to be deleted.
+  pausedSince: z.string().nullable(),
+  pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'other']).nullable(),
   // The permissions the connection's token holds beyond reading ad reports (empty for the sandbox and for a token that holds
   // only ads_read): the screen says when it can do more than read.
   extraScopes: z.array(z.string()),

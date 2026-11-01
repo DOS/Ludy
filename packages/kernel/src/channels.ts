@@ -175,6 +175,40 @@ export const channelMarkExpired = defineCommand({
   },
 });
 
+// A platform's own data deletion request (Meta's callback for Ads, plan docs/plan/ads.md section 9, #2219): the connection is
+// closed as a disconnect closes it, and its tokens are forgotten, but by the worker as the system, not by a member. Run once
+// per connection; one already closed only has its credential dropped again.
+export const channelRevokeByPlatform = defineCommand({
+  name: 'kernel.channel.revoke_by_platform',
+  input: z.strictObject({ connectionId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['status', 'provider'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (row.status !== 'revoked') {
+      await ctx.trx
+        .updateTable('crove_kernel.channel_connection')
+        .set({ status: 'revoked', status_reason: 'platform_deletion', updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
+      await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
+    }
+    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    return { connectionId: input.connectionId, status: 'revoked' as const };
+  },
+});
+
 // Connecting through a provider's OAuth dialog (Social plan §3.5, S6.1): the API hashes a fresh state and starts an
 // attempt for the signed-in owner or admin; the browser comes back with the state, and the same member finishes the
 // attempt once, which hands out its PKCE verifier. Both run in the oauth_state_* definers, which bind the attempt to
@@ -395,5 +429,5 @@ export const channelCredential = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
 export const channelQueries = [channelsList, channelCredential];

@@ -8,6 +8,8 @@ export const NOTIFICATION_KINDS = {
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
+  // An ad account whose connection stopped, so its updates are paused until an owner or admin connects it again (#2219).
+  ads: ['kernel.channel_expired'],
 } as const;
 export type KnownNotificationKind = (typeof NOTIFICATION_KINDS)[keyof typeof NOTIFICATION_KINDS][number];
 
@@ -36,7 +38,8 @@ export type NotificationTarget =
   | { to: 'ledger' }
   | { to: 'myWork' }
   | { to: 'task'; id: string }
-  | { to: 'tasks' };
+  | { to: 'tasks' }
+  | { to: 'ads' };
 
 // What an item opens: the proposal waiting for approval, the Inbox (where a file that failed to read is listed), the
 // bank account with lines to look at, the tax-portal check, the ledger, where the period is locked, or My work, where
@@ -58,6 +61,8 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
       return { to: 'ledger' };
     case 'notes.todo_due':
       return { to: 'myWork' };
+    case 'kernel.channel_expired':
+      return { to: 'ads' };
     default:
       return null;
   }

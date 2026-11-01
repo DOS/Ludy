@@ -11,10 +11,15 @@ export const adsManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_ads: {
-      ad_account: columns([
-        'org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'external_account_id', 'name', 'currency', 'time_zone', 'expense_account_code', 'result_kind',
-        'backfill_from', 'settled_through', 'synced_through', 'last_requested_at', 'last_run_at', 'last_error_kind', 'next_run_at', 'created_by', 'created_at', 'updated_at',
-      ]),
+      // granted_by_hash: a keyed hash of the platform user who granted the connection, which the platform's deletion callback
+      // finds the account by (plan section 9); never the platform's id of the person.
+      ad_account: columns(
+        [
+          'org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'external_account_id', 'name', 'currency', 'time_zone', 'expense_account_code', 'result_kind',
+          'backfill_from', 'settled_through', 'synced_through', 'last_requested_at', 'last_run_at', 'last_error_kind', 'next_run_at', 'created_by', 'created_at', 'updated_at',
+        ],
+        { granted_by_hash: 'pii' },
+      ),
       ad_spend_day: columns([
         'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'level', 'external_object_id', 'object_name', 'day', 'currency', 'spend', 'impressions', 'clicks', 'reach', 'results',
         'fetched_at', 'settled_at',
@@ -22,6 +27,9 @@ export const adsManifest = defineModule({
       ad_sync_run: columns([
         'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'status', 'window_from', 'window_to', 'rows_written', 'error_kind', 'error_code', 'retry_at', 'started_at', 'finished_at',
       ]),
+      // Meta's data deletion requests (plan section 9): a global machinery table, no org_id and nothing about an org; only the
+      // definers touch it. user_hash is the keyed hash of the Meta user who asked, never the id.
+      deletion_request: columns(['code', 'requested_at', 'completed_at', 'accounts'], { user_hash: 'pii' }),
     },
   },
   // It owns no permission: access comes from the base role (owners and admins connect and configure, members refresh,

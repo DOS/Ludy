@@ -198,6 +198,7 @@ export const en = {
       finance_portal_attention: 'Tax portal checks to look at',
       finance_period_closing: 'VAT returns due on a period that is not locked',
       notes_todo_due: 'Reminders of my to-dos',
+      kernel_channel_expired: 'An ad account connection expired or was refused',
     },
     text: {
       approval_waiting: 'Waiting for your approval: {title}',
@@ -210,6 +211,7 @@ export const en = {
       portal_failed: 'Could not read the tax portal list for {period}',
       period_closing: 'The VAT return for {period} is due on {due}, and the period is not locked',
       todo_due: 'You have 1 to-do due',
+      channel_expired: 'An ad account was paused because its connection expired or was refused. Connect it again to read on, with no day lost.',
       personal_data_notice: 'A person asked for their data to be erased: {items} of yours mention them and will be deleted. Copy out what you need, without their details.',
       other: 'New notification',
     },
@@ -1206,6 +1208,16 @@ export const en = {
       another: 'Connect another Meta ad account',
       note: '{brand} only asks Meta for permission to read ad reports (the ads_read permission). It never creates or changes a campaign, and never spends your money.',
       expiry: 'The connection lasts about 60 days, then Meta asks you to connect again.',
+      reconnect: 'Reconnect with Meta',
+    },
+    // An account whose connection stopped (#2219): why, since when, and what resumes it.
+    paused: {
+      token_expired: 'Since {since}, Meta no longer accepts this account’s access token, so Ludy paused its updates. No day is lost: once you reconnect, it reads on from the last day that was not final.',
+      owner_left: 'Since {since}, the member who connected this account is no longer an owner or admin, so Ludy paused its updates. An owner or admin reconnects it and it reads on, with no day lost.',
+      other: 'Since {since}, this account’s connection has stopped, so Ludy paused its updates. Reconnect it and it reads on, with no day lost.',
+      disconnected: 'This account was disconnected on {since}. Connect the same account again and the stored history is kept and reading goes on.',
+      platform_deletion: 'Since {since}, Meta asked for the data of the person who granted this account to be deleted, so the connection is closed and the data deleted.',
+      noReconnect: 'An owner or admin must reconnect this account.',
     },
     oauth: {
       title: 'Connect an ad account',
@@ -1293,6 +1305,13 @@ export const en = {
       disconnectTitle: 'Disconnect this ad account?',
       disconnectBody: 'The system will stop getting new figures for {name}. The stored figures are kept, to read.',
       disconnected: 'Disconnected the ad account.',
+      deleteHistory: 'Delete stored history',
+      deleteHistoryHint: 'Deletes every figure and update log Ludy stored for this account. The accounting books are not touched.',
+      deleteHistoryTitle: 'Delete the ad history of this account?',
+      deleteHistoryBody: 'Every ad figure and the update log of {name} will be deleted and cannot be restored. A connected account reads its last 13 months again at the next update.',
+      deleteHistoryBodyClosed: 'Every ad figure, the update log and the account {name} itself will be deleted from Ludy and cannot be restored. To see it again, connect the account from scratch.',
+      historyDeleted: 'Deleted the ad history ({days} days of figures).',
+      accountDeleted: 'Deleted the ad account and all its figures.',
     },
     books: {
       title: 'Compared with the books',
@@ -6180,6 +6199,7 @@ export const en = {
       ADS_ACCOUNT_NOT_FOUND: 'This ad account was not found.',
       ADS_CONNECTION_NOT_FOUND: 'This ad account connection was not found.',
       ADS_CONNECTION_INACTIVE: 'This ad account connection no longer works; connect it again.',
+      ADS_CONNECTION_STILL_OPEN: 'This account’s connection is still open; disconnect it before deleting the account.',
       ADS_SYNC_TOO_SOON: 'This account was just refreshed; try again in about a minute.',
       ADS_SYNC_ON_HOLD: 'The platform is limiting how often this account is read; the system will try again when the limit ends.',
       ADS_RANGE_INVALID: 'The date range is not valid: it must start before it ends and cover at most 400 days.',
@@ -6517,6 +6537,8 @@ export const en = {
     ads: {
       account: {
         configure: "Set an ad account's expense account, result and legal entity",
+        delete_history: "Delete an ad account's stored figures and update log",
+        erase: 'Erase an ad account at the platform’s data deletion request',
         link: 'Link a connected ad account',
         list: 'List the ad accounts',
       },
@@ -6844,6 +6866,7 @@ export const en = {
         disconnect: 'Disconnect a channel',
         list: 'List connected channels',
         mark_expired: 'Mark a channel connection expired',
+        revoke_by_platform: 'Close a channel connection at the platform’s data deletion request',
         oauth_begin: 'Start connecting a channel by sign-in',
         oauth_consume: 'Finish connecting a channel by sign-in',
         refresh: "Refresh a channel's credential",

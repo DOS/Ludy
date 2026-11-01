@@ -57,6 +57,8 @@ Mọi tin trong kế hoạch được gắn nhãn: [C] đã đọc trên trang c
 
 v1 **không lưu dữ liệu cá nhân**: chỉ mã và tên tài khoản, chiến dịch, và số liệu tổng hợp theo ngày. Tệp đối tượng, biểu mẫu khách hàng tiềm năng, pixel đều là dữ liệu cá nhân của người khác nên nằm ngoài v1. Meta coi số liệu tổng hợp là "Platform Data" nên ứng dụng phải có endpoint xóa dữ liệu theo yêu cầu, và có lệnh xóa lịch sử.
 
+**Đã làm ở lát A3 (#2219):** khi Meta từ chối token, tài khoản bị **tạm dừng** (không đọc, giữ nguyên số liệu), màn hình nói rõ lý do và từ ngày nào, chủ sở hữu và quản trị viên nhận thông báo trong chuông và bấm vào là tới màn Quảng cáo để **kết nối lại**; kết nối lại cùng tài khoản thì lấy tiếp từ ngày chưa chốt, không mất ngày nào. Nút **"Xóa lịch sử đã lưu"** xóa mọi số liệu và nhật ký của tài khoản (tài khoản đã ngắt kết nối thì xóa luôn cả tài khoản); sổ kế toán không bị đụng tới. **Endpoint xóa dữ liệu của Meta** (`/api/ads/meta/data-deletion`) kiểm tra chữ ký của Meta, trả mã xác nhận và trang xem trạng thái; hệ thống đóng kết nối và xóa các tài khoản do người đó cấp quyền. Người cấp quyền chỉ được lưu dưới dạng **băm có khóa**, không lưu mã Meta của họ. Tài khoản kết nối trước lát A3 chưa có băm này: phải kết nối lại thì endpoint mới tìm thấy (hoặc chủ tự xóa lịch sử).
+
 ## Rủi ro chính
 
 - Token Meta mang quyền ghi dù Ludy chỉ đọc. Giảm thiểu: mã hóa, chỉ worker mở, adapter chỉ có hàm đọc và có test kiểm tra, ngắt kết nối thì xóa token ngay.
