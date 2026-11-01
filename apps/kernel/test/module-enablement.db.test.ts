@@ -159,6 +159,9 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     expect(all.commands.map((c) => c.name)).toContain('crm.event_type.create');
     const crmOnly = moduleDefinitions(configFor('crm'));
     expect([...new Set([...crmOnly.commands, ...crmOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['crm', 'kernel']);
+    // CRM slice 1 (#2223): deals, the pipeline, the contacts and the contact import ride with the crm module alone.
+    const crmNames = [...crmOnly.commands, ...crmOnly.queries].map((d) => d.name);
+    for (const name of ['crm.deal.create', 'crm.deal.move', 'crm.deal.board', 'crm.stage.add', 'crm.contact.list', 'crm.import.stage', 'crm.import.commit', 'crm.import.expire']) expect(crmNames, name).toContain(name);
     // And the notes module (#1671).
     expect(all.commands.map((c) => c.name)).toContain('notes.note.create');
     const notesOnly = moduleDefinitions(configFor('notes'));
@@ -245,6 +248,10 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       for (const [path, input] of [['crm/eventTypes/list', {}], ['crm/eventTypes/setActive', { eventTypeId: randomUUID(), active: false }]] as const) {
         expect((await rpc(path, input)).status, path).toBe(404);
       }
+      // Nor are its deals, pipeline, contacts and contact import (#2223).
+      for (const [path, input] of [['crm/pipeline/stages', {}], ['crm/deals/board', {}], ['crm/deals/list', {}], ['crm/contacts/list', {}], ['crm/contactImport/preview', { batchId: randomUUID() }]] as const) {
+        expect((await rpc(path, input)).status, path).toBe(404);
+      }
       // Nor are the notes module's (#1671): nothing of it loads.
       for (const [path, input] of [['notes/list', { view: 'mine' }], ['notes/create', { title: 'Ghi chú' }], ['notes/privateCounts', {}]] as const) {
         expect((await rpc(path, input)).status, path).toBe(404);
@@ -283,6 +290,59 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       expect(scheduled?.n).toBe('0');
       const [ticks] = await adminQuery<{ n: string }>("SELECT count(*)::text AS n FROM crove_jobs.job WHERE name = ANY ($1) AND state = 'created'", [crons]);
       expect(ticks?.n).toBe('0');
+    } finally {
+      await stop();
+    }
+  });
+
+  it('boots with kernel and crm alone: the pipeline, a contact import and a deal work, no finance route, the import sweep is scheduled', { timeout: 120_000 }, async () => {
+    const port = await freePort();
+    const config = configFor('crm', port);
+    const identity: IdentityPort = {
+      sessions: { mode: 'off', liveCheckForR3: false, check: async () => {} },
+      revoker: null,
+      authenticator: () => async () => {
+        const user: AuthUser = { userId: owner, email: 'modules-owner@example.com', name: null, aal: 'aal1', sessionId: SESSION, mfaAt: null };
+        return user;
+      },
+    };
+    const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage: new MemoryStore() });
+    expect(kernel.modules).toEqual(['kernel', 'crm']);
+    const stop = await kernel.start('all');
+    try {
+      const origin = `http://127.0.0.1:${port}`;
+      const rpc = async <T>(path: string, input: unknown = {}): Promise<{ status: number; body: T }> => {
+        const res = await fetch(`${origin}/api/rpc/${path}`, {
+          method: 'POST',
+          headers: { authorization: 'Bearer fake-token', [ORG_HEADER]: slug, 'content-type': 'application/json' },
+          body: JSON.stringify({ json: input }),
+        });
+        return { status: res.status, body: ((await res.json()) as { json: T }).json };
+      };
+      expect(await (await fetch(`${origin}/api/config`)).json()).toMatchObject({ modules: ['crm', 'kernel'] });
+      // Finance is not there.
+      expect((await rpc('journal/list')).status).toBe(404);
+      // The pipeline: set up once, six stages.
+      const stages = await rpc<{ id: string; name: string; kind: string }[]>('crm/pipeline/setup');
+      expect(stages.status).toBe(200);
+      expect(stages.body.map((s) => s.name)).toEqual(['Mới', 'Đã liên hệ', 'Báo giá', 'Thương lượng', 'Thắng', 'Thua']);
+      // A contact import: stage, then commit; the party exists.
+      const row = { kind: null, name: 'Công ty Một Mình', taxCode: null, email: 'mot@khach.test', phone: null, address: null };
+      const staged = await rpc<{ batch: { id: string; newRows: number } }>('crm/contactImport/stage', { filename: 'lien-he.csv', rows: [row] });
+      expect(staged.status).toBe(200);
+      expect(staged.body.batch.newRows).toBe(1);
+      const done = await rpc<{ batch: { createdRows: number } }>('crm/contactImport/commit', { batchId: staged.body.batch.id, onDuplicate: 'skip' });
+      expect(done.body.batch.createdRows).toBe(1);
+      const found = await rpc<{ id: string; name: string }[]>('crm/parties/search', { q: 'Một Mình' });
+      expect(found.body.map((p) => p.name)).toEqual(['Công ty Một Mình']);
+      // A deal for it, on the board.
+      const deal = await rpc<{ id: string; stageKind: string }>('crm/deals/create', { partyId: found.body[0]?.id, title: 'Gói đầu tiên', amount: '1000000', expectedClose: null });
+      expect(deal.status).toBe(200);
+      const board = await rpc<{ columns: { stage: { name: string }; count: number }[] }>('crm/deals/board');
+      expect(board.body.columns.find((c) => c.stage.name === 'Mới')?.count).toBe(1);
+      // The import sweep is scheduled with the module.
+      const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmImportExpire]);
+      expect(scheduled?.n).toBe('1');
     } finally {
       await stop();
     }

@@ -22,20 +22,21 @@ import { OPEN_TASK_STATUSES } from '../lib/agents.ts';
 import { installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { deadlineTone } from '../lib/clients.ts';
-import { allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
+import { WAITING_LINKS, allCounted, gapsFromYear, waitingItems, type WaitingKey } from '../lib/overview.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { entityToMark, markableEntities } from '../lib/tax-calendar.ts';
 import { useWorkNotifications } from './notifications.tsx';
 
 
+// The icon of each card; where it opens is WAITING_LINKS (lib/overview.ts).
 const TARGET = {
-  proposals: { to: '/o/$slug/inbox', icon: 'inbox' },
-  socialReviews: { to: '/o/$slug/inbox', icon: 'social' },
-  failedFiles: { to: '/o/$slug/inbox', icon: 'documents' },
-  notifications: { to: '/o/$slug/notifications', icon: 'alerts' },
-  tasks: { to: '/o/$slug/tasks', icon: 'tasks' },
-  bankLines: { to: '/o/$slug/bank', icon: 'bank' },
-} as const satisfies Record<WaitingKey, { to: string; icon: NavIconName }>;
+  proposals: { icon: 'inbox' },
+  socialReviews: { icon: 'social' },
+  failedFiles: { icon: 'documents' },
+  notifications: { icon: 'alerts' },
+  tasks: { icon: 'tasks' },
+  bankLines: { icon: 'bank' },
+} as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
 const APP_CARD = {
   accounting: { to: '/o/$slug/vat', icon: 'appAccounting' },
@@ -236,13 +237,10 @@ export function OverviewPage() {
         {waiting.length > 0 ? (
           <Card className="mt-3 block overflow-hidden p-0">
             <ul className="divide-y">
-              {waiting.map(({ key, count }) => (
-                <li key={key}>
-                  <Link
-                    to={TARGET[key].to}
-                    params={{ slug }}
-                    className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50"
-                  >
+              {waiting.map(({ key, count }) => {
+                const rowClass = 'flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50';
+                const row = (
+                  <>
                     <NavIcon name={TARGET[key].icon} className="text-muted-foreground" />
                     <span className="w-8 shrink-0 text-right font-mono text-base font-semibold tabular-nums text-foreground">{count}</span>
                     <span className="min-w-0 flex-1">
@@ -251,9 +249,22 @@ export function OverviewPage() {
                     </span>
                     {/* The whole row is the link; on a phone the words would only squeeze what it counts. */}
                     <span className="hidden shrink-0 text-xs text-link sm:inline">{t(`waiting.${key}.open`)}</span>
-                  </Link>
-                </li>
-              ))}
+                  </>
+                );
+                return (
+                  <li key={key}>
+                    {key === 'socialReviews' ? (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} search={WAITING_LINKS[key].search} className={rowClass}>
+                        {row}
+                      </Link>
+                    ) : (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} className={rowClass}>
+                        {row}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </Card>
         ) : allCounted(counts, asked) && !failed ? (
