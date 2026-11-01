@@ -1213,7 +1213,6 @@ export const vi = {
       token_expired: 'Từ {since}, Meta không còn nhận mã truy cập của tài khoản này nên Ludy đã tạm dừng cập nhật. Không mất ngày nào: sau khi kết nối lại, hệ thống lấy tiếp từ ngày chưa chốt gần nhất.',
       owner_left: 'Từ {since}, người đã kết nối tài khoản này không còn là chủ sở hữu hay quản trị viên nên Ludy đã tạm dừng cập nhật. Chủ sở hữu hoặc quản trị viên kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
       other: 'Từ {since}, kết nối của tài khoản này đã dừng nên Ludy tạm dừng cập nhật. Kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
-      disconnected: 'Tài khoản này đã được ngắt kết nối từ {since}. Kết nối lại cùng tài khoản thì lịch sử đã lưu được giữ và việc lấy số liệu tiếp tục.',
       platform_deletion: 'Từ {since}, Meta yêu cầu xóa dữ liệu của người đã cấp quyền cho tài khoản này nên kết nối đã đóng và dữ liệu bị xóa.',
       noReconnect: 'Chủ sở hữu hoặc quản trị viên cần kết nối lại tài khoản này.',
     },

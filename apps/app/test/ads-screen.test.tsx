@@ -301,13 +301,17 @@ describe('a paused ad account (#2219)', () => {
   it.each([
     ['token_expired', 'expired', 'no longer accepts this account’s access token'],
     ['owner_left', 'expired', 'is no longer an owner or admin'],
-    ['disconnected', 'revoked', 'was disconnected on'],
   ] as const)('says why a %s account stopped and since when, and that no day is lost', (pausedReason, connectionStatus, words) => {
     const html = header(account({ connectionStatus, pausedReason, pausedSince: '2026-10-30T03:00:00.000Z' }));
     expect(html.replaceAll('&#x27;', '’')).toContain(words);
     expect(html).toContain('30');
     // A line that tells the person what resumes it, not the old generic one.
     expect(html).not.toContain(en.ads.connectionHint.expired);
+  });
+
+  it('keeps the quiet line of a disconnect the owner chose, whatever the reason recorded', () => {
+    const html = header(account({ connectionStatus: 'revoked', pausedReason: 'disconnected', pausedSince: '2026-10-30T03:00:00.000Z' }));
+    expect(html).toContain(en.ads.connectionHint.revoked);
   });
 
   it('falls back to the generic line for a connection with no recorded reason', () => {

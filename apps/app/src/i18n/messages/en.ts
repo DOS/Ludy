@@ -1215,7 +1215,6 @@ export const en = {
       token_expired: 'Since {since}, Meta no longer accepts this account’s access token, so Ludy paused its updates. No day is lost: once you reconnect, it reads on from the last day that was not final.',
       owner_left: 'Since {since}, the member who connected this account is no longer an owner or admin, so Ludy paused its updates. An owner or admin reconnects it and it reads on, with no day lost.',
       other: 'Since {since}, this account’s connection has stopped, so Ludy paused its updates. Reconnect it and it reads on, with no day lost.',
-      disconnected: 'This account was disconnected on {since}. Connect the same account again and the stored history is kept and reading goes on.',
       platform_deletion: 'Since {since}, Meta asked for the data of the person who granted this account to be deleted, so the connection is closed and the data deleted.',
       noReconnect: 'An owner or admin must reconnect this account.',
     },

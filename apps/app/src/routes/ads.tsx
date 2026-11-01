@@ -273,7 +273,7 @@ function SyncStatus({ account }: { account: AdAccountView }) {
       )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
-          {account.pausedReason && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince) }) : t(`connectionHint.${account.connectionStatus}`)}
+          {account.pausedReason && account.pausedReason !== 'disconnected' && account.pausedSince ? t(`paused.${account.pausedReason}`, { since: f.date(account.pausedSince) }) : t(`connectionHint.${account.connectionStatus}`)}
         </p>
       )}
       {active && account.lastErrorKind && (
