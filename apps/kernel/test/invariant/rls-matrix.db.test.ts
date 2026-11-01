@@ -269,6 +269,8 @@ let legalEntityBooksYear = 2000;
 let calendarHour = 0;
 // A bank account number is unique per org (#2183): every factory row takes the next one.
 let bankAccountNumber = 0;
+// A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
+let stagePosition = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
 const portalListRow = (o: { id: string; file: string }) => ({
@@ -394,7 +396,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => {
       const stage = randomUUID();
       return {
-        setup: [{ table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: 1 } }],
+        setup: [{ table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }],
         row: { org_id: o.id, id: randomUUID(), party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner },
       };
     },
@@ -404,7 +406,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
   },
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
-  'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: 1 } }) },
+  'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },
   // The number of a bank account (#2183): the digits a statement file names, recorded on a bank account of an entity (the
   // org's default, by its trigger) so a statement matches without a bank feed. One number per org (a unique key), so every
   // row gets its own. Written and removed whole by owners' and admins' commands: tenant roles read, insert and delete.
