@@ -16,6 +16,7 @@ import { CredentialVault, Runtime, parseVaultKey, sha256Hex, type BlobStore } fr
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { runConversationIntake, runConversationJob } from '../src/conversations-worker.ts';
+import { ZALO_REPLAY_WINDOW_MS, ZaloReplayCache } from '../src/zalo-webhook.ts';
 import { createHttpApp } from '../src/http.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -59,6 +60,8 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
   let connectionId = '';
   let ownerId = '';
   let api: Runtime;
+  let appConfig: ReturnType<typeof loadConfig>;
+  let appDb: Db;
   let vault: CredentialVault;
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
@@ -77,7 +80,8 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
   const signed = (body: string, timestamp: string, key = OA_KEY) => ({ 'x-zevent-signature': mac(body, timestamp, key) });
   const text = (msgId: string, content: string, timestamp = '1788300000000', user = 'u-100', oa = 'oa-1') =>
     `{"app_id":"${APP_ID}","user_id_by_app":"app-${user}","event_name":"user_send_text","timestamp":"${timestamp}","sender":{"id":"${user}"},"recipient":{"id":"${oa}"},"message":{"msg_id":"${msgId}","text":${JSON.stringify(content)}}}`;
-  const intake = () => runConversationIntake({ workerDb, runtime: worker, log: () => {} });
+  const intake = () => runConversationIntake({ workerDb, runtime: worker });
+  const commonDeps = () => ({ config: appConfig, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(appConfig, appDb), pool: pools[0] as pg.Pool, aiEnabled: false });
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -99,6 +103,8 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     api = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    appConfig = config;
+    appDb = db;
     const common = { config, runtime: api, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
     app = createHttpApp({ ...common, zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY } });
     bare = createHttpApp(common);
@@ -183,6 +189,55 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     ]);
     // The free window runs 48 hours from the customer's message (the platform's own time).
     expect(Number((await rows<{ hours: string }>("SELECT extract(epoch FROM (reply_window_until - last_inbound_at)) / 3600 AS hours FROM crove_kernel.conversation WHERE org_id = $1", [orgId]))[0]?.hours)).toBe(48);
+  });
+
+  it('answers a replayed event without parking it again for an hour, and parks one whose first try was refused', async () => {
+    let clock = Date.now();
+    const replays = new ZaloReplayCache(() => clock);
+    const replaying = createHttpApp({ ...commonDeps(), zaloWebhook: { appId: APP_ID, oaSecretKey: OA_KEY }, zaloReplays: replays });
+    const body = text('m-replay', 'Gửi lại nhiều lần', '1788300090000');
+    const send = () => post(replaying, body, signed(body, '1788300090000'));
+    expect((await send()).status).toBe(200);
+    expect(await waiting()).toBe(1);
+    // Zalo's resend and a captured body replayed: each is answered 200 and none is parked.
+    for (let i = 0; i < 3; i++) expect((await send()).status).toBe(200);
+    expect(await waiting()).toBe(1);
+    // Another event is parked as usual; a replay past the window is parked again (the unique message id keeps the thread to one).
+    const other = text('m-replay-2', 'Tin khác', '1788300091000');
+    expect((await post(replaying, other, signed(other, '1788300091000'))).status).toBe(200);
+    expect(await waiting()).toBe(2);
+    clock += ZALO_REPLAY_WINDOW_MS + 1;
+    expect((await send()).status).toBe(200);
+    expect(await waiting()).toBe(3);
+    expect(await intake()).toEqual({ stored: 2, dropped: 0 });
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND external_message_id = 'm-replay'", [orgId])).toHaveLength(1);
+    // A signature that fails never reaches the cache, so a forged body cannot make a real one look replayed.
+    const real = text('m-forged', 'Thật', '1788300092000');
+    expect((await post(replaying, real, signed(real, '1788300092000', 'another-key'))).status).toBe(401);
+    expect((await post(replaying, real, signed(real, '1788300092000'))).status).toBe(200);
+    expect(await waiting()).toBe(1);
+    await intake();
+  });
+
+  it('logs nothing of the body it parks or refuses', async () => {
+    const lines: string[] = [];
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((level) => {
+      const original = console[level];
+      console[level] = (...args: unknown[]) => void lines.push(args.map(String).join(' '));
+      return () => void (console[level] = original);
+    });
+    try {
+      const secretText = 'số điện thoại 0912345678 của Nguyễn Văn Mẫu';
+      const good = text('m-quiet', secretText, '1788300100000');
+      await post(app, good, signed(good, '1788300100000'));
+      await post(app, good, {});
+      await post(app, '{ not json', signed('{ not json', '1'));
+      await intake();
+    } finally {
+      for (const restore of spies) restore();
+    }
+    expect(lines.join(' | ')).not.toMatch(/0912345678|Nguyễn Văn Mẫu|m-quiet|u-100/);
+    expect(lines.join(' | ')).not.toContain(OA_KEY);
   });
 
   it('takes a redelivered or out-of-order notice once, and an OA with no connection nowhere', async () => {

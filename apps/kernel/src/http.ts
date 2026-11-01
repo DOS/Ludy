@@ -101,7 +101,7 @@ import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
-import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES, acceptAdsDeletion, adsDeletionStatus, renderAdsDeletionStatus } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
@@ -176,6 +176,8 @@ export interface HttpDeps {
   zaloWebhook?: ZaloWebhookConfig;
   // Notices per minute per client address for that route.
   zaloWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  zaloReplays?: ZaloReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -720,6 +722,7 @@ export function createHttpApp(deps: HttpDeps) {
   const zaloWebhook = deps.zaloWebhook;
   if (zaloWebhook) {
     const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });
+    const zaloReplays = deps.zaloReplays ?? new ZaloReplayCache();
     app.post(ZALO_WEBHOOK_PATH, bodyLimit({ maxSize: ZALO_MAX_NOTICE_BYTES }), async (c) => {
       const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
       if (!decision.allowed) {
@@ -728,7 +731,7 @@ export function createHttpApp(deps: HttpDeps) {
         return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
       }
       try {
-        const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) });
+        const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, zaloReplays);
         if (outcome.status === 200) return c.json({ ok: true }, 200);
         return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {

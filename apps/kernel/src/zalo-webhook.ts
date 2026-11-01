@@ -19,22 +19,56 @@ export interface ZaloWebhookConfig {
   oaSecretKey: string;
 }
 
+// Events seen lately, by their own id, so a signed notice replayed (by Zalo's resends or by anyone holding a captured one) is answered
+// without being parked again. Zalo resends after an outage 30 seconds, 5, 15, 30 minutes and 1 hour later [S], so the window is an
+// hour. It is a per-process guard against a queue flooded with one body; the guarantee that a replay stores nothing twice is the unique
+// platform message id of the thread's messages, which holds across processes and restarts. An event is remembered only once it is
+// parked, so a notice refused for backlog is accepted when Zalo sends it again.
+export const ZALO_REPLAY_WINDOW_MS = 60 * 60_000;
+const ZALO_REPLAY_MAX = 10_000;
+export class ZaloReplayCache {
+  private readonly seen = new Map<string, number>();
+  private readonly now: () => number;
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
+  has(key: string): boolean {
+    const until = this.seen.get(key);
+    if (until === undefined) return false;
+    if (until <= this.now()) {
+      this.seen.delete(key);
+      return false;
+    }
+    return true;
+  }
+  add(key: string): void {
+    this.seen.delete(key);
+    this.seen.set(key, this.now() + ZALO_REPLAY_WINDOW_MS);
+    // Insertion order is age order: the oldest go first when the cache is full.
+    while (this.seen.size > ZALO_REPLAY_MAX) this.seen.delete(this.seen.keys().next().value as string);
+  }
+}
+
 export type ZaloWebhookOutcome =
   | { status: 200; parked: boolean }
   | { status: 401; code: 'WEBHOOK_SIGNATURE' }
   | { status: 400; code: 'WEBHOOK_MALFORMED' }
   | { status: 503; code: 'BACKLOG' };
 
-export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookConfig, request: { signature: string | undefined; body: Uint8Array }): Promise<ZaloWebhookOutcome> {
+export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookConfig, request: { signature: string | undefined; body: Uint8Array }, replays?: ZaloReplayCache): Promise<ZaloWebhookOutcome> {
   if (!zaloSignatureOk({ body: request.body, header: request.signature, appId: config.appId, oaSecretKey: config.oaSecretKey })) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
-  let events: number;
+  let notice: ReturnType<typeof parseZaloNotice>;
   try {
-    events = parseZaloNotice(request.body).events.length;
+    notice = parseZaloNotice(request.body);
   } catch (error) {
     if (error instanceof ConversationNoticeError) return { status: 400, code: 'WEBHOOK_MALFORMED' };
     throw error;
   }
-  if (events === 0) return { status: 200, parked: false };
+  if (notice.events.length === 0) return { status: 200, parked: false };
+  // The id of the event: the OA, the platform's message id and which way it went. A replay inside the window is answered, not parked.
+  const event = notice.events[0];
+  const key = event ? `${notice.accountId}:${event.direction}:${event.messageId}` : null;
+  if (key && replays?.has(key)) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
       await sql`SELECT crove_kernel.conversation_inbound_enqueue('zalo_oa', ${Buffer.from(request.body)}::bytea)`.execute(db);
@@ -44,5 +78,6 @@ export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookCon
     if ((error as { code?: unknown } | null)?.code === '53400') return { status: 503, code: 'BACKLOG' };
     throw error;
   }
+  if (key) replays?.add(key);
   return { status: 200, parked: true };
 }
