@@ -18,11 +18,13 @@ CREATE TABLE IF NOT EXISTS crove_crm.pipeline_stage (
   name text NOT NULL CHECK (pg_catalog.length(name) BETWEEN 1 AND 40 AND name = pg_catalog.btrim(name)),
   kind text NOT NULL CHECK (kind IN ('open', 'won', 'lost')),
   -- 1 upward, in the order of the pipeline. The commands keep it gapless and cap the pipeline at 12 stages, under the
-  -- pipeline lock; a tie (it cannot happen through them) is broken by the id.
+  -- pipeline lock (no upper bound here, so a cap that changes is not a migration).
   position smallint NOT NULL CHECK (position >= 1),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (org_id, id)
+  PRIMARY KEY (org_id, id),
+  -- Deferred, so a reorder swaps positions inside one transaction; a command that writes a duplicate fails at commit.
+  CONSTRAINT pipeline_stage_position_uq UNIQUE (org_id, position) DEFERRABLE INITIALLY DEFERRED
 );
 -- One won stage and one lost stage per org.
 CREATE UNIQUE INDEX IF NOT EXISTS pipeline_stage_terminal_uq ON crove_crm.pipeline_stage (org_id, kind) WHERE kind IN ('won', 'lost');

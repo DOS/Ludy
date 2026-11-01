@@ -36,7 +36,7 @@ import { DomainError, defineCommand, defineQuery, type CommandContext, type Quer
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
-type Reader = Pick<QueryContext, 'trx' | 'orgId'>;
+type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -55,10 +55,17 @@ async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
   return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as DealStageKind, position: r.position }));
 }
 
-// Creates the defaults when the org has none. Two first uses at once wait for each other on this lock, so the second
-// sees the first one's stages.
-async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]> {
+// One lock per org for everything that places a deal or touches the pipeline (creating the defaults, creating a deal,
+// moving one), taken before any deal row is locked: two moves into one crowded stage then never rebalance rows the other
+// holds, and two creates never take the same sort key. It is held to the end of the transaction.
+async function lockPipeline(ctx: CommandContext): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${'crm.pipeline:' + ctx.orgId}, 0))`.execute(ctx.trx);
+}
+
+// Creates the defaults when the org has none. Two first uses at once wait for each other on the pipeline lock, so the
+// second sees the first one's stages.
+async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]> {
+  await lockPipeline(ctx);
   const existing = await loadStages(ctx);
   if (existing.length > 0) return existing;
   await ctx.trx
@@ -93,7 +100,7 @@ export const pipelineSetup = defineCommand({
 // Deals
 // ---------------------------------------------------------------------------------------------------------------
 
-const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_at', 'd.updated_at'] as const;
+const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at'] as const;
 
 interface Row {
   id: string;
@@ -107,13 +114,17 @@ interface Row {
   lost_reason: string | null;
   closed_at: Date | string | null;
   version: number;
+  created_by: string;
   created_at: Date | string;
   updated_at: Date | string;
   party_name: string;
   stage_kind: string;
 }
 
-function view(r: Row): Deal {
+// Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
+const mayDelete = (ctx: Reader, createdBy: string): boolean => ctx.role === 'owner' || ctx.role === 'admin' || (ctx.role === 'member' && ctx.actor.type === 'user' && ctx.actor.userId === createdBy);
+
+function view(r: Row, canDelete: boolean): Deal {
   return {
     id: r.id,
     partyId: r.party_id,
@@ -128,6 +139,7 @@ function view(r: Row): Deal {
     lostReason: r.lost_reason,
     closedAt: r.closed_at === null ? null : iso(r.closed_at),
     version: r.version,
+    canDelete,
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
@@ -145,7 +157,7 @@ function base(ctx: Reader) {
 async function loadView(ctx: Reader, dealId: string): Promise<Deal> {
   const row = await base(ctx).where('d.id', '=', dealId).executeTakeFirst();
   if (!row) throw new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
-  return view(row);
+  return view(row, mayDelete(ctx, row.created_by));
 }
 
 const notFound = () => new DomainError('DEAL_NOT_FOUND', 404, 'Không tìm thấy cơ hội này');
@@ -177,8 +189,8 @@ async function rebalance(ctx: CommandContext, rows: { id: string; sort_key: stri
   return next;
 }
 
-// A key for a deal placed after `afterId`, before `beforeId`, or at the end of the stage. A stage whose neighbours share
-// a key (two creates at once), or whose keys have grown long, is given fresh keys first.
+// A key for a deal placed after `afterId`, before `beforeId`, or at the end of the stage, under the pipeline lock. A
+// stage whose neighbours share a key, or whose keys have grown long, is given fresh keys first.
 async function keyFor(ctx: CommandContext, stageId: string, except: string | null, beforeId: string | null, afterId: string | null): Promise<string> {
   let rows = await stageKeys(ctx, stageId, except);
   const around = (list: typeof rows): [string | null, string | null] => {
@@ -252,7 +264,7 @@ export const dealCreate = defineCommand({
       .returning('id')
       .executeTakeFirstOrThrow();
     ctx.audit({ dealId: row.id, partyId: input.partyId, stageId: stage.id, ownerUserId: owner });
-    await ctx.activity('kernel.party', input.partyId, 'deal.created', `Tạo cơ hội bán hàng ở giai đoạn ${stage.name}`);
+    await ctx.activity('kernel.party', input.partyId, 'deal.created', 'Tạo cơ hội bán hàng');
     return loadView(ctx, row.id);
   },
 });
@@ -279,6 +291,7 @@ export const dealUpdate = defineCommand({
     if (before.version !== input.version) throw stale();
     if (input.partyId !== before.party_id) await assertParty(ctx, input.partyId);
     if (input.ownerUserId !== before.owner_user_id) await assertOwner(ctx, input.ownerUserId);
+    const titleChanged = title !== before.title;
     await ctx.trx
       .updateTable('crove_crm.deal')
       .set({ party_id: input.partyId, title, amount: input.amount, expected_close: input.expectedClose, owner_user_id: input.ownerUserId, version: before.version + 1, updated_by: userId, updated_at: ctx.now })
@@ -286,13 +299,12 @@ export const dealUpdate = defineCommand({
       .where('id', '=', input.dealId)
       .execute();
     // Field names only: the title may name a person.
-    const changed = [
-      title !== before.title && 'title',
-      money2(input.amount) !== money2(before.amount) && 'amount',
-      input.expectedClose !== day(before.expected_close) && 'expectedClose',
-      input.ownerUserId !== before.owner_user_id && 'ownerUserId',
-      input.partyId !== before.party_id && 'partyId',
-    ].filter((f): f is string => typeof f === 'string');
+    const changed: string[] = [];
+    if (titleChanged) changed.push('title');
+    if (money2(input.amount) !== money2(before.amount)) changed.push('amount');
+    if (input.expectedClose !== day(before.expected_close)) changed.push('expectedClose');
+    if (input.ownerUserId !== before.owner_user_id) changed.push('ownerUserId');
+    if (input.partyId !== before.party_id) changed.push('partyId');
     ctx.audit({ dealId: input.dealId, partyId: input.partyId, changed });
     return loadView(ctx, input.dealId);
   },
@@ -307,6 +319,7 @@ export const dealMove = defineCommand({
   target: (input) => ({ type: 'crm.deal', id: input.dealId }),
   handler: async (ctx, input): Promise<Deal> => {
     const userId = userOf(ctx.actor);
+    await lockPipeline(ctx);
     const before = await ctx.trx
       .selectFrom('crove_crm.deal as d')
       .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
@@ -319,6 +332,7 @@ export const dealMove = defineCommand({
     if (before.version !== input.version) throw stale();
     const stage = await stageOf(ctx, input.stageId);
     const closing = stage.kind !== 'open';
+    const sameStage = stage.id === before.stage_id;
     if (input.lostReason && stage.kind !== 'lost') throw new DomainError('DEAL_LOST_REASON_INVALID', 422, 'Lý do chỉ ghi khi chuyển cơ hội sang giai đoạn thua');
     const sortKey = await keyFor(ctx, stage.id, input.dealId, input.beforeDealId ?? null, input.afterDealId ?? null);
     await ctx.trx
@@ -326,8 +340,13 @@ export const dealMove = defineCommand({
       .set({
         stage_id: stage.id,
         sort_key: sortKey,
-        closed_at: closing ? ctx.now : null,
-        lost_reason: stage.kind === 'lost' ? (input.lostReason ? oneLine(input.lostReason) || null : null) : null,
+        // A move inside the stage it is in (a reorder of the Lost column) keeps the close time and the reason, unless a
+        // new reason comes with it.
+        ...(sameStage && closing
+          ? input.lostReason
+            ? { lost_reason: oneLine(input.lostReason) || null }
+            : {}
+          : { closed_at: closing ? ctx.now : null, lost_reason: stage.kind === 'lost' ? (input.lostReason ? oneLine(input.lostReason) || null : null) : null }),
         version: before.version + 1,
         updated_by: userId,
         updated_at: ctx.now,
@@ -338,7 +357,7 @@ export const dealMove = defineCommand({
     ctx.audit({ dealId: input.dealId, partyId: before.party_id, fromStageId: before.stage_id, toStageId: stage.id, status: stage.kind });
     if (stage.id !== before.stage_id) {
       const kind = stage.kind === 'won' ? 'deal.won' : stage.kind === 'lost' ? 'deal.lost' : 'deal.stage_changed';
-      const summary = stage.kind === 'won' ? 'Cơ hội đã thắng' : stage.kind === 'lost' ? 'Cơ hội đã thua' : `Chuyển cơ hội sang giai đoạn ${stage.name}`;
+      const summary = stage.kind === 'won' ? 'Cơ hội đã thắng' : stage.kind === 'lost' ? 'Cơ hội đã thua' : 'Chuyển cơ hội sang giai đoạn khác';
       await ctx.activity('kernel.party', before.party_id, kind, summary);
     }
     return loadView(ctx, input.dealId);
@@ -388,7 +407,7 @@ export const dealList = defineQuery({
       q = q.where(sql<boolean>`(d.created_at, d.id) < (${new Date(createdAt)}::timestamptz, ${id}::uuid)`);
     }
     const rows = await q.orderBy('d.created_at', 'desc').orderBy('d.id', 'desc').limit(limit + 1).execute();
-    const items = rows.slice(0, limit).map(view);
+    const items = rows.slice(0, limit).map((r) => view(r, mayDelete(ctx, r.created_by)));
     const last = items.at(-1);
     return { items, next: rows.length > limit && last ? { createdAt: last.createdAt, id: last.id } : null };
   },
@@ -400,7 +419,7 @@ export const partyDeals = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<Deal[]> => {
     const rows = await base(ctx).where('d.party_id', '=', input.partyId).orderBy('d.created_at', 'desc').orderBy('d.id', 'desc').limit(200).execute();
-    return rows.map(view);
+    return rows.map((r) => view(r, mayDelete(ctx, r.created_by)));
   },
 });
 

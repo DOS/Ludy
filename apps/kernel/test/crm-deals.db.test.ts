@@ -111,7 +111,7 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     expect(deal).toMatchObject({ partyId: party, partyName: 'Công ty ABC', title: 'Gói kế toán năm', amount: '15000000.50', currency: 'VND', stageKind: 'open', expectedClose: '2026-12-31', ownerUserId: o.member, lostReason: null, closedAt: null, version: 1 });
     expect((await o.stageNamed('Mới')).id).toBe(deal.stageId);
     expect((await o.query<Deal[]>(o.viewer, 'crm.party.deals', { partyId: party })).map((d) => d.id)).toEqual([deal.id]);
-    expect(await o.query<Deal>(o.viewer, 'crm.deal.get', { dealId: deal.id })).toEqual(deal);
+    expect(await o.query<Deal>(o.viewer, 'crm.deal.get', { dealId: deal.id })).toEqual({ ...deal, canDelete: false });
 
     await expect(o.newDeal(o.member, party, { amount: '-5' })).rejects.toMatchObject({ code: 'VALIDATION' });
     await expect(o.newDeal(o.member, party, { amount: '1.234' })).rejects.toMatchObject({ code: 'VALIDATION' });
@@ -145,7 +145,10 @@ suite('crm deals on PostgreSQL (#2225)', () => {
   it('moves deals between stages and inside one, closing and reopening them', async () => {
     const o = await org();
     const party = await o.party('Công ty ABC');
-    const [mới, báoGiá, thắng, thua] = await Promise.all(['Mới', 'Báo giá', 'Thắng', 'Thua'].map(async (n) => (await o.stageNamed(n)).id));
+    const mới = (await o.stageNamed('Mới')).id;
+    const báoGiá = (await o.stageNamed('Báo giá')).id;
+    const thắng = (await o.stageNamed('Thắng')).id;
+    const thua = (await o.stageNamed('Thua')).id;
     const d1 = await o.newDeal(o.member, party, { title: 'Một' });
     const d2 = await o.newDeal(o.member, party, { title: 'Hai' });
     const d3 = await o.newDeal(o.member, party, { title: 'Ba' });
@@ -183,6 +186,37 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     await expect(o.exec(o.owner, 'crm.deal.move', { dealId: d1.id, version: reopened.version, stageId: randomUUID() })).rejects.toMatchObject({ code: 'STAGE_NOT_FOUND' });
     await expect(o.exec(o.owner, 'crm.deal.move', { dealId: d1.id, version: reopened.version, stageId: báoGiá, afterDealId: d3.id })).rejects.toMatchObject({ code: 'DEAL_NEIGHBOUR_INVALID' });
     await expect(o.exec(o.owner, 'crm.deal.move', { dealId: d1.id, version: reopened.version, stageId: mới, beforeDealId: d2.id, afterDealId: d3.id })).rejects.toMatchObject({ code: 'VALIDATION' });
+  });
+
+  it('keeps the close time and the reason when a closed deal is reordered inside its stage', async () => {
+    const o = await org();
+    const party = await o.party('Công ty ABC');
+    const thua = (await o.stageNamed('Thua')).id;
+    const a = await o.newDeal(o.member, party, { title: 'A' });
+    const b = await o.newDeal(o.member, party, { title: 'B' });
+    const la = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: a.id, version: a.version, stageId: thua, lostReason: 'Giá cao' });
+    const lb = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: b.id, version: b.version, stageId: thua });
+    const again = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: lb.id, version: lb.version, stageId: thua, beforeDealId: la.id });
+    expect(again).toMatchObject({ closedAt: lb.closedAt, lostReason: null });
+    const reordered = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: la.id, version: la.version, stageId: thua, afterDealId: again.id });
+    expect(reordered).toMatchObject({ closedAt: la.closedAt, lostReason: 'Giá cao' });
+    // A new reason with the same move replaces the old one and keeps the close time.
+    const reworded = await o.exec<Deal>(o.member, 'crm.deal.move', { dealId: la.id, version: reordered.version, stageId: thua, lostReason: 'Chọn bên khác' });
+    expect(reworded).toMatchObject({ closedAt: la.closedAt, lostReason: 'Chọn bên khác' });
+  });
+
+  it('tells each caller whether they may delete a deal', async () => {
+    const o = await org();
+    const party = await o.party('Công ty ABC');
+    const mine = await o.newDeal(o.member, party, { title: 'Của member' });
+    const theirs = await o.newDeal(o.other, party, { title: 'Của other' });
+    const flags = async (user: string) => Object.fromEntries((await o.query<Deal[]>(user, 'crm.party.deals', { partyId: party })).map((d) => [d.title, d.canDelete]));
+    expect(await flags(o.member)).toEqual({ 'Của member': true, 'Của other': false });
+    expect(await flags(o.owner)).toEqual({ 'Của member': true, 'Của other': true });
+    expect(await flags(o.viewer)).toEqual({ 'Của member': false, 'Của other': false });
+    expect(mine.canDelete).toBe(true);
+    // The answer to the creator: it names what the caller may do.
+    expect(theirs.canDelete).toBe(true);
   });
 
   it('keeps the order when many deals are placed at the same spot', async () => {
@@ -247,10 +281,10 @@ suite('crm deals on PostgreSQL (#2225)', () => {
     const abc = await o.party('Công ty ABC');
     await o.party('Cửa hàng 100%_vàng');
     await p.party('Công ty ABC của org khác');
-    await admin((c) => c.query("UPDATE crove_kernel.party SET tax_code = '0100109106' WHERE org_id = $1 AND id = $2", [o.orgId, abc]));
+    await admin((c) => c.query("UPDATE crove_kernel.party SET tax_code = '0123456780' WHERE org_id = $1 AND id = $2", [o.orgId, abc]));
     const find = (q: string) => o.query<{ id: string; name: string; taxCode: string | null }[]>(o.viewer, 'crm.party.search', { q });
     expect((await find('abc')).map((r) => r.id)).toEqual([abc]);
-    expect((await find('0100109')).map((r) => r.name)).toEqual(['Công ty ABC']);
+    expect((await find('0123456')).map((r) => r.name)).toEqual(['Công ty ABC']);
     expect((await find('100%_')).map((r) => r.name)).toEqual(['Cửa hàng 100%_vàng']);
     expect(await find('%')).toHaveLength(1);
     expect(await find('')).toHaveLength(2);
@@ -291,6 +325,6 @@ suite('crm deals on PostgreSQL (#2225)', () => {
   it('refuses a caller that is not a person', async () => {
     const o = await org();
     const party = await o.party('Công ty ABC');
-    await expect(rt.execute('crm.deal.create', { partyId: party, title: 'x', amount: '1', expectedClose: null }, { actor: { type: 'system' }, orgId: o.orgId })).rejects.toBeDefined();
+    await expect(rt.execute('crm.deal.create', { partyId: party, title: 'x', amount: '1', expectedClose: null }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).rejects.toBeDefined();
   });
 });

@@ -98,7 +98,8 @@ function DealForm({ deal, members, onDone }: { deal: Deal | null; members: reado
     onDone();
   };
   const create = useMutation(orpc.crm.deals.create.mutationOptions({ onSuccess: done }));
-  const update = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: done }));
+  // A refused edit (someone saved first) reloads the list; the form is keyed by the deal's version, so it reopens on the new one.
+  const update = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: done, onError: () => void refresh() }));
   const pending = create.isPending || update.isPending;
   const fields = useFieldErrors<FormField>((field) => {
     if (field === 'title') return title.trim() ? null : t('form.titleRequired');
@@ -262,7 +263,7 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
       {editing && (
         <TableRow>
           <TableCell colSpan={columns} className="px-4 py-3">
-            <DealForm deal={deal} members={members} onDone={() => setEditing(false)} />
+            <DealForm key={deal.version} deal={deal} members={members} onDone={() => setEditing(false)} />
           </TableCell>
         </TableRow>
       )}
@@ -287,7 +288,7 @@ export function DealsPage() {
   }, [needsSetup, setupStages]);
   const deals = useInfiniteQuery({
     ...orpc.crm.deals.list.infiniteOptions({
-      input: (cursor: DealCursor | undefined) => ({ ...(cursor ? { cursor } : {}) }),
+      input: (cursor: DealCursor | undefined) => (cursor ? { cursor } : {}),
       initialPageParam: undefined as DealCursor | undefined,
       getNextPageParam: (page) => page.next ?? undefined,
       placeholderData: keepPreviousData,
@@ -325,7 +326,7 @@ export function DealsPage() {
         <>
           <DataTable head={head} numeric={[3]}>
             {rows.map((d) => (
-              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={canEdit} columns={head.length} />
+              <DealRow key={d.id} deal={d} stages={stageList} members={members} canEdit={canEdit} canDelete={d.canDelete} columns={head.length} />
             ))}
           </DataTable>
           {deals.hasNextPage && (

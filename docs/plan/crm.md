@@ -66,7 +66,7 @@ All tables are tenant tables: `org_id`, `PRIMARY KEY (org_id, id)`, RLS through 
 |---|---|
 | `name` | 1 to 40 characters, one line |
 | `kind` | `open`, `won`, `lost` |
-| `position` | integer order, 1 upward, kept gapless by the commands under the pipeline lock. No unique constraint (changed in K1): a tie is broken by the id, and the 12-stage cap is the commands', so the RLS matrix can make rows of the table |
+| `position` | integer order, 1 upward, kept gapless by the commands under the pipeline lock; `UNIQUE (org_id, position) DEFERRABLE INITIALLY DEFERRED` so a reorder swaps positions in one transaction and a duplicate fails. The CHECK is `position >= 1` only (changed in K1): the 12-stage cap is the commands', so a cap that changes is not a migration |
 | `created_at`, `updated_at` | |
 
 Rules: at most 12 stages; exactly one `won` and one `lost` stage per org (`UNIQUE (org_id, kind) WHERE kind IN ('won','lost')`), always the last two positions; open stages can be renamed, reordered, added and removed (removal only when no deal is in the stage). A fresh org has no rows; `crm.pipeline.setup` creates the defaults on first use: "Mới", "Đã liên hệ", "Báo giá", "Thương lượng" (open), "Thắng" (won), "Thua" (lost). There is no `pipeline` table (CRM-2): a second pipeline later adds one with a backfill.

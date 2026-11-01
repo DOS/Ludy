@@ -51,6 +51,8 @@ export interface Deal {
   lostReason: string | null;
   closedAt: string | null;
   version: number;
+  // Whether the caller may delete it: owners and admins any deal, a member the ones they made.
+  canDelete: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -138,6 +140,7 @@ export const zDeal = z.object({
   lostReason: z.string().nullable(),
   closedAt: z.string().nullable(),
   version: z.number().int(),
+  canDelete: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
