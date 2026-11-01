@@ -435,6 +435,18 @@ suite('conversations on PostgreSQL (#2303)', () => {
     await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_claim(10, 60)'))).rejects.toMatchObject({ code: '42501' });
     await expect(asRole(workerUrl.toString(), (c) => c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', Buffer.from('x')]))).rejects.toMatchObject({ code: '42501' });
     await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_pending'))).rejects.toMatchObject({ code: '42501' });
+    // Neither login role reads or writes the table itself, whatever the statement: only the definers above touch it.
+    for (const url of [appUrl, workerUrl.toString()]) {
+      for (const statement of [
+        'SELECT * FROM crove_kernel.conversation_inbound_pending',
+        "INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) VALUES ('sandbox', 'x'::bytea)",
+        "UPDATE crove_kernel.conversation_inbound_pending SET attempts = 0",
+        'DELETE FROM crove_kernel.conversation_inbound_pending',
+        'TRUNCATE crove_kernel.conversation_inbound_pending',
+      ]) {
+        await expect(asRole(url, (c) => c.query(statement)), statement).rejects.toMatchObject({ code: '42501' });
+      }
+    }
     const claim = () => asRole(workerUrl.toString(), async (c) => (await c.query('SELECT seq, provider, body, attempts, dropped, reason FROM crove_kernel.conversation_inbound_claim(10, 60)')).rows);
     const first = await claim();
     expect(first).toEqual([{ seq, provider: 'sandbox', body: Buffer.from('{"v":1}'), attempts: 1, dropped: false, reason: null }]);
