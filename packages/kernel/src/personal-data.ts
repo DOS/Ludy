@@ -70,6 +70,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_crm.booking.email': { kind: 'email', handling: 'erase', reason: 'The address a visitor gave when booking a meeting' },
   'crove_crm.booking.phone': { kind: 'phone', handling: 'erase', reason: 'The number a visitor gave when booking a meeting' },
   'crove_crm.booking.note': { kind: 'other', handling: 'erase', reason: 'Free text a visitor wrote when booking a meeting, which may name or describe them' },
+  // Rows of a contact import waiting for the member's go-ahead (#2229): the contact as read from the file. They are deleted
+  // on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep); the erasure deletes the rows that name the person sooner.
+  'crove_crm.import_row.email': { kind: 'email', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.phone': { kind: 'phone', handling: 'erase', reason: 'The number as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.tax_code': { kind: 'tax_code', handling: 'erase', reason: 'The tax code as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
+  'crove_crm.import_row.address': { kind: 'address', handling: 'erase', reason: 'The address as read from a contact file waiting to be imported; the row is deleted on commit, on cancel and once the batch is 7 days old (on the next import command of the org, or by the daily sweep)' },
   'crove_kernel.party.address': {
     kind: 'address',
     handling: 'erase',
@@ -532,6 +538,33 @@ export const personalDataErase = defineCommand({
       add('crove_crm.booking.email', Number(b.email));
       add('crove_crm.booking.phone', Number(b.phone));
       add('crove_crm.booking.note', Number(b.note));
+    }
+
+    // Rows of a contact import not yet committed (#2229), matched by email, phone or tax code: deleted whole, for the row
+    // holds the person's name and details as read from the file. The batch keeps its counts.
+    const importMatch = sql<boolean>`(${match('email', 'r.email') ?? never} OR ${match('phone', 'r.phone') ?? never} OR ${match('tax_code', 'r.tax_code') ?? never})`;
+    const { rows: staged } = await sql<{ batch_id: string; email: boolean; phone: boolean; tax_code: boolean; address: boolean }>`
+      DELETE FROM crove_crm.import_row r
+       WHERE r.org_id = ${ctx.orgId}::uuid AND ${importMatch}
+       RETURNING r.batch_id, r.email IS NOT NULL AS email, r.phone IS NOT NULL AS phone, r.tax_code IS NOT NULL AS tax_code,
+                 r.address IS NOT NULL AS address`.execute(ctx.trx);
+    // The staged batches that lost rows count what is left, so the preview and the Import button do not promise rows that are gone.
+    const touched = [...new Set(staged.map((r) => r.batch_id))];
+    if (touched.length > 0) {
+      await sql`
+        UPDATE crove_crm.import_batch b SET
+          total_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id),
+          new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
+          duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
+          conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
+          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid')
+        WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
+    }
+    for (const r of staged) {
+      add('crove_crm.import_row.email', Number(r.email));
+      add('crove_crm.import_row.phone', Number(r.phone));
+      add('crove_crm.import_row.tax_code', Number(r.tax_code));
+      add('crove_crm.import_row.address', Number(r.address));
     }
 
     if (probe.kind === 'email') {
