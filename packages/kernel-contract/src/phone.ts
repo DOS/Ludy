@@ -2,7 +2,7 @@
 // The key a phone number is matched on (CRM plan 4.5, step K4, #2228): `0912 345 678`, `+84 912 345 678`, `84912345678`
 // and `0084 912 345 678` are one number, and all four give `0912345678`. Contact search, the duplicate check of the
 // contact import (K5) and the expression index on party use it. Its immutable SQL twin is crove_kernel.phone_key(text)
-// (migration 20261115100000); packages/kernel-contract/test/phone-cases.ts is the one table of cases both run, so the two
+// (migration 20261115100000); packages/kernel-contract/src/phone-cases.ts is the one table of cases both run, so the two
 // cannot drift.
 //
 // The rules, in order:

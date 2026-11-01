@@ -61,6 +61,7 @@ import { SocialSharePage } from './routes/social-share.tsx';
 import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg, rememberShare } from './lib/social-share.ts';
 import { TaskDetailPage, TasksPage } from './routes/tasks.tsx';
 import { BookingsPage } from './routes/bookings.tsx';
+import { ContactsPage } from './routes/contacts.tsx';
 import { NotesPage } from './routes/notes.tsx';
 import { MyWorkPage } from './routes/my-work.tsx';
 import { VatPage } from './routes/vat.tsx';
@@ -436,6 +437,8 @@ const agentsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'agents'
 const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', validateSearch: parseTasksSearch, component: TasksPage });
 // The bookings of the public booking page (#1320), with the crm module.
 const bookingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'bookings', component: BookingsPage });
+// The contacts of the CRM (#2228): the org's parties with search, filters and saved views.
+const contactsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts', component: ContactsPage });
 // Members' notes (#1671), with the notes module: ?list= a list, ?q= a search, ?note= the note open.
 const notesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'notes', validateSearch: parseNotesSearch, component: NotesPage });
 // The member's own to-dos (#1673), with the notes module.
@@ -457,7 +460,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, notesRoute, myWorkRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, contactsRoute, notesRoute, myWorkRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

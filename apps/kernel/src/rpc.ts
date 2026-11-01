@@ -1704,6 +1704,7 @@ export function createRpcHandler(
       customers: os.parties.customers.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.customers.list', input, { actor, orgId })),
       ),
+      timeline: os.parties.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.timeline', input, { actor, orgId }))),
       create: os.parties.create.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.create', input, { actor, orgId }))),
       update: os.parties.update.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.update', input, { actor, orgId }))),
       markDuplicate: os.parties.markDuplicate.handler(({ context, input }) =>

@@ -1304,6 +1304,8 @@ export const contract = {
     // under it; nothing is deleted. unmarkDuplicate undoes it.
     markDuplicate: oc.input(z.object({ partyId: zId, keepId: zId })).output(z.object({ partyId: zId, keepId: zId })),
     unmarkDuplicate: oc.input(z.object({ partyId: zId })).output(z.object({ partyId: zId })),
+    // Every role (K4, #2228): what happened to a contact, oldest first (fixed text, never a name or contact detail).
+    timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.
     duplicateHints: oc.input(z.object({})).output(z.array(zDuplicateHint)),
   },

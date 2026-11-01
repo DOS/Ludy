@@ -4,7 +4,7 @@
 -- crove_kernel.phone_key(text)   the one form of a phone number to match on: `0912 345 678`, `+84 912 345 678`,
 --                                `84912345678` and `0084 912 345 678` all give `0912345678`. It is the SQL twin of
 --                                phoneKey() in @crove/kernel-contract (packages/kernel-contract/src/phone.ts), and one
---                                table of cases (packages/kernel-contract/test/phone-cases.ts) runs against both.
+--                                table of cases (packages/kernel-contract/src/phone-cases.ts) runs against both.
 --                                IMMUTABLE and pure, so it can back an index; no digit gives NULL.
 -- party_phone_key_idx            (org_id, phone_key(phone)) where a phone is recorded, for the contact search and the
 --                                duplicate check of the contact import (K5). Stored party.phone is never rewritten.

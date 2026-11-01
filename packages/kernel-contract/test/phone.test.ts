@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import { phoneKey } from '../src/phone.ts';
-import { PHONE_KEY_CASES } from './phone-cases.ts';
+import { PHONE_KEY_CASES } from '../src/phone-cases.ts';
 
 describe('phoneKey (CRM plan 4.5, #2228)', () => {
   it.each(PHONE_KEY_CASES)('gives %j the key %j', (phone, key) => {

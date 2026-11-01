@@ -11,10 +11,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ContactPage, FilterAst } from '@crove/kernel-contract';
+import { PHONE_KEY_CASES, type ContactPage, type FilterAst } from '@crove/kernel-contract';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
 import { Runtime } from '@crove/kernel-runtime';
-import { PHONE_KEY_CASES } from '../../../packages/kernel-contract/test/phone-cases.ts';
+
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -165,6 +165,25 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     // The party's timeline says it was added, with fixed text.
     const activity = (await admin((c) => c.query<{ summary: string }>("SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'", [o.orgId, made.partyId]))).rows;
     expect(activity).toEqual([{ summary: 'Thêm liên hệ' }]);
+  });
+
+  it('shows a contact’s timeline, oldest first and in fixed words, to every role of its org only', async () => {
+    const o = await org();
+    const other = await org();
+    const made = await create(o, o.lan, { name: 'Có lịch sử', phone: '0912 345 678' });
+    await exec(o, o.admin, 'kernel.party.update', { partyId: made.partyId, version: made.version, name: 'Có lịch sử mới', taxCode: null, address: null, email: null, phone: '0912 345 678' });
+    const timeline = (org_: Org, user: string, partyId: string) => rt.query<{ items: Array<{ kind: string; summary: string; actorType: string }>; more: boolean }>('kernel.party.timeline', { partyId }, { actor: asUser(user), orgId: org_.orgId });
+    const got = await timeline(o, o.viewer, made.partyId);
+    expect(got.items.map((e) => [e.kind, e.summary, e.actorType])).toEqual([
+      ['party.created', 'Thêm liên hệ', 'user'],
+      ['party.updated', 'Đổi tên', 'user'],
+    ]);
+    expect(got.more).toBe(false);
+    // The summaries are fixed words: no name or contact detail.
+    expect(JSON.stringify(got)).not.toContain('0912');
+    // Another org cannot read it, and an unknown contact is not found.
+    await expect(timeline(other, other.owner, made.partyId)).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND', status: 404 });
+    await expect(timeline(o, o.lan, randomUUID())).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND' });
   });
 
   describe('the list', () => {
