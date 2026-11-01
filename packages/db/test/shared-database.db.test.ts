@@ -6,6 +6,9 @@
 //
 // Set CROVE_TEST_SUPABASE_URL to the `postgres` role on a throwaway supabase/postgres container (as for supabase.db.test.ts).
 // The test makes, uses and drops its own database in that container, and refuses any host but this machine.
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -166,7 +169,7 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
        WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads')
        GROUP BY r.rolname ORDER BY 1`,
     );
-    for (const row of reach.rows) expect(row, row.rolname).toMatchObject({ tables: false, schemas: false });
+    for (const row of reach.rows) expect(row, row.rolname).toMatchObject({ tables: false, schemas: false, functions: false });
     expect(reach.rows.map((r) => r.rolname)).toContain('dos_reader');
   }, 180_000);
 
@@ -213,6 +216,14 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     } finally {
       await client.query("UPDATE crove_meta.deployment SET value = 'true' WHERE key = 'shared_database'");
     }
+    // A database whose runner never wrote the mode (no table) behaves as an owned one, and a statement never fails for it.
+    await client.query('DROP TABLE crove_meta.deployment');
+    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await withRole('dos_app', (c) => c.query('CREATE TABLE dos_core.no_mode_probe (i int)'));
+    await client.query('DROP TABLE dos_core.no_mode_probe');
+    expect((await ddlEvents()).some((e) => e.object_identity === 'dos_core.no_mode_probe')).toBe(true);
+    await migrateShared();
+    expect((await client.query('SELECT value FROM crove_meta.deployment')).rows).toEqual([{ value: 'true' }]);
     // The pipeline's own runs leave no row either way.
     await client.query('DELETE FROM crove_kernel.ddl_event');
     await migrateShared();
@@ -231,5 +242,89 @@ suite('shared-database mode beside a foreign schema and role (Supabase Postgres 
     );
     expect(Number(rows[0]?.n)).toBeGreaterThan(0);
     expect(await migrateShared()).toEqual([]);
+  });
+  // A login that ran the bootstrap is the grantor of the memberships it made (crove_tenant to crove_app and the others); they
+  // go before the role can. The admin takes its privileges for that.
+  const dropLogin = async (role: string): Promise<void> => {
+    const q = pg.escapeIdentifier(role);
+    const exists = await admin.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [role]);
+    if (exists.rowCount === 0) return;
+    await admin.query(`GRANT ${q} TO CURRENT_USER WITH INHERIT TRUE, SET TRUE`);
+    const made = await admin.query<{ role: string; member: string }>(
+      'SELECT g.rolname AS role, m.rolname AS member FROM pg_auth_members am JOIN pg_roles g ON g.oid = am.roleid JOIN pg_roles m ON m.oid = am.member JOIN pg_roles gr ON gr.oid = am.grantor WHERE gr.rolname = $1',
+      [role],
+    );
+    for (const { role: granted, member } of made.rows) {
+      await admin.query(`REVOKE ${pg.escapeIdentifier(granted)} FROM ${pg.escapeIdentifier(member)} GRANTED BY ${q} CASCADE`);
+    }
+    await admin.query(`REVOKE ${q} FROM CURRENT_USER`);
+    await admin.query(`DROP ROLE ${q}`);
+  };
+
+  // A fresh database in the same container, for a run that must not touch the shared one above.
+  const scratch = async (name: string): Promise<{ url: string; drop: () => Promise<void> }> => {
+    await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${name}`);
+    return { url: as(adminUrl, decodeURIComponent(new URL(adminUrl).username), decodeURIComponent(new URL(adminUrl).password), name), drop: async () => void (await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`)) };
+  };
+
+  it('refuses to apply the TEMPORARY revoke itself when its variant cannot be found, and leaves PUBLIC as it was', async () => {
+    const db = await scratch(`${DB}_novariant`);
+    try {
+      const empty = await mkdtemp(join(tmpdir(), 'crove-no-variants-'));
+      await expect(migrate({ adminUrl: db.url, dir: MIGRATIONS, sharedDatabase: true, sharedVariantsDir: empty })).rejects.toThrow(/has no shared-database variant/);
+      const c = new pg.Client({ connectionString: db.url });
+      await c.connect();
+      try {
+        const { rows } = await c.query("SELECT has_database_privilege('dos_reader', current_database(), 'TEMPORARY') AS temp");
+        expect(rows).toEqual([{ temp: true }]);
+        expect((await c.query('SELECT count(*)::int AS n FROM crove_meta.schema_migrations WHERE name = $1', [REVOKE_TEMP])).rows).toEqual([{ n: 0 }]);
+      } finally {
+        await c.end();
+      }
+    } finally {
+      await db.drop();
+    }
+  }, 120_000);
+
+  it('applies every migration for a dedicated login that is neither postgres nor a superuser, flags the admin that created the roles, and skips the DDL watch', async () => {
+    const db = await scratch(`${DB}_login`);
+    await dropLogin('ludy_migrate_test');
+    await admin.query(`CREATE ROLE ludy_migrate_test LOGIN CREATEROLE NOSUPERUSER PASSWORD '${FOREIGN_PASSWORD}'`);
+    await admin.query(`GRANT CREATE ON DATABASE ${db.url.split('/').pop()} TO ludy_migrate_test`);
+    // The crove_* roles belong to the cluster and exist from the runs above, made by this container's admin; on a project they are
+    // created by the login itself, which then holds ADMIN OPTION on them. Here the login is handed that, as a hand-over would.
+    const existing = await admin.query<{ rolname: string }>("SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\\_%'");
+    for (const { rolname } of existing.rows) await admin.query(`GRANT ${pg.escapeIdentifier(rolname)} TO ludy_migrate_test WITH ADMIN OPTION`);
+    const url = as(adminUrl, 'ludy_migrate_test', FOREIGN_PASSWORD, `${DB}_login`);
+    try {
+      const files = await readMigrations(MIGRATIONS);
+      // Every file applies; the run then fails the guard, which names the admin that made the roles and can still act as them.
+      await expect(migrate({ adminUrl: url, dir: MIGRATIONS, sharedDatabase: true })).rejects.toThrow(/role postgres is not a Ludy role but can act as crove_/);
+      const c = new pg.Client({ connectionString: url });
+      await c.connect();
+      try {
+        expect((await c.query('SELECT count(*)::int AS n FROM crove_meta.schema_migrations')).rows).toEqual([{ n: files.length }]);
+        const violations = await hardeningViolations(c, { shared: true });
+        expect(violations).toHaveLength(1);
+        expect(violations[0]).toMatch(/^role postgres is not a Ludy role but can act as /);
+      } finally {
+        await c.end();
+      }
+      expect(await installDdlWatch({ adminUrl: url })).toBe('skipped');
+    } finally {
+      await db.drop();
+      await dropLogin('ludy_migrate_test');
+    }
+  }, 240_000);
+
+  it('fails the guard for a foreign role that can act as a Ludy role', async () => {
+    await client.query('GRANT crove_auth_reader TO dos_reader');
+    try {
+      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader is not a Ludy role but can act as crove_auth_reader/);
+    } finally {
+      await client.query('REVOKE crove_auth_reader FROM dos_reader');
+    }
+    expect(await hardeningViolations(client, { shared: true })).toEqual([]);
   });
 });
