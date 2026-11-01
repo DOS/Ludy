@@ -256,6 +256,30 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     expect((await list(o, o.lan)).map((v) => v.name)).toEqual(['Đang mở (tuần)']);
   });
 
+  it('keeps a private view from a second member of the same org in the table itself, and lets them read a shared one', async () => {
+    const o = await org();
+    const priv = await save(o, o.lan, { name: 'Riêng của Lan' });
+    const pub = await save(o, o.lan, { name: 'Chung của Lan', shared: true });
+    const ids = async (user: string) =>
+      asApp(o.orgId, user, async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.saved_view WHERE org_id = $1 ORDER BY name', [o.orgId])).rows.map((r) => r.id));
+    // Minh, a member of the same org, reads the shared view and not the private one: no SELECT, by id or in a list.
+    expect(await ids(o.minh)).toEqual([pub.viewId]);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM crove_kernel.saved_view WHERE id = $1', [priv.viewId])).rowCount)).toBe(0);
+    expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('SELECT 1 FROM crove_kernel.saved_view WHERE id = $1', [pub.viewId])).rowCount)).toBe(1);
+    // He changes and deletes neither: the private one is invisible to him, the shared one is Lan's.
+    for (const id of [priv.viewId, pub.viewId]) {
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query("UPDATE crove_kernel.saved_view SET name = 'Của Minh' WHERE id = $1", [id])).rowCount)).toBe(0);
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('UPDATE crove_kernel.saved_view SET shared = true WHERE id = $1', [id])).rowCount)).toBe(0);
+      expect(await asApp(o.orgId, o.minh, async (c) => (await c.query('DELETE FROM crove_kernel.saved_view WHERE id = $1', [id])).rowCount)).toBe(0);
+    }
+    // Nothing changed for Lan.
+    expect(await ids(o.lan)).toEqual([pub.viewId, priv.viewId]);
+    expect((await list(o, o.lan)).map((v) => [v.name, v.shared])).toEqual([['Chung của Lan', true], ['Riêng của Lan', false]]);
+    // The org's admin reads the shared view and not the private one, and an owner neither.
+    expect(await ids(o.admin)).toEqual([pub.viewId]);
+    expect(await ids(o.owner)).toEqual([pub.viewId]);
+  });
+
   it('refuses an agent, whatever it asks, and an agent context reads no view', async () => {
     const o = await org();
     const view = await save(o, o.lan, { name: 'Riêng', shared: true });
