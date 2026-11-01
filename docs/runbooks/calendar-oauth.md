@@ -19,7 +19,7 @@ The client is its own: do not reuse the YouTube or Business Profile client (`CHA
 
 Each step has a check and a rollback. Never write a secret, a project id or an internal host into an issue, a PR or a file of the repository: name where it comes from.
 
-1. **Create the OAuth client.** Google Cloud console, APIs and services, Credentials, Create credentials, OAuth client ID, Web application. Add the authorized redirect URI `<PUBLIC_URL>/calendar/oauth/google_calendar/callback`, exactly, with no trailing slash.
+1. **Create the OAuth client.** Google Cloud console, APIs and services, Credentials, Create credentials, OAuth client ID, Web application. Add the authorized redirect URI `<APP_URL>/calendar/oauth/google_calendar/callback` (`APP_URL`, else `PUBLIC_URL`: the return address is a page of the app, [split-app-api.md](split-app-api.md)), exactly, with no trailing slash.
    - Check: the client shows the redirect URI; the Calendar API shows as enabled.
    - Rollback: delete the client.
 2. **Set the consent screen scopes** to the three above and the app name and support address members will see.

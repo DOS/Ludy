@@ -5,6 +5,7 @@ import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import { MutationCache, QueryCache, QueryClient } from '@tanstack/react-query';
 import { DIRECT_UPLOAD_MAX_BYTES, MAX_IMPORT_BYTES, MAX_SOCIAL_VIDEO_BYTES, MAX_UPLOAD_BYTES, type contract, type UploadPurpose } from '@crove/kernel-contract';
 import { activeLocale, translator } from '../i18n/runtime.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
 import { accessToken, afterMfaRefusal, auth, getConfig, secondFactorStillOwed } from './auth.ts';
 import { ClientError, apiErrorFromResponse, describeError, isMfaRequired, isOrgAccessRevoked, isUnauthenticated, retryWhileBusy } from './errors.ts';
 import { createSessionErrorHandler, rememberOrgLeft, requestHeaders, takeOrgLeft } from './org-access.ts';
@@ -23,18 +24,18 @@ async function headers(): Promise<Record<string, string>> {
   return requestHeaders(await accessToken(), currentOrg);
 }
 
-const link = new RPCLink({ url: `${window.location.origin}/api/rpc`, headers });
+const link = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers });
 
 export const client: ContractRouterClient<typeof contract> = createORPCClient(link);
 export const orpc = createTanstackQueryUtils(client);
 
 // The same API without the org header, whatever page this is: the user's own sign-out revoke (issue #247).
-const orglessLink = new RPCLink({ url: `${window.location.origin}/api/rpc`, headers: async () => requestHeaders(await accessToken(), null) });
+const orglessLink = new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), null) });
 export const orglessClient: ContractRouterClient<typeof contract> = createORPCClient(orglessLink);
 
 // The API for one org named here rather than by the page: onboarding sets up the org it has just created (issue #324).
 export function clientForOrg(slug: string): ContractRouterClient<typeof contract> {
-  return createORPCClient(new RPCLink({ url: `${window.location.origin}/api/rpc`, headers: async () => requestHeaders(await accessToken(), slug) }));
+  return createORPCClient(new RPCLink({ url: `${serverOrigin()}/api/rpc`, headers: async () => requestHeaders(await accessToken(), slug) }));
 }
 
 export { ClientError, isStepUpRequired, isUnauthenticated } from './errors.ts';
@@ -106,7 +107,7 @@ export function takeOrgLeftNotice() {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(path, { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
+  const response = await fetch(apiUrl(path), { ...init, headers: { ...(await headers()), ...(init.headers as Record<string, string> | undefined) } });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return response;
 }
@@ -114,7 +115,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 // A one-time ticket for the invalidation stream of `slug` (issue #69): EventSource cannot send the Authorization
 // header, so the stream opens with this ticket, valid for seconds and bound to this session and org.
 export async function fetchStreamTicket(slug: string): Promise<string> {
-  const response = await fetch('/api/stream/tickets', { method: 'POST', headers: requestHeaders(await accessToken(), slug) });
+  const response = await fetch(apiUrl('/api/stream/tickets'), { method: 'POST', headers: requestHeaders(await accessToken(), slug) });
   if (!response.ok) throw await apiErrorFromResponse(response);
   return ((await response.json()) as { ticket: string }).ticket;
 }

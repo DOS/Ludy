@@ -18,6 +18,7 @@ import { PlatformPreview } from '../components/social-preview.tsx';
 import { AccentRule, BrandMark, MadeWithCrove, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { apiUrl } from '../lib/api-base.ts';
 import { errorMessage } from '../lib/api.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { planProgress } from '../lib/social-plan-review.ts';
@@ -91,7 +92,7 @@ const readName = () => {
 };
 
 async function post<T>(path: string, body: unknown): Promise<T | null> {
-  const res = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'omit', referrerPolicy: 'no-referrer' });
+  const res = await fetch(apiUrl(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'omit', referrerPolicy: 'no-referrer' });
   if (res.status === 404) return null;
   // A refusal keeps the kernel's code, so the page says it in the reader's language.
   if (!res.ok) throw await apiErrorFromResponse(res);
@@ -100,7 +101,7 @@ async function post<T>(path: string, body: unknown): Promise<T | null> {
 
 // A file a channel of the link's post shows (#624): a download URL the page then fetches, or the bytes themselves.
 async function reviewFile(token: string, fileId: string): Promise<Blob> {
-  const res = await fetch('/api/review/file', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, fileId }), credentials: 'omit', referrerPolicy: 'no-referrer' });
+  const res = await fetch(apiUrl('/api/review/file'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, fileId }), credentials: 'omit', referrerPolicy: 'no-referrer' });
   if (!res.ok) throw await apiErrorFromResponse(res);
   if (res.headers.get('content-type')?.includes('application/json')) {
     const { url } = (await res.json()) as { url: string };

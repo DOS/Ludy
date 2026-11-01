@@ -4,6 +4,7 @@ import { EXTRACT_TIMING } from '@crove/extract-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
+import { parseAllowedOrigins } from './cors.ts';
 import { exportSealer } from './export-seal.ts';
 
 // The product name when BRAND_NAME is unset (#1040).
@@ -51,7 +52,26 @@ const schema = z.object({
   HOST: z.string().default('127.0.0.1'),
   // Number of reverse proxies in front of Crove whose X-Forwarded-For entries are trusted (0 = none).
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
+  // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
   PUBLIC_URL: z.string().default('http://localhost:8080'),
+  // Where people open the web app, when it is served from another origin than the API (a split deployment, #2261: the app
+  // at app.<domain>, the API at api.<domain>). Every link that opens a screen of the app (invite, notification and report
+  // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,
+  // `/calendar/oauth/<provider>/callback`, pages of the app) are built from it. Unset: PUBLIC_URL, as before. A different
+  // origin must also be listed in CORS_ALLOWED_ORIGINS.
+  APP_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // The exact origins whose pages may call this API from a browser (#2261), comma separated: the web app's origin in a
+  // split deployment. Never `*`; https only (http for localhost). Unset: no CORS headers at all, which is right when the
+  // app is served from this API's own origin.
+  CORS_ALLOWED_ORIGINS: optional.transform((v, ctx) => {
+    try {
+      return parseAllowedOrigins(v);
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) });
+      return z.NEVER;
+    }
+  }),
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
   CROVE_MODULES: modulesSetting,
@@ -625,6 +645,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
     if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   }
+  // A web app on another origin than the API calls it cross-origin, which the browser allows only for a listed origin.
+  if (config.APP_URL !== undefined && URL.canParse(config.PUBLIC_URL)) {
+    const appOrigin = new URL(config.APP_URL).origin;
+    if (appOrigin !== new URL(config.PUBLIC_URL).origin && !config.CORS_ALLOWED_ORIGINS.includes(appOrigin)) {
+      throw new Error(`APP_URL is another origin than PUBLIC_URL, so the app calls this API cross-origin: list ${appOrigin} in CORS_ALLOWED_ORIGINS`);
+    }
+  }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
@@ -671,10 +698,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_STEP_UP === 'off') {
       throw new Error('AUTH_STEP_UP=off lets a stolen session approve and change roles without MFA; set it to required');
     }
-    // A provider sends the authorization code to PUBLIC_URL/channels/oauth/<provider>/callback (#375).
+    // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
+    // page of the web app.
     const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
-    if (oauthApps.some(Boolean) && !config.PUBLIC_URL.startsWith('https://')) {
-      throw new Error('channel OAuth sends authorization codes back to PUBLIC_URL; a public PUBLIC_URL must be https when a CHANNEL_* or CALENDAR_* app is set');
+    if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
+      throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
+    }
+    if (config.APP_URL !== undefined && !config.APP_URL.startsWith('https://')) {
+      throw new Error('APP_URL is where people open the app and every link in mail points at it; a public APP_URL must be https');
     }
     // Browsers send files to, and fetch them from, this endpoint, and it is allowed in the app's CSP connect-src.
     const browserEndpoint = config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT;
@@ -814,6 +845,11 @@ export function isLocalUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Where people open the web app (#2261): APP_URL in a split deployment, else PUBLIC_URL, which then serves both.
+export function appUrl(config: Pick<Config, 'APP_URL' | 'PUBLIC_URL'>): string {
+  return config.APP_URL ?? config.PUBLIC_URL;
 }
 
 export function publicAuthUrl(config: Config): string {

@@ -74,6 +74,7 @@ import { VendorsPage } from './routes/vendors.tsx';
 import { CustomersPage } from './routes/customers.tsx';
 import { VouchersPage } from './routes/vouchers.tsx';
 import { PublishHoldBanner } from './components/social-publish-hold.tsx';
+import { VersionBanner } from './components/version-banner.tsx';
 import { FixedAssetsPage } from './routes/fixed-assets.tsx';
 
 async function requireSession() {
@@ -151,7 +152,16 @@ function requireInstalledOutside(matches: readonly { fullPath: unknown }[]) {
   if (typeof route === 'string' && !outsideInstalled(getConfig().modules, route)) throw notFound();
 }
 
-const rootRoute = createRootRoute({ component: () => <Outlet />, errorComponent: ErrorPage, notFoundComponent: NotFoundPage });
+const rootRoute = createRootRoute({
+  component: () => (
+    <>
+      <VersionBanner />
+      <Outlet />
+    </>
+  ),
+  errorComponent: ErrorPage,
+  notFoundComponent: NotFoundPage,
+});
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
