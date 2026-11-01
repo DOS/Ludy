@@ -2366,6 +2366,12 @@ export const vi = {
     listShortcuts: 'Phím tắt: J hoặc N sang đề xuất tiếp theo · K hoặc P về đề xuất trước · Enter mở đề xuất đang chọn',
     addressCopied: 'Đã chép địa chỉ',
     copyRefused: 'Trình duyệt không cho chép. Hãy chọn địa chỉ trên màn hình rồi chép bằng tay.',
+    // Mails with no invoice attached whose text held the seller's lookup link or code (#2286).
+    originalNeeded: {
+      title: 'Thư cần hóa đơn gốc ({count, number})',
+      hint: 'Các thư này không đính kèm hóa đơn nhưng có đường dẫn hoặc mã tra cứu của người bán. Mở trang tra cứu, tải file XML về rồi tải lên tại đây; hoặc bỏ qua nếu không cần.',
+      more: 'Còn {count, number} thư nữa.',
+    },
     failedJobs: {
       title: 'Việc chạy nền bị lỗi ({count, number})',
       hint: 'Mỗi việc dưới đây lỗi ở lần thử cuối và {brand} đã ngừng thử. Có thể một phần việc đã xong trước khi lỗi: hãy kiểm tra kết quả ở nơi nó hiện ra. Nếu lỗi cứ lặp lại, hãy báo cho người quản trị máy chủ {brand} của bạn, kèm mã việc.',
@@ -2665,6 +2671,7 @@ export const vi = {
       notXml: 'Chỉ nhận file .xml ở đây. Hóa đơn PDF hoặc ảnh tải lên ở trang Chứng từ chờ duyệt.',
       copyByHand: 'Không sao chép được tự động, hãy chép mã bằng tay.',
       newTab: 'mở trong thẻ mới',
+      dismiss: 'Bỏ qua',
     },
     signatureUnverifiedTitle: 'Chưa xác minh được chữ ký số của hóa đơn này',
     signatureUnverifiedHint:
@@ -6928,6 +6935,8 @@ export const vi = {
         dismiss: 'Ẩn một mục trong Chứng từ chờ duyệt',
         get: 'Xem một mục trong Chứng từ chờ duyệt',
         list: 'Xem danh sách chứng từ chờ duyệt',
+        original_dismiss: 'Bỏ qua một thư cần hóa đơn gốc',
+        originals: 'Xem các thư cần hóa đơn gốc',
         prune: 'Dọn các mục cũ hệ thống đưa vào Chứng từ chờ duyệt',
         raised: 'Xem các mục hệ thống đưa vào Chứng từ chờ duyệt',
       },

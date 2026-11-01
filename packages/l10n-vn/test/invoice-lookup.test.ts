@@ -166,6 +166,8 @@ describe('hostile text', () => {
       'a'.repeat(1_000_000),
       'a.'.repeat(500_000),
       'a '.repeat(100_000),
+      'https://meinvoice.vn/a Mã tra cứu: ABC12345XY '.repeat(4000),
+      'https://meinvoice.vn/a '.repeat(8000),
       'Mã tra\ncứu \n'.repeat(20_000),
       `${'ma tra cuu '.repeat(50_000)}`,
       'Mã tra cứu: '.repeat(20_000),

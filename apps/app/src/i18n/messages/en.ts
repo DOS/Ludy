@@ -2368,6 +2368,12 @@ export const en = {
     listShortcuts: 'Shortcuts: J or N next proposal · K or P previous one · Enter opens the selected one',
     addressCopied: 'Address copied',
     copyRefused: 'The browser refused to copy. Select the address on screen and copy it by hand.',
+    // Mails with no invoice attached whose text held the seller's lookup link or code (#2286).
+    originalNeeded: {
+      title: 'Mails that need the original invoice ({count, number})',
+      hint: "These mails have no invoice attached, but the seller's lookup link or code. Open the lookup page, download the XML file and upload it here; or dismiss one you do not need.",
+      more: '{count, number} more mails.',
+    },
     failedJobs: {
       title: 'Background work that failed ({count, number})',
       hint: 'Each of these failed on its last try, and {brand} stopped trying. Part of the work may have been done before it failed: check the result where it shows. If one keeps coming back, tell whoever runs your {brand} server and give them the job number.',
@@ -2669,6 +2675,7 @@ export const en = {
       notXml: 'Only .xml files are taken here. Upload a PDF or a photo invoice in the Inbox.',
       copyByHand: 'The code could not be copied automatically; copy it by hand.',
       newTab: 'opens in a new tab',
+      dismiss: 'Dismiss',
     },
     signatureUnverifiedTitle: 'The digital signature of this invoice could not be verified',
     signatureUnverifiedHint:
@@ -6929,6 +6936,8 @@ export const en = {
         dismiss: 'Dismiss an Inbox item',
         get: 'Read a Document inbox item',
         list: 'List the Document inbox',
+        original_dismiss: 'Dismiss a mail that needs the original invoice',
+        originals: 'List the mails that need the original invoice',
         prune: 'Remove old Inbox items the system raised',
         raised: 'List the Inbox items the system raised',
       },
