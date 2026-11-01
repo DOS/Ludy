@@ -283,6 +283,17 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     await expect(rt.execute('crm.import.stage', { filename: 'x.csv', rows: [row()] }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).rejects.toBeDefined();
   });
 
+  it('lets the personal-data erasure delete the staged rows that name the person, and no others', async () => {
+    const o = await org();
+    const staged = await o.stage(o.lan, [row({ name: 'Cần Xóa', email: 'xoa@khach.test', phone: '0900 000 222' }), row({ name: 'Giữ Lại', email: 'giu@khach.test' })]);
+    const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    const erased = await rt.execute<{ erased: { column: string; rows: number }[] }>('kernel.personal_data.erase', { value: 'XOA@khach.test' }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
+    expect(erased.erased.find((e) => e.column === 'crove_crm.import_row.email')).toMatchObject({ rows: 1 });
+    expect(await o.stagedRows(staged.batch.id)).toBe(1);
+    const left = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id });
+    expect(left.rows.map((r) => r.name)).toEqual(['Giữ Lại']);
+  });
+
   it('keeps one org out of another', async () => {
     const a = await org();
     const b = await org();
