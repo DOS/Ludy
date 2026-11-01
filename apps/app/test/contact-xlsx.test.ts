@@ -41,13 +41,14 @@ describe('an .xlsx of contacts', () => {
     expect(table.numeric).toEqual([[false, false, true], [false, false, false]]);
   });
 
-  it('puts back the zero a landline and a branch tax code lost too', () => {
-    const rows = [['An', '2838123456', '123456789001'], ['Bình', '5838123456', '1234567890123'], ['Cường', '1838123456', '12345678']];
+  it('puts back the zero a landline lost, and leaves a 12-digit number alone', () => {
+    const rows = [['An', '2838123456', '123456789012'], ['Bình', '9838123456', '1234567890123'], ['Cường', '1838123456', '12345678']];
     const numeric = [[false, true, true], [false, true, true], [false, true, true]];
     const mapped = mappedRows(rows, ['name', 'phone', 'taxCode'], numeric);
-    expect(mapped[0]).toMatchObject({ phone: '02838123456', taxCode: '0123456789001' });
+    // A landline (028 3812 3456) is stored as 2838123456; a 12-digit tax code is an individual's citizen ID and has no zero to lose.
+    expect(mapped[0]).toMatchObject({ phone: '02838123456', taxCode: '123456789012' });
     // A 10-digit number that cannot be a landline with its zero, and a tax code of another length, are left as they are.
-    expect(mapped[1]).toMatchObject({ phone: '05838123456', taxCode: '1234567890123' });
+    expect(mapped[1]).toMatchObject({ phone: '9838123456', taxCode: '1234567890123' });
     expect(mapped[2]).toMatchObject({ phone: '1838123456', taxCode: '12345678' });
   });
 
@@ -85,6 +86,9 @@ describe('an .xlsx of contacts', () => {
     const macro = book(plain, [{ name: 'xl/vbaProject.bin', data: enc('x') }]);
     await expect(readFirstSheet(macro, { refuseMacros: true })).rejects.toMatchObject({ name: 'XlsxError', reason: 'macro' });
     expect((await readFirstSheet(macro)).size).toBe(1);
+    // An Excel 4 macro sheet, with no VBA part, is refused too.
+    const macroSheet = book(plain, [{ name: 'xl/macrosheets/sheet1.xml', data: enc('<macrosheet/>') }]);
+    await expect(readFirstSheet(macroSheet, { refuseMacros: true })).rejects.toMatchObject({ reason: 'macro' });
     // A formula cell is refused when asked, and read (its cached value) when not.
     await expect(readFirstSheet(book(withFormula), { refuseFormulas: true })).rejects.toMatchObject({ reason: 'formula' });
     expect((await readFirstSheet(book(withFormula))).size).toBe(1);
@@ -108,8 +112,9 @@ describe('an .xlsx of contacts', () => {
     const rows = new Map<number, Map<number, { kind: 'text' | 'number'; value: string }>>();
     for (let r = 1; r <= 30_000; r++) rows.set(r, new Map([[0, { kind: 'text', value: r === 1 ? 'Tên' : `Khách ${r}` }], [18_000, { kind: 'text', value: 'x' }]]));
     const table = sheetToTable(rows);
-    // The columns stop at 100, and the rows one past what the import takes: the page then says there are too many.
+    // The columns stop at 100 and the sheet is marked too wide (the page refuses it); the rows stop one past what the import takes.
     expect(table.header.length).toBeLessThanOrEqual(100);
+    expect(table.tooWide).toBe(true);
     expect(table.rows.length).toBeLessThanOrEqual(2001);
     expect(table.rows.length).toBeGreaterThan(2000);
   });

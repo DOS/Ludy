@@ -407,7 +407,8 @@ export interface ReadOptions {
 export async function readFirstSheet(file: Uint8Array, options: ReadOptions = {}): Promise<SheetRows> {
   if (file.byteLength > MAX_XLSX_BYTES) throw new XlsxError('too_large', 'file too large');
   const entries = zipEntries(file);
-  if (options.refuseMacros && [...entries.keys()].some((name) => /(^|\/)vbaProject\.bin$/i.test(name))) throw new XlsxError('macro', 'the workbook carries macros');
+  // A VBA project part, or an Excel 4 macro sheet.
+  if (options.refuseMacros && [...entries.keys()].some((name) => /(^|\/)vbaProject\.bin$/i.test(name) || /(^|\/)macrosheets\//i.test(name))) throw new XlsxError('macro', 'the workbook carries macros');
   const text = async (name: string) => {
     const entry = entries.get(name);
     return entry ? readEntry(file, entry) : null;

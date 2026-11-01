@@ -15,6 +15,8 @@ export interface ParsedCsv {
   rows: string[][];
   // The file ended inside a quoted cell: the rest of it became that one cell, so it is not read as contacts.
   unterminated?: true;
+  // A spreadsheet has a filled cell past the widest column read: it is refused, not read without that column.
+  tooWide?: true;
   // Which cells a spreadsheet stored as numbers (an .xlsx only): a phone or tax code typed without a text format lost its
   // leading zero there, and mappedRows puts it back.
   numeric?: boolean[][];
@@ -87,7 +89,8 @@ const MAX_SHEET_ROWS = IMPORT_MAX_ROWS + 2;
 
 export function sheetToTable(sheet: SheetRows): ParsedCsv {
   const numbers = [...sheet.keys()].sort((a, b) => a - b);
-  const filled = (n: number) => [...(sheet.get(n)?.entries() ?? [])].filter(([c, cell]) => c < MAX_SHEET_COLUMNS && cell.value.trim() !== '');
+  const filled = (n: number) => [...(sheet.get(n)?.entries() ?? [])].filter(([, cell]) => cell.value.trim() !== '');
+  let tooWide = false;
   // Rows with a cell, in order, up to the cap (the header is the first of them).
   const kept: number[] = [];
   let width = 0;
@@ -95,7 +98,10 @@ export function sheetToTable(sheet: SheetRows): ParsedCsv {
     const cells = filled(n);
     if (cells.length === 0) continue;
     kept.push(n);
-    for (const [c] of cells) if (c + 1 > width) width = c + 1;
+    for (const [c] of cells) {
+      if (c >= MAX_SHEET_COLUMNS) tooWide = true;
+      else if (c + 1 > width) width = c + 1;
+    }
     if (kept.length >= MAX_SHEET_ROWS) break;
   }
   const line = (n: number) => {
@@ -106,7 +112,7 @@ export function sheetToTable(sheet: SheetRows): ParsedCsv {
     };
   };
   const [first, ...rest] = kept.map(line);
-  return { header: first?.text ?? [], rows: rest.map((l) => l.text), numeric: rest.map((l) => l.numeric) };
+  return { header: first?.text ?? [], rows: rest.map((l) => l.text), numeric: rest.map((l) => l.numeric), ...(tooWide ? { tooWide: true as const } : {}) };
 }
 
 // A header without marks, case or punctuation: "Số điện thoại" and "so dien thoai" are one.
@@ -148,9 +154,10 @@ export function mappedRows(rows: readonly string[][], mapping: readonly (ImportF
       const at = mapping.indexOf(field);
       const text = at < 0 ? '' : (cells[at] ?? '').trim();
       // A number cell lost the zero a Vietnamese number starts with: a mobile number or a tax code of 9 digits, a landline of 10
-      // (028 3812 3456 is stored as 2838123456), a branch tax code of 12 (0123456789001). Nothing else is touched.
+      // (028 3812 3456 is stored as 2838123456). A 12-digit number is left alone: it can be an individual's tax code, which is
+      // the citizen ID, with no zero to lose. Nothing else is touched.
       if (at < 0 || numeric?.[r]?.[at] !== true) return text;
-      const lost = field === 'phone' ? /^(?:\d{9}|[2-8]\d{9})$/.test(text) : field === 'taxCode' ? /^(?:\d{9}|\d{12})$/.test(text) : false;
+      const lost = field === 'phone' ? /^(?:\d{9}|[2-8]\d{9})$/.test(text) : field === 'taxCode' ? /^\d{9}$/.test(text) : false;
       return lost ? `0${text}` : text;
     };
     return { kind: pick('kind') || null, name: pick('name'), taxCode: pick('taxCode') || null, email: pick('email') || null, phone: pick('phone') || null, address: pick('address') || null };
