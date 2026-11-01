@@ -2,7 +2,7 @@
 // The Ludy mark (four keys that spell L, U, D and Y, the Y key teal, #2200, #2293) is drawn in several
 // places that cannot import one another: the app's `Logo`, the landing page's `LudyMark` and the SVG files under
 // apps/web/public. This keeps their paths identical, keeps the light and dark colors where DESIGN.md puts them, and
-// keeps the older marks (Crove's ring C, the tiles and spark of #2052, the accented y of #2203) out of the sources.
+// keeps the older marks (Crove's ring C, the tiles and spark of #2052, the accented y of #2200) out of the sources.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,7 @@ const PATH = Object.fromEntries(ROLES.map((role, i) => [role, reference[i]?.d ??
 type Palette = Record<'v' | 'vl' | 't' | 'tl' | 'ink' | 'tInk' | 'word', string>;
 const COLORS: Record<'light' | 'dark', Palette> = {
   light: { v: '#612BD3', vl: '#44209A', t: '#0F8F7A', tl: '#0A6A5B', ink: '#FFFFFF', tInk: '#FFFFFF', word: '#17141F' },
-  dark: { v: '#7C4DEB', vl: '#5A33B5', t: '#14A88C', tl: '#0B7563', ink: '#FFFFFF', tInk: '#FFFFFF', word: '#F4F3F8' },
+  dark: { v: '#7C4DEB', vl: '#5A33B5', t: '#13A58A', tl: '#0B7563', ink: '#FFFFFF', tInk: '#FFFFFF', word: '#F4F3F8' },
 };
 const fill = (color: string, d: string) => `<path fill="${color}" d="${d}"/>`;
 const stroke = (color: string, width: number, d: string) =>
@@ -76,7 +76,7 @@ function sources(dir: string): string[] {
   });
 }
 
-describe('the Ludy logo (#2200)', () => {
+describe('the Ludy logo (#2200, #2293)', () => {
   it('has the same keys and letters in every file that draws it', () => {
     expect(reference).toHaveLength(ROLES.length);
     expect(PATH.lips).toMatch(/^M0 15/);
@@ -153,7 +153,7 @@ describe('the Ludy logo (#2200)', () => {
     }
   });
 
-  it('letters "Ludy" the same in the light and the dark wordmark, the y in the teal of the y key, in a box as high as the mark (#2059)', () => {
+  it('letters "Ludy" the same in the light and the dark wordmark, the y in the teal of the Y key, in a box as high as the mark (#2059)', () => {
     const wordmark = (file: string, scheme: 'light' | 'dark') => {
       const text = read(`${BRAND}/${file}`);
       const lettering = pathsOf(text).slice(ROLES.length);
@@ -196,7 +196,7 @@ describe('the Ludy logo (#2200)', () => {
     expect(tokens('apps/web/src/app/globals.css')).toEqual(app);
   });
 
-  it('no longer draws the Crove mark (a ring C with two sparkles), the tiles and spark of #2052 or the accented y of #2203', () => {
+  it('no longer draws the Crove mark (a ring C with two sparkles), the tiles and spark of #2052 or the accented y of #2200', () => {
     const older = ['M141.5 33.7', 'M71 0C73.27 15.5', 'M61.99 64.05', 'M71.95 59.96'];
     const offenders = ['apps/app/src', 'apps/app/public', 'apps/web/src', 'apps/web/public', 'packages/ui/src']
       .flatMap(sources)
