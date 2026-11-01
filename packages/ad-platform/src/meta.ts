@@ -12,6 +12,7 @@
 // Standard access or the development tier) until App Review moves it to "Full". The owner's own ad accounts are readable
 // on the Limited tier with `ads_read` [C]; its rate limits are low [C] (plan section 5.3), so a run reads each account
 // with a handful of calls, backs off for the time a rate limit names, and the app never retries in a loop.
+import { createHmac } from 'node:crypto';
 import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
 import { ConnectorError, Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
 import { AdPlatformError, type AdDailyRow, type AdPlatform, type AdPlatformAccount, type AdPlatformCapabilities } from './index.ts';
@@ -275,6 +276,16 @@ function rowOf(row: InsightRow, level: 'account' | 'campaign', accountId: string
   };
 }
 
+// A Meta user id as the app sees it (app-scoped, digits).
+const META_USER_ID = /^\d{1,32}$/;
+
+// The keyed hash a connection stores of the Meta user who granted it, and the data deletion callback looks it up by: HMAC-SHA256
+// under the app secret, with a label so the same key never hashes another thing to the same value. The id itself is kept
+// nowhere; a rotated app secret leaves the old hashes unmatched (the owner then deletes history by hand).
+export function platformUserHash(appSecret: string, userId: string): string {
+  return createHmac('sha256', appSecret).update(`ludy.ads.meta_ads.user:${userId}`).digest('hex');
+}
+
 // Facebook Login for the ads_read permission, and the ad accounts the user granted: the OAuth connector of the channel layer
 // for a Meta ad account (ADR-0025, plan section 5.1). The user token never leaves here; each account's connection seals the
 // same long-lived token, which the sync reads with.
@@ -282,9 +293,11 @@ export class MetaAdsConnector implements OAuthConnector {
   readonly provider = META_ADS_PROVIDER;
   readonly pkce = false;
   private readonly login: MetaLogin;
+  private readonly appSecret: string;
   private readonly now: () => Date;
 
   constructor(app: MetaAppConfig, options: { fetch?: Fetch; now?: () => Date } = {}) {
+    this.appSecret = app.appSecret;
     this.login = new MetaLogin(app, META_ADS_SCOPES, graphHostOnly(options.fetch));
     this.now = options.now ?? (() => new Date());
   }
@@ -303,7 +316,14 @@ export class MetaAdsConnector implements OAuthConnector {
     // be able to spend. Pages permissions (pages_*, publish_*) are accepted and shown on the Ads screen.
     if (granted.some((s) => META_FORBIDDEN_SCOPES.includes(s))) throw new ConnectorError('denied', `the token holds ${granted.filter((s) => META_FORBIDDEN_SCOPES.includes(s)).join(', ')}`, 'WRITE_PERMISSION_GRANTED');
     let rows: NonNullable<AccountsAnswer['data']>;
+    let grantedByHash: string | undefined;
     try {
+      // Who granted it, as a keyed hash only (the person's id is kept nowhere): Meta's data deletion callback names the person
+      // by this id and the stored hash finds the accounts they granted (plan section 9). A login Meta does not name is left
+      // without one, which only means a deletion request cannot find the account.
+      // A failed call is only that: the connection is made without a hash, and the link says so (it drops an earlier one).
+      const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } }).catch(() => ({}) as { id?: unknown });
+      if (typeof me.id === 'string' && META_USER_ID.test(me.id)) grantedByHash = platformUserHash(this.appSecret, me.id);
       rows = await listAdAccounts(this.login.graph, token);
     } catch (error) {
       throw asProviderError(error);
@@ -314,7 +334,7 @@ export class MetaAdsConnector implements OAuthConnector {
     const accounts: ConnectedAccount[] = [];
     for (const row of rows) {
       if (typeof row.id !== 'string' || !ACT_ID.test(row.id)) continue;
-      accounts.push({ provider: META_ADS_PROVIDER, externalAccountId: row.id, displayName: accountName(row.name, row.id), scopes: [...scopes], expiresAt, secret: JSON.stringify({ accessToken: token } satisfies MetaSecret) });
+      accounts.push({ provider: META_ADS_PROVIDER, externalAccountId: row.id, displayName: accountName(row.name, row.id), scopes: [...scopes], expiresAt, secret: JSON.stringify({ accessToken: token } satisfies MetaSecret), ...(grantedByHash ? { grantedByHash } : {}) });
     }
     // A login that reaches no ad account is not a missing permission: the caller says so in words of its own.
     return accounts;

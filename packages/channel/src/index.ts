@@ -74,6 +74,9 @@ export interface ConnectedAccount {
   // When the access token expires, if the provider says; null when it does not expire on a timer.
   expiresAt: Date | null;
   secret: string;
+  // A keyed hash of the platform user who granted the connection, for a platform whose data deletion request names the user
+  // (Meta's, for Ads: @crove/ad-platform platformUserHash). Never the platform's id of the person.
+  grantedByHash?: string;
 }
 
 // The offline sandbox (Social plan §3.5): no network, so the whole flow runs on a laptop and in tests. Its token is

@@ -198,6 +198,7 @@ export const vi = {
       finance_portal_attention: 'Đối chiếu với cổng thuế cần xem lại',
       finance_period_closing: 'Kỳ sắp đến hạn nộp tờ khai mà chưa khóa sổ',
       notes_todo_due: 'Nhắc việc của tôi đến hạn',
+      kernel_channel_expired: 'Kết nối tài khoản quảng cáo hết hạn hoặc bị từ chối',
     },
     text: {
       approval_waiting: 'Đề xuất chờ bạn duyệt: {title}',
@@ -210,6 +211,7 @@ export const vi = {
       portal_failed: 'Không đọc được bảng kê hóa đơn của cổng thuế {period}',
       period_closing: 'Tờ khai GTGT {period} đến hạn nộp ngày {due} nhưng kỳ này chưa khóa sổ',
       todo_due: 'Bạn có 1 việc đến hạn',
+      channel_expired: 'Một tài khoản quảng cáo bị tạm dừng cập nhật vì kết nối hết hạn hoặc bị từ chối. Hãy kết nối lại để lấy tiếp số liệu, không mất ngày nào.',
       personal_data_notice: 'Theo yêu cầu xóa dữ liệu của một người, {items} của bạn có thông tin của họ và sắp bị xóa. Hãy chép lại phần bạn cần, bỏ thông tin của người đó ra.',
       other: 'Có thông báo mới',
     },
@@ -1206,6 +1208,15 @@ export const vi = {
       another: 'Kết nối thêm tài khoản quảng cáo Meta',
       note: '{brand} chỉ xin Meta quyền đọc báo cáo quảng cáo (quyền ads_read). Không bao giờ tạo hay sửa chiến dịch, và không tiêu tiền của bạn.',
       expiry: 'Kết nối kéo dài khoảng 60 ngày, sau đó Meta sẽ yêu cầu bạn kết nối lại.',
+      reconnect: 'Kết nối lại với Meta',
+    },
+    // An account whose connection stopped (#2219): why, since when, and what resumes it.
+    paused: {
+      token_expired: 'Từ {since}, Meta không còn nhận mã truy cập của tài khoản này nên Ludy đã tạm dừng cập nhật. Không mất ngày nào: sau khi kết nối lại, hệ thống lấy tiếp từ ngày chưa chốt gần nhất.',
+      owner_left: 'Từ {since}, người đã kết nối tài khoản này không còn là chủ sở hữu hay quản trị viên nên Ludy đã tạm dừng cập nhật. Chủ sở hữu hoặc quản trị viên kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
+      other: 'Từ {since}, kết nối của tài khoản này đã dừng nên Ludy tạm dừng cập nhật. Kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
+      platform_deletion: 'Từ {since}, Meta yêu cầu xóa dữ liệu của người đã cấp quyền cho tài khoản này nên kết nối đã đóng và dữ liệu bị xóa.',
+      noReconnect: 'Chủ sở hữu hoặc quản trị viên cần kết nối lại tài khoản này.',
     },
     oauth: {
       title: 'Kết nối tài khoản quảng cáo',
@@ -1293,6 +1304,13 @@ export const vi = {
       disconnectTitle: 'Ngắt kết nối tài khoản quảng cáo này?',
       disconnectBody: 'Hệ thống sẽ ngừng lấy số liệu mới cho tài khoản {name}. Số liệu đã lưu vẫn được giữ để xem lại.',
       disconnected: 'Đã ngắt kết nối tài khoản quảng cáo.',
+      deleteHistory: 'Xóa lịch sử đã lưu',
+      deleteHistoryHint: 'Xóa mọi số liệu và nhật ký cập nhật Ludy đã lưu cho tài khoản này. Sổ sách kế toán không bị đụng tới.',
+      deleteHistoryTitle: 'Xóa lịch sử quảng cáo của tài khoản này?',
+      deleteHistoryBody: 'Mọi số liệu quảng cáo và nhật ký cập nhật của tài khoản {name} sẽ bị xóa và không khôi phục được. Tài khoản còn kết nối sẽ lấy lại 13 tháng gần nhất ở lần cập nhật tới.',
+      deleteHistoryBodyClosed: 'Mọi số liệu quảng cáo, nhật ký cập nhật và chính tài khoản {name} sẽ bị xóa khỏi Ludy và không khôi phục được. Muốn xem lại, hãy kết nối lại tài khoản từ đầu.',
+      historyDeleted: 'Đã xóa lịch sử quảng cáo ({days} ngày số liệu).',
+      accountDeleted: 'Đã xóa tài khoản quảng cáo và toàn bộ số liệu của nó.',
     },
     books: {
       title: 'So với sổ sách',
@@ -6196,6 +6214,7 @@ export const vi = {
       ADS_ACCOUNT_NOT_FOUND: 'Không tìm thấy tài khoản quảng cáo này',
       ADS_CONNECTION_NOT_FOUND: 'Không tìm thấy kết nối tài khoản quảng cáo',
       ADS_CONNECTION_INACTIVE: 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại',
+      ADS_CONNECTION_STILL_OPEN: 'Kết nối của tài khoản này còn mở; hãy ngắt kết nối trước khi xóa tài khoản',
       ADS_SYNC_TOO_SOON: 'Vừa mới làm mới tài khoản này, hãy thử lại sau ít phút',
       ADS_SYNC_ON_HOLD: 'Nền tảng đang giới hạn tần suất truy vấn tài khoản này; hệ thống sẽ tự thử lại khi hết giới hạn',
       ADS_RANGE_INVALID: 'Khoảng ngày không hợp lệ: ngày bắt đầu phải trước ngày kết thúc và tối đa 400 ngày',
@@ -6533,6 +6552,8 @@ export const vi = {
     ads: {
       account: {
         configure: 'Đặt tài khoản chi phí, kết quả và pháp nhân của tài khoản quảng cáo',
+        delete_history: 'Xóa số liệu và nhật ký đã lưu của tài khoản quảng cáo',
+        erase: 'Xóa tài khoản quảng cáo theo yêu cầu xóa dữ liệu của nền tảng',
         link: 'Liên kết tài khoản quảng cáo đã kết nối',
         list: 'Xem các tài khoản quảng cáo',
       },
@@ -6860,6 +6881,7 @@ export const vi = {
         disconnect: 'Ngắt kết nối kênh',
         list: 'Xem danh sách kênh đã kết nối',
         mark_expired: 'Đánh dấu kết nối kênh đã hết hạn',
+        revoke_by_platform: 'Đóng kết nối kênh theo yêu cầu xóa dữ liệu của nền tảng',
         oauth_begin: 'Bắt đầu đăng nhập để kết nối kênh',
         oauth_consume: 'Hoàn tất đăng nhập để kết nối kênh',
         refresh: 'Làm mới thông tin đăng nhập của kênh',

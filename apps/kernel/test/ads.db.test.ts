@@ -6,12 +6,12 @@
 // recorded, and nothing of the credential reaches an answer, an audit row or an event. The pure rules are unit-tested in
 // modules/ads/test/domain.test.ts and the adapter in packages/ad-platform/test/sandbox.test.ts.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, type AdPlatform, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -20,8 +20,10 @@ import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-co
 import { CredentialVault, DomainError, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
+import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
 import { loadConfig } from '../src/config.ts';
+import { RateLimiter } from '../src/rate-limit.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -60,7 +62,7 @@ const DAY_MS = 86_400_000;
 
 // The OAuth connector of Meta ads the API holds in these tests, made of fixed answers: Meta's dialog and token exchange are
 // not reached from a test. A grant covers two ad accounts.
-const META_GRANT = { write: false };
+const META_GRANT = { write: false, user: '7001' };
 const META_CONNECTOR: OAuthConnector = {
   provider: 'meta_ads',
   pkce: false,
@@ -76,6 +78,8 @@ const META_CONNECTOR: OAuthConnector = {
       scopes: id === 'act_9002' ? ['ads_read', 'pages_manage_posts'] : ['ads_read'],
       expiresAt: new Date(Date.now() + 60 * DAY_MS),
       secret: JSON.stringify({ accessToken: 'EAAB-grant-token' }),
+      // The person who granted it, as the connector hands it on: a keyed hash, never the Meta user id.
+      grantedByHash: platformUserHash('meta-app-secret', META_GRANT.user),
     }));
   },
 };
@@ -186,6 +190,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       pool,
       aiEnabled: false,
       channels: { broker: vault, sandbox: true, adsPlatforms: { ...sandbox, ...adPlatforms({ sandbox: false, meta: { appSecret: 'meta-app-secret' } }) }, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
+      adsDeletion: { appSecret: 'meta-app-secret' },
     });
     appConfig = config;
     appDb = db;
@@ -697,6 +702,298 @@ suite('ads on PostgreSQL (#2217)', () => {
     }
   });
 
+  // A3 (#2219): an account whose token the platform refused is paused and its owners told; connecting again resumes it with
+  // no day lost; an owner or admin deletes the stored history; Meta's data deletion request erases what a person granted.
+  describe('paused accounts, deleting history and the deletion callback (A3)', () => {
+    const SECRET_META = 'meta-app-secret';
+    const expiring: Readonly<Record<string, AdPlatform>> = {
+      sandbox_ads: {
+        ...(sandbox.sandbox_ads as AdPlatform),
+        readDaily: async () => {
+          throw new AdPlatformError('token_expired', '190');
+        },
+      },
+    };
+    const daysOf = async (adAccountId: string, org = orgId) =>
+      (await row<{ day: string }>(`SELECT DISTINCT to_char(day, 'YYYY-MM-DD') AS day FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 ORDER BY 1`, [org, adAccountId])).map((r) => r.day);
+    const notices = async (kind: string) =>
+      row<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM crove_kernel.notification WHERE org_id = $1 AND kind = $2 ORDER BY created_at, id`, [orgId, kind]);
+    // Meta's signed request: the payload and its HMAC-SHA256 under the app secret, both base64url.
+    const signed = (userId: string, secret = SECRET_META, payload: Record<string, unknown> = { algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId }) => {
+      const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+      return `${createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}`;
+    };
+    const form = (signedRequest: string) => new URLSearchParams({ signed_request: signedRequest }).toString();
+    // Links a sandbox account as the Meta user `granted` (hashed), in a given org, as that org's owner.
+    // The same key is the same platform account: connecting again with it is connecting the account again, with a new token.
+    async function linkedAs(org: string, actor: ReturnType<typeof asOwner>, name: string, granted: string | undefined, key = `a3-${randomUUID().slice(0, 8)}`) {
+      const { externalAccountId, secret } = (sandbox.sandbox_ads as ReturnType<typeof sandboxAdPlatform>).connect({ displayName: name, key });
+      const sealed = vault.seal(secret, { orgId: org, provider: 'sandbox_ads', externalAccountId });
+      const made = await api.execute<{ connectionId: string }>(
+        'kernel.channel.connect',
+        { provider: 'sandbox_ads', externalAccountId, displayName: name, scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor, orgId: org },
+      );
+      const linked = await api.execute<{ adAccountId: string }>('ads.account.link', { connectionId: made.connectionId, ...(granted ? { grantedByHash: platformUserHash(SECRET_META, granted) } : {}) }, { actor, orgId: org });
+      return { connectionId: made.connectionId, adAccountId: linked.adAccountId, key };
+    }
+    const outsiderActor = () => ({ type: 'user' as const, userId: outsider.userId, aal: 'aal1' as const, sessionId: outsider.session });
+    const expiredEvent = async (connectionId: string) => {
+      const [event] = await row<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.channel.expired' AND payload->>'connection_id' = $2`, [orgId, connectionId]);
+      expect(event).toBeDefined();
+      return (event as { id: string }).id;
+    };
+
+    it('pauses an account the platform refused, tells the owners and admins once, and resumes with no day lost after it is connected again', async () => {
+      const { connectionId, adAccountId, key } = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined);
+      await sync(connectionId);
+      const full = await daysOf(adAccountId);
+      expect(full.length).toBeGreaterThan(300);
+      // The platform refuses the token: the connection is expired, the account says why and since when, and the cursors stay.
+      const cursors = () => row(`SELECT settled_through::text, synced_through::text FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+      const before = await cursors();
+      await sync(connectionId, expiring);
+      const paused = await view(owner, adAccountId);
+      expect(paused).toMatchObject({ connectionStatus: 'expired', pausedReason: 'token_expired', lastErrorKind: 'token_expired' });
+      expect(Date.now() - Date.parse(paused?.pausedSince as string)).toBeLessThan(60_000);
+      expect(await cursors()).toEqual(before);
+      // A paused account is not read or swept; the owners and admins (not the member or viewer) are told, once.
+      expect(await sync(connectionId)).toEqual({ rows: 0, slices: 0 });
+      const eventId = await expiredEvent(connectionId);
+      const dispatch = () => worker.execute<{ sent: number }>('kernel.notification.dispatch', { eventId }, { actor: SYSTEM, orgId });
+      expect((await dispatch()).sent).toBe(1);
+      expect((await dispatch()).sent).toBe(0);
+      const told = (await notices('kernel.channel_expired')).filter((n) => n.detail.provider === 'sandbox_ads');
+      expect(told.map((n) => n.user_id)).toContain(owner.userId);
+      expect(told.map((n) => n.user_id)).not.toContain(member.userId);
+      expect(told.map((n) => n.user_id)).not.toContain(viewer.userId);
+      // By the platform's id only: no name, no token.
+      expect(told[0]?.detail).toEqual({ provider: 'sandbox_ads' });
+      // Days pass while it is paused: the last ten of the stored figures are gone, as if the sync had missed them.
+      await row(`DELETE FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day > (now() AT TIME ZONE 'UTC')::date - 10`, [orgId, adAccountId]);
+      await row(`UPDATE crove_ads.ad_account SET settled_through = (now() AT TIME ZONE 'UTC')::date - 40, synced_through = (now() AT TIME ZONE 'UTC')::date - 10 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+      // The owner connects the same platform account again: the row, its settings and its history stay, and the next sync
+      // reads from the day after the last final one, so nothing between the pause and now is missing.
+      const again = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined, key);
+      expect(again.adAccountId).toBe(adAccountId);
+      expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'active', pausedSince: null, pausedReason: null });
+      await sync(again.connectionId);
+      expect(await daysOf(adAccountId)).toEqual(full);
+    });
+
+    it('does not carry a name or a token in the notice of an expired ad platform connection, and stays silent once it is connected again', async () => {
+      const { connectionId } = await connect('Tên không vào thông báo');
+      await sync(connectionId, expiring);
+      const eventId = await expiredEvent(connectionId);
+      expect((await worker.execute<{ sent: number }>('kernel.notification.dispatch', { eventId }, { actor: SYSTEM, orgId })).sent).toBeGreaterThan(0);
+      expect(JSON.stringify(await notices('kernel.channel_expired'))).not.toMatch(/sbx_|accessToken|Tên không vào thông báo/);
+      // A connection that is active again by the time the worker gets to the event is not waiting for anyone.
+      const { connectionId: other } = await connect('Nối lại trước khi báo');
+      await sync(other, expiring);
+      const otherEvent = await expiredEvent(other);
+      await row(`UPDATE crove_kernel.channel_connection SET status = 'active' WHERE org_id = $1 AND id = $2`, [orgId, other]);
+      expect((await worker.execute<{ sent: number }>('kernel.notification.dispatch', { eventId: otherEvent }, { actor: SYSTEM, orgId })).sent).toBe(0);
+    });
+
+    it('deletes the stored history on request: owners and admins only, the row stays while connected, goes with a closed connection', async () => {
+      const { connectionId, adAccountId } = await connect('Xóa lịch sử');
+      await sync(connectionId);
+      expect((await daysOf(adAccountId)).length).toBeGreaterThan(300);
+      // Members, viewers and another org's owner may not, and say nothing about whether the account exists.
+      for (const who of [member, viewer]) {
+        const refused = await rpc('ads/deleteHistory', await tokenFor(who), { adAccountId, idempotencyKey: randomUUID() });
+        expect(refused.status, who.email).toBe(403);
+      }
+      const foreign = await rpc('ads/deleteHistory', await tokenFor(outsider), { adAccountId, idempotencyKey: randomUUID() }, otherSlug);
+      expect(foreign.status).toBe(404);
+      expect((await daysOf(adAccountId)).length).toBeGreaterThan(300);
+      // The owner deletes: every figure and sync run goes, the cursors go back, the account and its settings stay.
+      const done = (await ok('ads/deleteHistory', owner, { adAccountId, idempotencyKey: randomUUID() })) as { days: number; runs: number; removed: boolean };
+      expect(done.removed).toBe(false);
+      expect(done.days).toBeGreaterThan(300);
+      expect(done.runs).toBeGreaterThan(0);
+      expect(await daysOf(adAccountId)).toEqual([]);
+      expect(await row(`SELECT 1 FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'active', syncedThrough: null, settledThrough: null, lastRunAt: null, lastErrorKind: null });
+      // The audit row names the account and counts, never a figure.
+      const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.account.delete_history' ORDER BY id DESC LIMIT 1`, [orgId]);
+      expect(audit[0]?.detail).toMatchObject({ adAccountId, removed: false });
+      // The next sync reads the 13 months again.
+      await sync(connectionId);
+      expect((await daysOf(adAccountId)).length).toBeGreaterThan(300);
+      // A connection still open does not let the account itself go; a closed one does, and nothing of it is left.
+      expect((await rpc('channels/disconnect', await tokenFor(owner), { connectionId, idempotencyKey: randomUUID() })).status).toBe(200);
+      const closed = (await ok('ads/deleteHistory', owner, { adAccountId, idempotencyKey: randomUUID() })) as { removed: boolean };
+      expect(closed.removed).toBe(true);
+      expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await row(`SELECT 1 FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId])).toEqual([]);
+      expect(await view(owner, adAccountId)).toBeUndefined();
+      const gone = await rpc('ads/deleteHistory', await tokenFor(owner), { adAccountId, idempotencyKey: randomUUID() });
+      expect(gone.status).toBe(404);
+      // The command that erases for a platform's request is the system's alone.
+      const { adAccountId: other } = await connect('Chỉ hệ thống xóa');
+      await expect(api.execute('ads.account.erase', { adAccountId: other }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });
+    });
+
+    it('checks Meta’s signature before anything else, and answers a verified request with a code and a status page', async () => {
+      const post = (body: string) => app.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+      // Forged, the wrong secret, the wrong algorithm, not a user id, malformed: none is stored.
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`);
+      expect((await post(form(signed('4242', 'another-secret')))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA1', user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('not-a-number')))).status).toBe(401);
+      expect((await post(form(`${signed('4242').split('.')[0]}.${Buffer.from('{"algorithm":"HMAC-SHA256","user_id":"9999"}').toString('base64url')}`))).status).toBe(401);
+      expect((await post(form('no-dot'))).status).toBe(401);
+      // Signed by Meta but expired, with no stamp, or stamped in the future: not a request to act on (a replay of an old one).
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: nowSeconds - 25 * 3600, user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: String(nowSeconds), user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: nowSeconds + 3600, user_id: '4242' })))).status).toBe(401);
+      expect((await post('other=1')).status).toBe(400);
+      expect((await post('')).status).toBe(400);
+      expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
+      // A verified one: a code of 128 random bits and the status page's address; the user id is stored nowhere.
+      const accepted = await post(form(signed('4242')));
+      expect(accepted.status).toBe(200);
+      const body = (await accepted.json()) as { url: string; confirmation_code: string };
+      expect(body.confirmation_code).toMatch(/^[0-9a-f]{32}$/);
+      expect(body.url).toBe(`${appConfig.PUBLIC_URL}/api/ads/meta/data-deletion?code=${body.confirmation_code}`);
+      const stored = await row<{ user_hash: string; completed_at: string | null }>(`SELECT user_hash, completed_at FROM crove_ads.deletion_request WHERE code = $1`, [body.confirmation_code]);
+      expect(stored).toEqual([{ user_hash: platformUserHash(SECRET_META, '4242'), completed_at: null }]);
+      expect(JSON.stringify(stored)).not.toContain('4242');
+      // The status page: waiting, then done, and 404 for a code nobody was given. It shows nothing of any org.
+      const waiting = await app.request(`/api/ads/meta/data-deletion?code=${body.confirmation_code}`);
+      expect(waiting.status).toBe(200);
+      expect(waiting.headers.get('cache-control')).toBe('no-store');
+      expect(await waiting.text()).toContain('đang được xử lý');
+      expect((await app.request(`/api/ads/meta/data-deletion?code=${'0'.repeat(32)}`)).status).toBe(404);
+      expect((await app.request('/api/ads/meta/data-deletion?code=zzz')).status).toBe(404);
+      expect((await app.request('/api/ads/meta/data-deletion')).status).toBe(404);
+      // Nothing is linked to that user: the worker completes it with no account.
+      expect(await runAdsDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
+      const done = await adsDeletionStatus(api, body.confirmation_code);
+      expect(done).toMatchObject({ accounts: 0 });
+      expect(done?.completedAt).toBeInstanceOf(Date);
+      expect(await (await app.request(`/api/ads/meta/data-deletion?code=${body.confirmation_code}`)).text()).toContain('không còn tài khoản quảng cáo nào');
+    });
+
+    it('answers a replay of a request that is still open with its own code, not a new row, and is told 503 when the table is full', async () => {
+      const post = (body: string) => app.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+      const first = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
+      const replay = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
+      expect(replay.confirmation_code).toBe(first.confirmation_code);
+      expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(SECRET_META, '9191')])).toHaveLength(1);
+      // The table's own limit is the database's answer (53400), which the runtime calls OVERLOADED: the callback says 503.
+      const full = { orgless: async () => Promise.reject(new DomainError('OVERLOADED', 503, 'full')) } as unknown as Runtime;
+      expect(await acceptAdsDeletion(full, SECRET_META, form(signed('9292')))).toEqual({ status: 503, code: 'DELETION_BACKLOG' });
+      // Another failure of the database is not turned into an answer.
+      const broken = { orgless: async () => Promise.reject(new Error('boom')) } as unknown as Runtime;
+      await expect(acceptAdsDeletion(broken, SECRET_META, form(signed('9393')))).rejects.toThrow('boom');
+    });
+
+    it('drops the person who granted an account when a link says the platform did not name them, and keeps it when the link says nothing', async () => {
+      const made = await linkedAs(orgId, asOwner(), 'Đổi người cấp quyền', '8080');
+      const hashOf = async () => (await row<{ h: string | null }>(`SELECT granted_by_hash AS h FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.h;
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8080'));
+      // A link that says nothing of it (a retry, the sandbox) leaves it.
+      await api.execute('ads.account.link', { connectionId: made.connectionId }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8080'));
+      // Another person grants it: their hash replaces the first, so the first one's request no longer reaches it.
+      await api.execute('ads.account.link', { connectionId: made.connectionId, grantedByHash: platformUserHash(SECRET_META, '8081') }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8081'));
+      // The platform named nobody this time: nobody is named, not the person before.
+      await api.execute('ads.account.link', { connectionId: made.connectionId, grantedByHash: null }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBeNull();
+    });
+
+    it('refuses a body past the cap before reading it, and a client address past its rate, and stores nothing of either', async () => {
+      const limited = createHttpApp({
+        config: appConfig,
+        runtime: api,
+        store: new MemoryStore(),
+        authenticate: createAuthenticator(appConfig, appDb),
+        pool,
+        aiEnabled: false,
+        channels: { broker: vault, sandbox: true, adsPlatforms: sandbox, connectors: {}, publicUrl: 'https://ludy.example.test' },
+        adsDeletion: { appSecret: SECRET_META },
+        adsDeletionLimit: new RateLimiter({ perMinute: 3 }),
+      });
+      const post = (body: string) => limited.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`);
+      // A body past 8 KiB is refused whatever it holds, before it is read (so it does not use up the address's calls).
+      const big = await post(`signed_request=${'a'.repeat(9 * 1024)}`);
+      expect(big.status).toBe(413);
+      // Three calls a minute from one address: the fourth is refused, with the time to wait, and still stores nothing.
+      for (let i = 0; i < 3; i++) expect((await post('other=1')).status).toBe(400);
+      const refused = await post(form(signed('4242')));
+      expect(refused.status).toBe(429);
+      expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
+      // The status page shares the limit: it too answers 429 once the address has used it.
+      expect((await limited.request(`/api/ads/meta/data-deletion?code=${'0'.repeat(32)}`)).status).toBe(429);
+    });
+
+    it('erases the ad accounts a deletion request names in every org, closes their connections, and leaves other people’s alone', async () => {
+      // One person granted two accounts of this org and one of another org; another person granted one here.
+      const mine1 = await linkedAs(orgId, asOwner(), 'Của người xin xóa 1', '5150');
+      const mine2 = await linkedAs(orgId, asOwner(), 'Của người xin xóa 2', '5150');
+      const theirs = await linkedAs(otherOrgId, outsiderActor(), 'Ở tổ chức khác', '5150');
+      const stays = await linkedAs(orgId, asOwner(), 'Của người khác', '5151');
+      for (const made of [mine1, mine2, stays]) await sync(made.connectionId);
+      await sync(theirs.connectionId, sandbox, otherOrgId);
+      expect((await daysOf(mine1.adAccountId)).length).toBeGreaterThan(300);
+      const accepted = await acceptAdsDeletion(api, SECRET_META, form(signed('5150')));
+      expect(accepted.status).toBe(200);
+      const code = (accepted as { code: string }).code;
+      expect(await runAdsDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
+      // Everything of the three accounts is gone, in both orgs; the other person's is not.
+      for (const [made, org] of [[mine1, orgId], [mine2, orgId], [theirs, otherOrgId]] as const) {
+        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [org, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
+        expect(await row(`SELECT 1 FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
+        // The connection is closed and its token forgotten.
+        // Closed, with the account's name and the token's permissions gone too: a platform id and the time it closed remain.
+        expect(await row(`SELECT status, status_reason, display_name, scopes FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [org, made.connectionId])).toEqual([
+          { status: 'revoked', status_reason: 'platform_deletion', display_name: 'Deleted', scopes: [] },
+        ]);
+        expect(await row(`SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2`, [org, made.connectionId])).toEqual([]);
+      }
+      expect((await daysOf(stays.adAccountId)).length).toBeGreaterThan(300);
+      expect(await view(owner, stays.adAccountId)).toMatchObject({ connectionStatus: 'active' });
+      expect(await adsDeletionStatus(api, code)).toMatchObject({ accounts: 3 });
+      // The audit rows name the accounts and the counts, nothing of the person.
+      const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.account.erase' AND outcome = 'ok'`, [orgId]);
+      expect(audit.length).toBe(2);
+      expect(JSON.stringify(audit)).not.toMatch(/5150|granted_by/);
+      // Run again: nothing is waiting, nothing changes.
+      expect(await runAdsDeletions({ runtime: worker, workerDb })).toBe(0);
+    });
+
+    it('lets only the API login enqueue and read a status, only the worker claim and complete, and no tenant role read the table', async () => {
+      const code = randomBytes(16).toString('hex');
+      const hash = platformUserHash(SECRET_META, '6060');
+      await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [code, hash]);
+      expect((await pool.query('SELECT * FROM crove_ads.deletion_request_status($1)', [code])).rows).toHaveLength(1);
+      await expect(pool.query('SELECT * FROM crove_ads.deletion_request_claim(10)')).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code])).rejects.toMatchObject({ code: '42501' });
+      await expect(pool.query('SELECT * FROM crove_ads.deletion_request')).rejects.toMatchObject({ code: '42501' });
+      const workerPool = workerPools[0] as pg.Pool;
+      await expect(workerPool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [randomBytes(16).toString('hex'), hash])).rejects.toMatchObject({ code: '42501' });
+      await expect(workerPool.query('SELECT * FROM crove_ads.deletion_request_status($1)', [code])).rejects.toMatchObject({ code: '42501' });
+      expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(true);
+      // A request that failed is put off, by the worker alone, and is not claimed again until its time.
+      await expect(pool.query('SELECT crove_ads.deletion_request_defer($1)', [code])).rejects.toMatchObject({ code: '42501' });
+      await workerPool.query('SELECT crove_ads.deletion_request_defer($1)', [code]);
+      expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(false);
+      // A bad code or hash is refused; the same person asking again gets the open request's code, and no new row.
+      await expect(pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', ['nope', hash])).rejects.toMatchObject({ code: '22P02' });
+      expect((await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2) AS code', [randomBytes(16).toString('hex'), hash])).rows[0]?.code).toBe(code);
+      // The history definer needs a context of an org: the API login alone gets none.
+      await expect(pool.query('SELECT * FROM crove_ads.account_history_delete($1::uuid, false, NULL)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
   // Meta (#2218): the OAuth grant connects each ad account and links it, the real adapter reads recorded Graph answers, a
   // rate limit holds the account back, an expired token expires the connection, and connecting again resumes it with no day lost.
   describe('Meta ad accounts', () => {
@@ -752,6 +1049,11 @@ suite('ads on PostgreSQL (#2217)', () => {
       ]);
       // A permission beyond ads_read (a Pages one) is accepted and shown; the other account holds none.
       expect(mine.map((a) => a.extraScopes)).toEqual([[], ['pages_manage_posts']]);
+      // The person who granted them is kept as a keyed hash only (#2219), never as the id Meta gave: Meta's data deletion
+      // request finds their accounts by it.
+      const grantedBy = await row<{ granted_by_hash: string }>(`SELECT granted_by_hash FROM crove_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' ORDER BY external_account_id`, [orgId]);
+      expect(grantedBy.map((r) => r.granted_by_hash)).toEqual([platformUserHash('meta-app-secret', META_GRANT.user), platformUserHash('meta-app-secret', META_GRANT.user)]);
+      expect(JSON.stringify(grantedBy)).not.toContain(META_GRANT.user);
       // Sealed once per connection and in no answer, audit row or event; the first sync was queued by the link.
       const sealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'meta_ads'`, [orgId]);
       expect(sealed[0]?.n).toBe('2');
