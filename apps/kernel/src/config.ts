@@ -98,6 +98,13 @@ const schema = z.object({
   // apps/kernel/src/log.ts); text: the plain lines, the default for a laptop. `pnpm pilot:check` recommends json on a public URL.
   LOG_FORMAT: z.enum(['json', 'text']).default('text'),
   ADMIN_DATABASE_URL: optional,
+  // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
+  // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
+  // false (the default, and every self-host) keeps every database-wide guard.
+  CROVE_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
+  // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
+  // this is true, for the one run a person decides to switch it in.
+  CROVE_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.
@@ -657,6 +664,23 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (appOrigin !== new URL(config.PUBLIC_URL).origin && !config.CORS_ALLOWED_ORIGINS.includes(appOrigin)) {
       throw new Error(`APP_URL is another origin than PUBLIC_URL, so the app calls this API cross-origin: list ${appOrigin} in CORS_ALLOWED_ORIGINS`);
     }
+  }
+  // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
+  // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.AUTH_SESSION_CHECK === 'db') {
+    throw new Error('CROVE_SHARED_DATABASE=true cannot use AUTH_SESSION_CHECK=db: its auth-grants step is refused in a shared database; use AUTH_SESSION_CHECK=jwt');
+  }
+  // Supabase's transaction-mode pooler listens on port 6543 (its session mode and the direct connection on 5432): the one
+  // URL-level sign of the pooler the reset cannot work behind. Another pooler is the operator's to keep out (runbook).
+  if (config.CROVE_SHARED_DATABASE === 'true') {
+    for (const [name, url] of [['DATABASE_URL', config.DATABASE_URL], ['WORKER_DATABASE_URL', config.WORKER_DATABASE_URL]] as const) {
+      if (url !== undefined && URL.canParse(url) && new URL(url).port === '6543') {
+        throw new Error(`${name} points at port 6543, Supabase's transaction-mode pooler: CROVE_SHARED_DATABASE=true needs a direct or session-mode connection (port 5432), so that temporary objects are cleared after each checkout`);
+      }
+    }
+  }
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
+    throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {

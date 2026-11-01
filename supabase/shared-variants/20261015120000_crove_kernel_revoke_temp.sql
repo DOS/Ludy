@@ -1,0 +1,12 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Shared-database variant of 20261015120000_crove_kernel_revoke_temp.sql (issue #2284), run in its place when `migrate` runs
+-- with CROVE_SHARED_DATABASE=true; the ledger records the original file's hash, so the two modes share one ledger.
+--
+-- The original revokes TEMPORARY on the database from PUBLIC (and re-grants it to every non-Crove role that holds it today).
+-- TEMPORARY is a database-wide privilege that every role holds through PUBLIC, and PostgreSQL has no per-role denial: the
+-- only way to take it from the Ludy roles is to take it from PUBLIC, which would change the sessions of every other
+-- system in the database (and silently deny it to every role they create later). A shared database keeps PUBLIC's
+-- TEMPORARY. What the revoke was the second layer behind stays: every `crove_*` function pins
+-- `search_path = pg_catalog, pg_temp`, and the hardening guard checks it on every run. The guard's two TEMPORARY rules do
+-- not apply in this mode (hardeningViolations, `shared`).
+SELECT 1;

@@ -725,9 +725,13 @@ suite('ads on PostgreSQL (#2217)', () => {
     };
     const form = (signedRequest: string) => new URLSearchParams({ signed_request: signedRequest }).toString();
     // Links a sandbox account as the Meta user `granted` (hashed), in a given org, as that org's owner.
-    // The same key is the same platform account: connecting again with it is connecting the account again, with a new token.
-    async function linkedAs(org: string, actor: ReturnType<typeof asOwner>, name: string, granted: string | undefined, key = `a3-${randomUUID().slice(0, 8)}`) {
-      const { externalAccountId, secret } = (sandbox.sandbox_ads as ReturnType<typeof sandboxAdPlatform>).connect({ displayName: name, key });
+    // The same key is the same platform account: connecting again with it is connecting the account again. The sandbox draws every
+    // figure from its token (a campaign that "did not run" that day has no row), so a new token is a new set of figures and a
+    // different set of quiet days: a test that compares days before and after a reconnect hands the second login the first token.
+    async function linkedAs(org: string, actor: ReturnType<typeof asOwner>, name: string, granted: string | undefined, key = `a3-${randomUUID().slice(0, 8)}`, token?: string) {
+      const login = (sandbox.sandbox_ads as ReturnType<typeof sandboxAdPlatform>).connect({ displayName: name, key });
+      const { externalAccountId } = login;
+      const secret = token ?? login.secret;
       const sealed = vault.seal(secret, { orgId: org, provider: 'sandbox_ads', externalAccountId });
       const made = await api.execute<{ connectionId: string }>(
         'kernel.channel.connect',
@@ -735,7 +739,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         { actor, orgId: org },
       );
       const linked = await api.execute<{ adAccountId: string }>('ads.account.link', { connectionId: made.connectionId, ...(granted ? { grantedByHash: platformUserHash(SECRET_META, granted) } : {}) }, { actor, orgId: org });
-      return { connectionId: made.connectionId, adAccountId: linked.adAccountId, key };
+      return { connectionId: made.connectionId, adAccountId: linked.adAccountId, key, secret };
     }
     const outsiderActor = () => ({ type: 'user' as const, userId: outsider.userId, aal: 'aal1' as const, sessionId: outsider.session });
     const expiredEvent = async (connectionId: string) => {
@@ -745,7 +749,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     };
 
     it('pauses an account the platform refused, tells the owners and admins once, and resumes with no day lost after it is connected again', async () => {
-      const { connectionId, adAccountId, key } = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined);
+      const { connectionId, adAccountId, key, secret } = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined);
       await sync(connectionId);
       const full = await daysOf(adAccountId);
       expect(full.length).toBeGreaterThan(300);
@@ -774,10 +778,12 @@ suite('ads on PostgreSQL (#2217)', () => {
       await row(`UPDATE crove_ads.ad_account SET settled_through = (now() AT TIME ZONE 'UTC')::date - 40, synced_through = (now() AT TIME ZONE 'UTC')::date - 10 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
       // The owner connects the same platform account again: the row, its settings and its history stay, and the next sync
       // reads from the day after the last final one, so nothing between the pause and now is missing.
-      const again = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined, key);
+      const again = await linkedAs(orgId, asOwner(), 'Hết hạn rồi nối lại', undefined, key, secret);
       expect(again.adAccountId).toBe(adAccountId);
       expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'active', pausedSince: null, pausedReason: null });
       await sync(again.connectionId);
+      // The same token draws the same figures, so the same days have a row (the newest drift in value with the minute, never in
+      // whether they have one).
       expect(await daysOf(adAccountId)).toEqual(full);
     });
 
