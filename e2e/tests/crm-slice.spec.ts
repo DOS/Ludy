@@ -90,4 +90,23 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
     await expect(timeline).not.toContainText('Gói kế toán năm');
     await expect(timeline).not.toContainText('15.000.000');
   });
+
+  await test.step('the screens fit a 375 px phone with no sideways scroll of the page, and the deal form opens from the keyboard', async () => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    const sidewaysScroll = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    for (const [path, ready] of [
+      ['contacts', page.getByRole('searchbox').first()],
+      ['deals', page.getByRole('button', { name: 'Thêm cơ hội' })],
+      ['contacts/import', page.getByLabel('Tệp Excel hoặc CSV')],
+    ] as const) {
+      await page.goto(`/o/${slug}/${path}`);
+      await expect(ready).toBeVisible();
+      expect(await sidewaysScroll(), path).toBeLessThanOrEqual(0);
+    }
+    // The keyboard alone: focus the button, press Enter, the form is there.
+    await page.goto(`/o/${slug}/deals`);
+    await page.getByRole('button', { name: 'Thêm cơ hội' }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('form', { name: 'Thêm cơ hội' })).toBeVisible();
+  });
 });
