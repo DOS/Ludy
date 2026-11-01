@@ -25,6 +25,8 @@ export const vi = {
     notFoundHint: 'Đường dẫn không đúng, hoặc hệ thống này chưa bật chức năng của trang.',
     httpError: 'Lỗi {status}',
     serverUnreachable: 'Không kết nối được máy chủ {brand}.',
+    newVersion: '{brand} có bản mới đang được cập nhật. Hãy tải lại trang; nếu vẫn thấy thông báo này, thử lại sau ít phút.',
+    newVersionReload: 'Tải lại',
     configLoadFailed: 'Không tải được cấu hình',
     reload: 'Tải lại',
     signOut: 'Đăng xuất',

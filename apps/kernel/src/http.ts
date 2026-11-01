@@ -94,7 +94,8 @@ import {
 import { actorOf, bearerIssuedToOAuthClient, oauthClientRefused, type Authenticate, type AuthUser } from './auth.ts';
 import { ConcurrencyLimiter, type Semaphore } from './concurrency.ts';
 import { logEvent, runWithLogContext, setLogContext } from './log.ts';
-import { publicAuthUrl, type Config } from './config.ts';
+import { appUrl, publicAuthUrl, type Config } from './config.ts';
+import { corsMiddleware } from './cors.ts';
 import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
@@ -410,7 +411,7 @@ function clientIp(c: Context, trustedHops: number): string | null {
 export function createHttpApp(deps: HttpDeps) {
   const { config, runtime, store, authenticate } = deps;
   const app = new Hono<{ Variables: { user: AuthUser } }>();
-  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, config.PUBLIC_URL, {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader);
+  const rpc = createRpcHandler(runtime, deps.mailer ? createInviteMailSender(deps.mailer, appUrl(config), {}, config.INBOUND_DOMAIN && config.INBOUND_SECRET ? config.INBOUND_DOMAIN : null, config.BRAND_NAME) : undefined, deps.channels, deps.socialWriter, deps.taxLookup, undefined, undefined, deps.portalSync, deps.bookingReader);
   const perMinute = config.API_RATE_LIMIT_PER_MINUTE;
   const limiter = deps.rateLimiter !== undefined ? deps.rateLimiter : perMinute > 0 ? new RateLimiter({ perMinute }) : null;
 
@@ -436,7 +437,10 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   });
-  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-origin' }));
+  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site' }));
+  // A web app on another origin (APP_URL, #2261) calls this API cross-origin: the allowlisted origins get CORS headers and
+  // their preflights are answered here, before the rate limit and the session check (a preflight carries no token).
+  app.use('*', corsMiddleware(config.CORS_ALLOWED_ORIGINS));
 
   app.get('/healthz', (c) => c.json({ ok: true }));
   app.get('/readyz', async (c) => {
@@ -818,11 +822,11 @@ export function createHttpApp(deps: HttpDeps) {
         let ics: string | null = null;
         if (token && socialFeeds) {
           const feed = await calendarFeed(runtime, token);
-          if (feed) ics = renderIcs(feed, config.PUBLIC_URL, now, config.BRAND_NAME);
+          if (feed) ics = renderIcs(feed, appUrl(config), now, config.BRAND_NAME);
         }
         if (token && ics === null && bookingFeeds) {
           const feed = await bookingFeed(runtime, token);
-          if (feed) ics = renderBookingFeedIcs(feed, config.PUBLIC_URL, now, config.BRAND_NAME);
+          if (feed) ics = renderBookingFeedIcs(feed, appUrl(config), now, config.BRAND_NAME);
         }
         if (ics === null) return c.text('Không tìm thấy lịch này', 404, headers);
         return c.body(ics, 200, { ...headers, 'content-type': 'text/calendar; charset=utf-8' });

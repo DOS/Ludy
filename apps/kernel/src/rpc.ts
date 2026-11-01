@@ -229,7 +229,8 @@ export interface RpcChannels {
   connectors?: Readonly<Partial<Record<string, OAuthConnector>>>;
   // Outside calendars members connect (#2123) through an OAuth dialog this deployment configured, by OAuth provider id.
   calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
-  // PUBLIC_URL: the provider sends the browser back to PUBLIC_URL/channels/oauth/:provider/callback.
+  // The web app's address (kernel.ts hands over APP_URL, else PUBLIC_URL, #2261): the provider sends the browser back to
+  // <it>/channels/oauth/:provider/callback, a page of the app that posts the code to the API. Named publicUrl for history.
   publicUrl?: string;
   // Stock photos from Pexels for the media library (#1106, MEDIA_PEXELS_API_KEY); unset: off, and no Pexels call is
   // made. Not a channel: it rides on this object because the HTTP edge hands it to the RPC handler unchanged, so the

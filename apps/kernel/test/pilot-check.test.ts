@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { vaultKeyId, type S3Sender } from '@crove/kernel-runtime';
-import { KNOWN_DEFAULTS, PILOT_EXIT, REQUIRED_SECRETS, checkEnv, parsePilotArgs, probeBuildChecks, probeDeployment, objectLockProbe, probeEvidenceHolds, runPilotCheck, type CheckResult, type Env, type Fetch } from '../src/pilot-check.ts';
+import { KNOWN_DEFAULTS, PILOT_EXIT, REQUIRED_SECRETS, checkEnv, parsePilotArgs, probeBuildChecks, probeCors, probeDeployment, objectLockProbe, probeEvidenceHolds, runPilotCheck, type CheckResult, type Env, type Fetch } from '../src/pilot-check.ts';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -43,6 +43,32 @@ const failures = (results: readonly CheckResult[]) => results.filter((r) => r.st
 const failing = (env: Env) => failures(checkEnv(env)).map((r) => `${r.item}: ${r.message}`);
 
 describe('pilot-check settings', () => {
+  // #2261: the web app on its own origin, calling the API cross-origin.
+  describe('split app and API (#2261)', () => {
+    const SPLIT = { ...READY, PUBLIC_URL: 'https://api.example.com', APP_URL: 'https://app.example.com', CORS_ALLOWED_ORIGINS: 'https://app.example.com' };
+
+    it('passes when the app origin is the only one listed, and a same-origin deployment needs neither setting', () => {
+      expect(failing(SPLIT)).toEqual([]);
+      expect(checkEnv(SPLIT).find((r) => r.item === 'Split app and API')?.status).toBe('pass');
+      expect(checkEnv(READY).some((r) => r.item === 'Split app and API')).toBe(false);
+    });
+
+    it('fails an app origin the API does not allow, a wildcard, a path and more origins than the app', () => {
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: '' })).toEqual([expect.stringMatching(/^Split app and API: APP_URL is https:\/\/app\.example\.com.*does not list it/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: '*' })).toEqual([expect.stringMatching(/^Split app and API: .*wildcard/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: 'https://app.example.com/' })).toEqual([expect.stringMatching(/^Split app and API: .*origin only/)]);
+      expect(failing({ ...SPLIT, CORS_ALLOWED_ORIGINS: 'https://app.example.com,https://other.example.com' })).toEqual([expect.stringMatching(/^Split app and API: .*remove the others/)]);
+      expect(failing({ ...READY, CORS_ALLOWED_ORIGINS: 'https://app.example.com' })).toEqual([expect.stringMatching(/^Split app and API: CORS_ALLOWED_ORIGINS is set without APP_URL/)]);
+    });
+
+    it('fails an APP_URL that is not https and a CORS list that serves nobody', () => {
+      expect(failing({ ...SPLIT, APP_URL: 'http://app.example.com', CORS_ALLOWED_ORIGINS: 'https://app.example.com' })).toEqual(
+        expect.arrayContaining([expect.stringMatching(/^TLS: APP_URL is http:\/\/app\.example\.com/)]),
+      );
+      expect(failing({ ...SPLIT, APP_URL: 'https://api.example.com' })).toEqual([expect.stringMatching(/^Split app and API: APP_URL is the same origin as PUBLIC_URL/)]);
+    });
+  });
+
   it('fails TLS when TRUSTED_PROXY_HOPS does not count the reverse proxy (#564)', () => {
     for (const hops of [undefined, '0', ' ', 'one', '6']) {
       expect(failing({ ...READY, TRUSTED_PROXY_HOPS: hops }), String(hops)).toEqual([expect.stringMatching(/^TLS: TRUSTED_PROXY_HOPS is .*one email budget/)]);
@@ -549,6 +575,54 @@ describe('pilot-check probe', () => {
       expect(failed.map((r) => r.item), authUrl).toEqual(['Sign-up limited', 'Email confirmation and MFA step-up']);
       expect(seen.filter((u) => u.endsWith('/settings')), authUrl).toEqual([]);
     }
+  });
+});
+
+describe('pilot-check CORS probe (#2261)', () => {
+  const API = 'https://api.example.com';
+  const APP = 'https://app.example.com';
+  // A fetch that answers a preflight the way an API with CORS_ALLOWED_ORIGINS=APP does, or a broken variant of it.
+  const preflight = (allow: (origin: string) => string | null, status = 204, headers = 'authorization, content-type, x-crove-org'): Fetch => async (_input, init) => {
+    const origin = new Headers(init?.headers).get('origin') ?? '';
+    const given = allow(origin);
+    return new Response(null, { status, headers: given === null ? {} : { 'access-control-allow-origin': given, 'access-control-allow-headers': headers } });
+  };
+
+  it('passes when the app origin is answered and any other is not', async () => {
+    expect(await probeCors(API, APP, preflight((o) => (o === APP ? APP : null)))).toMatchObject({ status: 'pass' });
+  });
+
+  it('fails when the app origin gets nothing, a wildcard, or another origin', async () => {
+    for (const given of [null, '*', 'https://other.example.com']) {
+      expect(await probeCors(API, APP, preflight(() => given)), String(given)).toMatchObject({ status: 'fail' });
+    }
+  });
+
+  it('fails when the preflight is not 2xx, or does not allow the headers the app sends', async () => {
+    const only = (o: string) => (o === APP ? APP : null);
+    expect(await probeCors(API, APP, preflight(only, 403))).toMatchObject({ status: 'fail', message: expect.stringMatching(/answered 403/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'content-type'))).toMatchObject({ status: 'fail', message: expect.stringMatching(/does not allow the header\(s\) authorization, x-crove-org/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'Authorization,Content-Type,X-Crove-Org'))).toMatchObject({ status: 'pass' });
+  });
+
+  it('fails when an origin off the list is answered too', async () => {
+    const result = await probeCors(API, APP, preflight((o) => o));
+    expect(result).toMatchObject({ status: 'fail' });
+    expect(result.message).toMatch(/origin off the list/);
+  });
+
+  it('fails when the API cannot be reached', async () => {
+    expect(await probeCors(API, APP, fakeFetch({}))).toMatchObject({ status: 'fail', message: expect.stringMatching(/CORS probe/) });
+  });
+
+  it('runs with --url on the API when APP_URL names another origin, and not on a same-origin deployment', async () => {
+    const lines: string[] = [];
+    const routes: Record<string, Route> = { [`${API}/api/rpc`]: (_input, init) => preflight((o) => (o === APP ? APP : null))(_input, init) };
+    await runPilotCheck(['--url', API], { ...READY, PUBLIC_URL: API, APP_URL: APP, CORS_ALLOWED_ORIGINS: APP }, fakeFetch(routes), (line) => lines.push(line));
+    expect(lines.join('\n')).toContain(`${API} answers CORS for ${APP} only`);
+    const same: string[] = [];
+    await runPilotCheck(['--url', 'https://crove.example.com'], READY, fakeFetch({}), (line) => same.push(line));
+    expect(same.join('\n')).not.toContain('CORS');
   });
 });
 

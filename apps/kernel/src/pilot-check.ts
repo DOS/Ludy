@@ -7,8 +7,10 @@
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
+import { ORG_HEADER } from '@crove/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
+import { parseAllowedOrigins } from './cors.ts';
 import { parseExportKey } from './export-seal.ts';
 import { loadProberConfig } from './prober.ts';
 
@@ -176,6 +178,23 @@ function aiCostProblem(env: Env): string | null {
   return priced ? null : 'AI_API_KEY is set while AI_PRICE_INPUT_PER_MTOK and AI_PRICE_OUTPUT_PER_MTOK are both 0: AI usage then costs nothing to ORG_LIMIT_AI_COST_PER_DAY and the cap does nothing; set the price of the model per million tokens';
 }
 
+// A web app on another origin than the API (#2261) calls it cross-origin, which a browser allows only for an exact origin
+// the API lists: the app's own. A wildcard, a path, plain http or a missing app origin each break or weaken that.
+function splitProblem(env: Env, appUrl: string | undefined, publicUrl: string | undefined): string | null {
+  let allowed: readonly string[];
+  try {
+    allowed = parseAllowedOrigins(value(env, 'CORS_ALLOWED_ORIGINS'));
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (appUrl === undefined || !URL.canParse(appUrl)) return allowed.length > 0 ? 'CORS_ALLOWED_ORIGINS is set without APP_URL: set APP_URL to where people open the app (the origin that calls the API), or unset it for a same-origin deployment' : null;
+  const appOrigin = new URL(appUrl).origin;
+  if (publicUrl !== undefined && URL.canParse(publicUrl) && new URL(publicUrl).origin === appOrigin) return allowed.length > 0 ? 'APP_URL is the same origin as PUBLIC_URL, so nothing calls the API cross-origin: unset CORS_ALLOWED_ORIGINS' : null;
+  if (!allowed.includes(appOrigin)) return `APP_URL is ${appOrigin}, another origin than PUBLIC_URL, but CORS_ALLOWED_ORIGINS does not list it: the browser refuses every call the app makes`;
+  const others = allowed.filter((origin) => origin !== appOrigin);
+  return others.length > 0 ? `CORS_ALLOWED_ORIGINS also lists ${others.join(', ')}: only the web app's origin needs to call the API; remove the others` : null;
+}
+
 /** Checks the deployment's settings (the .env docker compose reads, or the environment of a non-compose deploy). */
 export function checkEnv(env: Env): CheckResult[] {
   const results: CheckResult[] = [];
@@ -191,6 +210,9 @@ export function checkEnv(env: Env): CheckResult[] {
   tls.push(publicUrl ? httpsProblem('PUBLIC_URL', publicUrl) : 'PUBLIC_URL is unset (docker compose then uses http://localhost:8080)');
   const authUrl = value(env, 'PUBLIC_AUTH_URL');
   if (authUrl) tls.push(httpsProblem('PUBLIC_AUTH_URL', authUrl));
+  // A split deployment (#2261) serves the web app from its own origin: people open APP_URL.
+  const appUrl = value(env, 'APP_URL');
+  if (appUrl) tls.push(httpsProblem('APP_URL', appUrl));
   // Presigned transfers send files from the browser straight to the bucket (S3_PUBLIC_ENDPOINT, else S3_ENDPOINT;
   // AWS S3 itself when both are empty, which is https).
   if (value(env, 'STORAGE') === 's3' && value(env, 'S3_PRESIGNED_URLS') !== 'false') {
@@ -207,6 +229,7 @@ export function checkEnv(env: Env): CheckResult[] {
     );
   }
   add('TLS', tls, 'PUBLIC_URL and the other browser-facing URLs are https, and TRUSTED_PROXY_HOPS counts the reverse proxy in front');
+  if (appUrl !== undefined || value(env, 'CORS_ALLOWED_ORIGINS') !== undefined) add('Split app and API', [splitProblem(env, appUrl, publicUrl)], 'the web app calls the API cross-origin and only its own origin is allowed');
 
   // The settings below guard a deployment other people reach: a loopback or unset PUBLIC_URL is a local run, and TLS
   // above already fails it.
@@ -529,6 +552,38 @@ function reason(error: unknown): string {
     return error.message;
   }
   return String(error);
+}
+
+const CORS_STRANGER = 'https://not-the-app.invalid';
+
+/**
+ * The CORS answer of a split deployment (#2261), asked as a browser would: a preflight from the web app's origin gets that
+ * origin back and no wildcard, one from another origin gets no CORS header. Run with --url on the API.
+ */
+export async function probeCors(origin: string, appOrigin: string, fetchFn: Fetch = fetch): Promise<CheckResult> {
+  const item = 'Split app and API';
+  const init = (from: string): RequestInit => ({
+    method: 'OPTIONS',
+    redirect: 'manual',
+    signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    headers: { origin: from, 'access-control-request-method': 'POST', 'access-control-request-headers': 'authorization,content-type,x-crove-org' },
+  });
+  try {
+    const app = await fetchFn(`${origin}/api/rpc`, init(appOrigin));
+    const given = app.headers.get('access-control-allow-origin');
+    if (given !== appOrigin) return { item, status: 'fail', message: `a preflight from ${appOrigin} to ${origin}/api/rpc got Access-Control-Allow-Origin ${given === null ? 'none' : given} (status ${app.status}): the app cannot call the API; check CORS_ALLOWED_ORIGINS and what sits in front of the API` };
+    // A browser also needs a 2xx preflight that allows the headers the app sends.
+    const allowed = (app.headers.get('access-control-allow-headers') ?? '').toLowerCase().split(',').map((h) => h.trim());
+    const missing = ['authorization', 'content-type', ORG_HEADER].filter((h) => !allowed.includes(h));
+    if (!app.ok || missing.length > 0) {
+      return { item, status: 'fail', message: `the preflight from ${appOrigin} to ${origin}/api/rpc answered ${app.status}${missing.length > 0 ? ` and does not allow the header(s) ${missing.join(', ')}` : ''}: browsers block the app's calls; check what sits in front of the API` };
+    }
+    const stranger = await fetchFn(`${origin}/api/rpc`, init(CORS_STRANGER));
+    if (stranger.headers.get('access-control-allow-origin') !== null) return { item, status: 'fail', message: `a preflight from ${CORS_STRANGER} got an Access-Control-Allow-Origin header: the API answers CORS for an origin off the list; allow only ${appOrigin}` };
+    return { item, status: 'pass', message: `${origin} answers CORS for ${appOrigin} only` };
+  } catch (error) {
+    return { item, status: 'fail', message: `the CORS probe of ${origin} failed: ${reason(error)}` };
+  }
 }
 
 /** Probes the running deployment at `origin`: TLS, no plain-http service, a sign-up nobody may make, and email confirmation. */
@@ -856,6 +911,8 @@ export async function runPilotCheck(
   if (holds) results = [...results.filter((r) => !(r.item === 'Evidence holds' && r.status === 'manual')), holds];
   if (args.url) {
     results.push(...(await probeDeployment(args.url, fetchFn)));
+    const appUrl = value(env, 'APP_URL');
+    if (appUrl !== undefined && URL.canParse(appUrl) && new URL(appUrl).origin !== new URL(args.url).origin) results.push(await probeCors(args.url, new URL(appUrl).origin, fetchFn));
     // The CI of the deployed build (#1995) replaces the manual RLS matrix line.
     const ci = await probeBuildChecks(args.url, env, fetchFn);
     results = [...results.filter((r) => !(r.item === 'RLS matrix' && r.status === 'manual')), ci];

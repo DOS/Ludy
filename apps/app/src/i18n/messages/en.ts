@@ -27,6 +27,8 @@ export const en = {
     notFoundHint: 'The address is wrong, or this feature is not turned on here.',
     httpError: 'Error {status}',
     serverUnreachable: 'Cannot reach the {brand} server.',
+    newVersion: '{brand} has a new version being rolled out. Reload the page; if this message stays, try again in a few minutes.',
+    newVersionReload: 'Reload',
     configLoadFailed: 'Could not load the configuration',
     reload: 'Reload',
     signOut: 'Sign out',

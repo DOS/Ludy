@@ -1,11 +1,17 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import { cspMeta } from './vite-csp.ts';
 
 const api = process.env.CROVE_API_URL ?? 'http://localhost:8080';
+// The build this bundle ships with (#2261). On Vercel Production the release commit; the page compares it with the API's
+// /version and asks for a reload on a mismatch. Unset (the kernel's own image serves the matching bundle, and a Preview
+// is no release): no comparison.
+const build = process.env.VITE_BUILD ?? (process.env.VERCEL_ENV === 'production' ? process.env.VERCEL_GIT_COMMIT_SHA : undefined) ?? '';
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), cspMeta(process.env)],
+  define: { 'import.meta.env.VITE_BUILD': JSON.stringify(build) },
   server: {
     port: 5173,
     proxy: { '/api': api, '/auth': api },

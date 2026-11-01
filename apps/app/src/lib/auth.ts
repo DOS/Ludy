@@ -1,5 +1,6 @@
 import { AuthClient } from '@supabase/auth-js';
 import type { Translate } from '../i18n/runtime.ts';
+import { apiUrl, serverOrigin } from './api-base.ts';
 import { ClientError } from './errors.ts';
 import { withInviteToken } from './invite.ts';
 
@@ -48,7 +49,7 @@ let client: Client | null = null;
 
 export async function loadConfig(): Promise<PublicConfig> {
   if (config) return config;
-  const response = await fetch('/api/config');
+  const response = await fetch(apiUrl('/api/config'));
   if (!response.ok) throw new ClientError('common.configLoadFailed', (t) => t('common.configLoadFailed'));
   config = (await response.json()) as PublicConfig;
   return config;
@@ -67,7 +68,7 @@ export function auth(): Client {
     headers: authAnonKey ? { apikey: authAnonKey, Authorization: `Bearer ${authAnonKey}` } : {},
     storageKey: 'crove-auth',
     // A sign-up from an accept link carries the invite token for the proxy's sign-up policy (#563).
-    fetch: withInviteToken((input, init) => fetch(input, init), window.location.origin),
+    fetch: withInviteToken((input, init) => fetch(input, init), new URL(authUrl, serverOrigin()).origin),
     // Email links (confirmation, recovery) come back with a one-time code that only this browser can exchange.
     flowType: 'pkce',
     autoRefreshToken: true,

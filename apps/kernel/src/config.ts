@@ -4,6 +4,7 @@ import { EXTRACT_TIMING } from '@crove/extract-contract';
 import type { UsageLimits } from '@crove/kernel';
 import { SIGNUP_POLICIES, parseAllowedDomains } from './auth-signup-policy.ts';
 import { WEBHOOK_ENV } from './alert.ts';
+import { parseAllowedOrigins } from './cors.ts';
 import { exportSealer } from './export-seal.ts';
 
 // The product name when BRAND_NAME is unset (#1040).
@@ -51,7 +52,32 @@ const schema = z.object({
   HOST: z.string().default('127.0.0.1'),
   // Number of reverse proxies in front of Crove whose X-Forwarded-For entries are trusted (0 = none).
   TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+  // Where the API answers: the auth proxy (`/auth/v1`), webhooks, short links (`/l/<code>`), link-in-bio pages and
+  // feeds. With the web app served from the same origin (self-host) it is also where people open the app.
   PUBLIC_URL: z.string().default('http://localhost:8080'),
+  // Where people open the web app, when it is served from another origin than the API (a split deployment, #2261: the app
+  // at app.<domain>, the API at api.<domain>). Every link that opens a screen of the app (invite, notification and report
+  // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,
+  // `/calendar/oauth/<provider>/callback`, pages of the app) are built from it. Unset: PUBLIC_URL, as before. A different
+  // origin must also be listed in CORS_ALLOWED_ORIGINS.
+  // An origin only (scheme, host, optional port): a path, query or user information is refused, as in CORS_ALLOWED_ORIGINS.
+  APP_URL: optional.pipe(
+    z
+      .url({ protocol: /^https?$/ })
+      .refine((v) => URL.canParse(v) && new URL(v).origin === v, 'APP_URL is an origin only (scheme, host, optional port; no path, query, user information or trailing slash)')
+      .optional(),
+  ),
+  // The exact origins whose pages may call this API from a browser (#2261), comma separated: the web app's origin in a
+  // split deployment. Never `*`; https only (http for localhost). Unset: no CORS headers at all, which is right when the
+  // app is served from this API's own origin.
+  CORS_ALLOWED_ORIGINS: optional.transform((v, ctx) => {
+    try {
+      return parseAllowedOrigins(v);
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) });
+      return z.NEVER;
+    }
+  }),
   // Which modules' commands, queries, jobs, routes and menus this deployment registers. Migrations still apply to
   // every schema (one linear ledger); per-org access is entitlements (Decision 10), not this setting.
   CROVE_MODULES: modulesSetting,
@@ -297,7 +323,7 @@ const schema = z.object({
   // every call to a site goes through the egress guard. On unless false.
   CHANNEL_WORDPRESS: z.enum(['true', 'false']).default('true'),
   // The deployment's Meta app (Facebook Pages, Social plan S6). Set both to offer Facebook Pages; neither hides them.
-  // The app's valid OAuth redirect URI is PUBLIC_URL/channels/oauth/facebook_page/callback.
+  // The app's valid OAuth redirect URI is APP_URL/channels/oauth/facebook_page/callback.
   CHANNEL_META_APP_ID: optional,
   CHANNEL_META_APP_SECRET: optional,
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
@@ -306,45 +332,45 @@ const schema = z.object({
   // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
   // the person ever granted that app, so with a shared app the ads token can also hold the Pages ones (the connection
   // records the full set), and a separate app keeps it to ads_read. The app's valid OAuth redirect URI is
-  // PUBLIC_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
+  // APP_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_APP_ID: optional,
   CHANNEL_META_ADS_APP_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
-  // callback URL is PUBLIC_URL/channels/oauth/zalo_oa/callback.
+  // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
   CHANNEL_ZALO_APP_SECRET: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/threads/callback.
+  // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
   CHANNEL_THREADS_APP_SECRET: optional,
   // The deployment's LinkedIn app (Share on LinkedIn, Sign In with OpenID Connect), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/linkedin/callback.
+  // APP_URL/channels/oauth/linkedin/callback.
   CHANNEL_LINKEDIN_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_CLIENT_SECRET: optional,
   // LinkedIn post counts (#797): true once the LinkedIn app has member post analytics (r_member_postAnalytics).
   CHANNEL_LINKEDIN_ANALYTICS: z.enum(['true', 'false']).default('false'),
   // LinkedIn Company Pages (#1077): true once the LinkedIn app has the Community Management API (w_organization_social,
-  // r_organization_admin). Callback URL: PUBLIC_URL/channels/oauth/linkedin_page/callback.
+  // r_organization_admin). Callback URL: APP_URL/channels/oauth/linkedin_page/callback.
   CHANNEL_LINKEDIN_ORGANIZATIONS: z.enum(['true', 'false']).default('false'),
   // A separate LinkedIn app for Company Pages: LinkedIn grants the Community Management API only to an app with no other
   // product, so a deployment that also posts as members sets these; without them pages use the member app above.
   CHANNEL_LINKEDIN_PAGE_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET: optional,
   // The deployment's Google Cloud project for YouTube uploads (YouTube Data API v3, an OAuth web client), S9. Callback
-  // URL: PUBLIC_URL/channels/oauth/youtube/callback.
+  // URL: APP_URL/channels/oauth/youtube/callback.
   CHANNEL_GOOGLE_CLIENT_ID: optional,
   CHANNEL_GOOGLE_CLIENT_SECRET: optional,
   // Google Business Profile posts (#709), with the same Google project once Google has approved it for the Business
   // Profile APIs (Basic API Access). Off by default: an unapproved project gets no answer from them. Callback URL:
-  // PUBLIC_URL/channels/oauth/google_business/callback.
+  // APP_URL/channels/oauth/google_business/callback.
   CHANNEL_GOOGLE_BUSINESS: z.enum(['true', 'false']).default('false'),
   // Outside calendars members connect (#2123, #1374): the operator's own Google OAuth web client with the Calendar API
   // enabled (scope calendar.freebusy). Not the project above: it is a different app and consent screen. Callback URL:
-  // PUBLIC_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
+  // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
   CALENDAR_GOOGLE_CLIENT_ID: optional,
   CALENDAR_GOOGLE_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/tiktok/callback.
+  // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
   CHANNEL_TIKTOK_CLIENT_SECRET: optional,
   // The TikTok app also has the Display API: connections ask for video.list, and posts' counts are read (#744).
@@ -353,7 +379,7 @@ const schema = z.object({
   // to the creator's TikTok inbox as a draft. Off by default: TikTok refuses a sign-in that asks for a scope the app lacks.
   CHANNEL_TIKTOK_INBOX: z.enum(['true', 'false']).default('false'),
   // The deployment's X app (OAuth 2.0, a confidential client with PKCE), S9; X bills each post to its account.
-  // Callback URL: PUBLIC_URL/channels/oauth/x/callback.
+  // Callback URL: APP_URL/channels/oauth/x/callback.
   CHANNEL_X_CLIENT_ID: optional,
   CHANNEL_X_CLIENT_SECRET: optional,
   // X post counts (#797): every read is billed by X, so the metrics sweep reads X posts only when this is true.
@@ -625,6 +651,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
     if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
   }
+  // A web app on another origin than the API calls it cross-origin, which the browser allows only for a listed origin.
+  if (config.APP_URL !== undefined && URL.canParse(config.PUBLIC_URL)) {
+    const appOrigin = new URL(config.APP_URL).origin;
+    if (appOrigin !== new URL(config.PUBLIC_URL).origin && !config.CORS_ALLOWED_ORIGINS.includes(appOrigin)) {
+      throw new Error(`APP_URL is another origin than PUBLIC_URL, so the app calls this API cross-origin: list ${appOrigin} in CORS_ALLOWED_ORIGINS`);
+    }
+  }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
       // Compared as bytes, so the unpadded or base64url spelling of the test key is the test key too.
@@ -671,10 +704,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.AUTH_STEP_UP === 'off') {
       throw new Error('AUTH_STEP_UP=off lets a stolen session approve and change roles without MFA; set it to required');
     }
-    // A provider sends the authorization code to PUBLIC_URL/channels/oauth/<provider>/callback (#375).
+    // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
+    // page of the web app.
     const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
-    if (oauthApps.some(Boolean) && !config.PUBLIC_URL.startsWith('https://')) {
-      throw new Error('channel OAuth sends authorization codes back to PUBLIC_URL; a public PUBLIC_URL must be https when a CHANNEL_* or CALENDAR_* app is set');
+    if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
+      throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
+    }
+    if (config.APP_URL !== undefined && !config.APP_URL.startsWith('https://')) {
+      throw new Error('APP_URL is where people open the app and every link in mail points at it; a public APP_URL must be https');
+    }
+    // A browser origin on plain http (a laptop's dev server) is no caller of a public API.
+    if (config.CORS_ALLOWED_ORIGINS.some((origin) => !origin.startsWith('https://'))) {
+      throw new Error('CORS_ALLOWED_ORIGINS lists an http origin on a public deployment; list https origins only');
     }
     // Browsers send files to, and fetch them from, this endpoint, and it is allowed in the app's CSP connect-src.
     const browserEndpoint = config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT;
@@ -814,6 +855,11 @@ export function isLocalUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Where people open the web app (#2261): APP_URL in a split deployment, else PUBLIC_URL, which then serves both.
+export function appUrl(config: Pick<Config, 'APP_URL' | 'PUBLIC_URL'>): string {
+  return config.APP_URL ?? config.PUBLIC_URL;
 }
 
 export function publicAuthUrl(config: Config): string {

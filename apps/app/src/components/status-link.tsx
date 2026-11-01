@@ -1,5 +1,6 @@
 import { useTranslations } from 'use-intl';
 import { cn } from '@crove/ui/lib/utils';
+import { serverOrigin } from '../lib/api-base.ts';
 import { getConfig } from '../lib/auth.ts';
 
 // "Trạng thái hệ thống" next to the support link (issue #678): the kernel's /status page, a plain page outside the
@@ -8,7 +9,7 @@ export function StatusLink({ className }: { className?: string }) {
   const t = useTranslations('nav');
   if (!getConfig().statusPage) return null;
   return (
-    <a href="/status" target="_blank" rel="noopener" className={cn('hover:text-muted-foreground', className)}>
+    <a href={`${serverOrigin()}/status`} target="_blank" rel="noopener" className={cn('hover:text-muted-foreground', className)}>
       {t('status')}
     </a>
   );

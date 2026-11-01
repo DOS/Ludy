@@ -9,6 +9,7 @@ import { Input } from '@crove/ui/components/input';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { serverOrigin } from '../lib/api-base.ts';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 const bookingFeedUrl = (origin: string, token: string) => `${origin}/cal/${token}.ics`;
@@ -23,7 +24,7 @@ export function BookingFeedCard() {
   const create = useMutation({
     mutationFn: () => client.crm.bookingFeed.create({}),
     onSuccess: (r) => {
-      setMade(bookingFeedUrl(window.location.origin, r.token));
+      setMade(bookingFeedUrl(serverOrigin(), r.token));
       setCopied(false);
       refresh();
     },

@@ -24,6 +24,7 @@ import { OutsideChip } from '../components/social-external-posts.tsx';
 import { AccentRule, BrandMark, MadeWithCrove, accentStyle, useBrandTitle } from '../components/social-report-branding.tsx';
 import { ErrorText, Logo, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { apiUrl } from '../lib/api-base.ts';
 import { errorMessage } from '../lib/api.ts';
 import { apiErrorFromResponse } from '../lib/errors.ts';
 import { usePrintInLight } from '../lib/print.ts';
@@ -82,7 +83,7 @@ const tokenOf = () => {
 };
 
 async function load(token: string): Promise<ReportPage | null> {
-  const res = await fetch('/api/report/view', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' });
+  const res = await fetch(apiUrl('/api/report/view'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }), credentials: 'omit', referrerPolicy: 'no-referrer' });
   if (res.status === 404) return null;
   if (!res.ok) throw await apiErrorFromResponse(res);
   return (await res.json()) as ReportPage;
