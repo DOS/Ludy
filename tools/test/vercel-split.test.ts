@@ -3,12 +3,11 @@
 // builds only a release, and the workflow that moves the release branch runs on tags of main only.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { contentSecurityPolicy } from '../src/http.ts';
-import { STATIC_CSP_DIRECTIVES, cspMeta, cspOriginsFromEnv, metaCsp } from '../../app/vite-csp.ts';
-// @ts-expect-error a plain ES module with no type declarations
-import { RELEASE_BRANCH, decide } from '../../../tools/vercel/ignore-build.mjs';
+import { contentSecurityPolicy } from '../../apps/kernel/src/http.ts';
+import { STATIC_CSP_DIRECTIVES, cspMeta, cspOriginsFromEnv, metaCsp } from '../../apps/app/vite-csp.ts';
+import { RELEASE_BRANCH, decide } from '../vercel/ignore-build.mjs';
 
-const root = (path: string) => new URL(`../../../${path}`, import.meta.url);
+const root = (path: string) => new URL(`../../${path}`, import.meta.url);
 const vercel = JSON.parse(readFileSync(root('apps/app/vercel.json'), 'utf8')) as {
   ignoreCommand: string;
   build?: unknown;
