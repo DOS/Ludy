@@ -15,6 +15,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { sql } from 'kysely';
 import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime, defineCommand, type AgentActor, type CommandDef } from '@crove/kernel-runtime';
+import { adsCommands } from '@crove/mod-ads';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 import { contextToken } from './fixtures/context-token.ts';
@@ -197,7 +198,8 @@ suite('the approval gate in the database (#1793)', () => {
     expect(policies.length).toBeGreaterThan(0);
     // Every command registered as a proposal command has the same policy on both sides (nobody, when approval.ts lists
     // none), and approval.ts lists no command that is not one: a command added on one side only fails here.
-    const registered = [...kernelCommands, ...financeCommands, prepare1793, proposal1793]
+    // The ads module's proposal commands are listed here although this suite does not run them (running ads, ADR-0043).
+    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, prepare1793, proposal1793]
       .filter((c) => (c as CommandDef<unknown, unknown>).access === 'proposal')
       .map((c) => c.name);
     expect(registered.length).toBeGreaterThan(policies.length);

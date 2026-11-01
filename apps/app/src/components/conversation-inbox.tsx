@@ -139,9 +139,11 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
   // Opening a thread reads it, for this member.
   const markRead = useMutation({ mutationFn: (seq: number) => client.conversations.markRead({ conversationId, seq }), onSuccess: refresh });
   const unread = data?.conversation.unread ?? false;
+  // Marks what the member has seen, not what has arrived: a message that comes in while the thread is open stays unread until they
+  // acknowledge it ("Đã xem"), which moves `seen`.
   useEffect(() => {
-    if (unread && lastSeq !== null && canWrite !== undefined) markRead.mutate(lastSeq);
-  }, [unread, lastSeq]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (unread && seen !== null) markRead.mutate(seen);
+  }, [unread, seen]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     // A thread the reader may no longer read is gone from their screen.
     if (codeOf(detail.error) === 'CONVERSATION_NOT_FOUND') onGone();
@@ -211,10 +213,14 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   const reopen = useMutation({ mutationFn: () => client.conversations.reopen({ conversationId: conversation.id }), onSuccess: refresh });
   const resolved = conversation.status === 'resolved';
   const pending = resolve.isPending || reopen.isPending;
+  const failure = resolved ? reopen.error : resolve.error;
   return (
-    <Button type="button" size="sm" variant={resolved ? 'outline' : 'default'} disabled={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
+    <>
+    <Button type="button" size="sm" variant={resolved ? 'outline' : 'default'} loading={pending} data-testid={resolved ? 'conversation-reopen' : 'conversation-resolve'} onClick={() => (resolved ? reopen.mutate() : resolve.mutate())}>
       {resolved ? t('reopen') : t('resolve')}
     </Button>
+    {failure && <ErrorText>{errorMessage(failure)}</ErrorText>}
+    </>
   );
 }
 
@@ -244,11 +250,11 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
-              <Button type="button" size="sm" variant="outline" disabled={settle.isPending} onClick={() => settle.mutate('retry')}>
+              <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
                 {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
               </Button>
               {m.sendState === 'unknown' && (
-                <Button type="button" size="sm" variant="ghost" disabled={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
+                <Button type="button" size="sm" variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
                   {t('wasSent')}
                 </Button>
               )}
@@ -258,12 +264,12 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
           {m.hideRequest && <Badge variant="outline">{t(m.hideRequest === 'hide' ? 'hiding' : 'unhiding')}</Badge>}
           {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed', { code: m.hideErrorCode })}</span>}
           {canHide && m.hideRequest && m.hideErrorCode && (
-            <Button type="button" size="sm" variant="outline" disabled={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
+            <Button type="button" size="sm" variant="outline" loading={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
               {t('hideAgain')}
             </Button>
           )}
           {canHide && !m.hideRequest && (
-            <Button type="button" size="sm" variant="ghost" disabled={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
+            <Button type="button" size="sm" variant="ghost" loading={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
               {m.hidden ? t('unhide') : t('hide')}
             </Button>
           )}
@@ -311,7 +317,7 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <Textarea aria-label={t('replyLabel')} rows={3} maxLength={CONVERSATION_REPLY_MAX} value={text} placeholder={t('replyPlaceholder')} onChange={(e) => setText(e.target.value)} data-testid="conversation-reply-text" />
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
-      <Button type="submit" size="sm" disabled={send.isPending || text.trim() === ''} data-testid="conversation-send">
+      <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">
         {t('send')}
       </Button>
     </form>
@@ -353,7 +359,7 @@ function Notes({ detail, members, canWrite }: { detail: ConversationDetail; memb
           }}
         >
           <Textarea aria-label={t('noteLabel')} rows={2} maxLength={CONVERSATION_NOTE_MAX} value={text} placeholder={t('notePlaceholder')} onChange={(e) => setText(e.target.value)} data-testid="conversation-note-text" />
-          <Button type="submit" size="sm" variant="outline" disabled={add.isPending || text.trim() === ''} data-testid="conversation-note-add">
+          <Button type="submit" size="sm" variant="outline" loading={add.isPending} disabled={text.trim() === ''} data-testid="conversation-note-add">
             {t('addNote')}
           </Button>
         </form>
@@ -394,7 +400,7 @@ export function SandboxCommentButton({ connectionId, postId }: { connectionId: s
     >
       <Textarea aria-label={t('sandboxText')} rows={2} maxLength={2000} value={text} placeholder={t('sandboxText')} onChange={(e) => setText(e.target.value)} data-testid="sandbox-comment-text" />
       <div className="flex gap-2">
-        <Button type="submit" size="sm" disabled={make.isPending || text.trim() === ''} data-testid="sandbox-comment-send">
+        <Button type="submit" size="sm" loading={make.isPending} disabled={text.trim() === ''} data-testid="sandbox-comment-send">
           {t('sandboxSend')}
         </Button>
         <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>

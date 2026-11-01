@@ -52,7 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { runConversationIntake, runConversationJob, sweepStaleReplies, type ConversationJob } from './conversations-worker.ts';
+import { failUnsendable, runConversationIntake, runConversationJob, sweepStaleReplies, type ConversationJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -1850,15 +1850,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // A reply or a hide of the conversation core (#2303): the job begins the call (committed as started), makes it
               // with the connection's credential and records the answer. A reply is never repeated by a job after an unclear
               // answer, and a retry only covers a failure before the call began; a hide is idempotent.
-              if ((row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') && deps.channels?.publishers && deps.channels.broker) {
+              if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
                 const messageId = String(row.payload.messageId);
                 const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
-                await boss.send(QUEUES.conversationsReply, { orgId: row.org_id, messageId, connectionId: String(row.payload.connectionId), action } satisfies ConversationJob, {
-                  singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${messageId}:${row.event_id}`),
-                  retryLimit: action === 'hide' ? 3 : 2,
-                  retryDelay: 5,
-                  retryBackoff: true,
-                });
+                const job = { orgId: row.org_id, messageId, connectionId: String(row.payload.connectionId), action } satisfies ConversationJob;
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, job, {
+                    singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${messageId}:${row.event_id}`),
+                    retryLimit: action === 'hide' ? 3 : 2,
+                    retryDelay: 5,
+                    retryBackoff: true,
+                  });
+                } else {
+                  // No channel to send through here: the message fails visibly instead of waiting for a job that will never exist.
+                  await failUnsendable(deps.runtime, job);
+                }
               }
               // A visitor's booking (#1318): the worker confirms or refuses it as the system.
               if (crm && row.type === 'crm.booking.requested') {

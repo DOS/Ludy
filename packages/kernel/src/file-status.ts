@@ -176,8 +176,13 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           ])
           .whereRef('q.org_id', '=', 'f.org_id')
           // The proposals read from the file, and the one revised from its reading (the original of a PDF's invoice, #2269):
-          // both files show the one proposal.
-          .where(sql<boolean>`(q.source_file_id = f.id OR q.extraction_id IN (SELECT xe.id FROM crove_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id))`)
+          // both files show the one proposal. So does the original attached to an executed proposal (#2320): its run names
+          // the proposal it is the evidence of.
+          .where(
+            sql<boolean>`(q.source_file_id = f.id
+              OR q.extraction_id IN (SELECT xe.id FROM crove_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id)
+              OR q.id IN (SELECT xo.original_of_proposal_id FROM crove_kernel.extraction xo WHERE xo.org_id = f.org_id AND xo.file_id = f.id AND xo.original_of_proposal_id IS NOT NULL))`,
+          )
           .orderBy('q.created_at', 'desc')
           .orderBy('q.id', 'desc')
           .limit(1)
