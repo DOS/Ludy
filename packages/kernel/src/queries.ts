@@ -344,12 +344,23 @@ export const inboxGet = defineQuery({
     const own = row.extraction_id
       ? await ctx.trx
           .selectFrom('crove_kernel.extraction')
-          .select('version')
+          .select(['version', 'file_id'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', row.extraction_id)
           .executeTakeFirst()
       : undefined;
-    const reading = latest?.inFlight === true;
+    // The revision was read from another file than the source file: the original XML of an invoice first read from a PDF
+    // took the proposal's place (#2269). That file's re-reading holds decisions too, and reading the source file again is
+    // refused, so it is not offered.
+    const readElsewhere = own !== undefined && file !== undefined && own.file_id !== file.id;
+    const originalRun = readElsewhere ? await latestExtraction(ctx, own.file_id) : undefined;
+    const reading = latest?.inFlight === true || originalRun?.inFlight === true;
+    // The run the screen reports: the original's while it is the one being read again, so the version and the state shown
+    // are the run's in progress and not the source file's.
+    const shown = originalRun?.inFlight === true ? originalRun : latest;
+    // Reading the source file again is refused only while the proposal waits for a decision; once decided, a new reading of
+    // it is allowed as for any proposal.
+    const originalHolds = readElsewhere && row.status === 'pending';
     // kernel.file.reextract acts on the file's newest proposal, so only that one offers it.
     const newest = file
       ? await ctx.trx
@@ -420,8 +431,8 @@ export const inboxGet = defineQuery({
       canResubmit,
       resubmittedAs,
       resubmittedFrom: row.resubmitted_from,
-      extraction: latest
-        ? { version: latest.version, status: latest.status, error: latest.error, inFlight: reading, proposalVersion: own?.version ?? null }
+      extraction: shown
+        ? { version: shown.version, status: shown.status, error: shown.error, inFlight: reading, proposalVersion: own?.version ?? null }
         : null,
       // The same checks kernel.file.reextract makes. An expired file proposal offers both ways back (#876): reading the
       // file again (a new reading, as after a rejection) and asking for it again from the same reading (canResubmit).
@@ -429,6 +440,7 @@ export const inboxGet = defineQuery({
         editor &&
         latest !== undefined &&
         !reading &&
+        !originalHolds &&
         newest?.id === row.id &&
         (newest.status !== 'executed' || newestReopened) &&
         latest.version < MAX_EXTRACTION_VERSIONS,

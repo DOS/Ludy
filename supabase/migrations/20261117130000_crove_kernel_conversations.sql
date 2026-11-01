@@ -254,6 +254,22 @@ CREATE POLICY conversation_identity_scope ON crove_kernel.conversation_identity 
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = conversation_identity.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
+-- Deleting a thread, a message, a note or an identity is the owner's, an admin's or the system's alone (the erasure of a customer and
+-- the retention purge, CV6): the scope policies above are FOR ALL and so let anyone who may read a row delete it, with its cascades.
+-- A restrictive policy per table, so a viewer, a member or a member limited to some channels deletes 0 rows.
+DO $$
+DECLARE
+  t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['conversation', 'conversation_message', 'conversation_note', 'conversation_identity'] LOOP
+    EXECUTE pg_catalog.format('DROP POLICY IF EXISTS %I ON crove_kernel.%I', t || '_delete', t);
+    EXECUTE pg_catalog.format($p$CREATE POLICY %I ON crove_kernel.%I AS RESTRICTIVE FOR DELETE TO crove_tenant
+      USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+        OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = %I.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')))$p$,
+      t || '_delete', t, t);
+  END LOOP;
+END $$;
+
 -- ---------------------------------------------------------------------------
 -- The webhook's pending notices (no tenant column: the org is found by the worker from the stored connection)
 -- ---------------------------------------------------------------------------

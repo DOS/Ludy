@@ -1921,7 +1921,7 @@ export const executeAgentApproval = defineCommand({
     const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
     if (!proposal) return { approved: false, reason: 'not_found' };
     // A re-extraction in flight would replace the content the agent judged (issue #40); the job retries.
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     const decision = await decideAgentApproval(ctx.trx, ctx.orgId, { agentId, runId }, proposal, ctx.command(proposal.command), revision, {
       stoppedSince: event.createdAt,
     });
