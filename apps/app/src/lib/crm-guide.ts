@@ -19,7 +19,7 @@ const CRM_GUIDE: readonly CrmGuideStep[] = [
     id: 'crm-contacts',
     title: 'Bước 1. Thêm và tìm liên hệ',
     items: [
-      `Mở ${q(vi.nav.appCrm)} ở thanh bên, rồi ${q(vi.nav.contacts)}. Khách hàng và nhà cung cấp trên hóa đơn cũng hiện ở đây.`,
+      `Mở ${q(vi.nav.apps.crm)} ở thanh bên, rồi ${q(vi.nav.contacts)}. Khách hàng và nhà cung cấp trên hóa đơn cũng hiện ở đây.`,
       `Bấm ${q(vi.contacts.add)} để thêm một người hoặc một công ty. Mã số thuế đã có ở liên hệ khác thì {brand} cho biết đó là ai, để bạn mở liên hệ đó thay vì tạo thêm một liên hệ nữa.`,
       'Ô tìm kiếm không cần gõ dấu: gõ "nguyen" vẫn thấy "Nguyễn". Tìm được theo tên, email, số điện thoại và mã số thuế.',
       `Chọn bộ lọc (ví dụ ${q(vi.contacts.filters.hasEmail)}) rồi bấm ${q(vi.savedViews.save)} để lưu thành một thẻ ngay trên danh sách. Chế độ xem chỉ của bạn, trừ khi bạn chọn ${q(vi.savedViews.shareWithOrg)}.`,
@@ -42,7 +42,7 @@ const CRM_GUIDE: readonly CrmGuideStep[] = [
     id: 'crm-deals',
     title: 'Bước 3. Theo dõi cơ hội trên bảng',
     items: [
-      `Mở ${q(vi.nav.appCrm)}, rồi ${q(vi.nav.deals)}. Bảng có một cột cho mỗi giai đoạn: ${q('Mới')}, ${q('Đã liên hệ')}, ${q('Báo giá')}, ${q('Thương lượng')}, ${q('Thắng')} và ${q('Thua')}. Trên điện thoại, màn hình mở ở dạng ${q(vi.deals.view.list)}.`,
+      `Mở ${q(vi.nav.apps.crm)}, rồi ${q(vi.nav.deals)}. Bảng có một cột cho mỗi giai đoạn: ${q('Mới')}, ${q('Đã liên hệ')}, ${q('Báo giá')}, ${q('Thương lượng')}, ${q('Thắng')} và ${q('Thua')}. Trên điện thoại, màn hình mở ở dạng ${q(vi.deals.view.list)}.`,
       `Bấm ${q(vi.deals.add)}: nhập tên cơ hội, tìm khách hàng đã có, số tiền (đồng) và ngày dự kiến chốt.`,
       'Kéo thẻ sang cột khác, hoặc kéo lên xuống trong cột để đổi thứ tự. Dùng bàn phím hoặc điện thoại thì chọn giai đoạn ở menu trên thẻ. Gần mép bảng, các cột tự cuộn khi bạn kéo.',
       `Chuyển sang ${q('Thắng')} là cơ hội đã chốt. Chuyển sang ${q('Thua')} thì có thể ghi lý do. Chuyển ngược lại sang giai đoạn đang mở thì cơ hội mở lại.`,
