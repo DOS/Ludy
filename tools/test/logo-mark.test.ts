@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The Ludy mark (four keys that spell L, U, D and y, the y key teal with its acute accent, #2200) is drawn in several
+// The Ludy mark (four keys that spell L, U, D and Y, the Y key teal, #2200, #2293) is drawn in several
 // places that cannot import one another: the app's `Logo`, the landing page's `LudyMark` and the SVG files under
 // apps/web/public. This keeps their paths identical, keeps the light and dark colors where DESIGN.md puts them, and
-// keeps the older marks (Crove's ring C, the tiles and spark of #2052) out of the sources.
+// keeps the older marks (Crove's ring C, the tiles and spark of #2052, the accented y of #2200) out of the sources.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,19 +15,19 @@ const BRAND = 'apps/web/public/brand';
 const pathsOf = (text: string): { attrs: string; d: string }[] =>
   [...text.matchAll(/<path ([^>]*?)d="([^"]+)"\/>/g)].map((m) => ({ attrs: m[1] ?? '', d: m[2] ?? '' }));
 
-// The seven paths of the reference mark, in drawing order: the lips of the three violet keys and of the y key, their
-// faces, then the strokes of the letters L U D, of the y and of its accent.
-const ROLES = ['lips', 'lipY', 'keys', 'keyY', 'lud', 'y', 'accent'] as const;
+// The six paths of the reference mark, in drawing order: the lips of the three violet keys and of the Y key, their
+// faces, then the strokes of the letters L U D and of the Y.
+const ROLES = ['lips', 'lipY', 'keys', 'keyY', 'lud', 'y'] as const;
 type Role = (typeof ROLES)[number];
 const reference = pathsOf(read(`${BRAND}/ludy-mark.svg`));
 const PATH = Object.fromEntries(ROLES.map((role, i) => [role, reference[i]?.d ?? ''])) as Record<Role, string>;
 
-// DESIGN.md 1.2: `v` and `t` are the faces of the violet keys and of the teal y key, `vl` and `tl` their lips, `ink` the
-// letters L U D, `tInk` the y and its accent, `word` the "Lud" of the wordmark (its y takes `t`).
+// DESIGN.md 1.2: `v` and `t` are the faces of the violet keys and of the teal Y key, `vl` and `tl` their lips, `ink` the
+// letters L U D, `tInk` the Y, `word` the "Lud" of the wordmark (its y takes `t`).
 type Palette = Record<'v' | 'vl' | 't' | 'tl' | 'ink' | 'tInk' | 'word', string>;
 const COLORS: Record<'light' | 'dark', Palette> = {
   light: { v: '#612BD3', vl: '#44209A', t: '#0F8F7A', tl: '#0A6A5B', ink: '#FFFFFF', tInk: '#FFFFFF', word: '#17141F' },
-  dark: { v: '#7C4DEB', vl: '#5A33B5', t: '#3FD0B0', tl: '#2A9C82', ink: '#FFFFFF', tInk: '#0E2A25', word: '#F4F3F8' },
+  dark: { v: '#7C4DEB', vl: '#5A33B5', t: '#13A58A', tl: '#0B7563', ink: '#FFFFFF', tInk: '#FFFFFF', word: '#F4F3F8' },
 };
 const fill = (color: string, d: string) => `<path fill="${color}" d="${d}"/>`;
 const stroke = (color: string, width: number, d: string) =>
@@ -38,8 +38,7 @@ const markPaths = (c: Palette) => [
   fill(c.v, PATH.keys),
   fill(c.t, PATH.keyY),
   stroke(c.ink, 7, PATH.lud),
-  stroke(c.tInk, 6.4, PATH.y),
-  stroke(c.tInk, 5.4, PATH.accent),
+  stroke(c.tInk, 7, PATH.y),
 ];
 
 // An sRGB hex color as OKLCH, to compare the stylesheets' tokens with the hex colors of DESIGN.md.
@@ -77,12 +76,13 @@ function sources(dir: string): string[] {
   });
 }
 
-describe('the Ludy logo (#2200)', () => {
-  it('has the same keys, letters and accent in every file that draws it', () => {
+describe('the Ludy logo (#2200, #2293)', () => {
+  it('has the same keys and letters in every file that draws it', () => {
     expect(reference).toHaveLength(ROLES.length);
     expect(PATH.lips).toMatch(/^M0 15/);
     expect(PATH.keys).toMatch(/^M0 11/);
-    expect(PATH.accent).toMatch(/^M71\.95 59\.96/);
+    // The capital Y: two arms that meet just below the centre of its key, then the stem.
+    expect(PATH.y).toBe('M61.95 57.1L70.5 69.1L79.05 57.1M70.5 69.1V79.9');
     for (const file of DRAWS_THE_MARK) {
       const text = read(file);
       for (const role of ROLES) expect(text, `${file}: ${role}`).toContain(PATH[role]);
@@ -123,8 +123,7 @@ describe('the Ludy logo (#2200)', () => {
       jsx('fill-brand', PATH.keys),
       jsx('fill-brand-spark', PATH.keyY),
       jsx('fill-none stroke-brand-ink', PATH.lud, 7),
-      jsx('fill-none stroke-brand-spark-ink', PATH.y, 6.4),
-      jsx('fill-none stroke-brand-spark-ink', PATH.accent, 5.4),
+      jsx('fill-none stroke-brand-spark-ink', PATH.y, 7),
     ];
     for (const file of ['apps/app/src/components/ui.tsx', 'apps/web/src/components/landing/ui.tsx']) {
       const text = read(file);
@@ -154,7 +153,7 @@ describe('the Ludy logo (#2200)', () => {
     }
   });
 
-  it('letters "Ludy" the same in the light and the dark wordmark, the y in the teal of the y key, in a box as high as the mark (#2059)', () => {
+  it('letters "Ludy" the same in the light and the dark wordmark, the y in the teal of the Y key, in a box as high as the mark (#2059)', () => {
     const wordmark = (file: string, scheme: 'light' | 'dark') => {
       const text = read(`${BRAND}/${file}`);
       const lettering = pathsOf(text).slice(ROLES.length);
@@ -197,8 +196,8 @@ describe('the Ludy logo (#2200)', () => {
     expect(tokens('apps/web/src/app/globals.css')).toEqual(app);
   });
 
-  it('no longer draws the Crove mark (a ring C with two sparkles) or the tiles and spark of #2052', () => {
-    const older = ['M141.5 33.7', 'M71 0C73.27 15.5'];
+  it('no longer draws the Crove mark (a ring C with two sparkles), the tiles and spark of #2052 or the accented y of #2200', () => {
+    const older = ['M141.5 33.7', 'M71 0C73.27 15.5', 'M61.99 64.05', 'M71.95 59.96'];
     const offenders = ['apps/app/src', 'apps/app/public', 'apps/web/src', 'apps/web/public', 'packages/ui/src']
       .flatMap(sources)
       .filter((file) => older.some((d) => read(file).includes(d)));
