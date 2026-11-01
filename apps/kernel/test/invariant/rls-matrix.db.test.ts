@@ -342,6 +342,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // A spend cap of the org or of one ad account, a row per change (the history, the latest is the cap): written once and never
   // changed or deleted by a tenant role.
   'crove_ads.ad_spend_cap': {
+    noInsertControl: 'only a signed-in owner of the org inserts a cap, and the database stamps its id, who and when; every other context of the org is refused by its guard (ads.db.test.ts tests it)',
     make: (o) => {
       const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
       const account = randomUUID();

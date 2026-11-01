@@ -51,7 +51,10 @@ const PUBLIC: Record<string, string> = {
 // Public routes an open PR adds. CI runs the base branch's copy of this suite on a PR, so a new public route is listed
 // here first, in a PR of its own; the PR that adds the route moves it into PUBLIC. A route here may be public and may
 // not exist yet; the stale-list check below skips it, and nothing else does.
-const PENDING: Record<string, string> = {};
+const PENDING: Record<string, string> = {
+  '/api/channels/zalo/webhook':
+    "Zalo OA's signed notice of a customer's message (conversation core, #2304, plan docs/plan/conversations.md section 6.1): checks X-ZEvent-Signature over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
+};
 const isPublic = (path: string) => Object.hasOwn(PUBLIC, path) || Object.hasOwn(PENDING, path);
 
 const WEB_DIST = mkdtempSync(join(tmpdir(), 'crove-route-coverage-'));

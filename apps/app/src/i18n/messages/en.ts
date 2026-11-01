@@ -6063,6 +6063,7 @@ export const en = {
       FOUR_EYES_REQUIRED: 'Someone else must approve this (you uploaded or edited this proposal).',
       CONTENT_CHANGED: 'You changed accounts without saving. Save your edits before approving.',
       EXTRACTION_PENDING: 'The file is still being read. Wait for the result, then try again.',
+      READ_FROM_ORIGINAL: 'This proposal was updated from the original XML invoice, so reading the PDF again would change nothing. Read the XML file again instead.',
       REEXTRACT_LIMIT: 'This file was read the maximum number of times and cannot be read again.',
       ARCHIVE_NOT_READ: 'A ZIP file is opened into separate documents once. Read each document again instead.',
       CHECKS_BLOCKING: 'The amounts on the invoice do not match, so it cannot be recorded. Reject it and ask the seller for an adjusted invoice.',
