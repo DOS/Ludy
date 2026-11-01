@@ -176,6 +176,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
       ]);
       // The owner's saved view of the posts, shared with the org (#1300): deleted with the org's other Social rows.
       await c.query(`INSERT INTO crove_social.saved_view (org_id, user_id, name, filters, shared) VALUES ($1, $2, 'Tuần này', '{"tab":"calendar"}', true)`, [org.orgId, owner]);
+      // The owner's saved view of the deals (CRM K3, #2227), private: deleted before the members it names.
+      await c.query(`INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Của tôi', '{"v":1,"all":[{"field":"owner","op":"is_me"}]}')`, [org.orgId, owner]);
       // Archive marks on a loose file and on the file the books keep (#1302): both deleted with the org's other Social
       // rows, though the booked file stays.
       await c.query(`INSERT INTO crove_social.media_archive (org_id, file_id, archived_by) VALUES ($1, $2, $4), ($1, $3, $4)`, [org.orgId, loose.fileId, booked.fileId, owner]);
@@ -398,6 +400,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(before['crove_kernel.proposal']).toBe(2);
     expect(before['crove_social.push_subscription']).toBe(1);
     expect(before['crove_social.saved_view']).toBe(1);
+    expect(before['crove_kernel.saved_view']).toBe(1);
     expect(before['crove_social.media_archive']).toBe(2);
     expect(before['crove_notes.note']).toBe(2);
     expect(before['crove_notes.link']).toBe(1);
@@ -430,6 +433,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_finance.bank_account_number': 1,
             'crove_social.push_subscription': 1,
             'crove_social.saved_view': 1,
+            'crove_kernel.saved_view': 1,
             'crove_social.media_archive': 2,
             'crove_notes.note': 2,
             'crove_notes.link': 1,

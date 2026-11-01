@@ -51,6 +51,7 @@ import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
 import { inboxItemCommands } from './inbox-items.ts';
+import { savedViewCommands } from './saved-views.ts';
 import { offboardingCommands } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { setAddress, setContactEmail } from './org-address.ts';
@@ -1071,6 +1072,7 @@ const otherKernelCommands = [
   ...fileHoldCommands,
   ...notificationCommands,
   ...inboxItemCommands,
+  ...savedViewCommands,
   requestProposal,
   editProposal,
   approveProposal,

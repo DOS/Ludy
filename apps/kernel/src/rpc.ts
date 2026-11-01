@@ -1721,6 +1721,13 @@ export function createRpcHandler(
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
     },
+    savedViews: {
+      list: os.savedViews.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.saved_view.list', input, { actor, orgId }))),
+      save: os.savedViews.save.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.save', input, { actor, orgId }))),
+      rename: os.savedViews.rename.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.rename', input, { actor, orgId }))),
+      setShared: os.savedViews.setShared.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.set_shared', input, { actor, orgId }))),
+      remove: os.savedViews.remove.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.saved_view.delete', input, { actor, orgId }))),
+    },
     search: {
       query: os.search.query.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.search', input, { actor, orgId })),
