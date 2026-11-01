@@ -17,7 +17,7 @@ import {
   withinLastDays,
   type FieldCondition,
 } from '@crove/kernel';
-import { DomainError, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError } from '@crove/kernel-runtime';
 
 // The list a view of no sort opens on: the newest first, as the list has always been.
 export const DEAL_DEFAULT_SORT: SavedViewSort = { field: 'created', dir: 'desc' };
@@ -42,35 +42,67 @@ export function dealFields(): Record<string, FieldCondition> {
 
 interface SortColumn {
   column: Expression<unknown>;
-  // How the last row's value is read back as text and compared again.
+  // The column's value as text in a fixed form (UTC and microseconds for a time, ISO for a date), which is what a cursor
+  // carries and what `value::<type>` reads back exactly, whatever the session's settings.
+  text: Expression<unknown>;
   type: 'text' | 'timestamptz' | 'numeric' | 'date';
   nullable: boolean;
 }
 
+const TIME_TEXT = (column: string) => sql`to_char(${sql.ref(column)} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+
 export const DEAL_SORT: Record<string, SortColumn> = {
-  created: { column: sql`d.created_at`, type: 'timestamptz', nullable: false },
-  name: { column: sql`d.title`, type: 'text', nullable: false },
-  amount: { column: sql`d.amount`, type: 'numeric', nullable: false },
-  expected_close: { column: sql`d.expected_close`, type: 'date', nullable: true },
-  updated: { column: sql`d.updated_at`, type: 'timestamptz', nullable: false },
+  created: { column: sql`d.created_at`, text: TIME_TEXT('d.created_at'), type: 'timestamptz', nullable: false },
+  name: { column: sql`d.title`, text: sql`d.title`, type: 'text', nullable: false },
+  amount: { column: sql`d.amount`, text: sql`d.amount::text`, type: 'numeric', nullable: false },
+  expected_close: { column: sql`d.expected_close`, text: sql`to_char(d.expected_close, 'YYYY-MM-DD')`, type: 'date', nullable: true },
+  updated: { column: sql`d.updated_at`, text: TIME_TEXT('d.updated_at'), type: 'timestamptz', nullable: false },
 };
 
 export const dealSortColumns = (): Record<string, Expression<unknown>> => Object.fromEntries(Object.entries(DEAL_SORT).map(([field, c]) => [field, c.column]));
 
-// Where the page after deal `afterId` starts, for the sort in use: past that deal's value, or equal to it with a later id,
-// and, when the sort field may be empty (the expected close date, empty last), the deals with none. The value is read from
-// that deal here, in this org and as this member reads it, so the client sends an id and nothing else; a deal that is gone
-// is a stale cursor.
-export async function dealsAfter(ctx: Pick<QueryContext, 'trx' | 'orgId'>, sort: SavedViewSort, afterId: string): Promise<Expression<SqlBool>> {
-  const by = DEAL_SORT[sort.field];
+// The sort field's text for the row a page ends on, to go into the cursor.
+export function dealSortText(sort: SavedViewSort): Expression<string | null> {
+  const by = Object.hasOwn(DEAL_SORT, sort.field) ? DEAL_SORT[sort.field] : undefined;
   if (!by) throw new Error(`deal list: no column for sort field ${sort.field}`);
-  const found = await sql<{ v: string | null }>`SELECT (${by.column})::text AS v FROM crove_crm.deal d WHERE d.org_id = ${ctx.orgId}::uuid AND d.id = ${afterId}::uuid`.execute(ctx.trx);
-  const row = found.rows[0];
-  if (!row) throw new DomainError('VALIDATION', 422, 'Con trỏ trang không còn hợp lệ', { issues: [{ path: 'after', code: 'bad_cursor' }] });
+  return by.text as Expression<string | null>;
+}
+
+// A cursor value as the server wrote it, and nothing else: a made-up value is a 422 here and never reaches a cast.
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+const validDay = (v: string): boolean => {
+  if (!DAY.test(v)) return false;
+  const at = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(at.getTime()) && at.toISOString().slice(0, 10) === v;
+};
+const VALID_VALUE: Record<SortColumn['type'], (v: string) => boolean> = {
+  text: () => true,
+  numeric: (v) => /^\d{1,18}(\.\d{1,2})?$/.test(v),
+  date: validDay,
+  timestamptz: (v) => {
+    if (!TIME.test(v) || !validDay(v.slice(0, 10))) return false;
+    const at = new Date(`${v.slice(0, 23)}Z`);
+    return !Number.isNaN(at.getTime()) && at.toISOString().slice(0, 23) === v.slice(0, 23);
+  },
+};
+
+const badCursor = () => new DomainError('VALIDATION', 422, 'Con trỏ trang không hợp lệ', { issues: [{ path: 'after', code: 'bad_cursor' }] });
+
+// Where the page after `after` starts, for the sort in use: past the last deal's value, or equal to it with a later id,
+// and, when the sort field may be empty (the expected close date, empty last), the deals with none. The value is the one
+// the previous page ended on, so a deal edited or deleted since cannot make a page repeat or skip rows.
+export function dealsAfter(sort: SavedViewSort, after: { id: string; value: string | null }): Expression<SqlBool> {
+  const by = Object.hasOwn(DEAL_SORT, sort.field) ? DEAL_SORT[sort.field] : undefined;
+  if (!by) throw new Error(`deal list: no column for sort field ${sort.field}`);
   // Empty values sort last, so after a deal with none come only the later deals with none.
-  if (row.v === null) return sql<boolean>`(${by.column} IS NULL AND d.id > ${afterId}::uuid)`;
-  const value = sql`${row.v}::${sql.raw(by.type)}`;
+  if (after.value === null) {
+    if (!by.nullable) throw badCursor();
+    return sql<boolean>`(${by.column} IS NULL AND d.id > ${after.id}::uuid)`;
+  }
+  if (!VALID_VALUE[by.type](after.value)) throw badCursor();
+  const value = sql`${after.value}::${sql.raw(by.type)}`;
   const past = sort.dir === 'asc' ? sql`${by.column} > ${value}` : sql`${by.column} < ${value}`;
   const empty = by.nullable ? sql` OR ${by.column} IS NULL` : sql``;
-  return sql<boolean>`(${past} OR (${by.column} = ${value} AND d.id > ${afterId}::uuid)${empty})`;
+  return sql<boolean>`(${past} OR (${by.column} = ${value} AND d.id > ${after.id}::uuid)${empty})`;
 }

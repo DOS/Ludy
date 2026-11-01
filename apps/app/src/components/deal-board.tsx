@@ -7,7 +7,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState, type DragEvent } from 'react';
 import { useTranslations } from 'use-intl';
-import { BOARD_CLOSED_DAYS, DEAL_LOST_REASON_MAX, type Board, type BoardColumn, type Deal } from '@crove/kernel-contract';
+import { BOARD_CLOSED_DAYS, DEAL_LOST_REASON_MAX, type Board, type BoardColumn, type Deal, type FilterAst } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -94,11 +94,13 @@ function Card({
 const EDGE = 80;
 const SCROLL_STEP = 24;
 
-export function DealBoard({ members, canEdit }: { members: readonly Member[]; canEdit: boolean }) {
+export function DealBoard({ members, canEdit, filters }: { members: readonly Member[]; canEdit: boolean; filters?: FilterAst | undefined }) {
   const t = useTranslations('deals');
   const { locale } = useLocaleSetting();
-  const boardKey = orpc.crm.deals.board.queryKey({ input: {} });
-  const board = useQuery(orpc.crm.deals.board.queryOptions({ input: {} }));
+  // A saved view's filter (K3): the board shows the deals the list shows for it, and its cache entry is the view's own.
+  const boardInput = filters ? { filters } : {};
+  const boardKey = orpc.crm.deals.board.queryKey({ input: boardInput });
+  const board = useQuery(orpc.crm.deals.board.queryOptions({ input: boardInput }));
   const [dragging, setDragging] = useState<Deal | null>(null);
   const [over, setOver] = useState<Drop | null>(null);
   const [editing, setEditing] = useState<Deal | null>(null);

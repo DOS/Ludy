@@ -6,7 +6,7 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type PipelineStage } from '@crove/kernel-contract';
+import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type FilterAst, type PipelineStage, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -15,14 +15,21 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
+import { DealFilterBar } from '../components/deal-filter-bar.tsx';
 import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
 import { PipelineSettings } from '../components/pipeline-settings.tsx';
 import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
+import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { EMPTY_DEAL_FILTER, astToDealFilter, dealFilterToAst, type DealFilterState } from '../lib/deal-filter.ts';
 import { formatMoney } from '../lib/format.ts';
+import { useDebounced } from '../lib/use-debounced.ts';
 
 const refresh = refreshDeals;
+const SCOPE = 'crm.deal';
+// The search waits for a pause in typing, so one request goes out per word and not per key.
+const SEARCH_PAUSE_MS = 300;
 
 function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number }) {
   const t = useTranslations('deals');
@@ -168,9 +175,25 @@ export function DealsPage() {
   useEffect(() => {
     if (needsSetup) setupStages({});
   }, [needsSetup, setupStages]);
+  // The screen's filter and sort: what the bar shows, and what a picked view sets (the tabs above the bar). The board and
+  // the list read the same filter, so one view shows the same deals as cards and as rows; the sort is the list's.
+  const [bar, setBar] = useState<DealFilterState>(EMPTY_DEAL_FILTER);
+  const [sort, setSort] = useState<SavedViewSort | null>(null);
+  const filters: FilterAst = dealFilterToAst(bar);
+  const filtered = filters.all.length > 0;
+  // The search waits for a pause in typing; the rest of the bar applies at once.
+  const searchTerm = useDebounced(bar.search.trim(), SEARCH_PAUSE_MS);
+  const applied: FilterAst = dealFilterToAst({ ...bar, search: searchTerm });
+  const viewed = applied.all.length > 0 || sort !== null;
+  const applyView = ({ filters: next, sort: nextSort }: ViewState) => {
+    setBar(astToDealFilter(next));
+    setSort(nextSort);
+  };
   const deals = useInfiniteQuery({
     ...orpc.crm.deals.list.infiniteOptions({
-      input: (cursor: DealCursor | undefined) => (cursor ? { cursor } : {}),
+      // With a filter or a sort the list pages by the last deal and its sort value; without, the newest-first cursor of before.
+      input: (cursor: DealCursor | undefined) =>
+        viewed ? { filters: applied, ...(sort ? { sort } : {}), ...(cursor ? { after: { id: cursor.id, value: cursor.value ?? null } } : {}) } : cursor ? { cursor } : {},
       initialPageParam: undefined as DealCursor | undefined,
       getNextPageParam: (page) => page.next ?? undefined,
       placeholderData: keepPreviousData,
@@ -216,14 +239,16 @@ export function DealsPage() {
           <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
         </div>
       )}
+      <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
+      <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
       {view === 'board' ? (
-        <DealBoard members={members} canEdit={canEdit} />
+        <DealBoard members={members} canEdit={canEdit} filters={applied.all.length > 0 ? applied : undefined} />
       ) : deals.isPending || stages.isPending ? (
         <TableSkeleton columns={6} />
       ) : (deals.error || stages.error) && rows.length === 0 ? (
         <ErrorText>{errorMessage(deals.error ?? stages.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        <Empty title={t('empty')} hint={canEdit ? t('emptyHint') : undefined} />
+        <Empty title={filtered ? t('filters.noMatch') : t('empty')} hint={filtered ? undefined : canEdit ? t('emptyHint') : undefined} />
       ) : (
         <>
           <DataTable head={head} numeric={[3]}>

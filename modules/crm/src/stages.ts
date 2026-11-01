@@ -5,21 +5,25 @@
 // at the same time, wait for each other. Each command answers the stages as they are afterwards. The board query reads
 // the stages with their deals, in the order the deals are placed.
 import { sql } from 'kysely';
-import { z } from 'zod';
 import {
   BOARD_CARD_LIMIT,
   BOARD_CLOSED_DAYS,
   PIPELINE_STAGE_MAX,
+  vietnamToday,
+  zBoardQuery,
   zStageAdd,
   zStageRemove,
   zStageRename,
   zStageReorder,
   type Board,
   type BoardColumn,
+  type FilterAst,
   type PipelineStage,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { filterCondition } from '@crove/kernel';
+import { dealFields } from './deal-filter.ts';
 import { base, ensureStages, loadStages, mayDelete, view } from './deals.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -138,22 +142,28 @@ export const stageCommands = [stageAdd, stageRename, stageReorder, stageRemove];
 // days. Counts and totals come from the database over the same deals, so a long column still adds up.
 export const dealBoard = defineQuery({
   name: 'crm.deal.board',
-  input: z.strictObject({}),
+  input: zBoardQuery,
   access: ALL,
-  handler: async (ctx): Promise<Board> => {
+  handler: async (ctx, input): Promise<Board> => {
     const stages = await loadStages(ctx);
     if (stages.length === 0) return { columns: [] };
+    // A saved view's filter (K3, #2227), the one crm.deal.list reads, over the deals the columns show and count.
+    const now = new Date();
+    const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+    const where = filterCondition('crm.deal', (input.filters as FilterAst | undefined) ?? { v: 1, all: [] }, dealFields(), { me, today: vietnamToday(now), now });
     // Closed deals count while they were closed within the window; the database's clock decides, as a query has none.
     const window = sql.raw(`now() - interval '${Math.trunc(BOARD_CLOSED_DAYS)} days'`);
     const sums = await sql<{ stage_id: string; n: string; total: string }>`
       SELECT d.stage_id, pg_catalog.count(*)::text AS n, pg_catalog.sum(d.amount)::text AS total
-      FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
-      WHERE d.org_id = ${ctx.orgId}::uuid AND (s.kind = 'open' OR d.closed_at >= ${window})
+      FROM crove_crm.deal d
+      JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      JOIN crove_kernel.party p ON p.org_id = d.org_id AND p.id = d.party_id
+      WHERE d.org_id = ${ctx.orgId}::uuid AND (s.kind = 'open' OR d.closed_at >= ${window}) AND ${where}
       GROUP BY d.stage_id`.execute(ctx.trx);
     const byStage = new Map(sums.rows.map((r) => [r.stage_id, r]));
     const columns: BoardColumn[] = [];
     for (const stage of stages) {
-      let q = base(ctx).where('d.stage_id', '=', stage.id);
+      let q = base(ctx).where('d.stage_id', '=', stage.id).where(where);
       if (stage.kind !== 'open') q = q.where(sql<boolean>`d.closed_at >= ${window}`);
       const rows = await q.orderBy('d.sort_key').orderBy('d.id').limit(BOARD_CARD_LIMIT + 1).execute();
       const sum = byStage.get(stage.id);

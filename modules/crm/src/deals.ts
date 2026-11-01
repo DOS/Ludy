@@ -35,7 +35,7 @@ import { filterCondition, sortTerms } from '@crove/kernel';
 import type { MemberRole } from '@crove/db';
 import { z } from 'zod';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealsAfter } from './deal-filter.ts';
+import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealSortText, dealsAfter } from './deal-filter.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -413,12 +413,16 @@ export const dealList = defineQuery({
       const now = new Date();
       const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
       q = q.where(filterCondition('crm.deal', (input.filters as FilterAst | undefined) ?? { v: 1, all: [] }, dealFields(), { me, today: vietnamToday(now), now }));
-      if (input.after) q = q.where(await dealsAfter(ctx, sort, input.after));
-      for (const term of sortTerms('crm.deal', input.sort ?? null, dealSortColumns(), sql`d.id`, DEAL_DEFAULT_SORT)) q = q.orderBy(term);
-      const rows = await q.limit(limit + 1).execute();
-      const items = rows.slice(0, limit).map((r) => view(r, mayDelete(ctx, r.created_by)));
-      const last = items.at(-1);
-      return { items, next: rows.length > limit && last ? { createdAt: last.createdAt, id: last.id } : null };
+      // The sort is checked against the registry before anything is built from it.
+      const order = sortTerms('crm.deal', input.sort ?? null, dealSortColumns(), sql`d.id`, DEAL_DEFAULT_SORT);
+      if (input.after) q = q.where(dealsAfter(sort, input.after));
+      for (const term of order) q = q.orderBy(term);
+      const rows = await q.select(sql<string | null>`${dealSortText(sort)}`.as('sort_value')).limit(limit + 1).execute();
+      const shown = rows.slice(0, limit);
+      const items = shown.map((r) => view(r, mayDelete(ctx, r.created_by)));
+      const last = shown.at(-1);
+      const lastItem = items.at(-1);
+      return { items, next: rows.length > limit && last && lastItem ? { createdAt: lastItem.createdAt, id: lastItem.id, value: last.sort_value } : null };
     }
     if (input.cursor) {
       const { createdAt, id } = input.cursor;

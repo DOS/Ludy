@@ -195,6 +195,34 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     expect(await titles(o, o.lan, { ...all({ field: 'amount', op: 'gte', value: '1' }), partyId: p2 })).toEqual(['Hợp đồng Trần', 'Mất Hoàng 50%']);
   });
 
+  it('gives the board the deals the list gives for the same filter, with counts and totals over them', async () => {
+    const board = (user: string, filters?: FilterAst) => rt.query<{ columns: Array<{ stage: { kind: string }; count: number; total: string; cards: Array<{ title: string }> }> }>('crm.deal.board', filters ? { filters } : {}, { actor: asUser(user), orgId: o.orgId });
+    const cards = async (filters?: FilterAst) => (await board(o.lan, filters)).columns.flatMap((c) => c.cards.map((d) => d.title)).sort();
+    // No filter: every deal, as before.
+    expect(await cards()).toEqual([...(await titles(o, o.lan))].sort());
+    // The same filter, the same deals, as cards and as rows.
+    const filters: FilterAst[] = [
+      { v: 1, all: [{ field: 'status', op: 'is', value: 'open' }] },
+      { v: 1, all: [{ field: 'owner', op: 'is_me' }] },
+      { v: 1, all: [{ field: 'search', op: 'contains', value: 'nguyen' }] },
+      { v: 1, all: [{ field: 'expected_close', op: 'overdue' }, { field: 'amount', op: 'gte', value: '1000' }] },
+      { v: 1, all: [{ field: 'stage', op: 'in', value: [open1, won] }] },
+      { v: 1, all: [{ field: 'owner', op: 'is', value: randomUUID() }] },
+    ];
+    for (const f of filters) expect(await cards(f), JSON.stringify(f)).toEqual([...(await titles(o, o.lan, { filters: f }))].sort());
+    // Counts and totals are over the deals the filter leaves, in SQL: the open deals of the first stage worth 5,000,000 and 0.
+    const open = await board(o.lan, { v: 1, all: [{ field: 'party', op: 'is', value: p1 }] });
+    const first = open.columns.find((c) => c.cards.some((d) => d.title === 'Dự án Lê'));
+    expect(first).toMatchObject({ count: 2, total: '5000000.00' });
+    // A viewer reads the same board for a shared view's filter, and another org's board never shows our deals.
+    expect(await cards({ v: 1, all: [{ field: 'status', op: 'is', value: 'open' }] })).toEqual(
+      (await board(o.viewer, { v: 1, all: [{ field: 'status', op: 'is', value: 'open' }] })).columns.flatMap((c) => c.cards.map((d) => d.title)).sort(),
+    );
+    const theirs = await rt.query<{ columns: Array<{ cards: Array<{ title: string }> }> }>('crm.deal.board', { filters: { v: 1, all: [{ field: 'search', op: 'contains', value: 'nguyen' }] } }, { actor: asUser(other.owner), orgId: other.orgId });
+    expect(theirs.columns.flatMap((c) => c.cards.map((d) => d.title))).toEqual(['Báo giá website Nguyễn của tổ chức khác']);
+    await expect(rt.query('crm.deal.board', { filters: { v: 1, all: [{ field: 'color', op: 'is', value: 'red' }] } }, { actor: asUser(o.lan), orgId: o.orgId })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+  });
+
   it('runs every operator of the crm.deal scope in a case above', () => {
     const covered = new Set([
       'search:contains', 'stage:in', 'status:is', 'owner:is', 'owner:is_me', 'owner:is_empty', 'party:is', 'amount:gte', 'amount:lte',
@@ -224,19 +252,19 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     ] as const) {
       const whole = await sorted(o, o.lan, undefined, sort);
       const seen: string[] = [];
-      let after: string | undefined;
+      let after: { id: string; value: string | null } | undefined;
       for (let page = 0; page < 6; page++) {
         const got = await list(o, o.lan, { sort, limit: 2, ...(after ? { after } : {}) });
         expect(got.items.length).toBeLessThanOrEqual(2);
         seen.push(...got.items.map((d) => d.title));
         if (got.next === null) break;
-        after = got.next.id;
+        after = { id: got.next.id, value: got.next.value ?? null };
       }
       expect(seen, JSON.stringify(sort)).toEqual(whole);
     }
     // Paging within a filter keeps the filter.
     const first = await list(o, o.lan, { ...all({ field: 'status', op: 'is', value: 'open' }), sort: { field: 'amount', dir: 'desc' }, limit: 2 });
-    const second = await list(o, o.lan, { ...all({ field: 'status', op: 'is', value: 'open' }), sort: { field: 'amount', dir: 'desc' }, limit: 2, after: first.next?.id as string });
+    const second = await list(o, o.lan, { ...all({ field: 'status', op: 'is', value: 'open' }), sort: { field: 'amount', dir: 'desc' }, limit: 2, after: { id: first.next?.id as string, value: first.next?.value ?? null } });
     expect([...first.items, ...second.items].map((d) => d.title)).toEqual(['Hợp đồng Trần', 'Báo giá website Nguyễn', 'Dự án Lê']);
     expect(second.next).toBeNull();
   });
@@ -250,11 +278,69 @@ suite('saved views of the deals on PostgreSQL (CRM K3, #2227)', () => {
     await refused(all({ field: 'has_email', op: 'is', value: true }));
     await refused({ sort: { field: 'color', dir: 'asc' } });
     await refused({ sort: { field: 'amount', dir: 'sideways' } });
-    await refused({ after: 'không-phải-id' });
-    // The id of nothing, and the id of another org's deal, are stale cursors.
+    // A cursor is what the server wrote: an id that is not one, or a value that is not of the sort field's kind, is refused
+    // before it reaches a cast, and so is a cursor naming a sort the registry does not know.
+    const sort = (field: string) => ({ field, dir: 'asc' as const });
+    await refused({ after: { id: 'không-phải-id', value: 'x' } });
+    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: '1; DROP TABLE crove_crm.deal' } });
+    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: 'abc' } });
+    await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-13-45T00:00:00.000000Z' } });
+    await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-11-01 00:00:00+00' } });
+    await refused({ sort: sort('created'), after: { id: randomUUID(), value: '2026-11-01T25:00:00.000000Z' } });
+    await refused({ sort: sort('expected_close'), after: { id: randomUUID(), value: '2026-02-30' } });
+    await refused({ sort: sort('amount'), after: { id: randomUUID(), value: null } });
+    await refused({ sort: sort('color'), after: { id: randomUUID(), value: 'x' } });
+    await refused({ sort: sort('constructor'), after: { id: randomUUID(), value: 'x' } });
+    await refused({ sort: sort('__proto__'), after: { id: randomUUID(), value: 'x' } });
+    // A well-formed value of another org's deal narrows this org's list like any value: it names nothing and reads nothing.
     const theirs = (await list(other, other.owner)).items[0];
-    await refused({ after: randomUUID() });
-    await refused({ after: theirs?.id });
+    const page = await list(o, o.lan, { sort: sort('amount'), after: { id: theirs?.id as string, value: '1000000' } });
+    expect(page.items.every((d) => Number(d.amount) > 1_000_000)).toBe(true);
+  });
+
+  it('keeps paging stable while deals change between pages: no repeat or skip, and a deleted last deal is no stale cursor', async () => {
+    const paged = await org();
+    const st = await exec<Array<{ id: string; kind: string }>>(paged, paged.lan, 'crm.pipeline.setup', {});
+    const open = st.find((s) => s.kind === 'open')?.id;
+    const who = (await exec<{ partyId: string }>(paged, paged.lan, 'kernel.party.create', { kind: 'person', name: 'Khách phân trang' })).partyId;
+    const made: Array<{ id: string; version: number; title: string }> = [];
+    // Two deals share an amount and two have no close date, so the tie and the empty-last branches both run.
+    for (const [title, amount, close] of [['A', '300', day(3)], ['B', '200', null], ['C', '200', day(5)], ['D', '100', null], ['E', '400', day(1)]] as const) {
+      made.push({ title, ...(await exec<{ id: string; version: number }>(paged, paged.lan, 'crm.deal.create', { partyId: who, title, amount, expectedClose: close, ownerUserId: null, stageId: open })) });
+    }
+    const walk = async (sort: { field: string; dir: 'asc' | 'desc' }, between?: () => Promise<void>) => {
+      const seen: string[] = [];
+      let after: { id: string; value: string | null } | undefined;
+      for (let page = 0; page < 8; page++) {
+        const got = await list(paged, paged.lan, { sort, limit: 2, ...(after ? { after } : {}) });
+        seen.push(...got.items.map((d) => d.title));
+        if (got.next === null) break;
+        after = { id: got.next.id, value: got.next.value ?? null };
+        if (page === 0 && between) await between();
+      }
+      return seen;
+    };
+    for (const sort of [{ field: 'amount', dir: 'asc' }, { field: 'amount', dir: 'desc' }, { field: 'expected_close', dir: 'asc' }, { field: 'expected_close', dir: 'desc' }] as const) {
+      const whole = (await list(paged, paged.lan, { sort })).items.map((d) => d.title);
+      expect(await walk(sort), JSON.stringify(sort)).toEqual(whole);
+      expect(new Set(whole).size).toBe(5);
+    }
+    // The empty close dates are last and in id order whichever way the dates run.
+    const byClose = (await list(paged, paged.lan, { sort: { field: 'expected_close', dir: 'desc' } })).items.map((d) => d.title);
+    expect(byClose.slice(0, 3)).toEqual(['C', 'A', 'E']);
+    expect(new Set(byClose.slice(3))).toEqual(new Set(['B', 'D']));
+    // Another member moves the deal a page ended on before "Load more": the sort value the page ended on still decides.
+    const byUpdated = (await list(paged, paged.lan, { sort: { field: 'updated', dir: 'desc' } })).items.map((d) => d.title);
+    const seen = await walk({ field: 'updated', dir: 'desc' }, async () => {
+      const last = made.find((d) => d.title === byUpdated[1]);
+      await exec(paged, paged.admin, 'crm.deal.update', { dealId: last?.id, version: last?.version, partyId: who, title: last?.title, amount: '999', expectedClose: null, ownerUserId: null });
+    });
+    expect(new Set(seen).size).toBe(seen.length);
+    // And a deal deleted after a page ended on it does not turn "Load more" into an error.
+    const first = await list(paged, paged.lan, { sort: { field: 'amount', dir: 'asc' }, limit: 1 });
+    await exec(paged, paged.admin, 'crm.deal.delete', { dealId: first.items[0]?.id });
+    const next = await list(paged, paged.lan, { sort: { field: 'amount', dir: 'asc' }, limit: 2, after: { id: first.next?.id as string, value: first.next?.value ?? null } });
+    expect(next.items.length).toBeGreaterThan(0);
   });
 
   it('applies a saved view of the deals: a viewer opens the shared one and lists what the typed filter lists', async () => {

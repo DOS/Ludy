@@ -195,7 +195,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zBoard, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
+import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
   zNote,
@@ -470,7 +470,7 @@ export const contract = {
     },
     parties: { search: oc.input(zPartySearchQuery).output(z.array(zPartyChoice)) },
     deals: {
-      board: oc.input(z.strictObject({})).output(zBoard),
+      board: oc.input(zBoardQuery).output(zBoard),
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
