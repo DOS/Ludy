@@ -15,6 +15,7 @@ export const SITE_URL = 'https://ludy.vn';
 export const APP_PAGES = {
   accounting: { vi: '/ke-toan', en: '/en/accounting', module: 'finance' },
   crm: { vi: '/crm', en: '/en/crm', module: 'crm' },
+  notes: { vi: '/notes', en: '/en/notes', module: 'notes' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
 export const appPagePath = (key: AppPageKey, lang: string) => APP_PAGES[key][lang === 'vi' ? 'vi' : 'en'];
