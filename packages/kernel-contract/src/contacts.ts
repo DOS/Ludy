@@ -27,7 +27,7 @@ export const CONTACT_PAGE_MAX = 100;
 export const zContactList = z.strictObject({
   filters: zFilterAstShape.optional(),
   sort: zSavedViewSortShape.nullable().optional(),
-  cursor: z.string().max(400).optional(),
+  cursor: z.string().max(200).optional(),
   limit: z.number().int().min(1).max(CONTACT_PAGE_MAX).optional(),
 });
 

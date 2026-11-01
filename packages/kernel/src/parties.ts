@@ -5,6 +5,7 @@
 // person, and its tax code that person's national id; auditValue, #1626).
 // The tax code is how an e-invoice finds its party (finance's upsertParty), so it can be added to a party without one
 // but never changed or removed: a party recorded under a wrong tax code is merged with "mark duplicate" (#887).
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { auditValue, normalizeTaxCode, zId, zPartyCreate } from '@crove/kernel-contract';
@@ -158,11 +159,13 @@ export const createParty = defineCommand({
       const other = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
       if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về ${other.name}`, { partyId: other.id, name: other.name });
     }
-    const created = await ctx.trx
+    // The id is given here and the row inserted without RETURNING: once party carries its legal-entity policy (#1538) a
+    // RETURNING check could not see the link the party_link_new trigger adds in the same statement (#1280).
+    const created = { id: randomUUID(), version: 1 };
+    await ctx.trx
       .insertInto('crove_kernel.party')
-      .values({ org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now })
-      .returning(['id', 'version'])
-      .executeTakeFirstOrThrow()
+      .values({ id: created.id, org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now })
+      .execute()
       .catch((error: unknown) => {
         // Another transaction took the tax code after the check above (the unique index decides).
         if ((error as { code?: string }).code === '23505' && taxCode) {

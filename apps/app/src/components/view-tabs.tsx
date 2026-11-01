@@ -6,7 +6,7 @@
 // kernel.saved_view.* of one scope, so every list of the app (the contacts today, the deals next) shares this component and
 // the server's rules: at most 30 per member and scope, a private view seen by its owner alone.
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { SAVED_VIEW_LIMIT, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -38,6 +38,15 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
   const list = views.data ?? [];
   const [activeId, setActiveId] = useState<string | null>(null);
   const active = list.find((v) => v.id === activeId) ?? null;
+  // The picked view is gone (deleted here or by its owner): the screen leaves its filter too, not only the tab.
+  const gone = activeId !== null && views.isSuccess && active === null;
+  useEffect(() => {
+    if (!gone) return;
+    setActiveId(null);
+    onApply({ filters: NO_FILTER, sort: null });
+    // onApply is the screen's setter pair; the effect runs once per disappearance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gone]);
   const [mode, setMode] = useState<'none' | 'create' | 'rename'>('none');
   const [name, setName] = useState('');
   const [shared, setShared] = useState(false);
@@ -78,6 +87,7 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
     mutationFn: (view: SavedView) => client.savedViews.remove({ viewId: view.id }),
     onSuccess: (_, view) => {
       setActiveId(null);
+      onApply({ filters: NO_FILTER, sort: null });
       done(t('removed', { name: view.name }));
     },
   });
@@ -153,6 +163,7 @@ export function ViewTabs({ scope, filters, sort, onApply }: { scope: string; fil
           <Button
             variant="ghost"
             size="sm"
+            disabled={busy}
             onClick={() => {
               resetErrors();
               setNotice(null);

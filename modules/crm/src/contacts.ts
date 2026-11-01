@@ -62,12 +62,15 @@ export function contactFields(): Record<string, FieldCondition> {
   };
 }
 
+// Where the next page starts: the sort it belongs to and the last contact shown. The sort value is read from that contact
+// on the server, so a long name never makes the cursor long and nothing but an id is taken from the client.
 interface Cursor {
   f: string;
   d: 'asc' | 'desc';
-  v: string;
   id: string;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function encodeCursor(c: Cursor): string {
   return Buffer.from(JSON.stringify(c), 'utf8').toString('base64url');
@@ -76,7 +79,7 @@ function encodeCursor(c: Cursor): string {
 function decodeCursor(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<Cursor>;
-    if (typeof c.f === 'string' && (c.d === 'asc' || c.d === 'desc') && typeof c.v === 'string' && typeof c.id === 'string' && /^[0-9a-f-]{36}$/.test(c.id)) return c as Cursor;
+    if (typeof c.f === 'string' && (c.d === 'asc' || c.d === 'desc') && typeof c.id === 'string' && UUID.test(c.id)) return { f: c.f, d: c.d, id: c.id };
   } catch {
     // Falls through to the refusal below.
   }
@@ -93,7 +96,6 @@ interface Row {
   phone: string | null;
   version: number;
   created_at: Date;
-  sort_value: string;
 }
 
 export const contactList = defineQuery({
@@ -120,13 +122,18 @@ export const contactList = defineQuery({
       if (c.f !== sorted.field || c.d !== sorted.dir) {
         throw new DomainError('VALIDATION', 422, 'Con trỏ trang không khớp với cách sắp xếp', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
       }
-      const value = by.type === 'text' ? sql`${c.v}::text` : sql`${c.v}::timestamptz`;
+      // The sort value of the last contact shown, in this org and as this member reads it: a contact that is gone, or
+      // another org's, is a stale cursor.
+      const last = await sql<{ v: string }>`SELECT (${by.column})::text AS v FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${c.id}::uuid`.execute(ctx.trx);
+      const v = last.rows[0]?.v;
+      if (v === undefined) throw new DomainError('VALIDATION', 422, 'Con trỏ trang không còn hợp lệ', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
+      const value = by.type === 'text' ? sql`${v}::text` : sql`${v}::timestamptz`;
       const past = sorted.dir === 'asc' ? sql`${by.column} > ${value}` : sql`${by.column} < ${value}`;
       after = sql<boolean>`(${past} OR (${by.column} = ${value} AND p.id > ${c.id}::uuid))`;
     }
 
     const result = await sql<Row>`
-      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, (${by.column})::text AS sort_value
+      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at
       FROM crove_kernel.party p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND ${where} AND ${after}
       ORDER BY ${sql.join(order, sql`, `)}
@@ -146,7 +153,7 @@ export const contactList = defineQuery({
       version: r.version,
       createdAt: r.created_at.toISOString(),
     }));
-    return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, v: last.sort_value, id: last.id }) : null };
+    return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id }) : null };
   },
 });
 

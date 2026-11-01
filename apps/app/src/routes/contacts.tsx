@@ -6,7 +6,7 @@
 // contact's details, its notes (with the notes module) and its timeline.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
-import { useDeferredValue, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type Contact, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -34,6 +34,16 @@ import {
 } from '../lib/contact-filter.ts';
 
 const SCOPE = 'crm.party';
+// The search waits for a pause in typing, so one request goes out per word and not per key.
+const SEARCH_PAUSE_MS = 300;
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), ms);
+    return () => clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
 // The words of each sort option, by its `field:dir` value.
 const SORT_LABELS: Record<string, 'sort.name_asc' | 'sort.name_desc' | 'sort.created_asc' | 'sort.created_desc' | 'sort.updated_asc' | 'sort.updated_desc'> = {
   'name:asc': 'sort.name_asc',
@@ -200,7 +210,7 @@ export function ContactsPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   const filters: FilterAst = contactFilterToAst(bar);
   // The search waits for a pause in typing; the rest of the bar applies at once.
-  const searchTerm = useDeferredValue(bar.search.trim());
+  const searchTerm = useDebounced(bar.search.trim(), SEARCH_PAUSE_MS);
   const applied: FilterAst = contactFilterToAst({ ...bar, search: searchTerm });
   const contacts = useInfiniteQuery(
     orpc.crm.contacts.list.infiniteOptions({
@@ -297,7 +307,7 @@ export function ContactsPage() {
         </ul>
       )}
       {contacts.isPending ? (
-        <TableSkeleton columns={4} />
+        <TableSkeleton columns={head.length} />
       ) : contacts.error && rows.length === 0 ? (
         <ErrorText>{errorMessage(contacts.error)}</ErrorText>
       ) : rows.length === 0 ? (

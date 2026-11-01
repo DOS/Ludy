@@ -301,6 +301,34 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       expect(second.items.map((c) => c.name).filter((n) => first.items.some((f) => f.name === n))).toEqual([]);
     });
 
+    it('pages through contacts with the longest names, and refuses a forged cursor with 422', async () => {
+      const long = await org();
+      const stem = 'CÔNG TY CỔ PHẦN ĐẦU TƯ XÂY DỰNG VÀ PHÁT TRIỂN HẠ TẦNG ĐÔ THỊ NGUYỄN TRẦN LÊ PHẠM '.repeat(3).slice(0, 290);
+      for (const [i, letter] of ['A', 'B', 'C'].entries()) await create(long, long.lan, { kind: 'organization', name: `${stem}${letter}${i}` });
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 5; page++) {
+        const got = await list(long, long.lan, { limit: 1, ...(cursor ? { cursor } : {}) });
+        seen.push(...got.items.map((c) => c.name));
+        // The cursor never holds a name: it stays short whatever the names are.
+        if (got.next !== null) expect(got.next.length).toBeLessThan(120);
+        if (got.next === null) break;
+        cursor = got.next;
+      }
+      expect(seen).toHaveLength(3);
+      expect(new Set(seen).size).toBe(3);
+      // A cursor made up by hand: not an id, an id of nothing, another org's contact, or a valid one for another sort.
+      const forge = (payload: object) => Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+      const mine = (await list(long, long.lan)).items[0];
+      const theirs = (await list(other, other.owner)).items[0];
+      for (const id of ['-'.repeat(36), randomUUID(), theirs?.id]) {
+        await expect(list(long, long.lan, { cursor: forge({ f: 'name', d: 'asc', id }) }), String(id)).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      }
+      await expect(list(long, long.lan, { cursor: forge({ f: 'name', d: 'asc', id: "'; DROP TABLE crove_kernel.party; --" }) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      await expect(list(long, long.lan, { cursor: forge({ f: 'created', d: 'asc', id: mine?.id }) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      await expect(list(long, long.lan, { cursor: 'x'.repeat(201) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+    });
+
     it('leaves out a duplicate, answers 422 to an unknown field, sort or cursor, and a cursor from another sort', async () => {
       const dup = await create(o, o.lan, { name: 'Bản sao Trần Văn B' });
       const keep = (await list(o, o.lan, { filters: all({ field: 'search', op: 'contains', value: 'Trần Văn B' }).filters })).items.find((c) => c.name === 'Trần Văn B');

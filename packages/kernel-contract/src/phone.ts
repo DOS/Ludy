@@ -6,7 +6,8 @@
 // cannot drift.
 //
 // The rules, in order:
-//   1. Every character but the digits is dropped (spaces, dots, dashes, brackets); only a leading `+` is remembered.
+//   1. Every character but the digits is dropped (spaces, dots, dashes, brackets); only a leading `+` is remembered, after
+//      ASCII white space alone (a no-break space is not skipped), so the SQL twin does not depend on the database's locale.
 //   2. A leading `00` is the international call prefix, as a `+`: `0084...` is `+84...`.
 //   3. International `84` (after a `+` or `00`), or a bare `84` in front of 9 or 10 more digits, is Vietnam's country
 //      code: it becomes `0`, and a trunk `0` written after it (`+84 (0) 912...`) is not doubled.
@@ -16,7 +17,7 @@ export function phoneKey(phone: string | null | undefined): string | null {
   if (phone === null || phone === undefined) return null;
   let digits = phone.replace(/\D/g, '');
   if (digits === '') return null;
-  let international = /^\s*\+/.test(phone);
+  let international = /^[ \t\n\r\f\v]*\+/.test(phone);
   if (digits.startsWith('00')) {
     international = true;
     digits = digits.slice(2);

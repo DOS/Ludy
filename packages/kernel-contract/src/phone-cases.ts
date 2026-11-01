@@ -25,6 +25,8 @@ export const PHONE_KEY_CASES: ReadonlyArray<readonly [string, string | null]> = 
   ['12345', '12345'],
   ['8412345', '8412345'],
   ['1900 1234', '19001234'],
+  // Only ASCII white space may stand before the `+`: a no-break space does not, whatever the database's locale.
+  ['\u00a0+84 123', '84123'],
   // No digit, no key.
   ['', null],
   ['   ', null],
