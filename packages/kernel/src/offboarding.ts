@@ -72,6 +72,11 @@ export const EXPORT_TABLES = {
   'crm.event_type': { from: 'crove_crm.event_type', omit: [] },
   // Visitors' bookings (#1318); the request token's hash is the visitor's credential and stays out.
   'crm.booking': { from: 'crove_crm.booking', omit: ['request_token_sha256'] },
+  // Ads (#2217, ADR-0040): the org's ad accounts, the daily figures their platforms reported and the sync runs. They hold
+  // no credential (that is crove_kernel.credential, which no export reads) and no personal data.
+  'ads.ad_account': { from: 'crove_ads.ad_account', omit: [] },
+  'ads.ad_spend_day': { from: 'crove_ads.ad_spend_day', omit: [] },
+  'ads.ad_sync_run': { from: 'crove_ads.ad_sync_run', omit: [] },
   // Notes (#1671, ADR-0037 §6): the shared notes and their links, which the system context's row policies let the
   // snapshot read, without their folded search words; private notes stay out, and private_count records how many
   // each author had (crove_notes.private_counts(), a definer that answers counts only).

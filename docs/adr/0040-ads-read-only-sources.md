@@ -1,6 +1,6 @@
 # 0040. Ads: read-only ad platform sources in a module of their own, on the channel layer
 
-- Status: Proposed (2026-11-01). Nothing here is built. The first slice and the open points are **owner** decisions ([ads plan](../plan/ads.md), section 12).
+- Status: Accepted (owner, 2026-11-01, answers to Q1 to Q6 of the [ads plan](../plan/ads.md#12-questions-for-joy), comments on [#2214](https://github.com/DOS/Ludy/issues/2214)). Proposed 2026-11-01. The first slice is built in #2217.
 - Date: 2026-11-01
 - Deciders: owner (JOY), on the Marketing PO's recommendation
 - Builds on:

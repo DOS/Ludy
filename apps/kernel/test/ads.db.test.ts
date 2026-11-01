@@ -1,0 +1,560 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Ads on PostgreSQL 17 (issue #2217, ADR-0040, plan docs/plan/ads.md): an owner connects a sandbox ad account through the
+// API, the worker's sync reads it with the credential the API sealed and stores the figures in the account's own currency
+// and time zone, a day inside the revision window is rewritten in place and a final day is never read again, the summary
+// adds them up in decimal, the roles, the org and the legal-entity scope are checked, a failed sync and a rate limit are
+// recorded, and nothing of the credential reaches an answer, an audit row or an event. The pure rules are unit-tested in
+// modules/ads/test/domain.test.ts and the adapter in packages/ad-platform/test/sandbox.test.ts.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+import { randomBytes, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { SignJWT } from 'jose';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AdPlatformError, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { createDb, createPool, type Db } from '@crove/db';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { kernelCommands, kernelQueries } from '@crove/kernel';
+import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
+import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
+import { createAuthenticator } from '../src/auth.ts';
+import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
+import { loadConfig } from '../src/config.ts';
+import { createHttpApp } from '../src/http.ts';
+import { createSessionStatusSource } from '../src/sessions.ts';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const SECRET = 'test-only-jwt-secret-for-ads-0123456789-abcdefghij';
+const ISSUER = 'crove-auth';
+
+class MemoryStore implements BlobStore {
+  private readonly blobs = new Map<string, Uint8Array>();
+  async put(key: string, bytes: Uint8Array) {
+    this.blobs.set(key, bytes);
+    return `content:${sha256Hex(bytes)}`;
+  }
+  async get(key: string) {
+    const b = this.blobs.get(key);
+    if (!b) throw new Error('missing blob');
+    return b;
+  }
+  async delete(key: string) {
+    this.blobs.delete(key);
+  }
+}
+
+interface Account {
+  subject: string;
+  email: string;
+  session: string;
+  userId: string;
+}
+
+const suite = ADMIN ? describe : describe.skip;
+const SYSTEM = { type: 'system' as const, component: 'ads' };
+const DAY_MS = 86_400_000;
+
+suite('ads on PostgreSQL (#2217)', () => {
+  const dbName = `crove_test_ads_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  const workerPools: pg.Pool[] = [];
+  let app: ReturnType<typeof createHttpApp>;
+  let api: Runtime;
+  let worker: Runtime;
+  let workerDb: Db;
+  let vault: CredentialVault;
+  const sandbox = adPlatforms({ sandbox: true });
+  const owner: Account = { subject: randomUUID(), email: 'owner@ads.test', session: randomUUID(), userId: '' };
+  const member: Account = { subject: randomUUID(), email: 'member@ads.test', session: randomUUID(), userId: '' };
+  const viewer: Account = { subject: randomUUID(), email: 'viewer@ads.test', session: randomUUID(), userId: '' };
+  const accountant: Account = { subject: randomUUID(), email: 'accountant@ads.test', session: randomUUID(), userId: '' };
+  const outsider: Account = { subject: randomUUID(), email: 'outsider@ads.test', session: randomUUID(), userId: '' };
+  let slug = '';
+  let orgId = '';
+  let otherSlug = '';
+  let otherOrgId = '';
+  let branch = '';
+  // The accounts made for the tests, by name.
+  const accounts = new Map<string, { connectionId: string; adAccountId: string }>();
+
+  async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return await fn(client);
+    } finally {
+      await client.end();
+    }
+  }
+
+  async function tokenFor(who: Account, options: { mfa?: boolean } = {}) {
+    const now = Math.floor(Date.now() / 1000);
+    const mfa = options.mfa ? { aal: 'aal2', amr: [{ method: 'totp', timestamp: now }] } : {};
+    return new SignJWT({ role: 'authenticated', email: who.email, session_id: who.session, aal: 'aal1', is_anonymous: false, ...mfa })
+      .setProtectedHeader({ alg: 'HS256' })
+      .setSubject(who.subject)
+      .setIssuer(ISSUER)
+      .setAudience('authenticated')
+      .setIssuedAt()
+      .setExpirationTime('15m')
+      .sign(new TextEncoder().encode(SECRET));
+  }
+
+  async function rpc(path: string, token: string, input: unknown, org: string | null = slug) {
+    const response = await app.request(`/api/rpc/${path}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', ...(org ? { 'x-crove-org': org } : {}) },
+      body: JSON.stringify(input === undefined ? {} : { json: input }),
+    });
+    const body = (await response.json().catch(() => null)) as ({ json?: unknown } & Record<string, unknown>) | null;
+    return { status: response.status, body: (body && 'json' in body ? body.json : body) as any };
+  }
+
+  const ok = async (path: string, who: Account, input: unknown, org: string | null = slug) => {
+    const r = await rpc(path, await tokenFor(who), input, org);
+    expect(r.status, `${path}: ${JSON.stringify(r.body)}`).toBe(200);
+    return r.body;
+  };
+
+  // Connects a sandbox ad account through the API (the secret is sealed there) and runs its first sync as the worker.
+  async function connect(name: string, options: { currency?: 'VND' | 'USD'; legalEntityId?: string } = {}) {
+    const made = (await ok('ads/connectSandbox', owner, { displayName: name, idempotencyKey: randomUUID(), ...options })) as { connectionId: string; adAccountId: string };
+    accounts.set(name, made);
+    return made;
+  }
+
+  const sync = (connectionId: string, platforms: Readonly<Record<string, AdPlatform>> = sandbox, org = orgId) =>
+    runAdsSync({ runtime: worker, broker: vault, platforms }, { orgId: org, connectionId });
+  // The owner as the API's runtime sees a signed-in person: with the session the token carries.
+  const asOwner = () => ({ type: 'user' as const, userId: owner.userId, aal: 'aal1' as const, sessionId: owner.session });
+  const row = async <T extends pg.QueryResultRow>(sql: string, params: unknown[] = []) => admin(async (c) => (await c.query<T>(sql, params)).rows);
+  const view = async (who: Account, id: string): Promise<AdAccountView | undefined> => ((await ok('ads/accounts', who, undefined)) as AdAccountView[]).find((a) => a.id === id);
+
+  beforeAll(async () => {
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const appUrl = new URL(adminUrl);
+    appUrl.username = 'crove_app';
+    appUrl.password = 'test-app-pw';
+    pool = createPool({ connectionString: appUrl.toString(), max: 4 });
+    const db: Db = createDb(pool);
+    const registered = { commands: [...kernelCommands, ...adsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...adsQueries] };
+    api = new Runtime(db, { manifests: TEST_MANIFESTS, sessions: createSessionStatusSource('off'), stepUp: 'required' }).register(registered);
+    vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
+    const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
+    app = createHttpApp({
+      config,
+      runtime: api,
+      store: new MemoryStore(),
+      authenticate: createAuthenticator(config, db),
+      pool,
+      aiEnabled: false,
+      channels: { broker: vault, sandbox: true, adsPlatforms: sandbox },
+    });
+    const workerUrl = new URL(adminUrl);
+    workerUrl.username = 'crove_worker';
+    workerUrl.password = 'test-worker-pw';
+    const workerPool = createPool({ connectionString: workerUrl.toString(), max: 2 });
+    workerPools.push(workerPool);
+    workerDb = createDb(workerPool);
+    worker = new Runtime(workerDb, { manifests: TEST_MANIFESTS }).register(registered);
+
+    for (const who of [owner, member, viewer, accountant, outsider]) {
+      const me = await rpc('me/get', await tokenFor(who), undefined, null);
+      expect(me.status).toBe(200);
+      who.userId = String(me.body?.userId);
+    }
+    const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Quảng cáo', idempotencyKey: randomUUID() }, null);
+    slug = String(created.body?.slug);
+    orgId = String(created.body?.orgId);
+    for (const [who, role] of [
+      [member, 'member'],
+      [viewer, 'viewer'],
+      [accountant, 'member'],
+    ] as const) {
+      const invite = await rpc('org/invite', await tokenFor(owner, { mfa: true }), { email: who.email, role });
+      expect(invite.status).toBe(200);
+      expect((await rpc('invites/accept', await tokenFor(who), { token: String(invite.body?.acceptPath).split('#')[1] }, null)).status).toBe(200);
+    }
+    const other = await rpc('org/create', await tokenFor(outsider), { name: 'Công ty khác', idempotencyKey: randomUUID() }, null);
+    otherSlug = String(other.body?.slug);
+    otherOrgId = String(other.body?.orgId);
+    // A branch, and a member limited to it (an external accountant of the branch only).
+    branch = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.legal_entity (org_id, id, name, kind, created_by) VALUES ($1, $2, 'Chi nhánh quảng cáo', 'branch', $3)`, [orgId, branch, owner.userId]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, $3, 'external_accountant', $4, $5)`, [
+        orgId,
+        randomUUID(),
+        accountant.userId,
+        branch,
+        owner.userId,
+      ]);
+    });
+  }, 300_000);
+
+  afterAll(async () => {
+    for (const p of workerPools) await p.end();
+    await pool?.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  it('links a connected sandbox account for an owner, seals its secret, and leaves it out of the Social channels', async () => {
+    const made = await connect('Quảng cáo chính');
+    const account = await view(owner, made.adAccountId);
+    expect(account).toMatchObject({
+      id: made.adAccountId,
+      connectionId: made.connectionId,
+      connectionStatus: 'active',
+      provider: 'sandbox_ads',
+      name: 'Quảng cáo chính',
+      currency: null,
+      timeZone: null,
+      expenseAccountCode: null,
+      resultKind: null,
+      resultKinds: ['purchase', 'lead'],
+      settledThrough: null,
+      syncedThrough: null,
+    });
+    // 13 months of history, as the owner agreed (#2214 Q4).
+    const today = todayIn('UTC', new Date());
+    expect((account?.backfillFrom as string) <= today).toBe(true);
+    expect(Date.parse(today) - Date.parse(account?.backfillFrom as string)).toBeGreaterThan(395 * DAY_MS);
+    // Sealed: a credential row, and no token anywhere an answer or a trail could carry it.
+    const sealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2`, [orgId, made.connectionId]);
+    expect(sealed[0]?.n).toBe('1');
+    const leaks = await row<{ n: string }>(
+      `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbx_%')
+            + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%sbx_%') AS n`,
+      [orgId],
+    );
+    expect(Number(leaks[0]?.n)).toBe(0);
+    // The Social channel list does not show an ad account's connection.
+    const channels = (await ok('channels/list', owner, {})) as Array<{ provider: string }>;
+    expect(channels.map((c) => c.provider)).not.toContain('sandbox_ads');
+    // Linking it again is the same account.
+    const again = await api.execute<{ adAccountId: string; linked: boolean }>('ads.account.link', { connectionId: made.connectionId }, { actor: asOwner(), orgId });
+    expect(again).toEqual({ adAccountId: made.adAccountId, linked: false });
+  });
+
+  it('refuses a member, a viewer and another org the connection, and a connection that is not an ad account', async () => {
+    for (const who of [member, viewer]) {
+      const r = await rpc('ads/connectSandbox', await tokenFor(who), { displayName: 'Thử', idempotencyKey: randomUUID() });
+      expect(r.status, who.email).toBe(403);
+    }
+    const r = await rpc('ads/connectSandbox', await tokenFor(outsider), { displayName: 'Thử', idempotencyKey: randomUUID() }, otherSlug);
+    // The outsider owns another org and may connect there; what they cannot do is reach this org's accounts.
+    expect(r.status).toBe(200);
+    const mine = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).map((a) => a.name);
+    expect(mine).not.toContain('Thử');
+    const stranger = await rpc('ads/accounts', await tokenFor(outsider), undefined, slug);
+    expect(stranger.status).toBeGreaterThanOrEqual(400);
+    // A Social channel is not an ad account.
+    const conn = await rpc('channels/connectSandbox', await tokenFor(owner), { displayName: 'Kênh', key: randomUUID() });
+    expect(conn.status).toBe(200);
+    await expect(
+      api.execute('ads.account.link', { connectionId: String(conn.body?.connectionId) }, { actor: asOwner(), orgId }),
+    ).rejects.toMatchObject({ code: 'ADS_CONNECTION_NOT_FOUND' });
+  });
+
+  it("reads the credential in the worker and stores 13 months of the account's days in its own currency and time zone", async () => {
+    const { connectionId, adAccountId } = await connect('Đồng');
+    const done = await sync(connectionId);
+    expect(done.rows).toBeGreaterThan(1000);
+    expect(done.slices).toBeGreaterThanOrEqual(13);
+    const account = await view(owner, adAccountId);
+    expect(account).toMatchObject({ currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh', name: 'Đồng', lastErrorKind: null, nextRunAt: null });
+    const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+    expect(account?.syncedThrough).toBe(today);
+    // Days before today less the three-day revision window are final.
+    expect(account?.settledThrough).toBe(new Date(Date.parse(today) - 4 * DAY_MS).toISOString().slice(0, 10));
+    const days = await row<{ day: string; currency: string; level: string; settled: boolean }>(
+      `SELECT day::text, currency, level, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      [orgId, adAccountId],
+    );
+    expect(days.length).toBeGreaterThan(300);
+    expect(days.every((d) => d.currency === 'VND')).toBe(true);
+    expect((days[0]?.day as string) >= (account?.backfillFrom as string)).toBe(true);
+    expect((days.at(-1)?.day as string) <= today).toBe(true);
+    for (const d of days) expect(d.settled, d.day).toBe(d.day <= (account?.settledThrough as string));
+    const runs = (await ok('ads/syncRuns', owner, { adAccountId })) as AdsSyncRunView[];
+    expect(runs.length).toBeGreaterThanOrEqual(13);
+    expect(runs.every((r) => r.status === 'ok')).toBe(true);
+  });
+
+  it('rewrites a day inside the revision window in place, and never reads a final day again', async () => {
+    const { connectionId, adAccountId } = await connect('Đọc lại');
+    await sync(connectionId);
+    const before = await row<{ id: string; day: string; spend: string; fetched_at: Date; settled: boolean }>(
+      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      [orgId, adAccountId],
+    );
+    // A second sync asks the platform for the unsettled days only.
+    const ranges: Array<{ from: string; to: string }> = [];
+    const spy: Readonly<Record<string, AdPlatform>> = {
+      sandbox_ads: {
+        ...(sandbox.sandbox_ads as AdPlatform),
+        readDaily: (secret, id, range) => {
+          ranges.push(range);
+          return (sandbox.sandbox_ads as AdPlatform).readDaily(secret, id, range);
+        },
+      },
+    };
+    const target = await row<{ settled_through: string }>(`SELECT settled_through::text FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+    await sync(connectionId, spy);
+    const settledThrough = target[0]?.settled_through as string;
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0]?.from).toBe(new Date(Date.parse(settledThrough) + DAY_MS).toISOString().slice(0, 10));
+    const after = await row<{ id: string; day: string; spend: string; fetched_at: Date; settled: boolean }>(
+      `SELECT id, day::text, spend::text, fetched_at, settled_at IS NOT NULL AS settled FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' ORDER BY day`,
+      [orgId, adAccountId],
+    );
+    expect(after.map((r) => r.day)).toEqual(before.map((r) => r.day));
+    // The same rows (in place), final days untouched, the others read again.
+    expect(after.map((r) => r.id)).toEqual(before.map((r) => r.id));
+    for (const [i, r] of after.entries()) {
+      const was = before[i] as (typeof before)[number];
+      if (r.day <= settledThrough) expect(r.fetched_at.getTime(), r.day).toBe(was.fetched_at.getTime());
+      else expect(r.fetched_at.getTime(), r.day).toBeGreaterThan(was.fetched_at.getTime());
+    }
+  });
+
+  it('removes a day of the window the platform no longer reports, and keeps a final one', async () => {
+    const { connectionId, adAccountId } = await connect('Bớt ngày');
+    await sync(connectionId);
+    const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+    const unsettled = new Date(Date.parse(today) - DAY_MS).toISOString().slice(0, 10);
+    const count = async (day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
+    expect(await count(unsettled)).toBeGreaterThan(0);
+    const silent: Readonly<Record<string, AdPlatform>> = { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => [] } };
+    await sync(connectionId, silent);
+    expect(await count(unsettled)).toBe(0);
+    // A final day is never in the window, so an empty answer leaves it.
+    const final = (await row<{ day: string }>(`SELECT day::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND settled_at IS NOT NULL LIMIT 1`, [orgId, adAccountId]))[0]?.day as string;
+    expect(await count(final)).toBeGreaterThan(0);
+  });
+
+  it('adds the days up in decimal, by month and campaign, and works the cost per result from the chosen action', async () => {
+    const { connectionId, adAccountId } = await connect('Tổng hợp');
+    await sync(connectionId);
+    const from = new Date(Date.now() - 60 * DAY_MS).toISOString().slice(0, 10);
+    const to = todayIn('Asia/Ho_Chi_Minh', new Date());
+    // No result chosen: no results and no cost per result.
+    const plain = (await ok('ads/summary', member, { adAccountId, from, to })) as AdsSummary;
+    expect(plain).toMatchObject({ currency: 'VND', resultKind: null, total: { results: null, costPerResult: null } });
+    // The owner chooses purchases.
+    await ok('ads/configure', owner, { adAccountId, resultKind: 'purchase', expenseAccountCode: '6421', idempotencyKey: randomUUID() });
+    const summary = (await ok('ads/summary', viewer, { adAccountId, from, to })) as AdsSummary;
+    expect(summary.resultKind).toBe('purchase');
+    const sums = await row<{ spend: string; impressions: string; clicks: string; purchases: string }>(
+      `SELECT sum(spend)::text AS spend, sum(impressions)::text AS impressions, sum(clicks)::text AS clicks, sum((results ->> 'purchase')::numeric)::text AS purchases
+       FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day BETWEEN $3 AND $4`,
+      [orgId, adAccountId, from, to],
+    );
+    expect(summary.total.spend).toBe(sums[0]?.spend);
+    expect(summary.total.impressions).toBe(Number(sums[0]?.impressions));
+    expect(summary.total.clicks).toBe(Number(sums[0]?.clicks));
+    expect(summary.total.results).toBe(sums[0]?.purchases);
+    expect(Number(summary.total.costPerResult)).toBeCloseTo(Number(sums[0]?.spend) / Number(sums[0]?.purchases), 0);
+    // Months add up to the total, campaigns to the total too (the account row is their sum), and days to the total.
+    const spendOf = (items: Array<{ spend: string }>) => items.reduce((n, i) => n + Number(i.spend), 0);
+    expect(spendOf(summary.months)).toBe(Number(summary.total.spend));
+    expect(spendOf(summary.campaigns)).toBe(Number(summary.total.spend));
+    expect(spendOf(summary.days)).toBe(Number(summary.total.spend));
+    expect(summary.campaigns.map((c) => c.name).sort()).toEqual(['Khuyến mãi mùa hè', 'Nhận diện thương hiệu', 'Tin nhắn Messenger']);
+    // Largest spend first.
+    expect(summary.campaigns.map((c) => Number(c.spend))).toEqual(summary.campaigns.map((c) => Number(c.spend)).sort((a, b) => b - a));
+    expect(summary.days.some((d) => d.settled) && summary.days.some((d) => !d.settled)).toBe(true);
+    expect(summary.days.every((d) => d.reach === null || Number.isInteger(d.reach))).toBe(true);
+    // An account's range is bounded, and an unknown account is not found.
+    expect((await rpc('ads/summary', await tokenFor(owner), { adAccountId, from: '2024-01-01', to })).status).toBe(422);
+    expect((await rpc('ads/summary', await tokenFor(owner), { adAccountId: randomUUID(), from, to })).status).toBe(404);
+  });
+
+  it('keeps dollars to the cent and never converts them', async () => {
+    const { connectionId, adAccountId } = await connect('Đô la', { currency: 'USD' });
+    await sync(connectionId);
+    expect(await view(owner, adAccountId)).toMatchObject({ currency: 'USD', timeZone: 'America/Los_Angeles' });
+    await ok('ads/configure', owner, { adAccountId, resultKind: 'lead', idempotencyKey: randomUUID() });
+    const summary = (await ok('ads/summary', owner, { adAccountId, from: new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10), to: todayIn('America/Los_Angeles', new Date()) })) as AdsSummary;
+    expect(summary.currency).toBe('USD');
+    expect(summary.total.spend).toMatch(/^\d+\.\d{2}$/);
+    expect(summary.total.costPerResult).toMatch(/^\d+\.\d{2}$/);
+    expect(summary.months.every((m) => /^\d+\.\d{2}$/.test(m.spend))).toBe(true);
+  });
+
+  it('lets owners and admins configure, members refresh at most once a minute, and nobody else do either', async () => {
+    const { adAccountId } = accounts.get('Tổng hợp') as { adAccountId: string };
+    for (const who of [member, viewer]) {
+      expect((await rpc('ads/configure', await tokenFor(who), { adAccountId, resultKind: 'lead', idempotencyKey: randomUUID() })).status, who.email).toBe(403);
+    }
+    expect((await rpc('ads/requestSync', await tokenFor(viewer), { adAccountId, idempotencyKey: randomUUID() })).status).toBe(403);
+    await ok('ads/requestSync', member, { adAccountId, idempotencyKey: randomUUID() });
+    const second = await rpc('ads/requestSync', await tokenFor(owner), { adAccountId, idempotencyKey: randomUUID() });
+    expect(second.status).toBe(429);
+    expect(second.body?.code).toBe('ADS_SYNC_TOO_SOON');
+    // The asked-for refresh is an event for the worker, naming the connection and not a credential.
+    const events = await row<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.sync.requested'`, [orgId]);
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect(Object.keys(events[0]?.payload as object).sort()).toEqual(['ad_account_id', 'connection_id']);
+    // A bad expense account code is refused before the database.
+    expect((await rpc('ads/configure', await tokenFor(owner), { adAccountId, expenseAccountCode: 'abc', idempotencyKey: randomUUID() })).status).toBe(400);
+    await ok('ads/configure', owner, { adAccountId, expenseAccountCode: null, idempotencyKey: randomUUID() });
+    expect((await view(owner, adAccountId))?.expenseAccountCode).toBeNull();
+  });
+
+  it('reads an account in the entity the caller reads, and no other', async () => {
+    const own = await connect('Chi nhánh', { legalEntityId: branch });
+    const main = accounts.get('Đồng') as { adAccountId: string };
+    expect((await view(owner, own.adAccountId))?.legalEntityId).toBe(branch);
+    // The accountant limited to the branch sees the branch account and not the head office's.
+    const seen = ((await ok('ads/accounts', accountant, undefined)) as AdAccountView[]).map((a) => a.id);
+    expect(seen).toEqual([own.adAccountId]);
+    const from = new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10);
+    expect((await rpc('ads/summary', await tokenFor(accountant), { adAccountId: main.adAccountId, from, to: from })).status).toBe(404);
+    // Nor may they link or configure into an entity outside their scope.
+    expect((await rpc('ads/configure', await tokenFor(accountant), { adAccountId: own.adAccountId, resultKind: 'lead', idempotencyKey: randomUUID() })).status).toBe(403);
+    // Moving an account to another entity moves its history with it.
+    await sync(own.connectionId);
+    const entities = async (account: string) =>
+      row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, account, branch]);
+    expect(Number((await entities(own.adAccountId))[0]?.n)).toBeGreaterThan(0);
+    const defaultEntity = (await row<{ id: string }>(`SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [orgId]))[0]?.id as string;
+    await ok('ads/configure', owner, { adAccountId: own.adAccountId, legalEntityId: defaultEntity, idempotencyKey: randomUUID() });
+    expect(Number((await entities(own.adAccountId))[0]?.n)).toBe(0);
+    const moved = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND legal_entity_id = $3`, [orgId, own.adAccountId, defaultEntity]);
+    expect(Number(moved[0]?.n)).toBeGreaterThan(0);
+    expect(((await ok('ads/accounts', accountant, undefined)) as AdAccountView[])).toEqual([]);
+  });
+
+  it('records a failed sync, holds the next one back after a rate limit, and expires a connection the platform refused', async () => {
+    const { connectionId, adAccountId } = await connect('Hay lỗi');
+    const failing = (error: AdPlatformError): Readonly<Record<string, AdPlatform>> => ({
+      sandbox_ads: {
+        ...(sandbox.sandbox_ads as AdPlatform),
+        readDaily: async () => {
+          throw error;
+        },
+      },
+    });
+    const retryAt = new Date(Date.now() + 2 * 3_600_000);
+    await sync(connectionId, failing(new AdPlatformError('rate_limited', '80000', retryAt)));
+    let account = await view(owner, adAccountId);
+    expect(account?.lastErrorKind).toBe('rate_limited');
+    expect(Math.abs(Date.parse(account?.nextRunAt as string) - retryAt.getTime())).toBeLessThan(1000);
+    // The hourly sweep leaves it alone until then.
+    const due = await adsDue(workerDb, null);
+    expect(due.some((d) => d.connectionId === connectionId)).toBe(false);
+    const runs = (await ok('ads/syncRuns', owner, { adAccountId })) as AdsSyncRunView[];
+    expect(runs[0]).toMatchObject({ status: 'failed', errorKind: 'rate_limited', errorCode: '80000' });
+    // A passing failure is left to the job's retry (it throws), and is recorded too.
+    await expect(sync(connectionId, failing(new AdPlatformError('transient', '2')))).rejects.toBeInstanceOf(AdPlatformError);
+    account = await view(owner, adAccountId);
+    expect(account?.lastErrorKind).toBe('transient');
+    expect(account?.nextRunAt).toBeNull();
+    expect(due.every((d) => d.provider === 'sandbox_ads')).toBe(true);
+    // A refused token ends the connection: expired until an owner reconnects it, and no longer swept.
+    await sync(connectionId, failing(new AdPlatformError('token_expired', '190')));
+    account = await view(owner, adAccountId);
+    expect(account).toMatchObject({ connectionStatus: 'expired', lastErrorKind: 'token_expired' });
+    expect((await adsDue(workerDb, null)).some((d) => d.connectionId === connectionId)).toBe(false);
+    // The expired account is not refreshed on request.
+    const refused = await rpc('ads/requestSync', await tokenFor(owner), { adAccountId, idempotencyKey: randomUUID() });
+    expect(refused.status).toBe(422);
+    // Whatever an unclassified error carried, only a fixed code is kept.
+    const other = await connect('Lỗi lạ');
+    await expect(sync(other.connectionId, { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => { throw new Error('boom sbx_secret'); } } })).rejects.toThrow('boom');
+    const failed = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, other.adAccountId]);
+    expect(failed).toEqual([{ error_code: 'ADAPTER_ERROR' }]);
+  });
+
+  it('keeps the history of an account connected again after a disconnect, on the same row', async () => {
+    const { connectionId, adAccountId } = await connect('Nối lại');
+    await sync(connectionId);
+    const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
+    expect((await rpc('channels/disconnect', await tokenFor(owner), { connectionId, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect(await view(owner, adAccountId)).toMatchObject({ connectionStatus: 'revoked' });
+    // A revoked connection is not synced, and the sweep skips it.
+    expect(await sync(connectionId)).toEqual({ rows: 0, slices: 0 });
+    expect((await adsDue(workerDb, null)).some((d) => d.connectionId === connectionId)).toBe(false);
+    // The same platform account connected again: a new connection takes over the row and its history. The sandbox makes
+    // a fresh account each time, so this is done with the same account id by sealing its secret again.
+    const secret = (await row<{ id: string }>(`SELECT external_account_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id as string;
+    const login = JSON.stringify({ accessToken: `sbx_${'a'.repeat(43)}`, currency: 'VND' });
+    const sealed = vault.seal(login, { orgId, provider: 'sandbox_ads', externalAccountId: secret });
+    const reconnected = await api.execute<{ connectionId: string }>(
+      'kernel.channel.connect',
+      { provider: 'sandbox_ads', externalAccountId: secret, displayName: 'Nối lại', scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      { actor: asOwner(), orgId },
+    );
+    expect(reconnected.connectionId).not.toBe(connectionId);
+    const linked = await api.execute<{ adAccountId: string; linked: boolean }>('ads.account.link', { connectionId: reconnected.connectionId }, { actor: asOwner(), orgId });
+    expect(linked).toEqual({ adAccountId, linked: false });
+    expect(await view(owner, adAccountId)).toMatchObject({ connectionId: reconnected.connectionId, connectionStatus: 'active' });
+    const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, adAccountId]);
+    expect(after[0]?.n).toBe(before[0]?.n);
+  });
+
+  it('checks what a platform hands the record command, and lets only the system run it', async () => {
+    const { adAccountId } = accounts.get('Đồng') as { adAccountId: string };
+    const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+    const details = { currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh' };
+    const base = { externalObjectId: 'c1', objectName: 'x', spend: '1000', impressions: 1, clicks: 1, reach: null, results: {} };
+    const record = (input: Record<string, unknown>) => worker.execute('ads.sync.record', { adAccountId, details, window: { from: today, to: today }, settleBefore: null, rows: [], ...input }, { actor: SYSTEM, orgId });
+    await expect(record({ rows: [{ level: 'campaign', day: today, ...base }, { level: 'campaign', day: today, ...base }] })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    const yesterday = new Date(Date.parse(today) - DAY_MS).toISOString().slice(0, 10);
+    await expect(record({ rows: [{ level: 'campaign', day: yesterday, ...base }] })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    await expect(record({ window: { from: today, to: new Date(Date.parse(today) + 2 * DAY_MS).toISOString().slice(0, 10) } })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    await expect(record({ settleBefore: new Date(Date.parse(today) + 5 * DAY_MS).toISOString().slice(0, 10) })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    await expect(record({ details: { ...details, currency: 'USD' } })).rejects.toMatchObject({ code: 'ADS_CURRENCY_CHANGED' });
+    await expect(record({ window: { from: '2020-01-01', to: today } })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    await expect(record({ rows: [{ level: 'campaign', day: today, ...base, spend: '-1' }] })).rejects.toMatchObject({ status: 422 });
+    await expect(record({ rows: [{ level: 'campaign', day: today, ...base, spend: '1e3' }] })).rejects.toMatchObject({ status: 422 });
+    await expect(record({ rows: [{ level: 'campaign', day: today, ...base, impressions: 1.5 }] })).rejects.toMatchObject({ status: 422 });
+    // A person cannot run it, whatever their role.
+    await expect(api.execute('ads.sync.record', { adAccountId, details, window: { from: today, to: today }, settleBefore: null, rows: [] }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });
+    await expect(api.execute('ads.sync.record_failure', { adAccountId, errorKind: 'unknown' }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });
+    // And not on another org's account.
+    await expect(worker.execute('ads.sync.record', { adAccountId, details, window: { from: today, to: today }, settleBefore: null, rows: [] }, { actor: SYSTEM, orgId: otherOrgId })).rejects.toMatchObject({ code: 'ADS_ACCOUNT_NOT_FOUND' });
+  });
+
+  it('lists the due accounts and prunes old runs for the worker login alone', async () => {
+    const due = await adsDue(workerDb, null);
+    expect(due.length).toBeGreaterThan(0);
+    expect(due.every((d) => d.provider === 'sandbox_ads')).toBe(true);
+    // In key order, paged by key.
+    const keys = due.map((d) => `${d.orgId}:${d.connectionId}`);
+    expect(keys).toEqual([...keys].sort());
+    expect(await adsDue(workerDb, { orgId: due.at(-1)?.orgId as string, connectionId: due.at(-1)?.connectionId as string })).toEqual([]);
+    // Runs older than 90 days go, newer ones stay.
+    const { adAccountId } = accounts.get('Đồng') as { adAccountId: string };
+    const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.legal_entity_id as string;
+    await row(`INSERT INTO crove_ads.ad_sync_run (org_id, ad_account_id, legal_entity_id, status, started_at) VALUES ($1, $2, $3, 'ok', now() - interval '120 days')`, [orgId, adAccountId, entity]);
+    const total = async () => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_sync_run WHERE org_id = $1`, [orgId]))[0]?.n);
+    const before = await total();
+    expect(await pruneAdsRuns(workerDb, new Date())).toBeGreaterThanOrEqual(1);
+    expect(await total()).toBeLessThan(before);
+    const appClient = await pool.connect();
+    try {
+      await expect(appClient.query(`SELECT crove_ads.sync_runs_prune(now())`)).rejects.toMatchObject({ code: '42501' });
+      await expect(appClient.query(`SELECT * FROM crove_ads.ads_due(NULL, NULL, 10)`)).rejects.toMatchObject({ code: '42501' });
+    } finally {
+      appClient.release();
+    }
+  });
+});

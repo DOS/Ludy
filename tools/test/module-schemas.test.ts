@@ -69,16 +69,17 @@ describe('no cross-module SQL (plan §5.4)', () => {
 const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps/kernel/src', 'packages/db/src'];
 // The kernel source files that name a module's schema, with the modules they name and why.
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
-  'packages/db/src/generated/database.ts': { modules: ['crm', 'finance', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
-  'packages/db/src/schema.ts': { modules: ['crm', 'finance', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
+  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/offboarding.ts': {
-    modules: ['crm', 'finance', 'notes', 'social'],
+    modules: ['ads', 'crm', 'finance', 'notes', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
   },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'notes', 'social'],
     why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678)',
   },
+  'apps/kernel/src/ads-sync.ts': { modules: ['ads'], why: 'the ad account sync, its hourly sweep and the prune of old runs, worked and scheduled only when ads is installed (worker.ts)' },
   'apps/kernel/src/bank-feed-webhook.ts': { modules: ['finance'], why: 'the bank feed notice route queues the account ids through a finance definer, mounted only when finance is installed (http.ts)' },
   'apps/kernel/src/bank-feed-sync.ts': { modules: ['finance'], why: 'the bank feed sync and its daily sweep, worked and scheduled only when finance is installed (worker.ts)' },
   'apps/kernel/src/bio-page.ts': { modules: ['social'], why: 'public bio page routes, registered only when social is installed (http.ts)' },

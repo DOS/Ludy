@@ -19,7 +19,7 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'crm', 'notes'] as const;
+export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes'] as const;
 export type ModuleId = (typeof AVAILABLE_MODULES)[number];
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
@@ -278,6 +278,10 @@ const schema = z.object({
   // The secret the sandbox bank feed's signed notices are checked with (POST /api/bank-feed/bank_sandbox/webhook); unset:
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
+  // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
+  // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
+  // reach no books: the ads screen only shows them beside the ledger's total.
+  ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
   // Bluesky (S9): accounts connect with an app password, no app of the deployment's own is needed. On unless false.
   CHANNEL_BLUESKY: z.enum(['true', 'false']).default('true'),
   // Telegram channels (#747): a bot the shop makes with @BotFather posts to its channel; no app of the deployment's own is

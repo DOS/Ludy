@@ -171,7 +171,14 @@ describe('module screens against the router (#1652)', () => {
           ['parties', ['/o/$slug/customers', '/o/$slug/vendors']],
         ],
       ],
-      ['social', [['social', ['/o/$slug/social', '/o/$slug/social/notifications']]]],
+      // Ads is a group of the Social app (ads plan section 2), after the posting group.
+      [
+        'social',
+        [
+          ['social', ['/o/$slug/social', '/o/$slug/social/notifications']],
+          ['ads', ['/o/$slug/ads']],
+        ],
+      ],
       ['crm', [['crm', ['/o/$slug/bookings', '/o/$slug/deals']]]],
     ]);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([
@@ -179,7 +186,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'bookings', 'deals', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'ads', 'bookings', 'deals', 'agents', 'settings',
     ]);
   });
 });
@@ -191,6 +198,7 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
   it('finds the module of every screen, a parameter matching any one segment', () => {
     for (const [module] of MODULES) for (const path of addresses(module as keyof typeof MODULE_SCREENS)) expect(moduleOfPath(path), path).toBe(module);
     expect(moduleOfPath('/o/acme/social/new')).toBe('social');
+    expect(moduleOfPath('/o/acme/ads')).toBe('ads');
     expect(moduleOfPath('/o/acme/journal/')).toBe('finance');
     // The router matches without regard to case or percent-encoding, so the guard does too.
     expect(moduleOfPath('/o/acme/JOURNAL')).toBe('finance');
@@ -208,6 +216,15 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     expect(appOfPath('/o/acme/guide')).toBe('accounting');
   });
 
+  it('shows Ads as a group of the Social app, alone in it where Social is off, and not at all where Ads is off', () => {
+    const groupsOf = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => g.id);
+    expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['social', 'ads']);
+    expect(groupsOf(['kernel', 'ads'])).toEqual(['ads']);
+    expect(groupsOf(['kernel', 'social'])).toEqual(['social']);
+    expect(groupsOf(['kernel'])).toBeUndefined();
+    expect(appOfPath('/o/acme/ads')).toBe('social');
+  });
+
   // Where the router lands after loading an address: a router of the app's own route tree on a memory history, so the
   // address goes through the router's matching (case, parameters) before the org route's guard sees it. isServer: the
   // tests run in Node, where the router would otherwise skip loading.
@@ -217,9 +234,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     return r.state.location.pathname;
   };
 
-  it('sends every screen of crm, social and notes to the inbox through the router, and opens the others', async () => {
+  it('sends every screen of crm, social, notes and ads to the inbox through the router, and opens the others', async () => {
     session.modules = ['kernel', 'finance'];
-    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes')]) {
+    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads')]) {
       expect(screenInstalled(session.modules, path), path).toBe(false);
       expect(await landing(path), path).toBe('/o/acme/inbox');
     }
@@ -228,7 +245,7 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/inbox');
     session.modules = ['kernel'];
     for (const path of [...addresses('finance'), '/o/acme/JOURNAL']) expect(await landing(path), path).toBe('/o/acme/inbox');
-    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes'];
+    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads'];
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
         expect(screenInstalled(session.modules, path), path).toBe(true);

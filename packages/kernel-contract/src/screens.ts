@@ -123,10 +123,19 @@ const NOTES_SCREENS = {
   ],
 } as const satisfies ModuleScreens;
 
+// Ads (#2217, ads plan docs/plan/ads.md section 2 "Where Ads sits in the app"): a group of the Social app on the rail, after its
+// posting group. Its module's own entry, so the group shows only where the deployment runs the module; with Social off the
+// app still shows, with this group alone.
+const ADS_SCREENS = {
+  routes: [{ path: 'ads' }],
+  nav: [{ app: 'social', group: 'ads', path: 'ads', label: 'ads' }],
+} as const satisfies ModuleScreens;
+
 export const MODULE_SCREENS = {
   kernel: KERNEL_SCREENS,
   finance: FINANCE_SCREENS,
   social: SOCIAL_SCREENS,
+  ads: ADS_SCREENS,
   crm: CRM_SCREENS,
   notes: NOTES_SCREENS,
 } as const;

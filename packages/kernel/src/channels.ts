@@ -350,7 +350,9 @@ export const channelsList = defineQuery({
       // Social and messaging channels only: a bank feed's connection (provider bank_..., ADR-0039) is the finance
       // module's, listed with its accounts by finance.bank_feed.accounts. Left out before the limit, so they never
       // crowd a channel out.
-      .where('provider', 'not like', 'bank\\_%');
+      .where('provider', 'not like', 'bank\\_%')
+      // Nor an ad account's (provider ..._ads, ADR-0040): the ads module lists it with its settings.
+      .where('provider', 'not like', '%\\_ads');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({

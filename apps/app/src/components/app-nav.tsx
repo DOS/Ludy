@@ -24,6 +24,11 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotificatio
 
 const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', crm: 'appCrm' };
 
+// A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
+// the banknote of the vouchers, money spent; the type fails to compile for a label that has neither.
+const OWN_ICON = { ads: 'vouchers' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
+
 export interface ShellNavProps {
   slug: string;
   // The installed apps (#1528) and the one whose menu shows: the app of the screen, or the last one used on the org's
@@ -86,7 +91,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                 className="flex min-h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-center text-[11px] leading-tight text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
                 activeProps={{ className: 'bg-primary/15 !text-foreground' }}
               >
-                <NavIcon name={item.label} className="size-5" />
+                <NavIcon name={menuIcon(item.label)} className="size-5" />
                 <span>{t(item.label)}</span>
               </Link>
             </li>
@@ -169,7 +174,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
                           className="flex min-h-11 items-center gap-2.5 rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground md:min-h-0 md:py-1"
                           activeProps={{ className: 'bg-primary/15 !text-foreground' }}
                         >
-                          <NavIcon name={item.label} />
+                          <NavIcon name={menuIcon(item.label)} />
                           <span className="min-w-0 flex-1 truncate">{t(IN_MENU_LABEL[item.label] ?? item.label)}</span>
                           {badge ? <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{badge}</span> : null}
                         </Link>

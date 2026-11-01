@@ -3,14 +3,20 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes that crove_tenant may read. */
-export type Database = CroveCrmSchema & CroveFinanceSchema & CroveKernelSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads that crove_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveKernelSchema & CroveNotesSchema & CroveSocialSchema;
 
 /**
  * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
  * Kysely leaves out of the statement, so a write of the column fails typecheck.
  */
 export type NotGranted = undefined;
+
+export interface CroveAdsSchema {
+  'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_spend_day': AdsAdSpendDayTable;
+  'crove_ads.ad_sync_run': AdsAdSyncRunTable;
+}
 
 export interface CroveCrmSchema {
   'crove_crm.booking': CrmBookingTable;
@@ -164,6 +170,68 @@ export interface CroveSocialSchema {
   'crove_social.short_link_click': SocialShortLinkClickTable;
   'crove_social.snippet': SocialSnippetTable;
   'crove_social.watermark': SocialWatermarkTable;
+}
+
+/** crove_ads.ad_account */
+export interface AdsAdAccountTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: string;
+  channel_connection_id: string;
+  provider: ColumnType<string, string, NotGranted>;
+  external_account_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  currency: string | null;
+  time_zone: string | null;
+  expense_account_code: string | null;
+  result_kind: string | null;
+  backfill_from: ColumnType<string, string, NotGranted>;
+  settled_through: string | null;
+  synced_through: string | null;
+  last_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_run_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_error_kind: string | null;
+  next_run_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_ads.ad_spend_day */
+export interface AdsAdSpendDayTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  level: ColumnType<string, string, NotGranted>;
+  external_object_id: ColumnType<string, string, NotGranted>;
+  object_name: Generated<string>;
+  day: ColumnType<string, string, NotGranted>;
+  currency: string;
+  spend: string;
+  impressions: string;
+  clicks: string;
+  reach: string | null;
+  results: ColumnType<unknown, string | undefined, string>;
+  fetched_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_ads.ad_sync_run */
+export interface AdsAdSyncRunTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  status: ColumnType<string, string, NotGranted>;
+  window_from: ColumnType<string | null, string | null, NotGranted>;
+  window_to: ColumnType<string | null, string | null, NotGranted>;
+  rows_written: ColumnType<number, number | undefined, NotGranted>;
+  error_kind: ColumnType<string | null, string | null, NotGranted>;
+  error_code: ColumnType<string | null, string | null, NotGranted>;
+  retry_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  started_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  finished_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_crm.booking_feed */
