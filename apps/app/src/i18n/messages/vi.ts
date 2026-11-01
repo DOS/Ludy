@@ -89,7 +89,7 @@ export const vi = {
     allClients: 'Tất cả doanh nghiệp',
     addOrg: '+ Thêm tổ chức',
     overview: 'Tổng quan',
-    inbox: 'Hộp thư chứng từ',
+    inbox: 'Chứng từ chờ duyệt',
     documents: 'Chứng từ',
     customers: 'Khách hàng',
     vendors: 'Nhà cung cấp',
@@ -168,10 +168,10 @@ export const vi = {
     waiting: {
       title: 'Đang chờ bạn',
       empty: 'Không có việc gì đang chờ bạn',
-      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán trong Hộp thư chứng từ và hiện ở đây khi cần bạn duyệt.',
-      proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Hộp thư' },
-      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở Hộp thư' },
-      failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Hộp thư' },
+      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán trong Chứng từ chờ duyệt và hiện ở đây khi cần bạn duyệt.',
+      proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
+      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở Chứng từ chờ duyệt' },
+      failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
       notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
       bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
@@ -216,7 +216,7 @@ export const vi = {
     login: 'Đăng nhập',
     signup: 'Tạo tài khoản',
     reset: 'Quên mật khẩu',
-    tagline: 'Hộp thư chứng từ: chuyển tiếp hóa đơn, trợ lý AI {assistant} đề xuất hạch toán, bạn duyệt.',
+    tagline: 'Chứng từ chờ duyệt: chuyển tiếp hóa đơn, trợ lý AI {assistant} đề xuất hạch toán, bạn duyệt.',
     email: 'Email',
     password: 'Mật khẩu',
     signupSent: 'Đã gửi email xác nhận. Mở liên kết trong thư trên trình duyệt này để vào {brand}.',
@@ -344,7 +344,7 @@ export const vi = {
       'Hóa đơn mua vào và bán ra đã được duyệt và ghi sổ. Chứng từ đã hủy là chứng từ có bút toán đã bị đảo: {brand} không còn tính nó, còn hóa đơn của người bán không thay đổi.',
     empty: 'Chưa có chứng từ nào được ghi sổ',
     foreign: '{total} theo tỷ giá {rate}',
-    emptyHint: 'Duyệt đề xuất trong Hộp thư chứng từ để ghi sổ.',
+    emptyHint: 'Duyệt các đề xuất ở màn Chứng từ chờ duyệt để ghi sổ.',
     search: 'Lọc theo số hóa đơn, đối tác hoặc ngày',
     noMatch: 'Không có chứng từ nào khớp với bộ lọc',
     columns: {
@@ -423,7 +423,7 @@ export const vi = {
     empty: 'Chưa có nhà cung cấp',
     emptyHint: 'Nhà cung cấp được tạo tự động theo mã số thuế khi hóa đơn mua vào đầu tiên của họ được duyệt.',
     noMatch: 'Không có nhà cung cấp nào khớp với từ tìm kiếm',
-    openInbox: 'Mở Hộp thư chứng từ',
+    openInbox: 'Mở Chứng từ chờ duyệt',
     columns: {
       name: 'Tên',
       taxCode: 'Mã số thuế',
@@ -1053,7 +1053,7 @@ export const vi = {
   bankAccountNumbers: {
     title: 'Số tài khoản ngân hàng',
     intro:
-      'Ghi số tài khoản mà ngân hàng in trên sao kê vào tài khoản ngân hàng tương ứng của sổ sách. Sao kê gửi vào hộp thư nhận chứng từ hoặc tải vào Hộp thư đến sẽ tự tìm đúng tài khoản qua số này, không cần nguồn giao dịch ngân hàng; sao kê vẫn chờ một thành viên xem và nhập. Một số chỉ thuộc một tài khoản ngân hàng của tổ chức.',
+      'Ghi số tài khoản mà ngân hàng in trên sao kê vào tài khoản ngân hàng tương ứng của sổ sách. Sao kê gửi vào hộp thư nhận chứng từ hoặc tải vào Chứng từ chờ duyệt sẽ tự tìm đúng tài khoản qua số này, không cần nguồn giao dịch ngân hàng; sao kê vẫn chờ một thành viên xem và nhập. Một số chỉ thuộc một tài khoản ngân hàng của tổ chức.',
     none: 'Chưa ghi số tài khoản nào.',
     form: 'Ghi số tài khoản ngân hàng',
     bankAccount: 'Tài khoản ngân hàng',
@@ -1242,7 +1242,7 @@ export const vi = {
       crm: { sales: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
       desk: { agent: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
       hr: { manager: 'Chưa thêm quyền nào ngoài quyền của vai trò cơ bản.' },
-      external_accountant: 'Người này chỉ xem được sổ sách, chứng từ, thu chi và tờ khai của các pháp nhân được giao. Đề xuất trong Hộp thư và thông báo của pháp nhân khác có thể vẫn hiện, cho đến khi phần này cũng được tách theo pháp nhân. Mỗi lần giao là một pháp nhân; có thể giao thêm.',
+      external_accountant: 'Người này chỉ xem được sổ sách, chứng từ, thu chi và tờ khai của các pháp nhân được giao. Đề xuất trong Chứng từ chờ duyệt và thông báo của pháp nhân khác có thể vẫn hiện, cho đến khi phần này cũng được tách theo pháp nhân. Mỗi lần giao là một pháp nhân; có thể giao thêm.',
     },
     rolesOf: 'Vai trò nghiệp vụ của {name}',
     withEntity: '{role} ({entity})',
@@ -1351,7 +1351,7 @@ export const vi = {
     },
     depreciate: 'Khấu hao và phân bổ tháng',
     depreciationTitle: 'Khấu hao và phân bổ một tháng',
-    depreciationIntro: '{brand} lập bút toán từ sổ tài sản: Nợ tài khoản chi phí, Có 214 hoặc 242, ghi ngày cuối tháng. Chủ sở hữu hoặc quản trị viên duyệt trong Hộp thư; khi duyệt, {brand} cấp số NVK và ghi sổ.',
+    depreciationIntro: '{brand} lập bút toán từ sổ tài sản: Nợ tài khoản chi phí, Có 214 hoặc 242, ghi ngày cuối tháng. Chủ sở hữu hoặc quản trị viên duyệt ở màn Chứng từ chờ duyệt; khi duyệt, {brand} cấp số NVK và ghi sổ.',
     month: 'Tháng',
     depreciationSubmit: 'Lập bút toán khấu hao',
     depreciationCreated: 'Đã tạo đề xuất khấu hao tháng {month}.',
@@ -1374,7 +1374,7 @@ export const vi = {
   yearClosing: {
     title: 'Kết chuyển cuối năm',
     intro:
-      '{brand} lập bút toán kết chuyển từ sổ: chuyển số dư doanh thu, thu nhập, giá vốn và chi phí (loại 5 đến 8) sang 911, rồi chuyển lãi hoặc lỗ của năm sang 4212, ghi ngày 31/12. Chủ sở hữu hoặc quản trị viên duyệt trong Hộp thư; khi duyệt, {brand} cấp số NVK và ghi sổ. Báo cáo kết quả kinh doanh và bảng cân đối kế toán không đổi.',
+      '{brand} lập bút toán kết chuyển từ sổ: chuyển số dư doanh thu, thu nhập, giá vốn và chi phí (loại 5 đến 8) sang 911, rồi chuyển lãi hoặc lỗ của năm sang 4212, ghi ngày 31/12. Chủ sở hữu hoặc quản trị viên duyệt ở màn Chứng từ chờ duyệt; khi duyệt, {brand} cấp số NVK và ghi sổ. Báo cáo kết quả kinh doanh và bảng cân đối kế toán không đổi.',
     year: 'Năm kết chuyển',
     submit: 'Lập bút toán kết chuyển',
     created: 'Đã tạo đề xuất kết chuyển năm {year}.',
@@ -1383,7 +1383,7 @@ export const vi = {
   journalVoucher: {
     title: 'Phiếu kế toán khác',
     intro:
-      'Ghi một bút toán tự lập (trích trước, tiền lương, khấu hao, điều chỉnh): mỗi dòng một tài khoản, ghi Nợ hoặc Có. Tổng Nợ phải bằng tổng Có. Chủ sở hữu hoặc quản trị viên duyệt trong Hộp thư; khi duyệt, {brand} cấp số NVK và ghi sổ.',
+      'Ghi một bút toán tự lập (trích trước, tiền lương, khấu hao, điều chỉnh): mỗi dòng một tài khoản, ghi Nợ hoặc Có. Tổng Nợ phải bằng tổng Có. Chủ sở hữu hoặc quản trị viên duyệt ở màn Chứng từ chờ duyệt; khi duyệt, {brand} cấp số NVK và ghi sổ.',
     date: 'Ngày chứng từ',
     description: 'Diễn giải',
     descriptionPlaceholder: 'Ví dụ: Trích trước chi phí điện tháng 10',
@@ -1439,10 +1439,10 @@ export const vi = {
     from: 'Từ ngày',
     to: 'Đến ngày',
     empty: 'Chưa có bút toán',
-    emptyHint: 'Bút toán hiện ở đây khi một đề xuất trong Hộp thư chứng từ được duyệt, hoặc khi bạn lập phiếu kế toán.',
+    emptyHint: 'Bút toán hiện ở đây khi một đề xuất trong Chứng từ chờ duyệt được duyệt, hoặc khi bạn lập phiếu kế toán.',
     emptyFiltered: 'Không có bút toán trong khoảng ngày này',
     emptyFilteredHint: 'Đổi ngày bắt đầu, ngày kết thúc hoặc xóa bớt để xem các bút toán khác.',
-    openInbox: 'Mở Hộp thư chứng từ',
+    openInbox: 'Mở Chứng từ chờ duyệt',
     saleBadge: 'Bán ra',
     reversalBadge: 'Bút toán đảo',
     reversedBadge: 'Đã đảo',
@@ -1601,7 +1601,7 @@ export const vi = {
       open: 'Lấy danh sách từ cổng thuế',
       title: 'Lấy danh sách từ cổng thuế',
       intro:
-        '{brand} đăng nhập hoadondientu.gdt.gov.vn bằng tài khoản của công ty, lấy danh sách hóa đơn mua vào kỳ {period} và tải các tệp XML còn thiếu về Hộp thư chứng từ. Bạn chỉ cần nhập mật khẩu và mã xác nhận của cổng thuế.',
+        '{brand} đăng nhập hoadondientu.gdt.gov.vn bằng tài khoản của công ty, lấy danh sách hóa đơn mua vào kỳ {period} và tải các tệp XML còn thiếu về Chứng từ chờ duyệt. Bạn chỉ cần nhập mật khẩu và mã xác nhận của cổng thuế.',
       username: 'Tên đăng nhập (mã số thuế)',
       password: 'Mật khẩu cổng thuế',
       captcha: 'Mã xác nhận',
@@ -1622,7 +1622,7 @@ export const vi = {
         list: 'Đã lấy {count, plural, other {# hóa đơn}} từ cổng thuế.',
         unchanged: 'Danh sách trên cổng thuế không thay đổi so với lần lấy trước.',
         skipped: 'Có {count, plural, other {# dòng}} trên cổng thuế không đọc được; xem chi tiết ở danh sách bên dưới.',
-        xml: 'Đã tải {downloaded, plural, other {# tệp XML}} về Hộp thư chứng từ, {duplicates, plural, other {# tệp}} đã có sẵn, {failed, plural, other {# hóa đơn}} cổng thuế không trả tệp.',
+        xml: 'Đã tải {downloaded, plural, other {# tệp XML}} về Chứng từ chờ duyệt, {duplicates, plural, other {# tệp}} đã có sẵn, {failed, plural, other {# hóa đơn}} cổng thuế không trả tệp.',
         noXml: 'Không có hóa đơn nào cần tải thêm tệp XML.',
         listPending: '{brand} vẫn đang ghi nhận danh sách nên chưa tải tệp XML; hãy lấy lại sau ít phút.',
         remaining: 'Còn {count, plural, other {# hóa đơn}} chưa tải tệp XML; hãy lấy lại để tải tiếp.',
@@ -1632,7 +1632,7 @@ export const vi = {
     request: {
       title: 'Đề nghị công ty bổ sung hóa đơn',
       intro:
-        'Gửi email tới {email} liệt kê {count, plural, other {# hóa đơn}} {brand} chưa có trong kỳ này. Công ty chỉ cần trả lời thư hoặc chuyển tiếp email hóa đơn của người bán, hóa đơn sẽ về Hộp thư chứng từ.',
+        'Gửi email tới {email} liệt kê {count, plural, other {# hóa đơn}} {brand} chưa có trong kỳ này. Công ty chỉ cần trả lời thư hoặc chuyển tiếp email hóa đơn của người bán, hóa đơn sẽ về Chứng từ chờ duyệt.',
       introNone: 'Kỳ này không còn hóa đơn nào thiếu.',
       noContact: 'Công ty chưa có email liên hệ.',
       noContactManage: 'Nhập email liên hệ trong Cài đặt',
@@ -1718,7 +1718,7 @@ export const vi = {
     sections: {
       missing: {
         title: 'Cơ quan thuế có, {brand} chưa có ({count})',
-        hint: 'Hãy xin người bán tệp XML của các hóa đơn này rồi tải lên Hộp thư chứng từ, hoặc chuyển tiếp email hóa đơn vào địa chỉ nhận chứng từ.',
+        hint: 'Hãy xin người bán tệp XML của các hóa đơn này rồi tải lên Chứng từ chờ duyệt, hoặc chuyển tiếp email hóa đơn vào địa chỉ nhận chứng từ.',
       },
       void_in_crove: {
         title: 'Đã hủy hoặc bị thay thế trên cổng thuế nhưng {brand} vẫn giữ ({count})',
@@ -1733,7 +1733,7 @@ export const vi = {
         hint: 'Kiểm tra đã xuất đủ các danh sách của kỳ chưa (có mã, không mã, máy tính tiền). Nếu cổng thuế thật sự không có, có thể hóa đơn chưa được gửi đến cơ quan thuế.',
       },
       in_inbox: {
-        title: 'Đang chờ duyệt trong Hộp thư ({count})',
+        title: 'Chứng từ đang chờ duyệt ({count})',
         hint: '{brand} đã đọc các hóa đơn này nhưng chưa ghi sổ. Hãy duyệt để đưa vào sổ sách.',
       },
       matched: {
@@ -1816,7 +1816,7 @@ export const vi = {
       sections: {
         missing: {
           title: 'Cơ quan thuế có, sổ sách chưa có ({count})',
-          hint: 'Các hóa đơn bán ra này đã phát hành nhưng chưa ghi sổ, nên thuế GTGT đầu ra đang bị kê thiếu. Hãy ghi sổ từng hóa đơn: tải tệp XML lên Hộp thư chứng từ, hoặc nhập như một hóa đơn bán ra.',
+          hint: 'Các hóa đơn bán ra này đã phát hành nhưng chưa ghi sổ, nên thuế GTGT đầu ra đang bị kê thiếu. Hãy ghi sổ từng hóa đơn: tải tệp XML lên Chứng từ chờ duyệt, hoặc nhập như một hóa đơn bán ra.',
         },
         void_in_crove: {
           title: 'Đã hủy hoặc bị thay thế trên cổng thuế nhưng {brand} vẫn giữ ({count})',
@@ -1831,7 +1831,7 @@ export const vi = {
           hint: 'Kiểm tra đã xuất đủ các danh sách bán ra của kỳ chưa (có mã, không mã, máy tính tiền). Nếu cổng thuế thật sự không có, có thể hóa đơn chưa được phát hành trên cổng thuế.',
         },
         in_inbox: {
-          title: 'Đang chờ duyệt trong Hộp thư ({count})',
+          title: 'Chứng từ đang chờ duyệt ({count})',
           hint: '{brand} đã đọc các hóa đơn bán ra này nhưng chưa ghi sổ. Hãy duyệt để đưa vào sổ sách.',
         },
         matched: {
@@ -2008,7 +2008,7 @@ export const vi = {
     b02Title: 'Báo cáo kết quả hoạt động kinh doanh (B02-DNN), từ {from} đến {to}',
     unmappedTitle: 'Các số dư dưới đây chưa được chỉ tiêu nào đọc, nên báo cáo chưa đầy đủ:',
     trialBalanceEmpty: 'Chưa có bút toán nào tính đến hết kỳ này',
-    trialBalanceEmptyHint: 'Sổ có số liệu khi đề xuất trong Hộp thư chứng từ được duyệt, hoặc khi bạn nhập số dư đầu kỳ.',
+    trialBalanceEmptyHint: 'Sổ có số liệu khi bạn duyệt đề xuất ở Chứng từ chờ duyệt, hoặc khi bạn nhập số dư đầu kỳ.',
     openOpeningBalances: 'Nhập số dư đầu kỳ',
     unbalanced: 'Tổng Nợ và tổng Có không bằng nhau. Hãy báo lỗi này cho {brand}.',
     total: 'Tổng cộng',
@@ -2163,7 +2163,7 @@ export const vi = {
     more: 'Đang hiển thị {count, number} chứng từ mới nhất, còn chứng từ cũ hơn.',
     loadMore: 'Xem thêm',
     form: {
-      intro: 'Chứng từ được gửi vào Hộp thư thành đề xuất. Số chứng từ được cấp và bút toán được ghi khi chủ sở hữu hoặc quản trị duyệt.',
+      intro: 'Chứng từ được gửi vào Chứng từ chờ duyệt thành đề xuất. Số chứng từ được cấp và bút toán được ghi khi chủ sở hữu hoặc quản trị duyệt.',
       type: 'Loại chứng từ',
       date: 'Ngày chứng từ',
       cashAccountCash: 'Quỹ tiền mặt',
@@ -2303,7 +2303,7 @@ export const vi = {
     socialFileTooLarge: '{name} vượt quá 100 MB',
     storageUploadFailed: 'Không gửi được {name} lên kho lưu trữ; hãy tải lại tệp',
     storageDownloadFailed: 'Không tải được tệp từ kho lưu trữ',
-    title: 'Hộp thư chứng từ',
+    title: 'Chứng từ chờ duyệt',
     subtitle: 'Gửi hóa đơn vào đây. Trợ lý AI {assistant} đề xuất bút toán, bạn chỉ việc kiểm tra và duyệt.',
     upload: 'Tải chứng từ lên',
     dropHereCompact: 'Kéo thả hóa đơn vào đây để tải lên, hoặc dùng nút Tải chứng từ lên',
@@ -2477,7 +2477,7 @@ export const vi = {
     // The pending list beside a proposal on a wide screen (#1514).
     queue: 'Đề xuất chờ duyệt',
     queueEmpty: 'Không còn đề xuất nào chờ duyệt.',
-    queueAll: 'Xem cả Hộp thư',
+    queueAll: 'Xem tất cả chứng từ chờ duyệt',
     // Whose books the invoice goes to, with several legal entities (#1542).
     entity: 'Ghi vào sổ của pháp nhân',
     timeline: 'Lịch sử chứng từ',
@@ -2492,7 +2492,7 @@ export const vi = {
     exportFrom: 'từ {from}',
     exportTo: 'đến {to}',
     exportAll: 'mọi ngày',
-    back: '← Hộp thư chứng từ',
+    back: '← Chứng từ chờ duyệt',
     openPdf: 'Mở PDF trong tab mới',
     xmlFile: 'Tệp XML hóa đơn điện tử',
     xmlHint: 'Dữ liệu được đọc trực tiếp từ XML, không qua AI.',
@@ -2618,7 +2618,7 @@ export const vi = {
     voidedNotice: 'Bút toán của hóa đơn này đã được đảo nên {brand} đã hủy chứng từ trong sổ của mình.',
     voidedReread: 'Bấm Đọc lại để tạo đề xuất mới và ghi sổ lại hóa đơn với tài khoản đúng.',
     voidedNoReread:
-      'Tệp này không đọc lại được từ đề xuất này (đã có đề xuất mới hơn, hoặc tệp đã được đọc tối đa số lần); hãy xem đề xuất mới nhất của tệp trong Hộp thư.',
+      'Tệp này không đọc lại được từ đề xuất này (đã có đề xuất mới hơn, hoặc tệp đã được đọc tối đa số lần); hãy xem đề xuất mới nhất của tệp trong Chứng từ chờ duyệt.',
     reversalSubtitle: 'Đề xuất đảo bút toán: khi được duyệt, {brand} ghi một bút toán mới đối xứng với bút toán gốc.',
     approveReversal: 'Duyệt và ghi bút toán đảo',
     reversalFourEyes: 'Cần một người khác duyệt (bạn đã yêu cầu đảo bút toán này).',
@@ -2655,7 +2655,7 @@ export const vi = {
     saleDocument: 'Bút toán ghi chứng từ bán {document} cho {customer}.',
     documentAlreadyVoided: 'Chứng từ này đã bị hủy trong sổ của {brand}.',
     documentWillVoid:
-      'Khi duyệt, {brand} hủy chứng từ này trong sổ của mình để có thể ghi sổ lại hóa đơn với tài khoản đúng (đọc lại tệp trong Hộp thư). Đây chỉ là chỉnh sửa sổ sách của {brand}; hóa đơn điện tử của người bán không thay đổi.',
+      'Khi duyệt, {brand} hủy chứng từ này trong sổ của mình để có thể ghi sổ lại hóa đơn với tài khoản đúng (đọc lại tệp trong Chứng từ chờ duyệt). Đây chỉ là chỉnh sửa sổ sách của {brand}; hóa đơn điện tử của người bán không thay đổi.',
     viewInJournal: 'Xem trong sổ bút toán',
   },
   guide: {
@@ -5348,7 +5348,7 @@ export const vi = {
     aiDraftTitle: 'Soạn cùng {assistant}',
     aiBriefPlaceholder: 'Mô tả bài cần viết: nội dung chính, ưu đãi, thời gian, đối tượng...',
     aiDraftHint: 'Trợ lý AI {assistant} soạn nội dung chung và bản riêng cho kênh cần, chỉ dùng thông tin bạn đưa. Bài được lưu nháp và phải duyệt từng kênh.',
-    aiMail: { label: 'Soạn từ thư', noSubject: 'Thư không có tiêu đề', loading: 'Đang tải thư…', gone: 'Không còn thấy thư này trong Hộp thư', remove: 'Bỏ thư' },
+    aiMail: { label: 'Soạn từ thư', noSubject: 'Thư không có tiêu đề', loading: 'Đang tải thư…', gone: 'Không còn thấy thư này trong Chứng từ chờ duyệt', remove: 'Bỏ thư' },
     aiSource: 'Hoặc soạn từ một trang (không bắt buộc): dán đường link sản phẩm hoặc bài viết',
     aiDraft: 'Nhờ {assistant} soạn nháp',
     aiOff: 'Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).',
@@ -6010,7 +6010,7 @@ export const vi = {
       ENTRY_NOT_FOUND: 'Không tìm thấy bút toán',
       DOCUMENT_NOT_FOUND: 'Không tìm thấy chứng từ',
       REVERSAL_DATE_BEFORE_ENTRY: 'Ngày bút toán đảo không được trước ngày của bút toán gốc',
-      REVERSAL_PENDING: 'Bút toán này đã có đề xuất đảo đang chờ duyệt; hãy duyệt hoặc từ chối đề xuất đó trong Hộp thư',
+      REVERSAL_PENDING: 'Bút toán này đã có đề xuất đảo đang chờ duyệt; hãy duyệt hoặc từ chối đề xuất đó trong Chứng từ chờ duyệt',
       OPENING_BALANCE_EXISTS: 'Tổ chức đã có bút toán số dư đầu kỳ; hãy đảo bút toán đó trước khi nhập lại',
       PORTAL_LIST_EXISTS: 'Tệp này đã được nhập cho kỳ này rồi',
       PORTAL_LIST_LIMIT: 'Kỳ này đã có 12 danh sách; hãy gỡ bớt danh sách cũ rồi nhập lại',
@@ -6509,7 +6509,7 @@ export const vi = {
         lines: 'Xem các dòng sao kê',
         open_lines: 'Xem các dòng sao kê chưa đối chiếu',
         preview: 'Xem trước sao kê ngân hàng',
-        statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Hộp thư đến)',
+        statement_confirm: 'Nhập sao kê ngân hàng đã đọc từ tệp (thư gửi đến hoặc tải vào Chứng từ chờ duyệt)',
         statement_lines: 'Xem các dòng của sao kê ngân hàng đọc từ tệp trước khi nhập',
         statement_reject: 'Bỏ qua sao kê ngân hàng đã đọc từ tệp',
         statement_stage: 'Chuẩn bị sao kê ngân hàng đọc từ tệp để thành viên xem và nhập',
@@ -6783,14 +6783,14 @@ export const vi = {
         text: 'Đọc nội dung thư gửi đến',
       },
       inbox: {
-        dismiss: 'Ẩn một mục trong hộp thư',
-        get: 'Xem một mục trong hộp thư chứng từ',
-        list: 'Xem hộp thư chứng từ',
-        prune: 'Dọn các mục cũ hệ thống đưa vào hộp thư',
-        raised: 'Xem các mục hệ thống đưa vào hộp thư',
+        dismiss: 'Ẩn một mục trong Chứng từ chờ duyệt',
+        get: 'Xem một mục trong Chứng từ chờ duyệt',
+        list: 'Xem danh sách chứng từ chờ duyệt',
+        prune: 'Dọn các mục cũ hệ thống đưa vào Chứng từ chờ duyệt',
+        raised: 'Xem các mục hệ thống đưa vào Chứng từ chờ duyệt',
       },
       job: {
-        dead_letter: 'Đưa việc chạy nền bị lỗi vào hộp thư',
+        dead_letter: 'Đưa việc chạy nền bị lỗi vào Chứng từ chờ duyệt',
       },
       legal_entity: {
         create: 'Thêm pháp nhân',

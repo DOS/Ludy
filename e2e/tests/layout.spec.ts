@@ -37,7 +37,7 @@ test('the sidebar keeps sign-out and Settings in view on a short window, and eac
   await page.goto(`/o/${slug}/journal`);
   await expect(apps.getByRole('link', { name: 'Kế toán', exact: true })).toHaveAttribute('aria-current', 'true');
   await expect(sidebar.getByRole('link', { name: 'Sổ sách' })).toBeVisible();
-  await expect(sidebar.getByRole('link', { name: 'Hộp thư chứng từ' })).toHaveCount(0);
+  await expect(sidebar.getByRole('link', { name: 'Chứng từ chờ duyệt' })).toHaveCount(0);
 
   // On a 1366x768 laptop no app's menu scrolls.
   await page.setViewportSize({ width: 1366, height: 768 });
@@ -252,7 +252,7 @@ test.describe('at phone width', () => {
     const open = page.getByRole('button', { name: 'Mở menu' });
     await open.click();
     const drawer = page.getByRole('dialog', { name: 'Menu chính' });
-    await expect(drawer.getByRole('region', { name: 'Trang chủ' }).getByRole('link', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await expect(drawer.getByRole('region', { name: 'Trang chủ' }).getByRole('link', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await drawer.getByRole('link', { name: 'Kế toán', exact: true }).click();
     await expect(page).toHaveURL(/\/documents$/);
     await expect(drawer.getByRole('region', { name: 'Kế toán' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
