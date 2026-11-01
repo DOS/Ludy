@@ -3,6 +3,8 @@
 
 By default Ludy owns its database: `migrate` may change anything database-wide, and the hardening guard checks all of it. Ludy Cloud can instead live inside a PostgreSQL database that other systems own schemas, roles and event triggers in (the first case: the Supabase project of DOS's own products, with sign-in by their accounts). Issue #2284, [plan Decision 23](../plan/crove-os-kernel.md). With `CROVE_SHARED_DATABASE=true` every effect of `migrate` and of the runtime stays with Ludy's own roles (`crove_*`) and schemas (`crove_*`). Self-host and every owned database leave it unset (`false`, the default) and keep every guard exactly as before; the invariant suite runs against that default.
 
+The owner accepted what this mode gives up on 2026-11-02 (Decision 23) as a **temporary** arrangement: when paying customers arrive, Ludy Cloud moves to a database of its own, which is a restore of Ludy's schemas (route A below, into a new project) followed by a `migrate` run in owned mode with `CROVE_SHARED_DATABASE_SWITCH=true`.
+
 This runbook covers what the mode changes, what it needs from the database, and how to back up and restore Ludy's part. The production steps for one operator's project (creating the logins, running `migrate`) are run by that operator's coordinator with the owner's approval and live in their private deployment layer.
 
 ## What the mode changes
