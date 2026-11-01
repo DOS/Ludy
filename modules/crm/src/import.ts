@@ -200,7 +200,9 @@ const notFound = () => new DomainError('IMPORT_NOT_FOUND', 404, 'Không tìm th�
 // Staged batches of this org older than the limit lose their rows and are marked expired.
 async function expireStale(ctx: CommandContext): Promise<void> {
   const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
-  const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).execute();
+  // The batch rows are locked first, in id order, before their rows are deleted: the daily sweep (importExpire) takes the same
+  // order, so a command and the sweep reaching one stale batch cannot wait on each other.
+  const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
   if (stale.length === 0) return;
   const ids = stale.map((s) => s.id);
   await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).execute();
@@ -506,7 +508,7 @@ export const importExpire = defineCommand({
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
     const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
     // Locked, so a commit running at this moment finishes first and its batch no longer reads as staged here.
-    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).forUpdate().execute();
+    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
     if (stale.length === 0) return { batches: 0, rows: 0 };
     const ids = stale.map((s) => s.id);
     const deleted = await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).executeTakeFirst();
