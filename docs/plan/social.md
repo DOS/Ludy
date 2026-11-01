@@ -130,7 +130,7 @@ Built in S4 (#234), with these choices against the list above:
 - Typed errors: `token_expired`, `permission`, `bad_request`, `rate_limited` (with retry time), `transient`, `unknown`. Raw platform messages are mapped to Vietnamese and English text; Postiz still remaps dozens of "Unknown Error" cases, so every adapter has tests for its known error payloads.
 - Rate limits and quotas tracked per app and per account (Mixpost); quota checked before the visible call where the platform exposes it (Instagram `content_publishing_limit`, Threads `threads_publishing_limit`, YouTube's 100 uploads a day).
 - Concurrency per provider in the worker (Postiz: Reddit 1, LinkedIn 8): pg-boss queues `social-publish-<provider>` with their own team size; only providers the deployment configured get workers (Postiz idles 32 workers, #1570).
-- Media: several platforms fetch media from a public URL (Instagram, TikTok photos). A laptop deployment has none, so adapters prefer upload endpoints (Instagram resumable upload, TikTok file upload); the media library adds signed, time-limited URLs when storage is public.
+- Media: several platforms fetch media from a public URL (Instagram, TikTok photos). A laptop deployment has none, so adapters prefer upload endpoints (Instagram resumable upload, TikTok file upload); the media library adds signed, time-limited URLs when storage is public. The store's `fetchUrls` signs them (60 seconds, `org/` files only), also on R2 where browser transfers are off; it needs an https endpoint and is not on GCS (#2192, ADR-0013).
 - Platform native scheduling (Facebook, YouTube) is not used in v1: Crove's worker publishes at the time, so every channel follows one model and approval stays in Crove until the last moment.
 
 ### 3.7 AI

@@ -46,7 +46,7 @@ On `main` (2026-11-01), against recorded answers; none of this proves the platfo
 
 Gaps found while reading, and what became of them:
 
-- **Zalo needs a public image URL, and storage on R2 or GCS cannot give one.** The only source of that URL is a presigned download, which exists only with `S3_PRESIGNED_URLS=true`, and the server refuses that on Cloudflare R2. So a Zalo (and Instagram, Threads) post with an image fails with `MEDIA_URL_UNAVAILABLE` on such storage. Filed as #2192 (P2, Social). Not a blocker here: step B1 uses a plain S3 bucket.
+- **Zalo needs a public image URL.** Before #2192 the only source of that URL was a presigned download, which exists only with `S3_PRESIGNED_URLS=true`, and the server refuses that on Cloudflare R2, so a Zalo (and Instagram, Threads) post with an image failed with `MEDIA_URL_UNAVAILABLE` there. #2192 gives the store a signed read for platforms that works with browser transfers off. It needs an https endpoint (a plain http MinIO is refused as unreachable for a platform) and is not offered on GCS. The check below still uses a plain S3 bucket, since that is the path with the fewest unknowns; an R2 bucket (`S3_PRESIGNED_URLS=false`, `S3_VERSIONING=off`) is a second run worth recording.
 - **A Zalo article always needs a title, a body text and at least one image** (`zalo_oa` rules in `modules/social/src/domain/channels.ts`, `MEDIA_REQUIRED` and `TITLE_REQUIRED` in the adapter). So the Zalo "text post" of the check is an article with a title, text and a cover image, and the second article adds one more image after the text. Facebook has no such rule.
 - **Facebook Page tokens are sealed with no expiry** (`expiresAt: null`) on the reading that a Page token from a long-lived user token has no timer. Meta's current Pages docs say Page tokens "have an expiration time" and the page on expiry could not be read, so this is unconfirmed [U]: step A9 records what Meta reports.
 - **Meta's login model.** The connector uses classic Facebook Login with the permissions as `scope`. Meta also offers Facebook Login for Business, with a configuration id instead of `scope`, and says it requires a business-type app or a use case that supports it. If the dialog in step A4 refuses the `scope`, that is a finding to file, not something to work around live.
@@ -143,7 +143,7 @@ Tokens are sealed and never shown, so Meta's token debugger cannot be used on th
 
 ### B1. A small private S3 bucket for the images
 
-Zalo fetches the cover and every image by URL. Ludy makes that URL as a presigned download, valid for about a minute, so the bucket stays private. Presigned transfers exist only for real S3 storage (#2192 is the R2 gap).
+Zalo fetches the cover and every image by URL. Ludy makes that URL as a presigned download, valid for about a minute, so the bucket stays private. The signed read needs an https endpoint to the bucket, which AWS S3 has by default (on R2 it needs #2192).
 
 **[PERSON]** in the AWS console:
 
@@ -192,7 +192,7 @@ Kênh, **Kết nối Zalo OA**. **[PERSON]** the OA administrator signs in to Za
 Soạn bài for Zalo OA only. A title (up to 150 characters), a body text, and **one** JPEG or PNG under 1 MB as the first image: it is the cover. Leave comments on ("Cho phép bình luận"). Schedule it two minutes ahead.
 
 - **[CHECK]** The post goes "Đang đăng" (Zalo creates articles asynchronously: the app asks Zalo again every 20 seconds until it names the article) and then "Đã đăng". **[PERSON]** finds the article in the OA's article list (Zalo OA manager, Bài viết) with the title, text and cover. Record how long Zalo took.
-- Errors the adapter maps: -216, -220, -124, -118 are a dead access token; -32 a rate limit; `MEDIA_URL_UNAVAILABLE` means no presigned URL (storage is not S3 with presigning, B1); `IMAGE_TOO_LARGE` a file over 1 MB; `TITLE_REQUIRED` a missing title. Any other negative code is shown on the post with Zalo's message: copy it into the results.
+- Errors the adapter maps: -216, -220, -124, -118 are a dead access token; -32 a rate limit; `MEDIA_URL_UNAVAILABLE` means no signed URL (storage is not S3 on an https endpoint, or the file could not be read back, B1); `IMAGE_TOO_LARGE` a file over 1 MB; `TITLE_REQUIRED` a missing title. Any other negative code is shown on the post with Zalo's message: copy it into the results.
 
 ### B7. Publish an article with two images
 
@@ -244,7 +244,7 @@ Then publish one more article (B6 again).
 | B8 Refresh: new pair, article after it | | | |
 | B9 Remove | | | |
 
-Then **[PO]** writes each difference into `docs/plan/social.md` sections 4 and 6, and fixes or files it (P2, milestone Social, labels `line:social-management` and `social`). #2192 is already filed; so are the live questions on takedown codes in #1467 (answered by A8 and B9).
+Then **[PO]** writes each difference into `docs/plan/social.md` sections 4 and 6, and fixes or files it (P2, milestone Social, labels `line:social-management` and `social`). The live questions on takedown codes are already filed in #1467 (answered by A8 and B9).
 
 ## When something goes wrong
 

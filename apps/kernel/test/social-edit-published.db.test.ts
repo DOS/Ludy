@@ -461,7 +461,7 @@ suite('correcting a published post on PostgreSQL (#1223)', () => {
         return store ? sandbox.edit(i) : { kind: 'rejected', error: 'bad_request', code: 'MEDIA_URL_UNAVAILABLE' };
       },
     });
-    const signing = { direct: { presignDownload: async () => 'https://bucket.example/signed' } } as unknown as NonNullable<Parameters<typeof runEditJob>[0]['store']>;
+    const signing = { fetchUrls: { presign: async () => 'https://bucket.example/signed' } } as unknown as NonNullable<Parameters<typeof runEditJob>[0]['store']>;
     const { id } = await publishedPost(o, checking(true));
     await exec(o, 'social.variant.edit_published', { variantId: id, revision: 1, body: 'Giá 45.000đ' });
     expect(await runEditJob({ ...deps(checking(true)), store: signing }, o.orgId, id, 'sandbox', null)).toEqual({ action: 'call', state: 'succeeded' });

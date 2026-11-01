@@ -492,6 +492,9 @@ export function createHttpApp(deps: HttpDeps) {
       aiEnabled: deps.aiEnabled,
       // presigned: the app uploads to a staging key and downloads from the bucket (plan §7.6); direct: through the kernel.
       uploads: store.direct ? 'presigned' : 'direct',
+      // The store can sign a short-lived URL for a platform that fetches media (Zalo OA, Instagram, Threads), also when
+      // uploads are direct (R2, #2192): the composer then lets those channels take images.
+      platformMediaUrls: Boolean(store.fetchUrls),
       inboundEnabled: Boolean(config.INBOUND_DOMAIN && config.INBOUND_SECRET),
       mailEnabled: deps.mailer?.enabled ?? false,
       // The shell's feedback and support link (SUPPORT_URL, issue #310); null hides it.

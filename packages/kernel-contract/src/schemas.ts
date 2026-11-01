@@ -679,7 +679,9 @@ export const zFileStatus = z.object({
   statement: zStatementSummary
     .extend({
       decidedBy: z.object({ name: z.string().nullable(), at: z.string() }).nullable(),
-      origin: z.object({ channel: z.enum(['email', 'upload']), by: z.string().nullable() }),
+      // from: the sender address of the mail an emailed file came in (#2196), only for members who may read mails; null for
+      // an upload, for a file received before the link existed, for an erased address, and for any other reader.
+      origin: z.object({ channel: z.enum(['email', 'upload']), by: z.string().nullable(), from: z.string().nullable() }),
       entity: z.object({ id: zId, name: z.string() }).nullable(),
     })
     .nullable(),
