@@ -62,9 +62,18 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
     await form.getByRole('button', { name: 'Thêm', exact: true }).click();
     const board = page.getByTestId('deal-board');
     await expect(board.getByRole('region', { name: 'Mới' }).getByTestId('deal-card').filter({ hasText: 'Gói kế toán năm' })).toBeVisible();
-    await page.getByRole('combobox', { name: 'Giai đoạn của cơ hội Gói kế toán năm' }).selectOption({ label: 'Báo giá' });
+    // The card shows in its new column at once and carries the old version until the board is read again: the next move waits
+    // for that, as a person's second move would.
+    const moveTo = async (stage: string) => {
+      const moved = page.waitForResponse((r) => r.url().includes('/crm/deals/move'));
+      const refreshed = page.waitForResponse((r) => r.url().includes('/crm/deals/board'));
+      await page.getByRole('combobox', { name: 'Giai đoạn của cơ hội Gói kế toán năm' }).selectOption({ label: stage });
+      await moved;
+      await refreshed;
+    };
+    await moveTo('Báo giá');
     await expect(board.getByRole('region', { name: 'Báo giá' }).getByTestId('deal-card').filter({ hasText: 'Gói kế toán năm' })).toBeVisible();
-    await page.getByRole('combobox', { name: 'Giai đoạn của cơ hội Gói kế toán năm' }).selectOption({ label: 'Thắng' });
+    await moveTo('Thắng');
     await expect(board.getByRole('region', { name: 'Thắng' }).getByTestId('deal-card').filter({ hasText: 'Gói kế toán năm' })).toBeVisible();
   });
 

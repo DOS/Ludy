@@ -307,7 +307,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       },
     };
     const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage: new MemoryStore() });
-    expect(kernel.modules).toEqual(['crm', 'kernel']);
+    expect(kernel.modules).toEqual(['kernel', 'crm']);
     const stop = await kernel.start('all');
     try {
       const origin = `http://127.0.0.1:${port}`;
