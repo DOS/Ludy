@@ -1282,9 +1282,11 @@ suite('bank statement import (#326)', () => {
           async (c) =>
             (await c.query<{ command: string; detail: Record<string, unknown> }>(`SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'finance.bank_account_number.%' AND outcome = 'ok' ORDER BY occurred_at`, [orgId])).rows,
         );
-        const mine = audits.filter((a) => a.detail['accountMask'] === '******4444');
+        // Both rows name the record and keep the number's class, never its digits (#1626).
+        const mine = audits.filter((a) => a.detail['numberId'] === set.body.id);
         expect(mine.map((a) => a.command)).toEqual(['finance.bank_account_number.set', 'finance.bank_account_number.clear']);
-        // The whole number is in no audit row.
+        expect(mine.map((a) => a.detail['accountNumber'])).toEqual([{ redacted: 'payment' }, { redacted: 'payment' }]);
+        // The number is in no audit row.
         expect(JSON.stringify(audits)).not.toContain('5550004444');
       });
     });

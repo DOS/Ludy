@@ -6,20 +6,25 @@
 //   use). One number belongs to one bank account of an org: the same number on the same account is a no-op, on another
 //   account (or as a bank feed mapping of another account) is BANK_ACCOUNT_NUMBER_TAKEN. A bank account may hold several.
 // - finance.bank_account_number.clear: removes a number; the lines already imported stay. Changing a number is a clear
-//   and a set; both are audited, with the number masked (the audit trail never holds a whole account number).
+//   and a set; both are audited, with the number replaced by its class (the audit trail never holds an account number).
 // - finance.bank_account_number.list: the numbers the caller's entities hold, for the Settings card (owners and admins).
 // A number belongs to an entity (the row is under the entity scope): the one that holds the bank account, as a feed
 // mapping does. Nothing here moves money or posts a line.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { zBankAccountNumberSet, zId, type BankAccountNumberView } from '@crove/kernel-contract';
+import { auditValue, zBankAccountNumberSet, zId, type BankAccountNumberView } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
-import { accountNumberDigits, maskAccountNumber } from './account-number.ts';
+import { accountNumberDigits } from './account-number.ts';
 import { bankAccount } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
+import { financeManifest } from './manifest.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+// The number is a `payment` column: an audit fact keeps its class, never its digits (#1626). bank_account is the chart
+// account code (112x) the number is recorded on, internal data as in bank-feed.ts, listed for this file in
+// apps/kernel/test/audit-facts.test.ts.
+const NUMBER = financeManifest.tables.crove_finance.bank_account_number;
 
 // One answer for a number that is on another bank account, whether the caller can read that row or row security hides it
 // (as #2079 did for a feed mapping): nothing says which entity or account holds it.
@@ -68,7 +73,7 @@ export const bankAccountNumberSet = defineCommand({
       .returning('id')
       .executeTakeFirst();
     if (!inserted) throw taken();
-    ctx.audit({ numberId: inserted.id, bankAccount: input.bankAccount, legalEntityId, accountMask: maskAccountNumber(digits) });
+    ctx.audit({ numberId: inserted.id, bankAccount: input.bankAccount, legalEntityId, accountNumber: auditValue(NUMBER, 'account_number', digits) });
     return { id: inserted.id };
   },
 });
@@ -87,7 +92,7 @@ export const bankAccountNumberClear = defineCommand({
       .returning(['id', 'bank_account', 'legal_entity_id', 'account_number'])
       .executeTakeFirst();
     if (!removed) throw new DomainError('BANK_ACCOUNT_NUMBER_NOT_FOUND', 404, 'Không tìm thấy số tài khoản này');
-    ctx.audit({ numberId: removed.id, bankAccount: removed.bank_account, legalEntityId: removed.legal_entity_id, accountMask: maskAccountNumber(removed.account_number) });
+    ctx.audit({ numberId: removed.id, bankAccount: removed.bank_account, legalEntityId: removed.legal_entity_id, accountNumber: auditValue(NUMBER, 'account_number', removed.account_number) });
     return { id: removed.id };
   },
 });
