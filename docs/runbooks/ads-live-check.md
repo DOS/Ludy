@@ -31,7 +31,7 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 
 - The adapter makes GET requests to `graph.facebook.com` only, with `ads_read` as the one permission asked, and a test pins that its source names no write endpoint.
 - The token (a long-lived user token, about 60 days, no refresh) is sealed with `CREDENTIAL_KEY`, opened by the worker alone, and appears in no log, audit row, event or answer (database test).
-- A rate limit holds the account back until the time derived from the error code (10 minutes for the score cap codes 17 and 613, an hour for the others), an expired token marks the connection expired, and connecting again resumes the same account with its history and no day lost (database test with recorded answers).
+- A rate limit holds the account back until the time derived from the error code (10 minutes for the score cap codes 17, 32 and 613, an hour for the others), an expired token marks the connection expired, and connecting again resumes the same account with its history and no day lost (database test with recorded answers).
 
 ## Before you start
 
@@ -54,7 +54,7 @@ CHANNEL_META_ADS_APP_ID=<the App ID>
 CHANNEL_META_ADS_APP_SECRET=<the App Secret>
 ```
 
-The same app may already be set as the Pages app (`CHANNEL_META_APP_ID` and `CHANNEL_META_APP_SECRET`): the same two values go in both places. Both or neither: the server refuses to start with one of the pair, or with an App ID that is not digits.
+The same app may already be set as the Pages app (`CHANNEL_META_APP_ID` and `CHANNEL_META_APP_SECRET`): the same two values go in both places. **Know what that means:** a Meta user token holds every permission the person ever granted that app, not only the one asked for now, so with a shared app the sealed ads token can also hold Pages publishing (`pages_manage_posts`) and, if it was ever granted, `ads_management`. Ludy asks for `ads_read` only and records the full set on the connection; record in the results table which permissions the token held. A separate app avoids it. Both or neither: the server refuses to start with one of the pair, or with an App ID that is not digits.
 
 ### 3. Start the stack **[PO]**
 
@@ -96,6 +96,8 @@ Record in the issue (#2218) without any id, name or amount of a real account:
 |---|---|
 | Redirect `http://localhost` accepted by Meta (U) | |
 | Permissions the dialog asked for | |
+| Permissions the token held after connecting (names only; more than ads_read means the app was shared) | |
+| Campaigns of an older month add up to the account total (deleted or archived campaigns may be left out of the campaign level, U) | |
 | Ad accounts listed by the grant (count only) | |
 | Spend of a finished month: Ludy equals Ads Manager | |
 | Spend of the last 7 days: equal | |

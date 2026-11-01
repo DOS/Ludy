@@ -126,7 +126,7 @@ describe('the Meta ad platform', () => {
     expect(await fail(400, { code: 100 })).toMatchObject({ kind: 'bad_request' });
     expect(await fail(418, { code: 999 })).toMatchObject({ kind: 'unknown' });
     // Only Meta's code is kept: its message may carry a name or a token.
-    expect(JSON.stringify(limited)).not.toContain('too many calls');
+    expect((limited as Error).message).not.toContain('too many calls');
     expect(metaAdsError(new TypeError('fetch failed'))).toMatchObject({ kind: 'transient' });
     expect(metaAdsError(new Error('boom'))).toMatchObject({ kind: 'unknown' });
     expect(metaAdsError(new GraphError(400, { code: 4 }), () => NOW)).toMatchObject({ kind: 'rate_limited' });
@@ -190,6 +190,19 @@ describe('the Meta ad connection', () => {
     const denied = new MetaAdsConnector(app, { fetch: recorded(answers({ data: [{ permission: 'public_profile', status: 'granted' }] }, { data: [] })).fetch });
     await expect(denied.exchange({ code: 'c', redirectUri, codeVerifier: null })).rejects.toMatchObject({ kind: 'denied', code: 'MISSING_PERMISSION' });
     const none = new MetaAdsConnector(app, { fetch: recorded(answers({ data: [{ permission: 'ads_read', status: 'granted' }] }, { data: [] })).fetch });
-    await expect(none.exchange({ code: 'c', redirectUri, codeVerifier: null })).rejects.toMatchObject({ kind: 'denied', code: 'NO_AD_ACCOUNT' });
+    // Not a missing permission: the caller tells the person that this login reaches no ad account.
+    expect(await none.exchange({ code: 'c', redirectUri, codeVerifier: null })).toEqual([]);
+  });
+
+  it('records every permission the token holds, so an app shared with Pages publishing shows what the ads token can also do', async () => {
+    const { fetch } = recorded([
+      { body: { access_token: 'short' } },
+      { body: { access_token: 'long' } },
+      { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'pages_manage_posts', status: 'granted' }, { permission: 'ads_management', status: 'declined' }] } },
+      { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+    ]);
+    const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });
+    // Granted only: a declined permission is not held.
+    expect(accounts[0]?.scopes).toEqual(['ads_read', 'pages_manage_posts']);
   });
 });

@@ -303,7 +303,9 @@ const schema = z.object({
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
-  // Marketing API together), so the same id and secret can be given twice. The app's valid OAuth redirect URI is
+  // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
+  // the person ever granted that app, so with a shared app the ads token can also hold the Pages ones (the connection
+  // records the full set), and a separate app keeps it to ads_read. The app's valid OAuth redirect URI is
   // PUBLIC_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_APP_ID: optional,
   CHANNEL_META_ADS_APP_SECRET: optional,

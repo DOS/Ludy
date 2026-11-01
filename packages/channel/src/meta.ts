@@ -208,7 +208,9 @@ export class MetaLogin {
 
   // The long-lived user token for a code, and the permissions it holds (all the required ones, or a denied error, and
   // whichever optional ones Meta granted).
-  async userToken(input: ExchangeInput): Promise<{ token: string; scopes: string[] }> {
+  // `granted` is every permission the token holds, the ones this app was given before included: a Meta user token carries
+  // all that the person ever granted the app, not only the scopes this dialog asked for.
+  async userToken(input: ExchangeInput): Promise<{ token: string; scopes: string[]; granted: string[] }> {
     const short = await this.graph
       .call<TokenAnswer>('POST', 'oauth/access_token', {
         form: { client_id: this.app.appId, client_secret: this.app.appSecret, redirect_uri: input.redirectUri, code: input.code },
@@ -230,7 +232,7 @@ export class MetaLogin {
     const granted = new Set((permissions.data ?? []).filter((p) => p.status === 'granted' && typeof p.permission === 'string').map((p) => p.permission as string));
     const missing = this.scopes.filter((s) => !granted.has(s));
     if (missing.length > 0) throw new ConnectorError('denied', `Meta did not grant ${missing.join(', ')}`, 'MISSING_PERMISSION');
-    return { token, scopes: [...this.scopes, ...this.optional].filter((s) => granted.has(s)) };
+    return { token, scopes: [...this.scopes, ...this.optional].filter((s) => granted.has(s)), granted: [...granted].sort() };
   }
 
   // Every Page the user token manages, by cursor (never Meta's `next` URL, which carries the token).

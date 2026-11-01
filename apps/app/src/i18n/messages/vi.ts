@@ -1199,6 +1199,8 @@ export const vi = {
       connected: 'Đã kết nối: {list}. Số liệu sẽ về trong vài phút.',
       lost: 'Không tìm thấy lượt kết nối này trên trình duyệt (có thể đã mở ở tab khác). Hãy bắt đầu lại từ trang Quảng cáo.',
       backToAds: 'Về Quảng cáo',
+      failed: 'Không kết nối được: {list}. Hãy kiểm tra trong Meta rằng bạn vẫn thấy tài khoản quảng cáo đó rồi kết nối lại.',
+      skipped: 'Còn {count} tài khoản quảng cáo chưa được kết nối: mỗi lần kết nối tối đa {max} tài khoản.',
     },
     accountLabel: 'Tài khoản quảng cáo',
     sandboxBadge: 'Thử nghiệm (số liệu mẫu)',

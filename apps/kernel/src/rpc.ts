@@ -1512,7 +1512,13 @@ export function createRpcHandler(
           const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
             throw connectorFailure(error);
           });
-          if (accounts.length === 0) throw new DomainError('CHANNEL_NO_ACCOUNTS', 422, 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này');
+          if (accounts.length === 0) {
+            throw new DomainError(
+              'CHANNEL_NO_ACCOUNTS',
+              422,
+              isAdProviderId(input.provider) ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để đọc báo cáo' : 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
+            );
+          }
           // Each account connects in its own command, so one that fails leaves the others connected: the answer says
           // which did and which did not (#375), and only a grant where none connected is an error. A grant covering
           // more accounts than a request should connect one by one is cut, and the answer says how many were left.
@@ -1539,7 +1545,12 @@ export function createRpcHandler(
                 try {
                   await runtime.execute('ads.account.link', { connectionId: done.connectionId }, { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` });
                 } catch (linkError) {
-                  if (!done.reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch(() => undefined);
+                  if (!done.reconnected) {
+                    // A connection that stays with no ad account is listed nowhere: say so in the log, by code only.
+                    await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+                      console.warn(`[ads] a connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+                    });
+                  }
                   throw linkError;
                 }
               }

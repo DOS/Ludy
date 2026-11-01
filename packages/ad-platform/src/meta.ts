@@ -13,7 +13,7 @@
 // on the Limited tier with `ads_read` [C]; its rate limits are low [C] (plan section 5.3), so a run reads each account
 // with a handful of calls, backs off for the time a rate limit names, and the app never retries in a loop.
 import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
-import { ConnectorError, Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
+import { Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
 import { AdPlatformError, type AdDailyRow, type AdPlatform, type AdPlatformAccount, type AdPlatformCapabilities } from './index.ts';
 
 // Reading reports is all the ads module does; Meta's ads_read is "read reports of ad accounts you own or were granted".
@@ -34,7 +34,7 @@ const META_CAPABILITIES: AdPlatformCapabilities = { revisionDays: META_REVISION_
 
 // The fields of the Insights read: the day's money and counts, and the actions the results come from.
 const INSIGHT_FIELDS = 'date_start,spend,impressions,clicks,reach,actions,campaign_id,campaign_name';
-const ACCOUNT_FIELDS = 'id,name,currency,timezone_name,account_status';
+const ACCOUNT_FIELDS = 'id,name,currency,timezone_name';
 const ACT_ID = /^act_\d{1,32}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_ACCOUNTS_LISTED = 1000;
@@ -178,7 +178,7 @@ export class MetaAdsPlatform implements AdPlatform {
     const { accessToken } = parseSecret(secret);
     if (!ACT_ID.test(externalAccountId) || !DAY.test(range.from) || !DAY.test(range.to) || range.from > range.to) throw new AdPlatformError('bad_request', 'BAD_RANGE');
     try {
-      // The currency decides how many decimals a spend keeps; the account row of the same read names the account.
+      // Account level first, then campaign level: the same days, each as its own rows.
       const accountRows = await this.insights(accessToken, externalAccountId, range, 'account');
       const campaignRows = await this.insights(accessToken, externalAccountId, range, 'campaign');
       return [...accountRows, ...campaignRows];
@@ -274,7 +274,11 @@ export class MetaAdsConnector implements OAuthConnector {
   }
 
   async exchange(input: ExchangeInput): Promise<ConnectedAccount[]> {
-    const { token, scopes } = await this.login.userToken(input);
+    // The connection records every permission the token holds, not only ads_read: a Meta user token carries all that the
+    // person ever granted this app, so with an app shared with Pages publishing it can also post to their Pages (plan section
+    // 8, R1). A separate ads app keeps it to ads_read; the runbook and the config say so.
+    const { token, granted } = await this.login.userToken(input);
+    const scopes = granted;
     let rows: NonNullable<AccountsAnswer['data']>;
     try {
       rows = await listAdAccounts(this.login.graph, token);
@@ -289,7 +293,7 @@ export class MetaAdsConnector implements OAuthConnector {
       if (typeof row.id !== 'string' || !ACT_ID.test(row.id)) continue;
       accounts.push({ provider: META_ADS_PROVIDER, externalAccountId: row.id, displayName: accountName(row.name, row.id), scopes: [...scopes], expiresAt, secret: JSON.stringify({ accessToken: token } satisfies MetaSecret) });
     }
-    if (accounts.length === 0) throw new ConnectorError('denied', 'Meta granted no ad account', 'NO_AD_ACCOUNT');
+    // A login that reaches no ad account is not a missing permission: the caller says so in words of its own.
     return accounts;
   }
 }

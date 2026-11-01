@@ -1201,6 +1201,8 @@ export const en = {
       connected: 'Connected: {list}. The figures arrive within a few minutes.',
       lost: 'This connection attempt was not found in this browser (it may have been opened in another tab). Start again from the Ads page.',
       backToAds: 'Back to Ads',
+      failed: 'Could not connect: {list}. Check in Meta that you can still see that ad account, then connect again.',
+      skipped: '{count} more ad accounts were not connected: one connection takes at most {max}.',
     },
     accountLabel: 'Ad account',
     sandboxBadge: 'Sandbox (sample figures)',

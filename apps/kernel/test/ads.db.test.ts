@@ -689,7 +689,10 @@ suite('ads on PostgreSQL (#2217)', () => {
     const meta = { appSecret: 'meta-app-secret', graphVersion: 'v24.0' } as const;
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
     // Graph as Meta answers it for two ad accounts in dong: the same shape for any window asked.
-    const graph = (mode: 'ok' | 'limited' | 'expired' = 'ok'): Fetch => async (input) => {
+    // Every request the adapter makes, to show that none is a write.
+    const methods: string[] = [];
+    const graph = (mode: 'ok' | 'limited' | 'expired' = 'ok'): Fetch => async (input, init) => {
+      methods.push(init?.method ?? 'GET');
       const url = new URL(input);
       if (mode === 'expired') return json(400, { error: { code: 190, message: 'Error validating access token: Session has expired' } });
       if (mode === 'limited') return json(400, { error: { code: 80004, message: 'There have been too many calls from this ad-account' } });
@@ -725,6 +728,8 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(finished?.status, JSON.stringify(finished?.body)).toBe(200);
       expect(finished?.body.connections.map((c: { displayName: string }) => c.displayName).sort()).toEqual(['Meta act_9001', 'Meta act_9002']);
       expect(finished?.body.failed).toEqual([]);
+      // The answer of the grant carries no token.
+      expect(JSON.stringify(finished?.body)).not.toContain('EAAB-grant-token');
       const listed = (await ok('ads/accounts', owner, undefined)) as AdAccountView[];
       const mine = listed.filter((a) => a.provider === 'meta_ads').sort((a, b) => a.name.localeCompare(b.name));
       expect(mine.map((a) => [a.name, a.connectionStatus, a.resultKinds])).toEqual([
@@ -765,6 +770,9 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(summary.total.spend).toBe('700000');
       expect(summary.total.results).toBe('14');
       expect(summary.campaigns.map((c) => c.name).sort()).toEqual(['Chiến dịch 2301', 'Chiến dịch 2302']);
+      // Everything the sync asked Meta was a read.
+      expect(methods.length).toBeGreaterThan(20);
+      expect(new Set(methods)).toEqual(new Set(['GET']));
     });
 
     it('holds an account back after a rate limit, expires it on a refused token, and resumes it when connected again, with no day lost', async () => {
