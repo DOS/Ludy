@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { WAITING_LINKS, allCounted, gapsFromYear, waitingItems } from '../src/lib/overview.ts';
+import { WAITING_LINKS, allCounted, gapsFromYear, shellBadges, waitingItems } from '../src/lib/overview.ts';
 
 describe('org overview', () => {
   it('lists what waits, the books first, and leaves out counts of 0', () => {
@@ -35,14 +35,18 @@ describe('org overview', () => {
     expect(WAITING_LINKS.bankLines.to).toBe('/o/$slug/bank');
   });
 
-  it('keeps posts to review out of the accounting inbox and its menu count (#2234)', () => {
-    const src = join(import.meta.dirname, '..', 'src');
-    const inbox = readFileSync(join(src, 'routes', 'inbox.tsx'), 'utf8');
-    expect(inbox).not.toContain('reviewInbox');
-    expect(inbox).not.toContain('SocialReviews');
-    // The count of posts to review sits on Social's menu item; the inbox's count is the accounting work and Social's alerts.
-    const layout = readFileSync(join(src, 'routes', 'org-layout.tsx'), 'utf8');
-    expect(layout.match(/const inboxCount = [^;]*;/)?.[0]).not.toContain('reviews');
-    expect(layout).toContain('social: reviewCount > 0 ? reviewCount : null');
+  it("counts posts to review on Social's menu item and never on the Inbox's (#2234)", () => {
+    expect(shellBadges({ pending: 0, attention: 0, failedJobs: 0, reviews: 4 })).toEqual({ inbox: null, social: 4 });
+    expect(shellBadges({ pending: 2, attention: 1, failedJobs: 3, reviews: 0 })).toEqual({ inbox: 6, social: null });
+    // A reviews total moves only the Social badge.
+    const without = shellBadges({ pending: 2, attention: 1, failedJobs: 0, reviews: 0 });
+    expect(shellBadges({ pending: 2, attention: 1, failedJobs: 0, reviews: 9 }).inbox).toBe(without.inbox);
+  });
+
+  it('lists no post to review in the accounting Inbox (#2234)', () => {
+    // The Inbox screen is too wired to the router and the stream to render here; its source must not ask for the
+    // reviews at all, in either of the two ways it could (the inbox of reviews, or the review stage of the post list).
+    const inbox = readFileSync(join(import.meta.dirname, '..', 'src', 'routes', 'inbox.tsx'), 'utf8');
+    expect(inbox).not.toMatch(/reviewInbox|SocialReviews|stage:\s*['"]review['"]/);
   });
 });

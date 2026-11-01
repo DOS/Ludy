@@ -14,6 +14,7 @@ import { orpc } from '../lib/api.ts';
 import { ALL_NAV, appOfPath, installedApps, type AppId } from '../lib/apps.ts';
 import { getConfig } from '../lib/auth.ts';
 import { installedItems } from '../lib/modules.ts';
+import { shellBadges } from '../lib/overview.ts';
 import { isPaletteShortcut, searchTerm } from '../lib/palette.ts';
 import { documentNumber } from '../lib/search.ts';
 import { proposalName } from '../lib/review.ts';
@@ -65,7 +66,7 @@ export function OrgLayout() {
     ...orpc.inbox.list.queryOptions({ input: { status: 'pending' } }),
     refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS),
   });
-  // Social posts waiting for the viewer's review (#749) count toward the inbox, where Social runs.
+  // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox.
   const socialOn = NAV.some((n) => n.module === 'social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
@@ -77,9 +78,12 @@ export function OrgLayout() {
     enabled: roleHere === 'owner' || roleHere === 'admin',
     refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS),
   });
-  // Posts waiting for the viewer's review are counted on Social's own menu item, not on the accounting inbox (#2234).
-  const reviewCount = reviews.data?.total ?? 0;
-  const inboxCount = (pending.data?.length ?? 0) + (attention.data?.total ?? 0) + (failedJobs.data?.total ?? 0);
+  const menuBadges = shellBadges({
+    pending: pending.data?.length ?? 0,
+    attention: attention.data?.total ?? 0,
+    failedJobs: failedJobs.data?.total ?? 0,
+    reviews: reviews.data?.total ?? 0,
+  });
   // The member's unread notifications (#637), where Social runs.
   const notifications = useNotifications(NAV.some((n) => n.module === 'social'));
   const unread = unreadLabel(notifications.data?.unread ?? 0);
@@ -240,7 +244,7 @@ export function OrgLayout() {
       apps={apps}
       app={screenApp ?? lastApp}
       inApp={screenApp !== null}
-      badges={{ inbox: inboxCount > 0 ? inboxCount : null, social: reviewCount > 0 ? reviewCount : null, alerts: workUnread, notifications: unread }}
+      badges={{ ...menuBadges, alerts: workUnread, notifications: unread }}
       orgs={me.data?.orgs ?? []}
       email={me.data?.email}
       onOpenPalette={() => {
@@ -280,7 +284,7 @@ export function OrgLayout() {
             className="relative grid size-11 place-items-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
           >
             <NavIcon name="menu" className="size-5" />
-            {inboxCount > 0 && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
+            {menuBadges.inbox !== null && <span className="absolute top-2 right-2 size-2 rounded-full bg-primary" aria-hidden="true" />}
           </button>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{org?.name ?? <Logo />}</span>
           <button type="button" onClick={() => setPaletteOpen(true)} className="min-h-11 rounded-lg border px-2 text-xs text-subtle-foreground">

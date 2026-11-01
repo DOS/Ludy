@@ -27,6 +27,13 @@ export const WAITING_LINKS = {
   bankLines: { to: '/o/$slug/bank' },
 } as const satisfies Record<WaitingKey, { to: string; search?: Record<string, string> }>;
 
+// The counts the shell menu shows (#2234): what the accounting Inbox holds (proposals, Social work that needs a person,
+// failed background jobs) goes on the Inbox item; posts waiting for the viewer's review go on Social's own item.
+export function shellBadges(counts: { pending: number; attention: number; failedJobs: number; reviews: number }): { inbox: number | null; social: number | null } {
+  const inbox = counts.pending + counts.attention + counts.failedJobs;
+  return { inbox: inbox > 0 ? inbox : null, social: counts.reviews > 0 ? counts.reviews : null };
+}
+
 export function waitingItems(counts: WaitingCounts): { key: WaitingKey; count: number }[] {
   return ORDER.flatMap((key) => {
     const count = counts[key];

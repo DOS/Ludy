@@ -149,9 +149,8 @@ function FailedJobs() {
 
 // The name a proposal goes by in the list, its checkbox and the bulk report: the customer of a sale (#313; its seller is
 // the org itself), the seller of a purchase, else its title.
-// Posts waiting for the viewer's review are not listed here: they open from Social's own review tab (#2234).
 // Social work that needs a person (#771): channels to reconnect and posts that did not go out, each opening where it
-// is fixed.
+// is fixed. Posts waiting for the viewer's review are not listed here: they open from Social's own review tab (#2234).
 function SocialAttention({ slug }: { slug: string }) {
   const t = useTranslations('inbox.socialAttention');
   const live = useStreamLive();
