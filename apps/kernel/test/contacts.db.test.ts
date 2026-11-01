@@ -156,11 +156,11 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     await expect(rt.execute('kernel.party.create', { kind: 'person', name: 'Do máy' }, { actor: agent, orgId: o.orgId })).rejects.toBeTruthy();
     expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1 AND name LIKE 'Do %'", [o.orgId]))).rows[0]?.n).toBe(3);
 
-    const made = await create(o, o.lan, { kind: 'organization', name: 'Công ty Bí Mật', taxCode: '0108888888', address: '9 Phố Bí Mật', email: 'bi-mat@example.vn', phone: '0988 777 777' });
+    const made = await create(o, o.lan, { kind: 'organization', name: 'Công ty Bí Mật', taxCode: '0108888880', address: '9 Phố Bí Mật', email: 'bi-mat@example.vn', phone: '0988 777 777' });
     const audit = (await admin((c) => c.query<{ detail: unknown; command: string }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.create' AND detail ->> 'partyId' = $2", [o.orgId, made.partyId]))).rows;
     expect(audit).toHaveLength(1);
     const detail = JSON.stringify(audit[0]?.detail);
-    for (const secret of ['Bí Mật', '0108888888', 'bi-mat@example.vn', '0988', '9 Phố']) expect(detail).not.toContain(secret);
+    for (const secret of ['Bí Mật', '0108888880', 'bi-mat@example.vn', '0988', '9 Phố']) expect(detail).not.toContain(secret);
     expect(audit[0]?.detail).toMatchObject({ partyId: made.partyId, kind: 'organization', fields: ['name', 'taxCode', 'address', 'email', 'phone'] });
     // The party's timeline says it was added, with fixed text.
     const activity = (await admin((c) => c.query<{ summary: string }>("SELECT summary FROM crove_kernel.activity WHERE org_id = $1 AND record_id = $2 AND kind = 'party.created'", [o.orgId, made.partyId]))).rows;
