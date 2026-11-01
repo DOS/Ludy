@@ -14,6 +14,7 @@ export const SITE_URL = 'https://ludy.vn';
 // language switch of each page read this list, so a new app page is one entry here, its copy and its routes.
 export const APP_PAGES = {
   accounting: { vi: '/ke-toan', en: '/en/accounting', module: 'finance' },
+  crm: { vi: '/crm', en: '/en/crm', module: 'crm' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
 export const appPagePath = (key: AppPageKey, lang: string) => APP_PAGES[key][lang === 'vi' ? 'vi' : 'en'];

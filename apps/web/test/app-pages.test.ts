@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest';
 import sitemap from '../src/app/sitemap';
 import { accountingEn } from '../src/content/accounting-en';
 import { accountingVi } from '../src/content/accounting-vi';
+import { crmEn } from '../src/content/crm-en';
+import { crmVi } from '../src/content/crm-vi';
 import type { AppPageCopy } from '../src/content/app-page';
 import { en } from '../src/content/en';
 import { APP_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
@@ -16,6 +18,7 @@ import { vi } from '../src/content/vi';
 
 const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
   accounting: { vi: accountingVi, en: accountingEn },
+  crm: { vi: crmVi, en: crmEn },
 };
 const KEYS = Object.keys(APP_PAGES) as AppPageKey[];
 const app = join(import.meta.dirname, '..', 'src', 'app');
@@ -75,7 +78,7 @@ describe('app pages', () => {
       a.groups.items.forEach((group, i) => expect(b.groups.items[i]?.points.length, `${key} group ${i}`).toBe(group.points.length));
       expect(b.faq.items.length).toBe(a.faq.items.length);
       expect(b.how.steps.length).toBe(a.how.steps.length);
-      expect(b.soon.items.length).toBe(a.soon.items.length);
+      expect(b.soon?.items.length).toBe(a.soon?.items.length);
     }
   });
 

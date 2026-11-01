@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test';
 import { BUDGET, PROFILES } from './perf-budget';
 import { auditResources, measureVitals } from './perf-checks';
 
-for (const path of ['/', '/en', '/ke-toan', '/en/accounting']) {
+for (const path of ['/', '/en', '/ke-toan', '/en/accounting', '/crm', '/en/crm']) {
   for (const profile of PROFILES) {
     test(`${path} on ${profile.name} keeps LCP, CLS and INP in budget`, async ({ browser }) => {
       const { vitals, problems, summary } = await measureVitals(browser, path, profile, BUDGET.runs);

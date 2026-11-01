@@ -19,8 +19,8 @@ export interface AppPageCopy {
     lead: string;
     items: ReadonlyArray<{ id: string; title: string; lead: string; points: readonly string[] }>;
   };
-  soon: { title: string; lead: string; label: string; items: ReadonlyArray<{ title: string; body: string }> };
-  assistant: { title: string; lead: string; doesTitle: string; does: readonly string[]; doesNotTitle: string; doesNot: readonly string[] };
+  soon?: { title: string; lead: string; label: string; items: ReadonlyArray<{ title: string; body: string }> };
+  assistant?: { title: string; lead: string; doesTitle: string; does: readonly string[]; doesNotTitle: string; doesNot: readonly string[] };
   audience: { title: string; lead: string; items: ReadonlyArray<{ title: string; body: string }> };
   faq: { title: string; items: ReadonlyArray<{ q: string; a: string }> };
   cta: { title: string; body: string; primary: string; secondary: string };
