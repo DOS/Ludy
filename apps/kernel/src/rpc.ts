@@ -2021,7 +2021,8 @@ export function createRpcHandler(
           const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
           if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được tài khoản quảng cáo');
           if (!channels || !Object.hasOwn(channels.adsPlatforms ?? {}, 'sandbox_ads')) throw new DomainError('ADS_SANDBOX_DISABLED', 404, 'Nền tảng quảng cáo thử nghiệm chưa được bật');
-          const login = sandboxAdPlatform().connect({ displayName: input.displayName, ...(input.currency ? { currency: input.currency } : {}) });
+          // The account derives from the request's key, so a retry of this call is the same account (the same connection, the same link).
+          const login = sandboxAdPlatform().connect({ displayName: input.displayName, key: input.idempotencyKey, ...(input.currency ? { currency: input.currency } : {}) });
           const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
           const command: ChannelConnectInput = {
             provider: login.provider,
@@ -2032,12 +2033,19 @@ export function createRpcHandler(
             credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
           };
           const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
-          const { adAccountId } = await runtime.execute<{ adAccountId: string }>(
-            'ads.account.link',
-            { connectionId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) },
-            { actor, orgId, idempotencyKey: input.idempotencyKey },
-          );
-          return { connectionId, adAccountId };
+          try {
+            const { adAccountId } = await runtime.execute<{ adAccountId: string }>(
+              'ads.account.link',
+              { connectionId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) },
+              { actor, orgId, idempotencyKey: input.idempotencyKey },
+            );
+            return { connectionId, adAccountId };
+          } catch (error) {
+            // The link was refused (an entity to choose, one the caller may not use): no connection is left behind that no screen
+            // lists, with its sealed credential.
+            await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+            throw error;
+          }
         }),
       ),
       configure: os.ads.configure.handler(({ context, input }) =>

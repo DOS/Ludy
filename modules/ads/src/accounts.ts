@@ -146,13 +146,17 @@ export const adsSyncRequest = defineCommand({
     const row = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.channel_connection_id', 'a.last_requested_at', 'c.status'])
+      .select(['a.id', 'a.channel_connection_id', 'a.last_requested_at', 'a.next_run_at', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
       .forUpdate('a')
       .executeTakeFirst();
     if (!row) throw notFound();
     if (row.status !== 'active') throw new DomainError('ADS_CONNECTION_INACTIVE', 422, 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại');
+    // A rate limit holds the account back until the time the platform named: a refresh does not go round it.
+    if (row.next_run_at && new Date(row.next_run_at).getTime() > ctx.now.getTime()) {
+      throw new DomainError('ADS_SYNC_ON_HOLD', 429, 'Nền tảng đang giới hạn tần suất truy vấn tài khoản này; hệ thống sẽ tự thử lại khi hết giới hạn');
+    }
     if (row.last_requested_at && ctx.now.getTime() - new Date(row.last_requested_at).getTime() < ADS_REQUEST_MIN_SECONDS * 1000) {
       throw new DomainError('ADS_SYNC_TOO_SOON', 429, 'Vừa mới làm mới tài khoản này, hãy thử lại sau ít phút');
     }

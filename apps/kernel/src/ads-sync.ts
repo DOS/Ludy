@@ -9,12 +9,12 @@
 // kernel.channel.credential refuses once the member who connected the account may no longer use it, or the connection is
 // no longer active: the sync then marks the connection expired, so the hourly sweep skips it and an owner or admin connects
 // it again, rather than failing every hour. The platform's own answer to a refused token does the same.
-import { AdPlatformError, type AdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, type AdDailyRow, type AdPlatform } from '@crove/ad-platform';
 import { settleBefore, syncWindow, todayIn } from '@crove/mod-ads';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { ADS_SYNC_RUN_DAYS } from '@crove/kernel-contract';
+import { ADS_MAX_ROWS_PER_RUN, ADS_SYNC_RUN_DAYS } from '@crove/kernel-contract';
 
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 // Days one record command covers at most: a month or so of a large account stays well under its row limit.
@@ -46,6 +46,7 @@ interface Target {
   connectionUpdatedAt: string;
   backfillFrom: string;
   settledThrough: string | null;
+  nextRunAt: string | null;
 }
 
 // A page of the active ad accounts of active orgs after a key (crove_ads.ads_due, the worker login's alone), for the
@@ -66,12 +67,24 @@ export async function pruneAdsRuns(workerDb: Db, now: Date): Promise<number> {
 
 const addDays = (day: string, days: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
 
+// The rows of a window, in as many parts as the record command takes: a part with more rows than it accepts is read again as
+// two halves of its days (a single day with too many rows is left to the command's refusal).
+async function readParts(platform: AdPlatform, secret: string, accountId: string, window: { from: string; to: string }): Promise<Array<{ window: { from: string; to: string }; rows: AdDailyRow[] }>> {
+  const rows = await platform.readDaily(secret, accountId, window);
+  if (rows.length <= ADS_MAX_ROWS_PER_RUN || window.from >= window.to) return [{ window, rows }];
+  const days = Math.round((Date.parse(window.to) - Date.parse(window.from)) / 86_400_000) + 1;
+  const middle = addDays(window.from, Math.floor(days / 2) - 1);
+  return [...(await readParts(platform, secret, accountId, { from: window.from, to: middle })), ...(await readParts(platform, secret, accountId, { from: addDays(middle, 1), to: window.to }))];
+}
+
 export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ rows: number; slices: number }> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const now = deps.now ?? (() => new Date());
   const none = { rows: 0, slices: 0 };
   const target = await deps.runtime.query<Target | null>('ads.sync.target', { connectionId: job.connectionId }, options);
   if (!target || target.connectionStatus !== 'active') return none;
+  // A rate limit holds the account back until the time the platform named: neither a queued job nor a refresh goes round it.
+  if (target.nextRunAt && Date.parse(target.nextRunAt) > now().getTime()) return none;
   let sealed: SealedChannelCredential;
   try {
     sealed = await deps.runtime.query<SealedChannelCredential>('kernel.channel.credential', { connectionId: job.connectionId }, options);
@@ -102,11 +115,12 @@ export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ 
     let slices = 0;
     for (let from = planned.from; from <= planned.to; from = addDays(from, SLICE_DAYS)) {
       const to = addDays(from, SLICE_DAYS - 1) < planned.to ? addDays(from, SLICE_DAYS - 1) : planned.to;
-      window = { from, to };
-      const read = await platform.readDaily(secret, sealed.externalAccountId, window);
-      await deps.runtime.execute('ads.sync.record', { adAccountId: target.adAccountId, details, window, settleBefore: settle, rows: read }, options);
-      rows += read.length;
-      slices++;
+      for (const part of await readParts(platform, secret, sealed.externalAccountId, { from, to })) {
+        window = part.window;
+        await deps.runtime.execute('ads.sync.record', { adAccountId: target.adAccountId, details, window, settleBefore: settle, rows: part.rows }, options);
+        rows += part.rows.length;
+        slices++;
+      }
     }
     return { rows, slices };
   } catch (error) {
@@ -124,7 +138,15 @@ export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ 
       // A rate limit waits for its own time (the account's next_run_at); a refusal of a permission or a request is not
       // retried by the job. Only a passing failure is left to pg-boss's retry.
       if (error.kind !== 'transient') return none;
-    } else if (!(error instanceof DomainError)) {
+    } else if (error instanceof DomainError) {
+      // The connection went away or the account was removed while the job ran: nothing to record.
+      if (error.code === 'ADS_CONNECTION_INACTIVE' || error.code === 'ADS_ACCOUNT_NOT_FOUND') return none;
+      // The command refused what the platform handed it (a day outside the window, a changed currency, a row that does not
+      // fit): the same answer would come every hour, so it is recorded on the account and shown, not retried into the
+      // dead letters.
+      await deps.runtime.execute('ads.sync.record_failure', { adAccountId: target.adAccountId, errorKind: 'bad_request', errorCode: error.code.slice(0, 100), ...(window ? { window } : {}) }, options);
+      return none;
+    } else {
       await deps.runtime.execute('ads.sync.record_failure', { adAccountId: target.adAccountId, errorKind: 'unknown', errorCode: 'ADAPTER_ERROR', ...(window ? { window } : {}) }, options);
     }
     throw error;

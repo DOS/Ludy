@@ -29,9 +29,11 @@ describe('vendored pg-boss schema (External-tenant gate T6)', () => {
       (names ?? '').split(', ').map((name) => [name.slice(1, -1), JSON.parse(options ?? '{}').policy as string]),
     );
     expect(Object.fromEntries(created)).toEqual(
-      Object.fromEntries(Object.values(QUEUES).map((name) => [name, name === QUEUES.agentWake ? 'stately' : 'standard'])),
+      Object.fromEntries(Object.values(QUEUES).map((name) => [name, name === QUEUES.agentWake || name === QUEUES.adsSync ? 'stately' : 'standard'])),
     );
     expect(queueOptions(QUEUES.agentWake)).toBe('{"policy":"stately","deadLetter":"kernel-job.dlq"}');
+    // One queued and one active sync per account (its singleton key), so a link, a refresh and the sweep never read one twice.
+    expect(queueOptions(QUEUES.adsSync)).toBe('{"policy":"stately","deadLetter":"kernel-job.dlq"}');
     expect(queueOptions(QUEUES.extract)).toBe('{"policy":"standard","deadLetter":"kernel-job.dlq"}');
   });
 

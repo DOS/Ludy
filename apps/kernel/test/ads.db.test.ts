@@ -252,6 +252,24 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(again).toEqual({ adAccountId: made.adAccountId, linked: false });
   });
 
+  it('leaves no connection behind when the link is refused, and a retried connect is the same account', async () => {
+    const live = async () => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'sandbox_ads' AND status <> 'revoked'`, [orgId]))[0]?.n);
+    const before = await live();
+    // An entity the caller cannot use: refused after the connection was made, which is then disconnected.
+    const refused = await rpc('ads/connectSandbox', await tokenFor(owner), { displayName: 'Sai pháp nhân', legalEntityId: randomUUID(), idempotencyKey: randomUUID() });
+    expect(refused.status).toBe(403);
+    expect(await live()).toBe(before);
+    const credentials = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'sandbox_ads' AND k.status = 'revoked'`, [orgId]);
+    expect(credentials[0]?.n).toBe('0');
+    // The same request twice is one account and one connection, whatever the second seal is.
+    const key = randomUUID();
+    const first = (await ok('ads/connectSandbox', owner, { displayName: 'Hai lần', idempotencyKey: key })) as { connectionId: string; adAccountId: string };
+    const second = (await ok('ads/connectSandbox', owner, { displayName: 'Hai lần', idempotencyKey: key })) as { connectionId: string; adAccountId: string };
+    expect(second).toEqual(first);
+    expect(await live()).toBe(before + 1);
+    accounts.set('Hai lần', first);
+  });
+
   it('refuses a member, a viewer and another org the connection, and a connection that is not an ad account', async () => {
     for (const who of [member, viewer]) {
       const r = await rpc('ads/connectSandbox', await tokenFor(who), { displayName: 'Thử', idempotencyKey: randomUUID() });
@@ -452,22 +470,32 @@ suite('ads on PostgreSQL (#2217)', () => {
         },
       },
     });
-    const retryAt = new Date(Date.now() + 2 * 3_600_000);
-    await sync(connectionId, failing(new AdPlatformError('rate_limited', '80000', retryAt)));
-    let account = await view(owner, adAccountId);
-    expect(account?.lastErrorKind).toBe('rate_limited');
-    expect(Math.abs(Date.parse(account?.nextRunAt as string) - retryAt.getTime())).toBeLessThan(1000);
-    // The hourly sweep leaves it alone until then.
-    const due = await adsDue(workerDb, null);
-    expect(due.some((d) => d.connectionId === connectionId)).toBe(false);
-    const runs = (await ok('ads/syncRuns', owner, { adAccountId })) as AdsSyncRunView[];
-    expect(runs[0]).toMatchObject({ status: 'failed', errorKind: 'rate_limited', errorCode: '80000' });
     // A passing failure is left to the job's retry (it throws), and is recorded too.
     await expect(sync(connectionId, failing(new AdPlatformError('transient', '2')))).rejects.toBeInstanceOf(AdPlatformError);
-    account = await view(owner, adAccountId);
+    let account = await view(owner, adAccountId);
     expect(account?.lastErrorKind).toBe('transient');
     expect(account?.nextRunAt).toBeNull();
+    // A rate limit holds the next run back to the time the platform named.
+    const retryAt = new Date(Date.now() + 2 * 3_600_000);
+    await sync(connectionId, failing(new AdPlatformError('rate_limited', '80000', retryAt)));
+    account = await view(owner, adAccountId);
+    expect(account?.lastErrorKind).toBe('rate_limited');
+    expect(Math.abs(Date.parse(account?.nextRunAt as string) - retryAt.getTime())).toBeLessThan(1000);
+    // The hourly sweep leaves it alone until then, and so does a refresh asked for by hand or a job already queued.
+    const due = await adsDue(workerDb, null);
+    expect(due.some((d) => d.connectionId === connectionId)).toBe(false);
     expect(due.every((d) => d.provider === 'sandbox_ads')).toBe(true);
+    const held = await rpc('ads/requestSync', await tokenFor(owner), { adAccountId, idempotencyKey: randomUUID() });
+    expect(held.status).toBe(429);
+    expect(held.body?.code).toBe('ADS_SYNC_ON_HOLD');
+    const reads: string[] = [];
+    const spy = { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => { reads.push('read'); return []; } } };
+    expect(await sync(connectionId, spy)).toEqual({ rows: 0, slices: 0 });
+    expect(reads).toEqual([]);
+    const runs = (await ok('ads/syncRuns', owner, { adAccountId })) as AdsSyncRunView[];
+    expect(runs[0]).toMatchObject({ status: 'failed', errorKind: 'rate_limited', errorCode: '80000' });
+    // The hold passes (here by hand: the owner of the database moves it).
+    await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
     // A refused token ends the connection: expired until an owner reconnects it, and no longer swept.
     await sync(connectionId, failing(new AdPlatformError('token_expired', '190')));
     account = await view(owner, adAccountId);
@@ -481,7 +509,55 @@ suite('ads on PostgreSQL (#2217)', () => {
     await expect(sync(other.connectionId, { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => { throw new Error('boom sbx_secret'); } } })).rejects.toThrow('boom');
     const failed = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, other.adAccountId]);
     expect(failed).toEqual([{ error_code: 'ADAPTER_ERROR' }]);
+    // A refusal that would come every hour is recorded on the account and shown, not thrown into the dead letters.
+    const odd = await connect('Dữ liệu lạ');
+    const twice: Readonly<Record<string, AdPlatform>> = {
+      sandbox_ads: {
+        ...(sandbox.sandbox_ads as AdPlatform),
+        readDaily: async (secret, id, range) => {
+          const rows = await (sandbox.sandbox_ads as AdPlatform).readDaily(secret, id, range);
+          return [...rows, ...rows.slice(0, 1)];
+        },
+      },
+    };
+    expect(await sync(odd.connectionId, twice)).toEqual({ rows: 0, slices: 0 });
+    expect(await view(owner, odd.adAccountId)).toMatchObject({ connectionStatus: 'active', lastErrorKind: 'bad_request' });
+    const refusal = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, odd.adAccountId]);
+    expect(refusal).toEqual([{ error_code: 'ADS_ROWS_INVALID' }]);
   });
+
+  it('reads an answer with too many rows in halves of its days', async () => {
+    const { connectionId, adAccountId } = await connect('Rất nhiều chiến dịch');
+    // 40 days of history, so the first read is a 31-day slice and a shorter one.
+    await row(`UPDATE crove_ads.ad_account SET backfill_from = (now() AT TIME ZONE 'UTC')::date - 40 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+    const dense: Readonly<Record<string, AdPlatform>> = {
+      sandbox_ads: {
+        ...(sandbox.sandbox_ads as AdPlatform),
+        readDaily: async (_secret, id, range) => {
+          const rows: Awaited<ReturnType<AdPlatform['readDaily']>> = [];
+          for (let ms = Date.parse(`${range.from}T00:00:00Z`); ms <= Date.parse(`${range.to}T00:00:00Z`); ms += DAY_MS) {
+            const day = new Date(ms).toISOString().slice(0, 10);
+            rows.push({ level: 'account', externalObjectId: id, objectName: 'a', day, spend: '800', impressions: 1, clicks: 1, reach: null, results: {} });
+            for (let c = 0; c < 800; c++) rows.push({ level: 'campaign', externalObjectId: `c${c}`, objectName: `c${c}`, day, spend: '1', impressions: 1, clicks: 1, reach: null, results: {} });
+          }
+          return rows;
+        },
+      },
+    };
+    const done = await sync(connectionId, dense);
+    // The 31-day slice (24,831 rows) was read as two halves, so more parts than the two slices.
+    expect(done.slices).toBeGreaterThan(2);
+    const stored = await row<{ days: string; n: string }>(
+      `SELECT count(DISTINCT day)::text AS days, count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`,
+      [orgId, adAccountId],
+    );
+    // From the first day of history (40 days back, by the UTC date) to today in the account's zone.
+    const first = new Date(Date.now() - 40 * DAY_MS).toISOString().slice(0, 10);
+    const expectedDays = Math.round((Date.parse(todayIn('Asia/Ho_Chi_Minh', new Date())) - Date.parse(first)) / DAY_MS) + 1;
+    expect(Number(stored[0]?.days)).toBe(expectedDays);
+    expect(Number(stored[0]?.n)).toBe(expectedDays * 801);
+    expect(done.rows).toBe(expectedDays * 801);
+  }, 120_000);
 
   it('keeps the history of an account connected again after a disconnect, on the same row', async () => {
     const { connectionId, adAccountId } = await connect('Nối lại');
@@ -495,7 +571,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     // The same platform account connected again: a new connection takes over the row and its history. The sandbox makes
     // a fresh account each time, so this is done with the same account id by sealing its secret again.
     const secret = (await row<{ id: string }>(`SELECT external_account_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.id as string;
-    const login = JSON.stringify({ accessToken: `sbx_${'a'.repeat(43)}`, currency: 'VND' });
+    const login = JSON.stringify({ accessToken: `sbx_${'a'.repeat(43)}`, currency: 'VND', key: 'reconnect-key' });
     const sealed = vault.seal(login, { orgId, provider: 'sandbox_ads', externalAccountId: secret });
     const reconnected = await api.execute<{ connectionId: string }>(
       'kernel.channel.connect',
@@ -526,6 +602,17 @@ suite('ads on PostgreSQL (#2217)', () => {
     await expect(record({ rows: [{ level: 'campaign', day: today, ...base, spend: '-1' }] })).rejects.toMatchObject({ status: 422 });
     await expect(record({ rows: [{ level: 'campaign', day: today, ...base, spend: '1e3' }] })).rejects.toMatchObject({ status: 422 });
     await expect(record({ rows: [{ level: 'campaign', day: today, ...base, impressions: 1.5 }] })).rejects.toMatchObject({ status: 422 });
+    // An account-level row names the account itself.
+    await expect(record({ rows: [{ level: 'account', day: today, ...base }] })).rejects.toMatchObject({ code: 'ADS_ROWS_INVALID' });
+    // A final day is never rewritten, even by a window that covers it.
+    const finalDay = (await row<{ day: string; spend: string; external: string }>(
+      `SELECT d.day::text, d.spend::text, a.external_account_id AS external FROM crove_ads.ad_spend_day d JOIN crove_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
+       WHERE d.org_id = $1 AND d.ad_account_id = $2 AND d.level = 'account' AND d.settled_at IS NOT NULL ORDER BY d.day DESC LIMIT 1`,
+      [orgId, adAccountId],
+    ))[0] as { day: string; spend: string; external: string };
+    await record({ window: { from: finalDay.day, to: finalDay.day }, rows: [{ level: 'account', day: finalDay.day, ...base, externalObjectId: finalDay.external, spend: '1' }] });
+    const kept = await row<{ spend: string }>(`SELECT spend::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND day = $3`, [orgId, adAccountId, finalDay.day]);
+    expect(kept).toEqual([{ spend: finalDay.spend }]);
     // A person cannot run it, whatever their role.
     await expect(api.execute('ads.sync.record', { adAccountId, details, window: { from: today, to: today }, settleBefore: null, rows: [] }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });
     await expect(api.execute('ads.sync.record_failure', { adAccountId, errorKind: 'unknown' }, { actor: asOwner(), orgId })).rejects.toMatchObject({ status: 403 });

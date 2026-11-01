@@ -182,8 +182,9 @@ CREATE TRIGGER b_legal_entity BEFORE INSERT ON crove_ads.ad_sync_run FOR EACH RO
 ALTER TABLE crove_ads.ad_sync_run ENABLE ALWAYS TRIGGER b_legal_entity;
 
 -- The worker's queue: one account's sync, queued by the outbox relay when an account is linked or a refresh asked for, and
--- every hour for every active account.
-SELECT crove_jobs.create_queue('ads-sync', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+-- every hour for every active account. Stately, with the singleton key <org>:<queue>:<connection> (job-keys.ts): at most one
+-- queued and one active job per account, so a link, a refresh and the sweep never read one account twice at once.
+SELECT crove_jobs.create_queue('ads-sync', '{"policy":"stately","deadLetter":"kernel-job.dlq"}'::jsonb);
 
 -- The active ad accounts of active orgs after a key, in key order, for the worker's hourly sweep, which pages through
 -- them all (the worker login's alone, as crove_finance.bank_feeds_due). An account waits for its next_run_at after a rate

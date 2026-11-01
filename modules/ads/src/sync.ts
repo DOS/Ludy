@@ -33,6 +33,8 @@ export interface AdsSyncTarget {
   timeZone: string | null;
   backfillFrom: string;
   settledThrough: string | null;
+  // After a rate limit: not before this time.
+  nextRunAt: string | null;
 }
 
 const day = (value: Date | string | null): string | null => (value === null ? null : typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10));
@@ -45,7 +47,7 @@ export const adsSyncTarget = defineQuery({
     const row = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.provider', 'a.currency', 'a.time_zone', 'a.backfill_from', 'a.settled_through', 'c.status', 'c.updated_at'])
+      .select(['a.id', 'a.provider', 'a.currency', 'a.time_zone', 'a.backfill_from', 'a.settled_through', 'a.next_run_at', 'c.status', 'c.updated_at'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.channel_connection_id', '=', input.connectionId)
       .executeTakeFirst();
@@ -59,14 +61,17 @@ export const adsSyncTarget = defineQuery({
       timeZone: row.time_zone,
       backfillFrom: day(row.backfill_from) as string,
       settledThrough: day(row.settled_through),
+      nextRunAt: row.next_run_at ? new Date(row.next_run_at).toISOString() : null,
     };
   },
 });
 
 // Checks the rows against the window and each other; returns them keyed for the upsert.
-function checkRows(rows: readonly AdDailyRowInput[], window: { from: string; to: string }): void {
+function checkRows(rows: readonly AdDailyRowInput[], window: { from: string; to: string }, accountExternalId: string): void {
   const seen = new Set<string>();
   for (const row of rows) {
+    // The account's own row names the account itself: two such rows on one day would both be summed.
+    if (row.level === 'account' && row.externalObjectId !== accountExternalId) throw invalid('một dòng cấp tài khoản không thuộc tài khoản này');
     if (row.day < window.from || row.day > window.to) throw invalid('một ngày nằm ngoài khoảng đã đọc');
     const key = `${row.level}\u0000${row.externalObjectId}\u0000${row.day}`;
     if (seen.has(key)) throw invalid('một đối tượng có hai dòng trong cùng một ngày');
@@ -87,7 +92,7 @@ export const adsSyncRecord = defineCommand({
     const account = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
-      .select(['a.id', 'a.legal_entity_id', 'a.currency', 'a.backfill_from', 'a.settled_through', 'c.status'])
+      .select(['a.id', 'a.legal_entity_id', 'a.currency', 'a.backfill_from', 'a.settled_through', 'a.external_account_id', 'c.status'])
       .where('a.org_id', '=', ctx.orgId)
       .where('a.id', '=', input.adAccountId)
       .forUpdate('a')
@@ -103,12 +108,12 @@ export const adsSyncRecord = defineCommand({
     if (window.from > window.to || window.to > today) throw invalid('khoảng ngày đã đọc không hợp lệ');
     if (window.from < backfillFrom) throw invalid('khoảng ngày bắt đầu trước lịch sử được giữ');
     if (input.settleBefore !== null && input.settleBefore > today) throw invalid('ngày chốt nằm trong tương lai');
-    checkRows(rows, window);
+    checkRows(rows, window, account.external_account_id);
 
     const horizon = addMonths(today, -ADS_BACKFILL_MONTHS);
     const settled = nextSettledThrough({ current: day(account.settled_through), backfillFrom, window, settleBefore: input.settleBefore });
     const started = ctx.now;
-    // Upsert: a day inside the platform's revision window is rewritten in place.
+    // Upsert: a day inside the platform's revision window is rewritten in place; a final day is never rewritten.
     for (let i = 0; i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK);
       await ctx.trx
@@ -141,7 +146,7 @@ export const adsSyncRecord = defineCommand({
             reach: eb.ref('excluded.reach'),
             results: eb.ref('excluded.results'),
             fetched_at: eb.ref('excluded.fetched_at'),
-          })),
+          })).where('crove_ads.ad_spend_day.settled_at', 'is', null),
         )
         .execute();
     }

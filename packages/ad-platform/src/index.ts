@@ -113,6 +113,7 @@ const SANDBOX_CAMPAIGNS: ReadonlyArray<{ id: string; name: string }> = [
 const SANDBOX_MAX_DAYS = 93;
 const SANDBOX_FIRST_DAY = '2025-01-01';
 const SECRET = /^sbx_[A-Za-z0-9_-]{43}$/;
+const KEY = /^[A-Za-z0-9-]{1,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 
@@ -129,6 +130,8 @@ function todayIn(timeZone: string, now: Date): string {
 interface SandboxSecret {
   accessToken: string;
   currency: SandboxCurrency;
+  // What the account id derives from: a caller's key (a retry of one connect is the same account) or a random one.
+  key: string;
 }
 
 function parseSecret(secret: string): SandboxSecret {
@@ -138,12 +141,14 @@ function parseSecret(secret: string): SandboxSecret {
   } catch {
     throw new Error('sandbox ad platform: invalid secret');
   }
-  const { accessToken, currency } = (parsed ?? {}) as { accessToken?: unknown; currency?: unknown };
-  if (typeof accessToken !== 'string' || !SECRET.test(accessToken) || !(SANDBOX_CURRENCIES as readonly unknown[]).includes(currency)) throw new Error('sandbox ad platform: invalid secret');
-  return { accessToken, currency: currency as SandboxCurrency };
+  const { accessToken, currency, key } = (parsed ?? {}) as { accessToken?: unknown; currency?: unknown; key?: unknown };
+  if (typeof accessToken !== 'string' || !SECRET.test(accessToken) || !(SANDBOX_CURRENCIES as readonly unknown[]).includes(currency) || typeof key !== 'string' || !KEY.test(key)) {
+    throw new Error('sandbox ad platform: invalid secret');
+  }
+  return { accessToken, currency: currency as SandboxCurrency, key };
 }
 
-const accountIdOf = (accessToken: string) => `sbxads-${createHash('sha256').update(accessToken).digest('hex').slice(0, 16)}`;
+const accountIdOf = (key: string) => `sbxads-${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
 
 // A whole amount of the currency's smallest unit as a decimal string: dong, or cents with two decimals.
 function money(units: number, currency: SandboxCurrency): string {
@@ -151,25 +156,26 @@ function money(units: number, currency: SandboxCurrency): string {
   return `${Math.floor(units / 100)}.${String(units % 100).padStart(2, '0')}`;
 }
 
-export function sandboxAdPlatform(now: () => Date = () => new Date()): AdPlatform & { connect(input: { displayName: string; currency?: SandboxCurrency }): AdPlatformLogin } {
+export function sandboxAdPlatform(now: () => Date = () => new Date()): AdPlatform & { connect(input: { displayName: string; currency?: SandboxCurrency; key?: string }): AdPlatformLogin } {
   return {
     id: 'sandbox_ads',
     hosts: [],
     capabilities: SANDBOX_CAPABILITIES,
-    connect({ displayName, currency = 'VND' }): AdPlatformLogin {
+    connect({ displayName, currency = 'VND', key = randomBytes(16).toString('hex') }): AdPlatformLogin {
       if (!(SANDBOX_CURRENCIES as readonly string[]).includes(currency)) throw new Error('sandbox ad platform: unknown currency');
+      if (!KEY.test(key)) throw new Error('sandbox ad platform: invalid key');
       const accessToken = `sbx_${randomBytes(32).toString('base64url')}`;
-      const secret = JSON.stringify({ accessToken, currency } satisfies SandboxSecret);
-      // Keyed by the secret's hash, so each connect is an account of its own.
-      return { provider: 'sandbox_ads', externalAccountId: accountIdOf(accessToken), displayName, secret };
+      const secret = JSON.stringify({ accessToken, currency, key } satisfies SandboxSecret);
+      // Keyed by a key of the caller's, or a random one: a retry of one connect is the same account, any other is a new one.
+      return { provider: 'sandbox_ads', externalAccountId: accountIdOf(key), displayName, secret };
     },
     async accounts(secret: string): Promise<AdPlatformAccount[]> {
-      const { accessToken, currency } = parseSecret(secret);
-      return [{ externalAccountId: accountIdOf(accessToken), displayName: `Sandbox ads ${currency}`, currency, timeZone: SANDBOX_TIME_ZONES[currency] }];
+      const { currency, key } = parseSecret(secret);
+      return [{ externalAccountId: accountIdOf(key), displayName: `Sandbox ads ${currency}`, currency, timeZone: SANDBOX_TIME_ZONES[currency] }];
     },
     async readDaily(secret: string, externalAccountId: string, range: { from: string; to: string }): Promise<AdDailyRow[]> {
-      const { accessToken, currency } = parseSecret(secret);
-      if (externalAccountId !== accountIdOf(accessToken)) throw new Error('sandbox ad platform: unknown account');
+      const { accessToken, currency, key } = parseSecret(secret);
+      if (externalAccountId !== accountIdOf(key)) throw new Error('sandbox ad platform: unknown account');
       if (!DAY.test(range.from) || !DAY.test(range.to) || Number.isNaN(dayMs(range.from)) || Number.isNaN(dayMs(range.to)) || range.from > range.to) {
         throw new Error('sandbox ad platform: invalid range');
       }

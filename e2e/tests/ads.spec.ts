@@ -167,7 +167,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(books.getByText('Sổ sách ghi bằng đồng, còn tài khoản này tính bằng USD', { exact: false })).toBeVisible();
     await expect(books.getByRole('table')).toHaveCount(0);
     // Back to the account in dong: its comparison is there again.
-    await picker.selectOption({ label: 'Sandbox ads VND' });
+    await picker.selectOption({ label: 'Quảng cáo cửa hàng E2E' });
     await expect(books.getByRole('columnheader', { name: 'Chênh lệch' })).toBeVisible();
   });
 

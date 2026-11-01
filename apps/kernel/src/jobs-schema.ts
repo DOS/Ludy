@@ -165,7 +165,7 @@ export function queueEgress(queue: string): JobEgress {
 // The pg-boss policy of each queue that is not 'standard'. kernel-agent-wake is 'stately' with the singleton key
 // <org>:<queue>:<agent> (job-keys.ts): at most one queued and one active job per agent, so wake-ups coalesce and an
 // agent runs once at a time (ADR-0029 section 5; the database also allows one running ai_run per agent).
-const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately' };
+const QUEUE_POLICIES: Partial<Record<QueueName, 'stately'>> = { [QUEUES.agentWake]: 'stately', [QUEUES.adsSync]: 'stately' };
 
 // The dead letter queue's own options, as 20261103150000_crove_jobs_dead_letter.sql created it: a few retries, in case
 // the database or the command is briefly unavailable.

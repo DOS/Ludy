@@ -23,6 +23,17 @@ describe('the sandbox ad platform', () => {
     expect(adPlatforms({ sandbox: false })).toEqual({});
   });
 
+  it('makes the same account again for the same key, and another for any other', () => {
+    const platform = sandboxAdPlatform();
+    const a = platform.connect({ displayName: 'a', key: 'request-1' });
+    const b = platform.connect({ displayName: 'a', key: 'request-1' });
+    const c = platform.connect({ displayName: 'a', key: 'request-2' });
+    expect(a.externalAccountId).toBe(b.externalAccountId);
+    expect(a.secret).not.toBe(b.secret);
+    expect(c.externalAccountId).not.toBe(a.externalAccountId);
+    expect(() => platform.connect({ displayName: 'a', key: 'bad key!' })).toThrow('invalid key');
+  });
+
   it('reaches one account, in dong in Ho Chi Minh City or in dollars in Los Angeles', async () => {
     const platform = sandboxAdPlatform();
     const vnd = platform.connect({ displayName: 'a' });

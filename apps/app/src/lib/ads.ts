@@ -162,10 +162,27 @@ export function booksMonths<T extends { month: string; spend: string }>(months: 
   return months.filter((m) => !isZeroAmount(m.spend)).slice(-ADS_BACKFILL_MONTHS);
 }
 
-// What the books hold for the advertising expense account in a month: its debits less its credits, as the ledger reports
-// them (4 decimals). Exact: a decimal string in, a decimal string out.
-export function booksExpense(ledger: { debit: string; credit: string }): string {
-  return fromUnits(toUnits(ledger.debit) - toUnits(ledger.credit));
+// The account the year closing moves every expense and revenue account to (finance.year_closing, #889). It posts on the
+// year's last day and credits an expense account with the whole year's balance against 911, so December's own ledger would
+// show December less the year, and the line is left out of what the books hold for the month.
+export const CLOSING_COUNTER_ACCOUNT = '911';
+
+interface LedgerLine {
+  debit: string;
+  credit: string;
+  counterAccounts: readonly string[];
+}
+
+// What the books hold for the advertising expense account in a month: the debits less the credits of its lines, as the
+// ledger reports them (4 decimals), without the year closing's line (its counter account is 911). Any other line counts,
+// a reversal's credit included. Exact: decimal strings in, a decimal string out.
+export function booksExpense(ledger: { lines: readonly LedgerLine[] }): string {
+  let net = 0n;
+  for (const line of ledger.lines) {
+    if (line.counterAccounts.includes(CLOSING_COUNTER_ACCOUNT)) continue;
+    net += toUnits(line.debit) - toUnits(line.credit);
+  }
+  return fromUnits(net);
 }
 
 // The platform's spend less the books' expense: positive when the platform reports more than the books hold. Shown as it
@@ -179,3 +196,16 @@ export const errorCode = (error: unknown): string | null => {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' ? code : null;
 };
+
+// The two ways the server declines a refresh that are not faults, so the screen says them calmly (a status line, not an
+// alert): another refresh within a minute, and a hold the platform put on the account (a rate limit, until `nextRunAt`).
+export const CALM_REFUSALS = ['ADS_SYNC_TOO_SOON', 'ADS_SYNC_ON_HOLD'] as const;
+export function isCalmRefusal(error: unknown): boolean {
+  const code = errorCode(error);
+  return code !== null && (CALM_REFUSALS as readonly string[]).includes(code);
+}
+
+// Whether the platform holds the account back: the next try is later than now, and the server refuses a refresh and skips
+// the account until then (ADS_SYNC_ON_HOLD).
+export const syncHeld = (account: Pick<AdAccountView, 'nextRunAt'>, nowMs: number): boolean =>
+  account.nextRunAt !== null && Date.parse(account.nextRunAt) > nowMs;

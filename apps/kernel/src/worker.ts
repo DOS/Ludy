@@ -320,10 +320,9 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
 const BANK_FEED_SYNC_CRON = '30 5 * * *';
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
-// sweep also prunes the old sync runs once a day, in the hour below (UTC).
+// sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
 const ADS_SYNC_CRON = '10 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
-const ADS_PRUNE_HOUR_UTC = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
 const CALENDAR_WRITEBACK_RETRY_LIMIT = 3;
@@ -1043,11 +1042,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           if (!last || page.length < ADS_DUE_PAGE) break;
           after = { orgId: last.orgId, connectionId: last.connectionId };
         }
-        // Once a day, the runs older than 90 days.
-        if (new Date().getUTCHours() === ADS_PRUNE_HOUR_UTC) {
-          const pruned = await pruneAdsRuns(deps.workerDb, new Date());
-          if (pruned > 0) console.log(`[ads] pruned ${pruned} old sync run(s)`);
-        }
+        // The runs older than 90 days.
+        const pruned = await pruneAdsRuns(deps.workerDb, new Date());
+        if (pruned > 0) console.log(`[ads] pruned ${pruned} old sync run(s)`);
         return;
       }
       const done = await runAdsSync({ runtime: deps.runtime, broker: adsBroker, platforms: adPlatforms }, job.data);
