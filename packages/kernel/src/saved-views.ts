@@ -100,9 +100,14 @@ export const savedViewSave = defineCommand({
       // A change of the filter and sort of a view the viewer may change; its scope, name and sharing stay.
       const view = await changeable(ctx, me, input.viewId, 'sửa');
       checkViewBody(view.scope, filters, sort);
+      // A sort left out keeps the view's own; null clears it.
       await ctx.trx
         .updateTable('crove_kernel.saved_view')
-        .set({ filters: storedFilters(view.scope, filters), sort: sort === null ? null : JSON.stringify(sort), updated_at: ctx.now })
+        .set({
+          filters: storedFilters(view.scope, filters),
+          ...(input.sort === undefined ? {} : { sort: sort === null ? null : JSON.stringify(sort) }),
+          updated_at: ctx.now,
+        })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', view.id)
         .execute();
@@ -158,6 +163,9 @@ export const savedViewRename = defineCommand({
     const me = requireUser(ctx);
     const name = nameOf(input.name);
     const view = await changeable(ctx, me, input.viewId, 'sửa');
+    // The lock a save takes for this owner and scope, so a rename racing a save or another rename to the same name is
+    // answered SAVED_VIEW_NAME_TAKEN and not by the unique index.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.saved_view:${ctx.orgId}:${view.user_id}:${view.scope}`}, 0))`.execute(ctx.trx);
     if (await nameTaken(ctx, view.user_id, view.scope, name, view.id)) throw new DomainError('SAVED_VIEW_NAME_TAKEN', 409, 'Đã có chế độ xem cùng tên', { name });
     await ctx.trx.updateTable('crove_kernel.saved_view').set({ name, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', view.id).execute();
     ctx.audit({ view_id: view.id, scope: view.scope });

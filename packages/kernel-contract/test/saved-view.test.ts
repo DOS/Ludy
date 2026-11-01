@@ -112,6 +112,12 @@ describe('saved view registry', () => {
     ).toEqual({ v: 1, all: [{ field: 'search', op: 'contains', value: 'Lê' }, { field: 'owner', op: 'is_me' }, { field: 'status', op: 'is', value: 'open' }] });
   });
 
+  it('normalizes only what the registry knows, and never reads a prototype key', () => {
+    expect(() => normalizeFilter('crm.deal', ast({ field: 'constructor', op: 'is' }))).not.toThrow();
+    expect(() => normalizeFilter('crm.deal', ast({ field: 'owner', op: 'toString' }))).not.toThrow();
+    expect(normalizeFilter('crm.deal', ast({ field: 'owner', op: 'toString', value: 1 })).all).toEqual([{ field: 'owner', op: 'toString' }]);
+  });
+
   it('shapes the command input: a new view, or a new filter for one', () => {
     const create = { scope: 'crm.deal', name: 'Của tôi', filters: ast({ field: 'owner', op: 'is_me' }), shared: false };
     expect(zSavedViewSave.safeParse(create).success).toBe(true);

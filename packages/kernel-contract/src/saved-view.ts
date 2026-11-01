@@ -149,7 +149,8 @@ export function normalizeFilter(scope: SavedViewScope, ast: FilterAst): FilterAs
   return {
     v: FILTER_AST_VERSION,
     all: ast.all.map((c) => {
-      const schema = fields[c.field]?.ops[c.op];
+      const field = Object.hasOwn(fields, c.field) ? fields[c.field] : undefined;
+      const schema = field && Object.hasOwn(field.ops, c.op) ? field.ops[c.op] : undefined;
       const value = schema ? schema.parse(c.value) : undefined;
       return value === undefined ? { field: c.field, op: c.op } : { field: c.field, op: c.op, value };
     }),

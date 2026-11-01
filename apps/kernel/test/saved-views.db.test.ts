@@ -31,6 +31,7 @@ import {
   valueIs,
   withinLastDays,
   type FieldCondition,
+  type FilterContext,
 } from '@crove/kernel';
 import { SAVED_VIEW_LIMIT, SAVED_VIEW_SCOPES, type FilterAst, type SavedView } from '@crove/kernel-contract';
 import { Runtime, defineQuery } from '@crove/kernel-runtime';
@@ -316,6 +317,20 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     await exec(o, o.lan, 'kernel.saved_view.rename', { viewId: first?.id, name: 'Tuần sau' });
     await expect(exec(o, o.lan, 'kernel.saved_view.rename', { viewId: first?.id, name: 'Chế độ 3' })).rejects.toMatchObject({ code: 'SAVED_VIEW_NAME_TAKEN' });
     await exec(o, o.lan, 'kernel.saved_view.save', { viewId: first?.id, filters: { v: 1, all: [{ field: 'owner', op: 'is_empty' }] } });
+    // A replacement without a sort keeps the view's sort; a null sort clears it.
+    await exec(o, o.lan, 'kernel.saved_view.save', { viewId: first?.id, filters: none, sort: { field: 'amount', dir: 'asc' } });
+    await exec(o, o.lan, 'kernel.saved_view.save', { viewId: first?.id, filters: { v: 1, all: [{ field: 'owner', op: 'is_empty' }] } });
+    expect((await list(o, o.lan)).find((v) => v.id === first?.id)).toMatchObject({ sort: { field: 'amount', dir: 'asc' }, filters: { v: 1, all: [{ field: 'owner', op: 'is_empty' }] } });
+    await exec(o, o.lan, 'kernel.saved_view.save', { viewId: first?.id, filters: none, sort: null });
+    expect((await list(o, o.lan)).find((v) => v.id === first?.id)).toMatchObject({ sort: null });
+    // A rename racing a rename to the same name is answered SAVED_VIEW_NAME_TAKEN, not by the unique index.
+    const second = (await list(o, o.lan)).find((v) => v.name === 'Chế độ 2');
+    const race = await Promise.allSettled([
+      exec(o, o.lan, 'kernel.saved_view.rename', { viewId: first?.id, name: 'Trùng tên' }),
+      exec(o, o.lan, 'kernel.saved_view.rename', { viewId: second?.id, name: 'Trùng tên' }),
+    ]);
+    expect(race.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(race.find((r) => r.status === 'rejected')).toMatchObject({ reason: { code: 'SAVED_VIEW_NAME_TAKEN' } });
     // The table's own checks hold without the command.
     await expect(
       admin((c) => c.query("INSERT INTO crove_kernel.saved_view (org_id, user_id, scope, name, filters) VALUES ($1, $2, 'crm.deal', 'Mảng', '[]')", [o.orgId, o.minh])),
@@ -391,7 +406,7 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
     const P1 = randomUUID();
     const P2 = randomUUID();
     const P3 = randomUUID();
-    const ctx = { me: U2, today: TODAY, now: NOW };
+    const ctx: FilterContext = { me: U2, today: TODAY, now: NOW };
     const dealFields: Record<string, FieldCondition> = {
       search: textContains([sql`d.title`]),
       stage: idIn(sql`d.stage_id`),
