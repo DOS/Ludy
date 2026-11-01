@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2305, plan docs/plan/conversations.md CV6): the org purge deletes the conversation settings too.
--- Idempotent; applied files stay untouched. This is the body of 20261117150000 (the newest, which carries the conversations and
+-- Idempotent; applied files stay untouched. This is the body of 20261118130000 (the newest, which carries the conversations and
 -- Ads' spend caps and settings) with crove_kernel.conversation_setting added to the first list, with its signature, owner, grants
 -- and every list and step it had.
 SET LOCAL lock_timeout = '2s';
