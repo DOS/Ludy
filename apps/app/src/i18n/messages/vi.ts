@@ -715,6 +715,7 @@ export const vi = {
     errors: {
       tooBig: 'Tệp quá lớn (tối đa 5 MB).',
       empty: 'Tệp không có tiêu đề hoặc không có dòng dữ liệu nào.',
+      unterminated: 'Tệp có một dấu ngoặc kép mở mà không đóng, nên phần còn lại bị đọc thành một ô. Hãy sửa tệp rồi chọn lại.',
       tooMany: 'Tệp có nhiều hơn {max} dòng; hãy chia thành nhiều tệp.',
     },
     map: {

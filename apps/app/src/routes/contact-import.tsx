@@ -92,7 +92,10 @@ export function ContactImportPage() {
     },
   });
 
+  // Which file selection is current: a read that finishes after a newer selection, or after Cancel, is dropped.
+  const selection = useRef(0);
   const reset = () => {
+    selection.current += 1;
     setStep('choose');
     setCsv(null);
     setStaged(null);
@@ -107,9 +110,13 @@ export function ContactImportPage() {
 
   const choose = async (file: File | undefined) => {
     setReadError(null);
+    const mine = (selection.current += 1);
     if (!file) return;
     if (file.size > IMPORT_MAX_BYTES) return setReadError(t('errors.tooBig'));
-    const parsed = parseContactCsv(await file.text());
+    const text = await file.text();
+    if (mine !== selection.current) return;
+    const parsed = parseContactCsv(text);
+    if (parsed.unterminated) return setReadError(t('errors.unterminated'));
     if (parsed.header.length === 0 || parsed.rows.length === 0) return setReadError(t('errors.empty'));
     if (parsed.rows.length > IMPORT_MAX_ROWS) return setReadError(t('errors.tooMany', { max: String(IMPORT_MAX_ROWS) }));
     setFilename(file.name);
@@ -181,7 +188,7 @@ export function ContactImportPage() {
             <Button disabled={!nameMapped} loading={stage.isPending} onClick={() => stage.mutate({ filename, rows: mappedRows(csv.rows, mapping) })}>
               {t('map.next')}
             </Button>
-            <Button variant="ghost" onClick={reset}>
+            <Button variant="ghost" disabled={stage.isPending} onClick={reset}>
               {t('cancel')}
             </Button>
           </div>

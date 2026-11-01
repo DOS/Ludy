@@ -717,6 +717,7 @@ export const en = {
     errors: {
       tooBig: 'The file is too big (5 MB at most).',
       empty: 'The file has no header or no data row.',
+      unterminated: 'The file has a quotation mark that is opened and never closed, so the rest of it was read as one cell. Fix the file and choose it again.',
       tooMany: 'The file has more than {max} rows; split it into several files.',
     },
     map: {

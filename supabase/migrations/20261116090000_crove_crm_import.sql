@@ -8,8 +8,9 @@
 --                         committed, cancelled or expired.
 -- crove_crm.import_row    one row of the file as read, with how it was classified (new, duplicate, conflict or invalid)
 --                         and why (a fixed code, never a value), and the party a duplicate matched. The rows carry
---                         personal data, so they exist only while the batch is staged: a commit, a cancel or an expiry
---                         (7 days) deletes them.
+--                         personal data, so they exist only while the batch is staged: a commit or a cancel deletes them,
+--                         and so does an expiry (7 days old), which runs on the next import command of the org and, for an
+--                         org that never imports again, in the daily sweep (K5b, #2251).
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_crm.import_batch (

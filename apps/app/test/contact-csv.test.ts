@@ -19,6 +19,11 @@ describe('parseContactCsv', () => {
     expect(parseContactCsv('"a,b,c,d";"e"\n"x";"y"').rows).toEqual([['x', 'y']]);
   });
 
+  it('says so when the file ends inside a quoted cell', () => {
+    expect(parseContactCsv('Tên,Email\n"An,an@khach.test\nBình,binh@khach.test').unterminated).toBe(true);
+    expect(parseContactCsv('Tên,Email\n"An",an@khach.test').unterminated).toBeUndefined();
+  });
+
   it('picks the delimiter that splits every line the same way, not the one that shows up most', () => {
     // Semicolons separate the cells; the commas are in the addresses.
     const parsed = parseContactCsv('Tên;Địa chỉ;Email\nAn;12 Lê Lợi, Quận 1, TP.HCM;an@khach.test\nBình;5 Hai Bà Trưng, Quận 3, TP.HCM, Việt Nam;binh@khach.test');

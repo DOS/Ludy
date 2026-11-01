@@ -124,24 +124,30 @@ function classify(rows: readonly Candidate[], existing: readonly Existing[]): Ma
     const tax = r.taxCode;
     const mail = emailKey(r.email);
     const phone = phoneKey(r.phone);
+    // A row that is a duplicate or a conflict still names this tax code, email and phone: a later row with one of them repeats it.
+    const remember = () => {
+      if (tax) seenTax.add(tax);
+      if (mail) seenEmail.add(mail);
+      if (phone) seenPhone.add(phone);
+    };
     const hits = { tax: tax ? (byTax.get(tax) ?? []) : [], email: mail ? (byEmail.get(mail) ?? []) : [], phone: phone ? (byPhone.get(phone) ?? []) : [] };
     const ids = new Set([...hits.tax, ...hits.email, ...hits.phone].map((p) => p.id));
     if (ids.size > 1) {
       verdicts.set(r.rowNo, { outcome: 'conflict', reason: 'CONFLICT_PARTIES', matchId: null });
+      remember();
       continue;
     }
     if (ids.size === 1) {
       const reason: ImportReason = hits.tax.length > 0 ? 'DUPLICATE_TAX_CODE' : hits.email.length > 0 ? 'DUPLICATE_EMAIL' : 'DUPLICATE_PHONE';
       verdicts.set(r.rowNo, { outcome: 'duplicate', reason, matchId: [...ids][0] as string });
+      remember();
       continue;
     }
     if ((tax && seenTax.has(tax)) || (mail && seenEmail.has(mail)) || (phone && seenPhone.has(phone))) {
       verdicts.set(r.rowNo, { outcome: 'duplicate', reason: 'DUPLICATE_IN_FILE', matchId: null });
       continue;
     }
-    if (tax) seenTax.add(tax);
-    if (mail) seenEmail.add(mail);
-    if (phone) seenPhone.add(phone);
+    remember();
     verdicts.set(r.rowNo, { outcome: 'new', reason: null, matchId: null });
   }
   return verdicts;
@@ -371,12 +377,16 @@ export const importCommit = defineCommand({
     userOf(ctx.actor);
     await expireStale(ctx);
     const batch = await lockBatch(ctx, input.batchId);
-    // A second commit changes nothing and answers what the first one did.
+    // A second commit changes nothing and answers the first one's counts. The rows that were not imported are not kept (the staged
+    // rows are gone and the batch holds counts only): the page offers that file once, right after the first commit.
     if (batch.status === 'committed') return { batch: batchView(batch), skipped: [] };
     // An expired batch answers as expired instead of failing: the failure would roll back the deletion of its rows.
     if (batch.status === 'expired') return { batch: batchView(batch), skipped: [] };
     if (batch.status !== 'staged') throw new DomainError('IMPORT_NOT_STAGED', 409, 'Lần nhập này đã bị hủy');
 
+    // Commits of one org run one after another: the classification below reads the parties as they are, and the party table has no
+    // unique key on email or phone, so two commits carrying one contact would both read it as new.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crm.import-commit:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const staged = (
       await ctx.trx
         .selectFrom('crove_crm.import_row')
@@ -457,6 +467,9 @@ export const importCommit = defineCommand({
             if ('phone' in set) fields.push('phone');
             if ('address' in set) fields.push('address');
             if (filled.length < FILLED_AUDIT_MAX) filled.push({ partyId: locked.id, fields });
+            // What this party holds now is taken for the rest of the commit: a later row never fills it into a second party.
+            if ('email' in set && c.email) taken.email.add(c.email.toLowerCase());
+            if ('phone' in set && pk) taken.phone.add(pk);
             await ctx.activity('kernel.party', locked.id, 'party.import_filled', 'Bổ sung thông tin từ tệp');
             continue;
           }

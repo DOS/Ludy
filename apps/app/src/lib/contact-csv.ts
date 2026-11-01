@@ -12,6 +12,8 @@ export const IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export interface ParsedCsv {
   header: string[];
   rows: string[][];
+  // The file ended inside a quoted cell: the rest of it became that one cell, so it is not read as contacts.
+  unterminated?: true;
 }
 
 // Comma, semicolon or tab: the one that splits the header and the lines under it into the same number of cells (outside
@@ -69,7 +71,7 @@ export function parseContactCsv(raw: string): ParsedCsv {
   }
   if (value !== '' || row.length > 0) endRow();
   const [header = [], ...rows] = lines;
-  return { header: header.map((h) => h.trim()), rows };
+  return { header: header.map((h) => h.trim()), rows, ...(quoted ? { unterminated: true as const } : {}) };
 }
 
 // A header without marks, case or punctuation: "Số điện thoại" and "so dien thoai" are one.

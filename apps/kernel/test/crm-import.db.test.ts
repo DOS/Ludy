@@ -237,6 +237,54 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(after.rows[0]).toEqual({ tax_code: null, phone: null });
   });
 
+  it('counts a later row against the keys of an earlier row that matched an existing party', async () => {
+    const o = await org();
+    await o.party({ name: 'Khách Cũ', email: 'cu@khach.test' });
+    const staged = await o.stage(o.owner, [
+      // Matches the old party by email and brings a phone the party does not have.
+      row({ name: 'Khách Cũ', email: 'cu@khach.test', phone: '0900 000 777' }),
+      // The same phone later in the file: a duplicate of that earlier row, not a new contact.
+      row({ name: 'Người Khác', phone: '0900 000 777' }),
+    ]);
+    expect(staged.rows.map((r) => [r.rowNo, r.outcome, r.reason])).toEqual([[1, 'duplicate', 'DUPLICATE_EMAIL'], [2, 'duplicate', 'DUPLICATE_IN_FILE']]);
+  });
+
+  it('never fills one phone or email into two parties in one commit', async () => {
+    const o = await org();
+    await o.party({ name: 'Bên Một', email: 'mot@khach.test' });
+    await o.party({ name: 'Bên Hai', email: 'hai@khach.test' });
+    const staged = await o.stage(o.owner, [
+      row({ name: 'Bên Một', email: 'mot@khach.test', phone: '0900 000 888' }),
+      // Matches the second party by email and carries the phone the first one is about to get.
+      row({ name: 'Bên Hai', email: 'hai@khach.test', phone: '0900 000 888' }),
+    ]);
+    expect(staged.rows.map((r) => r.outcome)).toEqual(['duplicate', 'duplicate']);
+    const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
+    expect(done.batch).toMatchObject({ updatedRows: 1 });
+    const holders = await admin((c) => c.query("SELECT name FROM crove_kernel.party WHERE org_id = $1 AND phone = '0900 000 888'", [o.orgId]));
+    expect(holders.rows).toHaveLength(1);
+  });
+
+  it('serializes commits of one org: two batches carrying one contact make one party', async () => {
+    const o = await org();
+    const a = await o.stage(o.lan, [row({ name: 'Chung Một', email: 'chung@khach.test' })]);
+    const b = await o.stage(o.huy, [row({ name: 'Chung Hai', email: 'chung@khach.test' })]);
+    const [ra, rb] = await Promise.all([o.commit(o.lan, a.batch.id), o.commit(o.huy, b.batch.id)]);
+    expect(ra.batch.createdRows + rb.batch.createdRows).toBe(1);
+    expect((await o.parties()).filter((p) => p.email === 'chung@khach.test')).toHaveLength(1);
+  });
+
+  it('recounts a staged batch after the erasure removes some of its rows', async () => {
+    const o = await org();
+    const staged = await o.stage(o.lan, [row({ name: 'Một', email: 'mot2@khach.test' }), row({ name: 'Hai', email: 'hai2@khach.test' })]);
+    expect(staged.batch).toMatchObject({ totalRows: 2, newRows: 2 });
+    const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    await rt.execute('kernel.personal_data.erase', { value: 'mot2@khach.test' }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
+    const after = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id });
+    expect(after.batch).toMatchObject({ totalRows: 1, newRows: 1 });
+    expect(after.rows).toHaveLength(1);
+  });
+
   it('keeps one open batch per person: staging again cancels the earlier one and deletes its rows', async () => {
     const o = await org();
     const first = await o.stage(o.lan, [row({ name: 'Lô Một' })]);
