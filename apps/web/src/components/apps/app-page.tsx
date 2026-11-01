@@ -26,6 +26,7 @@ export interface AppPageProps {
 export function AppPage({ dict, copy, otherLangHref, hero, visuals }: AppPageProps) {
   const home = dict.lang === 'vi' ? '/' : '/en';
   const selfHost = `${home}#tu-host`;
+  const { soon, assistant } = copy;
   return (
     <>
       <SiteHeader dict={dict} otherLangHref={otherLangHref} linkToHome />
@@ -109,46 +110,50 @@ export function AppPage({ dict, copy, otherLangHref, hero, visuals }: AppPagePro
           </div>
         </Section>
 
-        <Section id="soon" labelledBy="soon-title" tinted>
-          <SectionHead id="soon-title" title={copy.soon.title} lead={copy.soon.lead} />
-          <ul className="grid gap-6 md:grid-cols-2">
-            {copy.soon.items.map((item) => (
-              <li key={item.title} className="flex min-w-0 flex-col items-start gap-2 border-t border-line pt-4">
-                <Chip tone="neutral">{copy.soon.label}</Chip>
-                <h3 className="font-display text-lg font-semibold">{item.title}</h3>
-                <p className="max-w-[56ch] text-sm text-muted">{item.body}</p>
-              </li>
-            ))}
-          </ul>
-        </Section>
+        {soon ? (
+          <Section id="soon" labelledBy="soon-title" tinted>
+            <SectionHead id="soon-title" title={soon.title} lead={soon.lead} />
+            <ul className="grid gap-6 md:grid-cols-2">
+              {soon.items.map((item) => (
+                <li key={item.title} className="flex min-w-0 flex-col items-start gap-2 border-t border-line pt-4">
+                  <Chip tone="neutral">{soon.label}</Chip>
+                  <h3 className="font-display text-lg font-semibold">{item.title}</h3>
+                  <p className="max-w-[56ch] text-sm text-muted">{item.body}</p>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        ) : null}
 
-        <Section id="vy" labelledBy="vy-title">
-          <SectionHead id="vy-title" title={copy.assistant.title} lead={copy.assistant.lead} />
-          <div className="grid gap-8 md:grid-cols-2 md:gap-12">
-            <div className="min-w-0">
-              <h3 className="font-display text-lg font-semibold">{copy.assistant.doesTitle}</h3>
-              <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
-                {copy.assistant.does.map((line) => (
-                  <li key={line} className="flex gap-3">
-                    <Check className="mt-0.5 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
+        {assistant ? (
+          <Section id="vy" labelledBy="vy-title" tinted={!soon}>
+            <SectionHead id="vy-title" title={assistant.title} lead={assistant.lead} />
+            <div className="grid gap-8 md:grid-cols-2 md:gap-12">
+              <div className="min-w-0">
+                <h3 className="font-display text-lg font-semibold">{assistant.doesTitle}</h3>
+                <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
+                  {assistant.does.map((line) => (
+                    <li key={line} className="flex gap-3">
+                      <Check className="mt-0.5 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-display text-lg font-semibold">{assistant.doesNotTitle}</h3>
+                <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
+                  {assistant.doesNot.map((line) => (
+                    <li key={line} className="flex gap-3">
+                      <Minus className="mt-0.5 size-4 shrink-0 text-subtle" strokeWidth={2.5} aria-hidden="true" />
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </div>
-            <div className="min-w-0">
-              <h3 className="font-display text-lg font-semibold">{copy.assistant.doesNotTitle}</h3>
-              <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
-                {copy.assistant.doesNot.map((line) => (
-                  <li key={line} className="flex gap-3">
-                    <Minus className="mt-0.5 size-4 shrink-0 text-subtle" strokeWidth={2.5} aria-hidden="true" />
-                    <span>{line}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </Section>
+          </Section>
+        ) : null}
 
         <Section id="audience" labelledBy="audience-title">
           <SectionHead id="audience-title" title={copy.audience.title} lead={copy.audience.lead} />

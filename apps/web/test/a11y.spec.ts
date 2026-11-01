@@ -16,6 +16,8 @@ const PAGES = [
   { path: '/en', lang: 'en' },
   { path: '/ke-toan', lang: 'vi' },
   { path: '/en/accounting', lang: 'en' },
+  { path: '/crm', lang: 'vi' },
+  { path: '/en/crm', lang: 'en' },
 ] as const;
 const VIEWPORTS = [
   { name: '360px', width: 360, height: 780 },

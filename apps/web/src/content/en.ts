@@ -466,12 +466,13 @@ export const en: Dictionary = {
     },
     crm: {
       name: 'Ludy CRM',
-      body: 'A public booking page for each kind of meeting. Clients pick a free time, both sides get a confirmation email with a calendar file, reminders go out on their own, and clients move or cancel with a link that works once.',
+      body: 'A contact list shared with Ludy Accounting, sales deals on a board by stage, and a public booking page for each kind of meeting: clients pick a free time, both sides get a confirmation email with a calendar file, reminders go out on their own, and clients move or cancel with a link that works once.',
       points: [
+        'Import contacts from an Excel or CSV file after previewing every row, and search without typing diacritics',
+        'Deals on a drag and drop board by stages you set, with a card count and a total in each column',
         'Team meeting types: round robin to whoever is free, or only the times the whole team is free',
         'Working hours and days off for each person, with public holidays and Tet already counted up to 2028',
         'Connect Google Calendar (whoever installs Ludy sets up the Google keys): busy times there block bookings, and new bookings can be written into your calendar',
-        'A subscription address to see your bookings in Google Calendar, Outlook or Apple Calendar',
       ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
       calendar: {
@@ -565,7 +566,7 @@ export const en: Dictionary = {
       },
       {
         q: 'What do Ludy CRM and Ludy Notes do today?',
-        a: 'Ludy CRM is bookings for now: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
+        a: 'Ludy CRM keeps a contact list (the same parties as Ludy Accounting), sales deals on a board by stage, and bookings: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
       },
       {
         q: 'Where is my data?',

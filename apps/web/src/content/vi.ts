@@ -466,12 +466,13 @@ export const vi = {
     },
     crm: {
       name: 'Ludy CRM',
-      body: 'Trang đặt lịch công khai cho từng loại cuộc hẹn. Khách tự chọn giờ trống, hai bên nhận email xác nhận kèm tệp lịch, lịch nhắc gửi tự động, và khách tự dời hoặc huỷ bằng liên kết dùng một lần.',
+      body: 'Danh sách liên hệ dùng chung với Ludy Kế toán, các cơ hội bán hàng trên bảng theo giai đoạn, và trang đặt lịch công khai cho từng loại cuộc hẹn: khách tự chọn giờ trống, hai bên nhận email xác nhận kèm tệp lịch, lịch nhắc gửi tự động, và khách tự dời hoặc huỷ bằng liên kết dùng một lần.',
       points: [
+        'Liên hệ nhập từ file Excel hoặc CSV sau khi xem trước từng dòng, tìm không cần gõ dấu',
+        'Cơ hội trên bảng kéo thả theo giai đoạn do bạn đặt, mỗi cột có số thẻ và tổng tiền',
         'Loại hẹn theo nhóm: luân phiên cho người rảnh, hoặc chỉ hiện giờ cả nhóm cùng rảnh',
         'Giờ làm việc và ngày nghỉ của từng người, ngày lễ và Tết đã tính sẵn đến năm 2028',
         'Nối Google Calendar (người cài đặt cấu hình khoá Google): giờ bận trên đó chặn giờ hẹn, và lịch hẹn mới có thể tự ghi vào lịch của bạn',
-        'Địa chỉ đăng ký để xem lịch hẹn trong Google Calendar, Outlook hoặc Lịch của Apple',
       ],
       people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
       calendar: {
@@ -565,7 +566,7 @@ export const vi = {
       },
       {
         q: 'Ludy CRM và Ludy Notes làm được gì hôm nay?',
-        a: 'Ludy CRM hiện là lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
+        a: 'Ludy CRM giữ danh sách liên hệ (cùng danh sách đối tác với Ludy Kế toán), các cơ hội bán hàng trên bảng theo giai đoạn và lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
       },
       {
         q: 'Dữ liệu của tôi nằm ở đâu?',
