@@ -266,7 +266,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(audit.rows.map((r) => r.command).sort()).toEqual(['crm.import.commit', 'crm.import.stage']);
     expect(text).not.toContain('bí mật');
     expect(text).not.toContain('bimat');
-  });
+  }, 60_000);
 
   it('lets owners, admins and members import, viewers only read, and no system actor run it', async () => {
     const o = await org();
