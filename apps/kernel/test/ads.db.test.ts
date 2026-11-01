@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AdPlatformError, MetaAdsPlatform, adPlatforms, type AdPlatform } from '@crove/ad-platform';
-import type { Fetch, OAuthConnector } from '@crove/channel';
+import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -60,12 +60,24 @@ const DAY_MS = 86_400_000;
 
 // The OAuth connector of Meta ads the API holds in these tests, made of fixed answers: Meta's dialog and token exchange are
 // not reached from a test. A grant covers two ad accounts.
+const META_GRANT = { write: false };
 const META_CONNECTOR: OAuthConnector = {
   provider: 'meta_ads',
   pkce: false,
   authorizeUrl: ({ state, redirectUri }) => `https://www.facebook.com/v24.0/dialog/oauth?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=ads_read`,
-  exchange: async () =>
-    ['act_9001', 'act_9002'].map((id) => ({ provider: 'meta_ads' as const, externalAccountId: id, displayName: `Meta ${id}`, scopes: ['ads_read'], expiresAt: new Date(Date.now() + 60 * DAY_MS), secret: JSON.stringify({ accessToken: 'EAAB-grant-token' }) })),
+  exchange: async () => {
+    // The grant of a person whose token also holds ads_management: the connector refuses it, as MetaAdsConnector does.
+    if (META_GRANT.write) throw new ConnectorError('denied', 'the token holds ads_management', 'WRITE_PERMISSION_GRANTED');
+    // The second account's token also holds a Pages permission, which is accepted and shown.
+    return ['act_9001', 'act_9002'].map((id) => ({
+      provider: 'meta_ads' as const,
+      externalAccountId: id,
+      displayName: `Meta ${id}`,
+      scopes: id === 'act_9002' ? ['ads_read', 'pages_manage_posts'] : ['ads_read'],
+      expiresAt: new Date(Date.now() + 60 * DAY_MS),
+      secret: JSON.stringify({ accessToken: 'EAAB-grant-token' }),
+    }));
+  },
 };
 
 suite('ads on PostgreSQL (#2217)', () => {
@@ -736,6 +748,8 @@ suite('ads on PostgreSQL (#2217)', () => {
         ['Meta act_9001', 'active', ['purchase', 'lead', 'message']],
         ['Meta act_9002', 'active', ['purchase', 'lead', 'message']],
       ]);
+      // A permission beyond ads_read (a Pages one) is accepted and shown; the other account holds none.
+      expect(mine.map((a) => a.extraScopes)).toEqual([[], ['pages_manage_posts']]);
       // Sealed once per connection and in no answer, audit row or event; the first sync was queued by the link.
       const sealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'meta_ads'`, [orgId]);
       expect(sealed[0]?.n).toBe('2');
@@ -800,6 +814,21 @@ suite('ads on PostgreSQL (#2217)', () => {
       const final = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id);
       expect(final).toMatchObject({ lastErrorKind: null, connectionStatus: 'active' });
       expect(final?.settledThrough).not.toBeNull();
+    });
+
+    it('refuses a grant whose token can change ads, says why in its own words, and connects nothing', async () => {
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]);
+      META_GRANT.write = true;
+      try {
+        const { finished } = await grant(owner);
+        expect(finished?.status).toBe(422);
+        expect(finished?.body.code).toBe('OAUTH_WRITE_PERMISSION');
+        expect(finished?.body.message).toContain('ads_management');
+      } finally {
+        META_GRANT.write = false;
+      }
+      const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]);
+      expect(after[0]?.n).toBe(before[0]?.n);
     });
 
     it('does not offer an ad platform where the Ads module is off, and refuses its OAuth then', async () => {

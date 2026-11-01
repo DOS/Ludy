@@ -233,6 +233,29 @@ describe('the Meta ad connection', () => {
     expect(await none.exchange({ code: 'c', redirectUri, codeVerifier: null })).toEqual([]);
   });
 
+  it('refuses a token that can change campaigns or the business, whatever else it holds', async () => {
+    for (const forbidden of ['ads_management', 'business_management']) {
+      const { fetch, calls } = recorded([
+        { body: { access_token: 'short' } },
+        { body: { access_token: 'long' } },
+        { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: forbidden, status: 'granted' }, { permission: 'pages_manage_posts', status: 'granted' }] } },
+        { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+      ]);
+      await expect(new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null }), forbidden).rejects.toMatchObject({ kind: 'denied', code: 'WRITE_PERMISSION_GRANTED' });
+      // Refused before the ad accounts are listed: no call after the permissions read.
+      expect(calls.map((c) => c.method)).toEqual(['POST', 'POST', 'GET']);
+    }
+    // A declined one is not held.
+    const { fetch } = recorded([
+      { body: { access_token: 'short' } },
+      { body: { access_token: 'long' } },
+      { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'ads_management', status: 'declined' }] } },
+      { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+    ]);
+    const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });
+    expect(accounts).toHaveLength(1);
+  });
+
   it('records every permission the token holds, so an app shared with Pages publishing shows what the ads token can also do', async () => {
     const { fetch } = recorded([
       { body: { access_token: 'short' } },

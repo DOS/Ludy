@@ -59,6 +59,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   id: 'a1',
   connectionId: 'c1',
   connectionStatus: 'active',
+  extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',
   currency: 'VND',
@@ -286,6 +287,14 @@ describe('the header of an ad account', () => {
   const header = (acc: AdAccountView, canRefresh = true) => render(<AccountHeader account={acc} canRefresh={canRefresh} onRequested={() => undefined} />);
   const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
   const anHourAgo = () => new Date(Date.now() - 3_600_000).toISOString();
+
+  it('says when the connection can do more than read ad reports, and says nothing when it cannot', () => {
+    const quiet = header(account({ provider: 'meta_ads' }));
+    expect(quiet).not.toContain('can do more than read');
+    const html = header(account({ provider: 'meta_ads', extraScopes: ['pages_manage_posts', 'pages_show_list'] }));
+    expect(html).toContain('can do more than read ad reports');
+    expect(html).toContain('pages_manage_posts, pages_show_list');
+  });
 
   it('says the sandbox figures are made up, how far they run, and offers a refresh to those who may ask', () => {
     const html = header(account());

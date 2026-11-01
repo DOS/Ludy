@@ -13,12 +13,14 @@
 // on the Limited tier with `ads_read` [C]; its rate limits are low [C] (plan section 5.3), so a run reads each account
 // with a handful of calls, backs off for the time a rate limit names, and the app never retries in a loop.
 import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
-import { Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
+import { ConnectorError, Graph, GraphError, MetaLogin, META_DEFAULT_GRAPH_VERSION, META_GRAPH_HOST, asProviderError } from '@crove/channel';
 import { AdPlatformError, type AdDailyRow, type AdPlatform, type AdPlatformAccount, type AdPlatformCapabilities } from './index.ts';
 
 // Reading reports is all the ads module does; Meta's ads_read is "read reports of ad accounts you own or were granted".
 export const META_ADS_SCOPES = ['ads_read'] as const;
 export const META_ADS_PROVIDER = 'meta_ads' as const;
+// Permissions that let a token change campaigns, budgets or the business: a connection that holds one is refused.
+export const META_FORBIDDEN_SCOPES: readonly string[] = ['ads_management', 'business_management'];
 
 // Insights stop changing after 28 days (plan section 5.2): a day older than that is settled.
 const META_REVISION_DAYS = 28;
@@ -297,6 +299,9 @@ export class MetaAdsConnector implements OAuthConnector {
     // 8, R1). A separate ads app keeps it to ads_read; the runbook and the config say so.
     const { token, granted } = await this.login.userToken(input);
     const scopes = granted;
+    // A token that can change campaigns or the business is refused: this connection reads reports, and a leaked token must not
+    // be able to spend. Pages permissions (pages_*, publish_*) are accepted and shown on the Ads screen.
+    if (granted.some((s) => META_FORBIDDEN_SCOPES.includes(s))) throw new ConnectorError('denied', `the token holds ${granted.filter((s) => META_FORBIDDEN_SCOPES.includes(s)).join(', ')}`, 'WRITE_PERMISSION_GRANTED');
     let rows: NonNullable<AccountsAnswer['data']>;
     try {
       rows = await listAdAccounts(this.login.graph, token);

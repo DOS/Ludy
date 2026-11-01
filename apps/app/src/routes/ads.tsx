@@ -265,6 +265,12 @@ function SyncStatus({ account }: { account: AdAccountView }) {
     <div className="mt-3 space-y-1 text-sm">
       {account.syncedThrough && <p className="text-muted-foreground">{active ? t('syncedThrough', { day: f.date(account.syncedThrough) }) : t('storedThrough', { day: f.date(account.syncedThrough) })}</p>}
       {account.lastRunAt && <p className="text-xs text-subtle-foreground">{t('lastRun', { when: f.dateTime(account.lastRunAt) })}</p>}
+      {account.extraScopes.length > 0 && (
+        // The token can do more than read reports (the app was shared with another use that the person granted): say what.
+        <p className="text-warning" role="status">
+          {t('extraScopes', { list: account.extraScopes.join(', ') })}
+        </p>
+      )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
           {t(`connectionHint.${account.connectionStatus}`)}

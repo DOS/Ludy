@@ -43,6 +43,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   id: '0190c4a1-0000-7000-8000-000000000001',
   connectionId: '0190c4a1-0000-7000-8000-000000000002',
   connectionStatus: 'active',
+  extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',
   currency: 'VND',

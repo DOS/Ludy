@@ -178,7 +178,7 @@ export const adsAccountList = defineQuery({
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select([
-        'a.id', 'a.channel_connection_id', 'c.status', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
+        'a.id', 'a.channel_connection_id', 'c.status', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
         'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at',
       ])
       .where('a.org_id', '=', ctx.orgId)
@@ -192,6 +192,9 @@ export const adsAccountList = defineQuery({
       id: r.id,
       connectionId: r.channel_connection_id,
       connectionStatus: r.status as AdAccountView['connectionStatus'],
+      // What the sealed token can do beyond reading ad reports (a Meta token holds every permission the person granted the
+      // app): the screen says so. public_profile is the basic login permission and is not one of them.
+      extraScopes: r.scopes.filter((s) => s !== 'ads_read' && s !== 'public_profile'),
       provider: r.provider,
       name: r.name,
       currency: r.currency,

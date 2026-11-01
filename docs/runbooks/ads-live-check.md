@@ -45,6 +45,10 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 
 In the Meta app (developers.facebook.com, the app's dashboard): Facebook Login, Settings, "Valid OAuth Redirect URIs": add `http://localhost:8080/channels/oauth/meta_ads/callback` (or the deployment's `<PUBLIC_URL>/channels/oauth/meta_ads/callback`). Meta documents Strict Mode (an exact match) and an "Enforce HTTPS" switch; whether `http://localhost` is accepted is [U]: if the dialog refuses it, record the message and use a public https address instead.
 
+In the same app, Settings, Advanced, Security: turn on **"Require App Secret"**. Ludy sends the proof of the app secret (`appsecret_proof`) with every Graph request it makes, so a leaked token alone cannot call the API once this is on; with it off, the proof is sent but not required. **[CHECK]** after turning it on, connecting (step 4) still works; if Meta then refuses, record the error.
+
+The connection also **refuses a token that holds `ads_management` or `business_management`** (a person who granted them to this app before): the screen says so and connects nothing. Pages permissions (`pages_*`, `publish_*`) are accepted, recorded on the connection and shown on the Ads screen as permissions beyond reading reports; a separate Meta app for ads avoids both (step 2).
+
 ### 2. Give the server the app **[PERSON]**
 
 From the app's Settings, Basic page take the App ID (digits) and the App Secret ("Show", asks the password). Put them in the `.env` of the stack:
