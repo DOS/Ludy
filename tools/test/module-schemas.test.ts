@@ -86,6 +86,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/booking-feed.ts': { modules: ['crm'], why: 'the booking calendar feed, served only when crm is installed (http.ts)' },
   'apps/kernel/src/booking-page.ts': { modules: ['crm'], why: 'public booking routes, registered only when crm is installed (http.ts)' },
   'apps/kernel/src/calendar-feed.ts': { modules: ['social'], why: 'the post calendar feed, served only when social is installed (http.ts)' },
+  'apps/kernel/src/crm-worker.ts': { modules: ['crm'], why: 'the contact import staging sweep, worked and scheduled only when crm is installed (worker.ts)' },
   'apps/kernel/src/credential-reseal.ts': { modules: ['social'], why: 'the chat alert targets are resealed only when social is installed; the channel credentials are kernel work' },
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },

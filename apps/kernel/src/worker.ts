@@ -36,6 +36,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
+import { CRM_IMPORT_EXPIRE_CRON, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -956,6 +957,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const { orgId, ...input } = job.data;
       await deps.runtime.execute('crm.booking.remind', input, { actor: { type: 'system', component: 'crm.booking' }, orgId });
     });
+    // Contact import (#2251): once a day, the staged rows past their 7 days in orgs that never imported again.
+    await boss.work(QUEUES.crmImportExpire, { batchSize: 1 }, async () => {
+      const removed = await sweepCrmImports({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (removed > 0) console.log(`[crm-import-expire] removed ${removed} staged rows`);
+    });
+    await boss.schedule(QUEUES.crmImportExpire, CRM_IMPORT_EXPIRE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.crmImportExpire);
   }
 
   // Notes (#1671): a former member's private notes 30 days after they left, the daily trash and the to-do reminders

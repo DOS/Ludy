@@ -56,6 +56,8 @@ export const QUEUES = {
   // Created by the live calendar check migration (20261113090000): a visitor's booking request or manage ask, decided after the
   // slot is checked live at the hosts' connected calendars (#2139).
   crmBookingLive: 'crm-booking-live',
+  // Created by the contact import expiry migration (20261116100000): the daily sweep of staged import rows past 7 days.
+  crmImportExpire: 'crm-import-expire',
   // Created by the period balance migration (20261101160000).
   periodBalanceVerify: 'finance-period-balance-verify',
   // Created by the notes core migration (20261103130000).
@@ -135,6 +137,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.crmBookingRemind]: 'none',
   // The live check reaches the calendar adapters (channels.calendars); the decision itself is a command.
   [QUEUES.crmBookingLive]: ['provider:channel'],
+  [QUEUES.crmImportExpire]: 'none',
   [QUEUES.periodBalanceVerify]: 'none',
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',

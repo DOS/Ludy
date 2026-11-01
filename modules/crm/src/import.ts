@@ -11,6 +11,7 @@
 // rows older than IMPORT_STAGED_DAYS are refused and deleted the next time any import command runs in the org.
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
+import { z } from 'zod';
 import {
   IMPORT_PREVIEW_PAGE,
   IMPORT_STAGED_DAYS,
@@ -199,7 +200,9 @@ const notFound = () => new DomainError('IMPORT_NOT_FOUND', 404, 'Không tìm th�
 // Staged batches of this org older than the limit lose their rows and are marked expired.
 async function expireStale(ctx: CommandContext): Promise<void> {
   const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
-  const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).execute();
+  // The batch rows are locked first, in id order, before their rows are deleted: the daily sweep (importExpire) takes the same
+  // order, so a command and the sweep reaching one stale batch cannot wait on each other.
+  const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
   if (stale.length === 0) return;
   const ids = stale.map((s) => s.id);
   await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).execute();
@@ -492,5 +495,29 @@ export const importCommit = defineCommand({
   },
 });
 
-export const importCommands = [importStage, importCommit, importCancel];
+// The daily sweep's part in one org (K5b, #2251): the worker found a staged batch past IMPORT_STAGED_DAYS here (the
+// definer crove_crm.import_expired lists the orgs) and runs this in the org's system context, where the tenant policy shows
+// this org's rows alone. The rows are deleted and the batches marked expired, counts only in the audit row.
+export const importExpire = defineCommand({
+  name: 'crm.import.expire',
+  input: z.strictObject({}),
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: 'system',
+  handler: async (ctx): Promise<{ batches: number; rows: number }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
+    // Locked, so a commit running at this moment finishes first and its batch no longer reads as staged here.
+    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).orderBy('id').forUpdate().execute();
+    if (stale.length === 0) return { batches: 0, rows: 0 };
+    const ids = stale.map((s) => s.id);
+    const deleted = await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).executeTakeFirst();
+    await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
+    const rows = Number(deleted.numDeletedRows);
+    ctx.audit({ batches: ids.length, rows });
+    return { batches: ids.length, rows };
+  },
+});
+
+export const importCommands = [importStage, importCommit, importCancel, importExpire];
 export const importQueries = [importPreview];
