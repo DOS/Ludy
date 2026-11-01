@@ -75,7 +75,7 @@ export const zConversationIngest = z.strictObject({
   events: z.array(zConversationEvent).min(1).max(CONVERSATION_EVENTS_MAX),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
-export const zConversationIngested = z.strictObject({ stored: z.number().int().min(0), duplicates: z.number().int().min(0), skipped: z.number().int().min(0) });
+export const zConversationIngested = z.strictObject({ stored: z.number().int().min(0), duplicates: z.number().int().min(0), ignored: z.number().int().min(0) });
 export type ConversationIngested = z.infer<typeof zConversationIngested>;
 
 // What a thread's customer looks like on screen: the platform's name when it gave one, else a short tail of its id.

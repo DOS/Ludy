@@ -96,6 +96,12 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_kernel.mail_suppression.to_hash': { kind: 'other', handling: 'hashed', reason: 'Keyed hash; keeps a bounced or unsubscribed address suppressed after erasure' },
   'crove_kernel.inbound_message.from_address': { kind: 'email', handling: 'erase', reason: 'The sender of a forwarded mail; the stored file keeps the document itself' },
   'crove_kernel.inbound_message.body_text': { kind: 'other', handling: 'erase', reason: 'The text of a forwarded mail (#779), which may name or describe its sender; erased with the address of its sender' },
+  'crove_kernel.conversation_identity.display_name': {
+    kind: 'name',
+    handling: 'keep_record',
+    reason:
+      'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact) and the retention purge of the conversation core remove it, both built in CV6 (#2305); until then it goes with the org (offboarding), and no live channel takes a real customer before CV6 is accepted',
+  },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
   'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },

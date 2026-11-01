@@ -146,12 +146,12 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const o = await org();
     const ch = await connection(o);
     const first = comment('c-1', SECRET_TEXT);
-    expect(await ingest(o, ch, [first])).toEqual({ stored: 1, duplicates: 0, skipped: 0 });
-    expect(await ingest(o, ch, [first])).toEqual({ stored: 0, duplicates: 1, skipped: 0 });
+    expect(await ingest(o, ch, [first])).toEqual({ stored: 1, duplicates: 0, ignored: 0 });
+    expect(await ingest(o, ch, [first])).toEqual({ stored: 0, duplicates: 1, ignored: 0 });
     // A follow-up under the same top-level comment joins its thread; another top-level comment is a thread of its own.
     const follow = comment('c-1', 'Còn hàng không shop?', { messageId: 'm-follow-1' });
     const other = comment('c-2', 'Giá bao nhiêu?', { contact: { id: 'u-2002', name: 'Lê Văn Hỏi' } });
-    expect(await ingest(o, ch, [follow, other])).toEqual({ stored: 2, duplicates: 0, skipped: 0 });
+    expect(await ingest(o, ch, [follow, other])).toEqual({ stored: 2, duplicates: 0, ignored: 0 });
     const listed = await listAll(o, o.lan);
     expect(listed.conversations).toHaveLength(2);
     const t1 = await threadOf(o, ch, 'c-1');
@@ -171,14 +171,14 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const b = await org();
     const chB = await connection(b);
     // Org A's context names org B's connection: it is not found there, so nothing is stored anywhere.
-    expect(await ingest(a, chB, [comment('x-1', 'hi')])).toEqual({ stored: 0, duplicates: 0, skipped: 1 });
+    expect(await ingest(a, chB, [comment('x-1', 'hi')])).toEqual({ stored: 0, duplicates: 0, ignored: 1 });
     expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE channel_connection_id = $1', [chB])).toHaveLength(0);
     // Only the system runs it; a member is refused.
     await expect(exec(a, a.owner, 'kernel.conversation.ingest', { connectionId: chB, events: [comment('x-2', 'hi')] })).rejects.toMatchObject({ status: 403 });
     // An inactive connection stores nothing.
     const chA = await connection(a);
     await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [chA]));
-    expect(await ingest(a, chA, [comment('x-3', 'hi')])).toEqual({ stored: 0, duplicates: 0, skipped: 1 });
+    expect(await ingest(a, chA, [comment('x-3', 'hi')])).toEqual({ stored: 0, duplicates: 0, ignored: 1 });
   });
 
   it('reopens a resolved thread when the customer writes again, and blanks a message the platform removed', async () => {
@@ -409,7 +409,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(made.events[0]).toMatchObject({ kind: 'comment_thread', postId: 'post-9', direction: 'in', text: 'Bình luận thử', contact: { name: 'Khách thử nghiệm' } });
     // It is only an event: nothing is stored until the intake takes it.
     expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
-    expect(await ingest(o, ch, made.events)).toEqual({ stored: 1, duplicates: 0, skipped: 0 });
+    expect(await ingest(o, ch, made.events)).toEqual({ stored: 1, duplicates: 0, ignored: 0 });
     await expect(exec(o, o.lan, 'kernel.conversation.sandbox_comment', { connectionId: ch, postId: 'p', text: 'x' })).rejects.toMatchObject({ status: 403 });
     await expect(exec(o, o.owner, 'kernel.conversation.sandbox_comment', { connectionId: real, postId: 'p', text: 'x' })).rejects.toMatchObject({ code: 'CHANNEL_NOT_FOUND' });
   });

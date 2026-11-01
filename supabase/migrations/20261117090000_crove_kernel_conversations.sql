@@ -35,7 +35,7 @@
 --   - owners and admins read every conversation and are never limited to some channels;
 --   - a member or viewer reads a comment thread of a channel they may use (crove_kernel.channel_access: with rows they are
 --     limited to those channels, without any they use every one) and writes it when they are not a viewer;
---   - a private message is read only by owners, admins and holders of the permission conversation.direct.read (none yet:
+--   - a private message is read only by owners, admins and holders of the permission kernel.conversation.direct.read (none yet:
 --     the role that holds it arrives with the Service inbox), and the channel limit applies to them too.
 -- Rows are org-level: a connection belongs to no legal entity yet, so a conversation does not either.
 SET LOCAL lock_timeout = '2s';
@@ -51,7 +51,7 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
       SELECT CASE
         WHEN m.role IN ('owner', 'admin') THEN true
         WHEN p_write AND m.role = 'viewer' THEN false
-        WHEN p_kind = 'direct' AND NOT crove_kernel.ctx_has_permission('conversation.direct.read') THEN false
+        WHEN p_kind = 'direct' AND NOT crove_kernel.ctx_has_permission('kernel.conversation.direct.read') THEN false
         WHEN p_kind NOT IN ('direct', 'comment_thread') THEN false
         ELSE NOT EXISTS (SELECT 1 FROM crove_kernel.channel_access a WHERE a.org_id = m.org_id AND a.user_id = m.user_id)
           OR EXISTS (SELECT 1 FROM crove_kernel.channel_access a
@@ -268,6 +268,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_inbound_pending (
 );
 REVOKE ALL ON crove_kernel.conversation_inbound_pending FROM PUBLIC;
 ALTER TABLE crove_kernel.conversation_inbound_pending ENABLE ROW LEVEL SECURITY;
+-- An agent context writes none of it (ADR-0029): the guard every table carries.
+SELECT crove_kernel.agent_write_guard_install('crove_kernel.conversation_inbound_pending');
 
 -- Stores a notice the API verified, for the worker. Reads nothing and writes no tenant data. Past 10000 waiting notices it
 -- raises 53400 (configuration_limit_exceeded), which the API answers with 503 so the platform retries later.
@@ -334,4 +336,4 @@ GRANT EXECUTE ON FUNCTION crove_kernel.conversation_inbound_claim(integer, integ
   crove_kernel.conversation_connections_for(text, text) TO crove_worker;
 
 -- The reply job: one queue, ids only in its data (a reply's text is read from the message row, not carried).
-SELECT crove_jobs.create_queue('conversations-reply', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+SELECT crove_jobs.create_queue('kernel-conversation-reply', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);

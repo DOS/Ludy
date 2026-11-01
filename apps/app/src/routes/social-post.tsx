@@ -28,6 +28,7 @@ import { SnippetPicker } from '../components/social-snippets.tsx';
 import { ReviewLinks } from '../components/social-review-links.tsx';
 import { archiveBlock, mayArchive } from '../lib/social-archive.ts';
 import { PostActivity } from '../components/social-activity.tsx';
+import { ConversationInbox, SandboxCommentButton } from '../components/conversation-inbox.tsx';
 import { boardMedia } from '../components/social-comment-pins.tsx';
 import { ReviewChanges } from '../components/social-review-diff.tsx';
 import { PreReviewFindings } from '../components/social-pre-review.tsx';
@@ -4466,6 +4467,22 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
             );
           })}
         </div>
+        {p.variants.some((v) => v.status === 'published' && v.externalPostId) && (
+          // The comments under the post on its published channels (#2303): the conversation core's threads, joined by channel and the platform's post id.
+          <section className="space-y-3 lg:col-span-2" aria-labelledby="post-comments-title" data-testid="post-comments">
+            <h2 id="post-comments-title" className="text-sm font-semibold text-foreground">
+              {t('commentsTitle')}
+            </h2>
+            {canDecide &&
+              p.variants
+                .filter((v) => v.provider === 'sandbox' && v.status === 'published' && v.externalPostId)
+                .map((v) => <SandboxCommentButton key={v.id} connectionId={v.connectionId} postId={v.externalPostId as string} />)}
+            <ConversationInbox
+              kind="comment_thread"
+              posts={p.variants.filter((v) => v.status === 'published' && v.externalPostId).map((v) => ({ connectionId: v.connectionId, externalPostId: v.externalPostId as string }))}
+            />
+          </section>
+        )}
         <PostActivity
           postId={p.id}
           channels={p.variants.map((v) => ({ variantId: v.id, name: names.get(v.connectionId) ?? providerName(v.provider) }))}

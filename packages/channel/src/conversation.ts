@@ -12,13 +12,13 @@ export type ConversationKindId = 'comment_thread' | 'direct';
 export interface InboundConversationEvent {
   kind: ConversationKindId;
   threadId: string;
-  postId?: string;
+  postId?: string | undefined;
   messageId: string;
   direction: 'in' | 'out';
-  contact: { id: string; name?: string };
+  contact: { id: string; name?: string | undefined };
   text: string;
   at: string;
-  removed?: boolean;
+  removed?: boolean | undefined;
 }
 
 // A verified notice: the platform's own account id (a Page, an Instagram account, an OA), from which the worker finds the
@@ -29,9 +29,11 @@ export interface ConversationNotice {
 }
 
 export class ConversationNoticeError extends Error {
-  constructor(readonly reason: 'malformed' | 'signature') {
+  readonly reason: 'malformed' | 'signature';
+  constructor(reason: 'malformed' | 'signature') {
     super(reason);
     this.name = 'ConversationNoticeError';
+    this.reason = reason;
   }
 }
 

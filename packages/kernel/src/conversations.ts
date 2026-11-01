@@ -6,7 +6,7 @@
 // - the worker, as the system, takes platform events in (kernel.conversation.ingest) and settles the calls a reply or a hide
 //   makes (reply_begin, reply_record, hide_begin, hide_record); the org of an event comes from the stored connection;
 // - owners, admins and members read and answer a comment thread of a channel they may use; a viewer only reads; a private
-//   message is read and answered only by owners, admins and holders of conversation.direct.read, and the channel limit
+//   message is read and answered only by owners, admins and holders of kernel.conversation.direct.read, and the channel limit
 //   (crove_kernel.channel_access) applies to every member; an agent reads and writes none.
 //
 // A reply is a message (queued) and, before the platform is called, an external_call row written by reply_begin in its own
@@ -175,11 +175,11 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    const out: ConversationIngested = { stored: 0, duplicates: 0, skipped: 0 };
+    const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
     const connection = await connectionOf(ctx, input.connectionId);
     const rules = connection && connection.status === 'active' ? conversationRules(connection.provider) : null;
     if (!connection || !rules) {
-      out.skipped = input.events.length;
+      out.ignored = input.events.length;
       ctx.audit({ connection_id: input.connectionId, ...out });
       return out;
     }
@@ -187,7 +187,7 @@ export const conversationIngest = defineCommand({
     const events = input.events.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
     for (const { event } of events) {
       if (!rules.kinds.includes(event.kind)) {
-        out.skipped++;
+        out.ignored++;
         continue;
       }
       const result = await ingestEvent(ctx, input.connectionId, connection.provider, rules.windowHours, event);
@@ -198,7 +198,7 @@ export const conversationIngest = defineCommand({
   },
 });
 
-async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'skipped'> {
+async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
     .select(['id', 'body', 'platform_removed_at'])
@@ -219,7 +219,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     return 'duplicates';
   }
   // A removal of a message never seen leaves nothing to blank.
-  if (event.removed) return 'skipped';
+  if (event.removed) return 'ignored';
 
   const identity = await ctx.trx
     .insertInto('crove_kernel.conversation_identity')
@@ -715,8 +715,6 @@ const zCallResult = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('accepted'), externalId: z.string().min(1).max(300) }),
   z.strictObject({ kind: z.literal('rejected'), error: zErrorKind, code: z.string().max(200).optional() }),
   z.strictObject({ kind: z.literal('unknown'), code: z.string().max(200).optional() }),
-  // Nothing was called: the channel's credential could not be used.
-  z.strictObject({ kind: z.literal('blocked'), code: z.string().max(200) }),
 ]);
 
 // Stores what the platform answered for a reply; an answer for a call that is no longer the message's current one changes
@@ -735,11 +733,6 @@ export const conversationReplyRecord = defineCommand({
     const { result } = input;
     // The echo of the message may have settled it already; a stale call's answer is ignored.
     if (input.callKey !== current) return { state: message.send_state ?? 'none' };
-    if (result.kind === 'blocked') {
-      if (message.send_state !== 'queued') return { state: message.send_state ?? 'none' };
-      await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'failed', send_error_code: code(result.code, 'BLOCKED') }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
-      return { state: 'failed' };
-    }
     if (message.send_state === 'sent') {
       await ctx.trx
         .updateTable('crove_kernel.external_call')
@@ -921,7 +914,6 @@ const zHideResult = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('done') }),
   z.strictObject({ kind: z.literal('rejected'), error: zErrorKind, code: z.string().max(200).optional() }),
   z.strictObject({ kind: z.literal('unknown'), code: z.string().max(200).optional() }),
-  z.strictObject({ kind: z.literal('blocked'), code: z.string().max(200) }),
 ]);
 
 export const conversationHideRecord = defineCommand({
@@ -961,14 +953,14 @@ export const conversationHideRecord = defineCommand({
       await settle({ state: 'ambiguous', error_kind: 'unknown', error_code: code(result.code, 'unknown') });
       return { state: 'unknown' };
     }
-    const failure = result.kind === 'blocked' ? code(result.code, 'BLOCKED') : code(result.code, result.error.toUpperCase());
+    const failure = code(result.code, result.error.toUpperCase());
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
       .set({ hide_request: null, hide_error_code: failure, hidden_by: message.hidden_at ? message.hidden_by : null })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
       .execute();
-    await settle({ state: 'failed', error_kind: result.kind === 'blocked' ? 'permission' : result.error, error_code: failure });
+    await settle({ state: 'failed', error_kind: result.error, error_code: failure });
     return { state: 'failed' };
   },
 });
