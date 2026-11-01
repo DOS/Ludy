@@ -6,7 +6,7 @@
 // contact's details, its notes (with the notes module) and its timeline.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type Contact, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
@@ -21,6 +21,7 @@ import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
 import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { formatMoney } from '../lib/format.ts';
+import { useDebounced } from '../lib/use-debounced.ts';
 import {
   CONTACT_SORT_OPTIONS,
   EMPTY_CONTACT_FILTER,
@@ -37,14 +38,6 @@ import {
 const SCOPE = 'crm.party';
 // The search waits for a pause in typing, so one request goes out per word and not per key.
 const SEARCH_PAUSE_MS = 300;
-function useDebounced<T>(value: T, ms: number): T {
-  const [settled, setSettled] = useState(value);
-  useEffect(() => {
-    const timer = setTimeout(() => setSettled(value), ms);
-    return () => clearTimeout(timer);
-  }, [value, ms]);
-  return settled;
-}
 // The words of each sort option, by its `field:dir` value.
 const SORT_LABELS: Record<string, 'sort.name_asc' | 'sort.name_desc' | 'sort.created_asc' | 'sort.created_desc' | 'sort.updated_asc' | 'sort.updated_desc'> = {
   'name:asc': 'sort.name_asc',
