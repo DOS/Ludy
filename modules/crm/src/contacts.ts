@@ -29,12 +29,22 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The list a view of no sort opens on: by name.
 export const CONTACT_DEFAULT_SORT: SavedViewSort = { field: 'name', dir: 'asc' };
 
-// The sort fields of the scope, as the column each means, and the type its cursor value is read back as.
-const SORT_COLUMNS: Record<string, { column: Expression<unknown>; type: 'text' | 'timestamptz' }> = {
-  created: { column: sql`p.created_at`, type: 'timestamptz' },
-  name: { column: sql`p.name`, type: 'text' },
-  updated: { column: sql`p.updated_at`, type: 'timestamptz' },
+// The sort fields of the scope, as the column each means; `text` is its value as a cursor carries it (a time in UTC with
+// microseconds, so it reads back exactly whatever the session's settings) and `type` how it is read back.
+const TIME_TEXT = (column: string) => sql`to_char(${sql.ref(column)} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+const SORT_COLUMNS: Record<string, { column: Expression<unknown>; text: Expression<unknown>; type: 'text' | 'timestamptz' }> = {
+  created: { column: sql`p.created_at`, text: TIME_TEXT('p.created_at'), type: 'timestamptz' },
+  name: { column: sql`p.name`, text: sql`p.name`, type: 'text' },
+  updated: { column: sql`p.updated_at`, text: TIME_TEXT('p.updated_at'), type: 'timestamptz' },
 };
+
+// A cursor value as the server wrote it, and nothing else: a made-up value is a 422 and never reaches a cast.
+const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
+function validTime(v: string): boolean {
+  if (!TIME.test(v)) return false;
+  const at = new Date(`${v.slice(0, 23)}Z`);
+  return !Number.isNaN(at.getTime()) && at.toISOString().slice(0, 23) === v.slice(0, 23);
+}
 
 // A typed phone number (at least four digits, nothing but digits and phone punctuation) also matches the parties whose
 // phone key starts with its key, so every way of writing a number finds it.
@@ -64,12 +74,13 @@ export function contactFields(): Record<string, FieldCondition> {
   };
 }
 
-// Where the next page starts: the sort it belongs to and the last contact shown. The sort value is read from that contact
-// on the server, so a long name never makes the cursor long and nothing but an id is taken from the client.
+// Where the next page starts: the sort it belongs to and the last contact shown with its sort value as the page was served,
+// so a contact edited or removed since cannot make a page repeat or skip rows. The value is checked before it is used.
 interface Cursor {
   f: string;
   d: 'asc' | 'desc';
   id: string;
+  v: string;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -81,7 +92,7 @@ function encodeCursor(c: Cursor): string {
 function decodeCursor(raw: string): Cursor {
   try {
     const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as Partial<Cursor>;
-    if (typeof c.f === 'string' && (c.d === 'asc' || c.d === 'desc') && typeof c.id === 'string' && UUID.test(c.id)) return { f: c.f, d: c.d, id: c.id };
+    if (typeof c.f === 'string' && (c.d === 'asc' || c.d === 'desc') && typeof c.id === 'string' && UUID.test(c.id) && typeof c.v === 'string' && c.v.length <= 1000) return { f: c.f, d: c.d, id: c.id, v: c.v };
   } catch {
     // Falls through to the refusal below.
   }
@@ -98,6 +109,7 @@ interface Row {
   phone: string | null;
   version: number;
   created_at: Date;
+  sort_value: string;
 }
 
 export const contactList = defineQuery({
@@ -124,18 +136,16 @@ export const contactList = defineQuery({
       if (c.f !== sorted.field || c.d !== sorted.dir) {
         throw new DomainError('VALIDATION', 422, 'Con trỏ trang không khớp với cách sắp xếp', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
       }
-      // The sort value of the last contact shown, in this org and as this member reads it: a contact that is gone, or
-      // another org's, is a stale cursor.
-      const last = await sql<{ v: string }>`SELECT (${by.column})::text AS v FROM crove_kernel.party p WHERE p.org_id = ${ctx.orgId}::uuid AND p.id = ${c.id}::uuid`.execute(ctx.trx);
-      const v = last.rows[0]?.v;
-      if (v === undefined) throw new DomainError('VALIDATION', 422, 'Con trỏ trang không còn hợp lệ', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
-      const value = by.type === 'text' ? sql`${v}::text` : sql`${v}::timestamptz`;
+      if (by.type === 'timestamptz' && !validTime(c.v)) {
+        throw new DomainError('VALIDATION', 422, 'Con trỏ trang không hợp lệ', { issues: [{ path: 'cursor', code: 'bad_cursor' }] });
+      }
+      const value = by.type === 'text' ? sql`${c.v}::text` : sql`${c.v}::timestamptz`;
       const past = sorted.dir === 'asc' ? sql`${by.column} > ${value}` : sql`${by.column} < ${value}`;
       after = sql<boolean>`(${past} OR (${by.column} = ${value} AND p.id > ${c.id}::uuid))`;
     }
 
     const result = await sql<Row>`
-      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at
+      SELECT p.id, p.kind, p.name, p.tax_code, p.address, p.email, p.phone, p.version, p.created_at, (${by.text}) AS sort_value
       FROM crove_kernel.party p
       WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND ${where} AND ${after}
       ORDER BY ${sql.join(order, sql`, `)}
@@ -155,7 +165,7 @@ export const contactList = defineQuery({
       version: r.version,
       createdAt: r.created_at.toISOString(),
     }));
-    return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id }) : null };
+    return { items, next: more ? encodeCursor({ f: sorted.field, d: sorted.dir, id: last.id, v: last.sort_value }) : null };
   },
 });
 

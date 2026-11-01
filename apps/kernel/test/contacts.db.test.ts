@@ -328,8 +328,8 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       for (let page = 0; page < 5; page++) {
         const got = await list(long, long.lan, { limit: 1, ...(cursor ? { cursor } : {}) });
         seen.push(...got.items.map((c) => c.name));
-        // The cursor never holds a name: it stays short whatever the names are.
-        if (got.next !== null) expect(got.next.length).toBeLessThan(120);
+        // The cursor carries the last name, 290 characters of Vietnamese here, and stays inside the input's limit.
+        if (got.next !== null) expect(got.next.length).toBeLessThan(2000);
         if (got.next === null) break;
         cursor = got.next;
       }
@@ -339,12 +339,40 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       const forge = (payload: object) => Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
       const mine = (await list(long, long.lan)).items[0];
       const theirs = (await list(other, other.owner)).items[0];
-      for (const id of ['-'.repeat(36), randomUUID(), theirs?.id]) {
-        await expect(list(long, long.lan, { cursor: forge({ f: 'name', d: 'asc', id }) }), String(id)).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      const refused = (cursor: string, sort?: object) => expect(list(long, long.lan, { cursor, ...(sort ? { sort } : {}) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      for (const id of ['-'.repeat(36), "'; DROP TABLE crove_kernel.party; --", 'không-phải-id']) await refused(forge({ f: 'name', d: 'asc', id, v: 'x' }));
+      await refused(forge({ f: 'name', d: 'asc', id: mine?.id }));
+      // A value that is not a time the server wrote never reaches a cast; a made-up name only narrows this org's list.
+      for (const v of ['2026-13-45T00:00:00.000000Z', '2026-11-01 00:00:00+00', '2026-11-01T25:00:00.000000Z', "1'; DROP TABLE x; --"]) {
+        await refused(forge({ f: 'created', d: 'asc', id: mine?.id, v }), { field: 'created', dir: 'asc' });
       }
-      await expect(list(long, long.lan, { cursor: forge({ f: 'name', d: 'asc', id: "'; DROP TABLE crove_kernel.party; --" }) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
-      await expect(list(long, long.lan, { cursor: forge({ f: 'created', d: 'asc', id: mine?.id }) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
-      await expect(list(long, long.lan, { cursor: 'x'.repeat(201) })).rejects.toMatchObject({ code: 'VALIDATION', status: 422 });
+      // The same id with a sort the cursor did not come from, and a cursor too long for the input.
+      await refused(forge({ f: 'created', d: 'asc', id: mine?.id, v: 'x' }));
+      await refused('x'.repeat(2001));
+      // A foreign contact's id only names a position: nothing of that org is read or listed.
+      const foreign = await list(long, long.lan, { cursor: forge({ f: 'name', d: 'asc', id: theirs?.id, v: 'A' }) });
+      expect(foreign.items.every((c) => !c.name.includes('tổ chức khác'))).toBe(true);
+    });
+
+    it('keeps paging stable when the contact a page ended on is edited before "Load more"', async () => {
+      const drift = await org();
+      for (const name of ['Một', 'Hai', 'Ba', 'Bốn']) await create(drift, drift.lan, { name });
+      const sort = { field: 'updated', dir: 'desc' } as const;
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 6; page++) {
+        const got = await list(drift, drift.lan, { sort, limit: 2, ...(cursor ? { cursor } : {}) });
+        seen.push(...got.items.map((c) => c.name));
+        if (got.next === null) break;
+        cursor = got.next;
+        if (page === 0) {
+          // Another member edits the last contact shown: its updated time jumps ahead of everything on page 2.
+          const last = got.items.at(-1);
+          await exec(drift, drift.admin, 'kernel.party.update', { partyId: last?.id, version: last?.version, name: `${last?.name} (sửa)`, taxCode: null, address: null, email: null, phone: null });
+        }
+      }
+      expect(seen).toHaveLength(4);
+      expect(new Set(seen.map((n) => n.replace(' (sửa)', ''))).size).toBe(4);
     });
 
     it('leaves out a duplicate, answers 422 to an unknown field, sort or cursor, and a cursor from another sort', async () => {
