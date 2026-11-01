@@ -26,6 +26,7 @@ import {
   money,
   Decimal,
   parseTaxCode,
+  readLookupHints,
   roundInvoiceToDong,
   type InvoiceCheck,
   type LearnedRule,
@@ -299,7 +300,7 @@ async function readInvoice(
   file: { filename: string; content_type: string; aiStopped: boolean },
   bytes: Uint8Array,
   used: ReadUsage,
-): Promise<{ method: Method; invoice: ParsedInvoice | null; error: string | null }> {
+): Promise<{ method: Method; invoice: ParsedInvoice | null; error: string | null; text?: string }> {
   const onUsage = (usage: AiUsage) => {
     used.ai.push(usage);
   };
@@ -328,7 +329,7 @@ async function readInvoice(
       const text = result.text.trim();
       if (text.length < 40) return { method: 'pdf_text_ai', invoice: null, error: 'PDF dạng ảnh scan chưa được hỗ trợ; hãy gửi ảnh chụp hoặc tệp XML' };
       const invoice = await deps.extractor.fromText(text, onUsage);
-      return { method: 'pdf_text_ai', invoice, error: invoice ? null : 'Tài liệu không phải hóa đơn mua vào' };
+      return { method: 'pdf_text_ai', invoice, error: invoice ? null : 'Tài liệu không phải hóa đơn mua vào', text };
     }
     if (IMAGE_TYPES.includes(file.content_type)) {
       if (file.aiStopped) return { method: 'image_ai', invoice: null, error: AI_STOPPED_MESSAGE };
@@ -458,7 +459,7 @@ export async function extractAndPropose(
       }
     }
   }
-  const { method, invoice, error } = read;
+  const { method, invoice, error, text: pdfText } = read;
 
   const fail = (message: string, checks: InvoiceCheck[] = []) =>
     deps.runtime.execute<{ proposalId: string | null }>(
@@ -500,6 +501,9 @@ export async function extractAndPropose(
   const seller = { ...invoice.seller, taxCode: sellerTaxCode ?? invoice.seller.taxCode };
   const buyer = sale ? { ...invoice.buyer, taxCode: parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode } : invoice.buyer;
   const direction = sale ? { direction: 'sale' as const } : {};
+  // The seller's lookup link and code printed on a PDF (#2267): the reader is deterministic and follows no link. Only a
+  // purchase has an original to look up at the seller's provider.
+  const lookupHints = !sale && pdfText ? readLookupHints(pdfText, { sellerTaxCode }) : [];
   const memo = journalMemo({ ...direction, seller, buyer, invoice });
   const payload: PurchaseProposal = {
     ...direction,
@@ -525,6 +529,7 @@ export async function extractAndPropose(
     journal: sale ? buildSalesJournal(lines, booked.vatTotal, memo) : buildPurchaseJournal(lines, booked.vatTotal, memo),
     checks,
     sourceFileId: fileId,
+    ...(lookupHints.length > 0 ? { lookupHints } : {}),
     extractionMethod: method === 'unsupported' ? 'einvoice_xml' : method,
     // The signature verification from the sandbox (#674). An invoice read by AI has no signature to verify; an XML
     // answer from a sandbox older than #674 has no verification, which leaves it out.

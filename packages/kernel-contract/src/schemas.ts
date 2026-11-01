@@ -191,6 +191,26 @@ export const zRelatedInvoiceRef = z.object({
 });
 export type RelatedInvoiceRef = z.infer<typeof zRelatedInvoiceRef>;
 
+// Where the seller's original XML can be looked up (#2267, plan docs/plan/einvoice-lookup.md): the provider, an https link on
+// one of its lookup hosts and the lookup code, as read from the invoice's PDF text. Each part may be absent (a code
+// with no link, a link with no code). The list of providers is LOOKUP_PROVIDERS in @crove/l10n-vn, which this package
+// does not depend on; a finance test compares them. The code is invoice data (class pii): kept with the proposal, never
+// in a log, an audit row or an error text.
+export const LOOKUP_PROVIDER_IDS = ['misa', 'viettel', 'vnpt', 'bkav', 'easyinvoice', 'fpt'] as const;
+export const zLookupHint = z.object({
+  provider: z.enum(LOOKUP_PROVIDER_IDS).nullable(),
+  url: z
+    .string()
+    .max(400)
+    .regex(/^https:\/\/[a-z0-9.-]+(?:[/?][^\s]*)?$/)
+    .nullable(),
+  code: z
+    .string()
+    .regex(/^[A-Za-z0-9]{6,40}$/)
+    .nullable(),
+});
+export type LookupHint = z.infer<typeof zLookupHint>;
+
 // Payload stored on a finance.purchase proposal and executed by finance.purchase.record. direction 'sale' (issue #313):
 // the seller is the org itself (its tax code), the buyer is the customer, and the journal is Dr 131, Cr revenue, Cr
 // 3331. Absent on purchases, including every proposal raised before sales existed.
@@ -245,6 +265,9 @@ export const zPurchaseProposal = z.object({
   // The legal entity whose books the invoice is recorded in (#1280), set by a revision (inbox.edit legalEntityId).
   // Absent: the entity resolved for the approver as in zLegalEntityChoice (the org's default entity for an owner).
   legalEntityId: zId.optional(),
+  // Lookup links and codes read from the invoice's PDF text, at most three (#2267). Only on a proposal read from a PDF,
+  // and only when the text held any.
+  lookupHints: z.array(zLookupHint).max(3).optional(),
 });
 export type PurchaseProposal = z.infer<typeof zPurchaseProposal>;
 
