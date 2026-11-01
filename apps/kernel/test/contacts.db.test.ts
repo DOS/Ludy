@@ -118,9 +118,9 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
 
   it('adds a person or a company by hand, checked as an edit is, and refuses a used tax code naming the party', async () => {
     const o = await org();
-    const made = await create(o, o.lan, { kind: 'organization', name: '  Công ty  TNHH Nguyễn  ', taxCode: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@nguyen.vn', phone: '+84 912 345 678' });
+    const made = await create(o, o.lan, { kind: 'organization', name: '  Công ty  TNHH Nguyễn  ', taxCode: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@example.com', phone: '+84 912 345 678' });
     const row = (await admin((c) => c.query('SELECT * FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, made.partyId]))).rows[0];
-    expect(row).toMatchObject({ kind: 'organization', name: 'Công ty TNHH Nguyễn', tax_code: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@nguyen.vn', phone: '+84 912 345 678', source_trust: 'user', version: 1 });
+    expect(row).toMatchObject({ kind: 'organization', name: 'Công ty TNHH Nguyễn', tax_code: '0101234567', address: '12 Lê Lợi, Hà Nội', email: 'lien-he@example.com', phone: '+84 912 345 678', source_trust: 'user', version: 1 });
     expect(made.version).toBe(1);
     // Only a name is needed.
     await expect(create(o, o.lan, { name: 'Trần Văn B' })).resolves.toMatchObject({ version: 1 });
@@ -156,7 +156,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     await expect(rt.execute('kernel.party.create', { kind: 'person', name: 'Do máy' }, { actor: agent, orgId: o.orgId })).rejects.toBeTruthy();
     expect((await admin((c) => c.query("SELECT count(*)::int AS n FROM crove_kernel.party WHERE org_id = $1 AND name LIKE 'Do %'", [o.orgId]))).rows[0]?.n).toBe(3);
 
-    const made = await create(o, o.lan, { kind: 'organization', name: 'Công ty Bí Mật', taxCode: '0108888888', address: '9 Phố Bí Mật', email: 'bi-mat@example.vn', phone: '0988 777 666' });
+    const made = await create(o, o.lan, { kind: 'organization', name: 'Công ty Bí Mật', taxCode: '0108888888', address: '9 Phố Bí Mật', email: 'bi-mat@example.vn', phone: '0988 777 777' });
     const audit = (await admin((c) => c.query<{ detail: unknown; command: string }>("SELECT command, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.create' AND detail ->> 'partyId' = $2", [o.orgId, made.partyId]))).rows;
     expect(audit).toHaveLength(1);
     const detail = JSON.stringify(audit[0]?.detail);
@@ -192,8 +192,8 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
     beforeAll(async () => {
       o = await org();
       other = await org();
-      await create(o, o.lan, { kind: 'organization', name: 'Công ty Nguyễn Hoàng', taxCode: '0101234567', email: 'kinh.doanh@nguyen.vn', phone: '+84 912 345 678' });
-      await create(o, o.lan, { name: 'Trần Văn B', phone: '0903 000 111' });
+      await create(o, o.lan, { kind: 'organization', name: 'Công ty Nguyễn Hoàng', taxCode: '0101234567', email: 'kinh.doanh@example.com', phone: '+84 912 345 678' });
+      await create(o, o.lan, { name: 'Trần Văn B', phone: '0903 000 000' });
       await create(o, o.lan, { name: 'Lê Thị Cúc', email: 'cuc@example.vn' });
       await create(o, o.lan, { kind: 'organization', name: 'Đặng Gia Hưng', taxCode: '0109999999', address: 'Hải Phòng' });
       await create(o, o.lan, { name: 'Phạm Thị D' });
@@ -214,7 +214,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
         name: 'Công ty Nguyễn Hoàng',
         taxCode: '0101234567',
         address: null,
-        email: 'kinh.doanh@nguyen.vn',
+        email: 'kinh.doanh@example.com',
         phone: '+84 912 345 678',
         version: 1,
         createdAt: expect.any(String),
