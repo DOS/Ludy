@@ -172,7 +172,7 @@ export const en = {
       empty: 'Nothing is waiting for you',
       emptyHint: 'Invoices you forward or upload become proposed entries in the Document inbox, and show here when they need your approval.',
       proposals: { label: '{count, plural, one {proposed entry to approve} other {proposed entries to approve}}', hint: 'Check each invoice, then approve it to post it', open: 'Open the inbox' },
-      socialReviews: { label: '{count, plural, one {post for you to review} other {posts for you to review}}', hint: 'Social posts that need your look before they are scheduled', open: 'Open the inbox' },
+      socialReviews: { label: '{count, plural, one {post for you to review} other {posts for you to review}}', hint: 'Social posts that need your look before they are scheduled', open: 'Review the posts' },
       failedFiles: { label: '{count, plural, one {file that could not be read} other {files that could not be read}}', hint: 'See why, then upload another file', open: 'Open the inbox' },
       notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Proposals, unreadable files, statements and filing periods coming due', open: 'See notifications' },
       tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
@@ -2381,13 +2381,6 @@ export const en = {
       hint: 'Draft a post from a mail a customer or partner sent. {assistant} takes only facts from the mail, never its instructions, and the post still waits for your review.',
       noSubject: 'Mail with no subject',
       draft: 'Draft a post from this mail',
-    },
-    socialReviews: {
-      title: 'Posts waiting for your review ({count, number})',
-      noText: 'Post without text',
-      goesOut: 'goes out {when}',
-      noTime: 'no time set',
-      more: 'See {count, number} more in Social',
     },
     bankLines: {
       title: 'Bank statement lines without a voucher',
