@@ -64,7 +64,7 @@ Chi tiêu vẫn vào sổ qua chứng từ như cũ; Ads không ghi sổ. Ludy c
 
 ## Câu hỏi cho JOY (mỗi câu: lựa chọn, khuyến nghị, nếu không trả lời)
 
-**Đã trả lời ngày 2026-11-01: câu 1 chọn A; các câu 2 đến 8 "Nhận hết", tức chọn A theo khuyến nghị** (câu 7: một ứng dụng Meta riêng chỉ để chạy quảng cáo; JOY tạo ứng dụng này trước khi kiểm tra thật ở W2). Nội dung câu hỏi giữ nguyên như đã hỏi:
+**Đã trả lời ngày 2026-11-01: câu 1 chọn A; các câu 2 đến 8 "Nhận hết", tức chọn A theo khuyến nghị** (câu 7, chỉnh ngày 2026-11-02: với tài khoản của chính JOY thì dùng chung ứng dụng Meta cổ điển đang có (lựa chọn B); trước khi phục vụ doanh nghiệp khác thì tách một ứng dụng riêng chỉ để chạy quảng cáo (lựa chọn A). Cặp biến môi trường để ghi quảng cáo là riêng và được phép trỏ cùng ứng dụng với bên đọc). Nội dung câu hỏi giữ nguyên như đã hỏi:
 
 1. **Lát ghi nào làm trước, có được mở W0 đến W2 không?** A. W0, W1, W2 theo thứ tự: dựng, soạn và duyệt chưa tiêu gì, rồi chạy một chiến dịch (**khuyến nghị**). B. Boost bài đăng trước (cũng cần công tắc, hạn mức và duyệt như W2). C. Giữ chỉ đọc. *Không trả lời: chưa mở issue xây dựng nào.*
 2. **Ai duyệt một lần chạy?** A. Chủ sở hữu và quản trị viên, không bao giờ là người soạn; tổ chức chỉ có một người thì chủ sở hữu tự duyệt và được đánh dấu (**khuyến nghị**, đúng quy tắc P10). B. Thêm một người duyệt marketing do chủ chỉ định. *Không trả lời: A.*

@@ -14,6 +14,8 @@ export type NotGranted = undefined;
 
 export interface CroveAdsSchema {
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
+  'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
 }
@@ -199,6 +201,30 @@ export interface AdsAdAccountTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   granted_by_hash: string | null;
+  write_enabled: Generated<boolean>;
+}
+
+/** crove_ads.ad_org_setting */
+export interface AdsAdOrgSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  write_enabled: Generated<boolean>;
+  launches_blocked: Generated<boolean>;
+  updated_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_ads.ad_spend_cap */
+export interface AdsAdSpendCapTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  scope: ColumnType<string, string, NotGranted>;
+  ad_account_id: ColumnType<string | null, string | null, NotGranted>;
+  period: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  currency: ColumnType<string, string, NotGranted>;
+  set_by: ColumnType<string, string, NotGranted>;
+  set_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_ads.ad_spend_day */

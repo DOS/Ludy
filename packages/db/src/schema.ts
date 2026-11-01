@@ -761,8 +761,20 @@ export type AdsAdSyncRunTable = Refine<
   }
 >;
 
+// Running ads (#2294, ADR-0043): whose cap a row of ad_spend_cap is (the org's or one account's) and its period. Insert-only.
+export const AD_CAP_SCOPES = ['org', 'account'] as const;
+export const AD_CAP_PERIODS = ['daily', 'monthly'] as const;
+export type AdsAdSpendCapTable = Refine<
+  G.AdsAdSpendCapTable,
+  {
+    scope: ColumnType<(typeof AD_CAP_SCOPES)[number], (typeof AD_CAP_SCOPES)[number], never>;
+    period: ColumnType<(typeof AD_CAP_PERIODS)[number], (typeof AD_CAP_PERIODS)[number], never>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
   'crove_crm.booking': CrmBookingTable;
