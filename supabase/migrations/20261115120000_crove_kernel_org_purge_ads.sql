@@ -2,10 +2,10 @@
 -- Crove kernel (issue #2217): the org purge deletes a closing org's ad accounts and their figures. Idempotent; applied files stay
 -- untouched.
 --
--- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115100000) hold what ad platforms reported for the org's ad
+-- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115110000) hold what ad platforms reported for the org's ad
 -- accounts: daily aggregates and the sync log. They name no person and nothing the books keep, so they go with the org's
--- other working rows, before the channel connections they reference. Otherwise this is the body of 20261115090100 (the
--- newest, which added the deals), with its signature, owner, grants and every list and step it had.
+-- other working rows, before the channel connections they reference. Otherwise this is the body of 20261115100000 (the
+-- newest, which added crove_kernel.saved_view), with its signature, owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -33,7 +33,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
-    'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
+    'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',
