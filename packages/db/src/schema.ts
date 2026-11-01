@@ -101,9 +101,10 @@ export type TaxProfileTable = Refine<
 export const RECORD_LE_TYPES = ['kernel.party'] as const;
 export type RecordLeTable = Refine<G.KernelRecordLeTable, { record_type: ColumnType<(typeof RECORD_LE_TYPES)[number], (typeof RECORD_LE_TYPES)[number], never> }>;
 
-// Inbox items the system raises (#1720): a job that failed its last retry, in its own org. Only a system context
+// Inbox items the system raises (#1720): a job that failed its last retry, in its own org; and (#2286) a mail with no
+// invoice attachment but with the seller's lookup link or code, whose original invoice is needed. Only a system context
 // inserts them; tenant roles update the dismissal columns only.
-export const INBOX_ITEM_KINDS = ['kernel.job.dead_lettered'] as const;
+export const INBOX_ITEM_KINDS = ['kernel.job.dead_lettered', 'finance.invoice.original_needed'] as const;
 export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
 export type InboxItemTable = Refine<G.KernelInboxItemTable, { kind: ColumnType<InboxItemKind, InboxItemKind, never> }>;
 

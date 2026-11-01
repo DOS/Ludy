@@ -1694,6 +1694,8 @@ export function createRpcHandler(
       timeline: os.inbox.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.proposal.timeline', input, { actor, orgId }))),
       raised: os.inbox.raised.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.raised', {}, { actor, orgId }))),
       dismiss: os.inbox.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.dismiss', input, { actor, orgId }))),
+      originals: os.inbox.originals.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.originals', {}, { actor, orgId }))),
+      dismissOriginal: os.inbox.dismissOriginal.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.original_dismiss', input, { actor, orgId }))),
       approve: os.inbox.approve.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

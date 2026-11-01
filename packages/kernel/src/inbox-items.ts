@@ -1,5 +1,6 @@
 // Inbox items the system raises (#1720, plan §4.9 "pg-boss contract"): crove_kernel.inbox_item, one open row per org,
-// kind and key. The only kind today is kernel.job.dead_lettered: work of the org that failed its last retry.
+// kind and key. kernel.job.dead_lettered: work of the org that failed its last retry. finance.invoice.original_needed
+// (#2286): a mail with no invoice attachment whose text held the seller's lookup link or code (see the end of this file).
 //
 // The worker raises it: the dead letter queue's job (apps/kernel/src/dead-letter.ts) runs kernel.job.dead_letter in the
 // system context of the job's org, with the queue the job failed on, its id and how many retries it had. Nothing of
@@ -14,9 +15,9 @@
 // INBOX_ITEM_DISMISSED_KEEP_DAYS ago, and any raised INBOX_ITEM_KEEP_DAYS ago (kernel.inbox.prune).
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, vietnamToday, zId, type RaisedInboxItem } from '@crove/kernel-contract';
+import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -167,5 +168,106 @@ export const inboxRaised = defineQuery({
   },
 });
 
-export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune];
-export const inboxItemQueries = [inboxRaised];
+// ---------------------------------------------------------------------------------------------------------------------
+// "The original invoice is needed" (#2286, plan docs/plan/einvoice-lookup.md): a mail with no invoice attachment whose text
+// held the seller's lookup link or code. kernel.inbound.receive raises one item per hint (raiseOriginalNeeded), in the
+// worker's system context and the mail's transaction. An item holds the hint (provider, link on a provider's lookup host, lookup code) and nothing
+// of the mail. The lookup code opens the invoice for anyone who has it, so it is read only by members of the org (a
+// database policy, inbox_item_read) and is kept out of the audit row, logs and errors: the audit detail below counts, it
+// never names a code or a link, and no error text carries one.
+
+// A hint must name a link or a code; the provider alone says nothing to act on.
+const zOriginalHint = zLookupHint.refine((hint) => hint.url !== null || hint.code !== null, 'a link or a code');
+const MAX_ORIGINAL_HINTS = 3;
+// The most original-needed items the Inbox lists; the total counts them all.
+export const ORIGINAL_ITEMS_MAX = 50;
+
+// The dedupe seed of a mail: a hash of its Message-ID (the caller's), never the Message-ID itself.
+const zMailKey = z.string().regex(/^[0-9a-f]{64}$/);
+
+// One open item per hint of a mail, raised by kernel.inbound.receive in its own (system) context and transaction: not a
+// command of its own, so the receive command's nested runs stay the file ingests the job egress invariant lists. A mail the
+// org already received never gets here (the receive command stops at a Message-ID it has), and an open item with the same
+// key is left as it is. Returns how many were raised.
+export async function raiseOriginalNeeded(ctx: CommandContext, mailKey: string, hints: readonly z.infer<typeof zOriginalHint>[]): Promise<number> {
+  if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới tạo được mục này');
+  const key = zMailKey.parse(mailKey);
+  const checked = z.array(zOriginalHint).min(1).max(MAX_ORIGINAL_HINTS).parse(hints);
+  let raised = 0;
+  for (const [index, hint] of checked.entries()) {
+    const row = await ctx.trx
+      .insertInto('crove_kernel.inbox_item')
+      .values({
+        org_id: ctx.orgId,
+        kind: ORIGINAL_NEEDED_KIND,
+        dedupe_key: `mail:${key}:${index}`,
+        // Exactly the hint: the database refuses any other key (inbox_item_original_detail).
+        detail: JSON.stringify({ provider: hint.provider, url: hint.url, code: hint.code }),
+        raised_at: ctx.now,
+      })
+      .onConflict((oc) => oc.columns(['org_id', 'kind', 'dedupe_key']).where('dismissed_at', 'is', null).doNothing())
+      .returning('id')
+      .executeTakeFirst();
+    if (row) raised += 1;
+  }
+  return raised;
+}
+
+// A member of the org dismisses an open original-needed item; one already dismissed stays as it was. Another kind of item
+// is not found: the dead-letter items stay with owners and admins (kernel.inbox.dismiss), and the database agrees.
+export const originalDismiss = defineCommand({
+  name: 'kernel.inbox.original_dismiss',
+  input: z.strictObject({ id: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  target: (input) => ({ type: 'kernel.inbox_item', id: input.id }),
+  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['dismissed_at', 'dismissed_by'])],
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
+    const done = await ctx.trx
+      .updateTable('crove_kernel.inbox_item')
+      .set({ dismissed_at: ctx.now, dismissed_by: ctx.actor.userId })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .where('kind', '=', ORIGINAL_NEEDED_KIND)
+      .where('dismissed_at', 'is', null)
+      .executeTakeFirst();
+    if (Number(done.numUpdatedRows) === 0) {
+      const exists = await ctx.trx
+        .selectFrom('crove_kernel.inbox_item')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.id)
+        .where('kind', '=', ORIGINAL_NEEDED_KIND)
+        .executeTakeFirst();
+      if (!exists) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy mục này trong Chứng từ chờ duyệt');
+    }
+    return { ok: true as const };
+  },
+});
+
+// The org's open original-needed items, newest first, for owners, admins and members whose scope is the whole org (the
+// policy decides: a viewer, an agent or a member limited to some entities reads none).
+export const originalsList = defineQuery({
+  name: 'kernel.inbox.originals',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx): Promise<{ items: OriginalNeededItem[]; total: number }> => {
+    if (ctx.actor.type !== 'user' || ctx.role === 'viewer') return { items: [], total: 0 };
+    const open = ctx.trx.selectFrom('crove_kernel.inbox_item').where('org_id', '=', ctx.orgId).where('kind', '=', ORIGINAL_NEEDED_KIND).where('dismissed_at', 'is', null);
+    const rows = await open.select(['id', 'detail', 'raised_at']).orderBy('raised_at', 'desc').orderBy('id', 'desc').limit(ORIGINAL_ITEMS_MAX).execute();
+    const { total } = await open.select((eb) => eb.fn.countAll<string>().as('total')).executeTakeFirstOrThrow();
+    const items: OriginalNeededItem[] = [];
+    for (const row of rows) {
+      const hint = zOriginalHint.safeParse(row.detail);
+      // Written by kernel.inbox.original_needed alone, from checked input and a database CHECK; one that does not parse is left out.
+      if (!hint.success) continue;
+      items.push({ id: row.id, ...hint.data, raisedAt: row.raised_at.toISOString() });
+    }
+    return { items, total: Number(total) };
+  },
+});
+
+export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune, originalDismiss];
+export const inboxItemQueries = [inboxRaised, originalsList];

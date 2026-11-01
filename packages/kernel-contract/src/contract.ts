@@ -158,6 +158,7 @@ import {
   zNotificationKind,
   zNotifications,
   zRaisedInboxItems,
+  zOriginalNeededItems,
   zRole,
   zSession,
   zSessionRevoke,
@@ -1282,6 +1283,11 @@ export const contract = {
     // newest first (50 at most; total counts them all), and dismissing one. Members and viewers get an empty list.
     raised: oc.input(z.object({})).output(zRaisedInboxItems),
     dismiss: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
+    // Owners, admins and members whose scope is the whole org (#2286): the mails with no invoice attachment whose text held
+    // the seller's lookup link or code, one item per hint, newest first (50 at most; total counts them all), and
+    // dismissing one. Viewers and members limited to some legal entities get an empty list.
+    originals: oc.input(z.object({})).output(zOriginalNeededItems),
+    dismissOriginal: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
     // Asks for a proposal that no file produced (kernel.proposal.request; owners, admins and members): reversing a
     // posted journal entry (#138, #165), or a cash or bank voucher entered by hand (#327). It posts nothing; the
     // proposal is approved like any other (R3, P10 four-eyes, P11 step-up). Reversing a purchase entry also voids
