@@ -143,7 +143,7 @@ export const purchaseLookup = defineQuery({
     };
     const document = await inForce(input.series, input.number);
     const original = input.related ? await inForce(input.related.series, input.related.number) : undefined;
-    const duplicate = await ctx.trx
+    const duplicates = await ctx.trx
       .selectFrom('crove_kernel.proposal')
       .select(['id', 'status', sql<string | null>`payload ->> 'extractionMethod'`.as('method')])
       .where('org_id', '=', ctx.orgId)
@@ -181,8 +181,9 @@ export const purchaseLookup = defineQuery({
         q.where(input.sellerTaxCode ? sql`payload #>> '{seller,taxCode}'` : sql`payload #>> '{seller,name}'`, '=', input.sellerTaxCode ?? input.sellerName),
       )
       .orderBy('created_at')
-      .limit(1)
-      .executeTakeFirst();
+      .limit(2)
+      .execute();
+    const [duplicate, anotherDuplicate] = duplicates;
     // The vendor whose learned rules apply: by tax code as above, or, for an invoice without one, by name as
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
     const ruleParty =
@@ -202,7 +203,10 @@ export const purchaseLookup = defineQuery({
       learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, await resolveLegalEntity(ctx, input.legalEntityId)),
       duplicateDocumentId: document?.id ?? null,
       duplicateProposalId: duplicate?.id ?? null,
-      duplicateProposalUpgradable: duplicate?.status === 'pending' && (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') && !document,
+      // Only when the pending PDF or photo reading is the one match: another proposal of the same invoice (a second one, in
+      // another legal entity, an executed one) keeps the original flagged as a duplicate.
+      duplicateProposalUpgradable:
+        anotherDuplicate === undefined && duplicate?.status === 'pending' && (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') && !document,
       relatedDocumentId: original?.id ?? null,
     };
   },

@@ -240,6 +240,32 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     expect(all[0]?.payload.extractionMethod).toBe('einvoice_xml');
   });
 
+  it('leaves the revision alone when a re-read of the PDF that was already running finishes after the original took its place', async () => {
+    const pdf = await readPdf('5011');
+    const asked = await rt.execute<{ version: number }>('kernel.file.reextract', { fileId: pdf.fileId }, { actor: asUser(users.owner), orgId });
+    // The original arrives while the PDF is being read again.
+    await readXml('5011');
+    expect(((await proposals('5011')) as Row[])[0]).toMatchObject({ revision: 2 });
+    await extractAndPropose({ runtime: worker, store, extractor: reader('5011') as never, extract, today: () => '2026-10-13' }, orgId, pdf.fileId, asked.version);
+    const [proposal] = (await proposals('5011')) as [Row];
+    expect(await proposals('5011')).toHaveLength(1);
+    expect(proposal).toMatchObject({ status: 'pending', revision: 2 });
+    expect(proposal.payload.extractionMethod).toBe('einvoice_xml');
+  });
+
+  it('reports the run of the original while it is read again, and allows the PDF to be read again once the proposal is decided', async () => {
+    const pdf = await readPdf('5012');
+    const xml = await readXml('5012');
+    const asked = await rt.execute<{ version: number }>('kernel.file.reextract', { fileId: xml.fileId }, { actor: asUser(users.owner), orgId });
+    const during = await rt.query<{ extraction: { version: number; inFlight: boolean } | null }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.owner), orgId });
+    // The XML's second run (version 2), not the PDF's first.
+    expect(during.extraction).toMatchObject({ version: asked.version, inFlight: true });
+    await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, xml.fileId, asked.version);
+    await rt.execute('kernel.proposal.reject', { id: pdf.proposalId, reason: 'x' }, { actor: asUser(users.approver), orgId });
+    const after = await rt.query<{ canReextract: boolean }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.owner), orgId });
+    expect(after.canReextract).toBe(true);
+  });
+
   it('flags the original instead of replacing what a person chose on the PDF reading', async () => {
     const pdf = await readPdf('5010');
     const seen = await rt.query<{ revision: number }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.owner), orgId });
@@ -290,6 +316,17 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     expect(all).toHaveLength(2);
     expect(all.find((p) => p.id === pdf.proposalId)).toMatchObject({ revision: 1, status: 'pending' });
     expect((all.find((p) => p.id === xml.proposalId) as Row).payload.checks.map((c) => c.code)).toContain('duplicate.found');
+  });
+
+  it('keeps the original flagged when the invoice has another pending proposal besides the PDF reading', async () => {
+    const pdf = await readPdf('5013');
+    // A second reading of the same invoice from another PDF (flagged as a duplicate of the first), then the original.
+    const other = await readPdf('5013');
+    expect(other.proposalId).not.toBe(pdf.proposalId);
+    const xml = await readXml('5013');
+    expect(xml.proposalId).not.toBe(pdf.proposalId);
+    expect(xml.proposalId).not.toBe(other.proposalId);
+    expect(((await proposals('5013')) as Row[]).filter((p) => p.payload.extractionMethod === 'pdf_text_ai').map((p) => p.revision)).toEqual([1, 1]);
   });
 
   it('does not revise a rejected PDF proposal: the XML is a new proposal, not a duplicate', async () => {
