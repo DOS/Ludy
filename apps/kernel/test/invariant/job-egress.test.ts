@@ -51,13 +51,7 @@ function workProblems(sites: readonly WorkSite[]): string[] {
       }
       const declared = new Set<string>(targets(egress));
       const shown = egress === 'none' ? 'none' : egress.join(', ');
-      const allowance = QUEUE_EGRESS_PENDING[queue];
-      for (const n of needs) {
-        if (declared.has(n)) continue;
-        // A target the queue is allowed to declare later (an unexpired allowance, checked on its own).
-        if (allowance && allowance.reaches === n && TODAY <= allowance.expires) continue;
-        out.push(`${at}: queue ${queue} reaches ${n} but declares egress ${shown}`);
-      }
+      for (const n of needs) if (!declared.has(n)) out.push(`${at}: queue ${queue} reaches ${n} but declares egress ${shown}`);
       for (const d of declared) if (!needs.has(d)) out.push(`${at}: queue ${queue} declares ${d} but its handler does not reach it`);
     }
   }
@@ -110,44 +104,11 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // Mail a command queued; every command that queues mail declares an external effect (#1563).
   sweepMail: { command: 'kernel.mail.contact.queue' },
   [`${QUEUES.extract} handler`]: { reason: 'the same file again, once its org is back under its daily limit' },
-};
-
-// What a queue's declaration may lag behind what its handler reaches, for a limited time, so the two steps of a change
-// land apart (the pattern of NO_COMMAND_PENDING and of PENDING_TABLES in the RLS matrix): the base copy of this file runs
-// against a pull request's code, so a declaration that changes in a later step has to be accepted before and after. An entry
-// names the target the handler reaches, the reason with its issue, and a fixed yyyy-mm-dd expiry after which the test fails
-// (the entry is then removed once the queue declares the target). A queue that declares the target already is not an error.
-interface EgressPending {
-  reaches: string;
-  reason: string;
-  expires: string;
-}
-const QUEUE_EGRESS_PENDING: Readonly<Record<string, EgressPending>> = {
-  // The ad platform adapters (channels.adPlatforms) are classified as reaching provider:ad_platform now; the Meta adapter of
-  // #2218 lands with the ads-sync queue declaring it (jobs-schema.ts), in the next step.
-  [QUEUES.adsSync]: { reaches: 'provider:ad_platform', reason: 'the Meta ad adapter of #2218 adds the declaration in jobs-schema.ts', expires: '2026-11-15' },
-};
-// Sends to such a queue (outside the relay) that exist only once it declares egress: listed with what decides each, like
-// OTHER_SENDS, and allowed to be absent until then. Entries move to OTHER_SENDS when their queue declares the target.
-const OTHER_SENDS_PENDING: Readonly<Record<string, { command: string }>> = {
   // The hourly sweep queues the ad accounts that are due, each linked by an owner or admin through ads.account.link.
   [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
   // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
   startWorker: { command: 'ads.account.link' },
 };
-
-const TODAY = new Date().toISOString().slice(0, 10);
-// What is wrong with the allowances above: an expired or malformed one, or one that names no issue.
-function egressPendingProblems(pending: Readonly<Record<string, EgressPending>>, today: string): string[] {
-  const out: string[] = [];
-  for (const [queue, { reaches, reason, expires }] of Object.entries(pending)) {
-    if (!/#\d+/.test(reason)) out.push(`${queue}: the reason names no issue (#<number>)`);
-    if (!/^(tenant_url|provider:[a-z_]+)$/.test(reaches)) out.push(`${queue}: ${reaches} is not an egress target`);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(expires)) out.push(`${queue}: the expiry date is not a yyyy-mm-dd date`);
-    else if (today > expires) out.push(`${queue}: the egress allowance expired on ${expires} (${reason}); declare ${reaches} in jobs-schema.ts and remove the entry`);
-  }
-  return out;
-}
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
 const NO_COMMAND: Readonly<Record<string, string>> = {
@@ -347,26 +308,6 @@ describe('job egress (#1653)', () => {
     expect(guarded.sort()).toEqual([...TENANT_HOSTED_PROVIDERS].sort());
   });
 
-  it('keeps the allowances for a queue that declares its egress later dated, tied to an issue and unexpired', () => {
-    expect(egressPendingProblems(QUEUE_EGRESS_PENDING, TODAY)).toEqual([]);
-    // Planted: an expired allowance, one without an issue, one with a bad date, and one that names no egress target.
-    const problems = egressPendingProblems(
-      {
-        a: { reaches: 'provider:x', reason: 'no issue here', expires: '2999-01-01' },
-        b: { reaches: 'provider:x', reason: '#1', expires: '2020-01-01' },
-        c: { reaches: 'provider:x', reason: '#1', expires: 'soon' },
-        d: { reaches: 'x', reason: '#1', expires: '2999-01-01' },
-      },
-      '2026-11-01',
-    );
-    expect(problems).toEqual([
-      'a: the reason names no issue (#<number>)',
-      'b: the egress allowance expired on 2020-01-01 (#1); declare provider:x in jobs-schema.ts and remove the entry',
-      'c: the expiry date is not a yyyy-mm-dd date',
-      'd: x is not an egress target',
-    ]);
-  });
-
   it('declares an external effect, at least R2, on every command whose events feed a queue with egress (plan §4.7)', () => {
     const sends = sendSites(sources, known).filter((s) => s.queues.some(hasEgress));
     // Every send of the relay to such a queue names the events that lead to it.
@@ -382,12 +323,8 @@ describe('job egress (#1653)', () => {
       // register() already holds the declared risk at or above the derived one.
       return def?.sideEffect !== undefined && RANK[deriveRisk(def.sideEffect)] >= RANK.R2;
     };
-    const found = [...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort();
-    // Every send is listed (a pending one only for a queue that is not yet declared), and every listed one is found.
-    expect(found.filter((site) => !Object.hasOwn(OTHER_SENDS, site) && !Object.hasOwn(OTHER_SENDS_PENDING, site))).toEqual([]);
-    expect(Object.keys(OTHER_SENDS).filter((site) => !found.includes(site)).sort()).toEqual([]);
+    expect([...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort()).toEqual(Object.keys(OTHER_SENDS).sort());
     for (const [site, why] of Object.entries(OTHER_SENDS)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
-    for (const [site, why] of Object.entries(OTHER_SENDS_PENDING)) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
 
     const { commands, runs, problems } = emittersOf(feeds, sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
     expect(problems).toEqual([]);

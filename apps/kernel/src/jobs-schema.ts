@@ -142,9 +142,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',
-  // The ad platform adapters (channels.adPlatforms): the offline sandbox reaches nothing. A real adapter (A2, #2218) adds its
-  // provider here, and to DEPS_REACH first.
-  [QUEUES.adsSync]: 'none',
+  // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
+  // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
+  [QUEUES.adsSync]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

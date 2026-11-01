@@ -139,6 +139,24 @@ function resultsOf(actions: unknown): Record<string, string> {
   return out;
 }
 
+// The fetch of this adapter and of its OAuth connection: it reaches graph.facebook.com over https and nothing else. The shared
+// Graph client also knows Meta's video and upload hosts (for publishing), which an ads reader never needs, so this narrows it
+// to the one host the plan names (section 7.6); a request to any other host, a plain http one, or one with credentials in the
+// address is refused before it leaves, and nothing redirects (the channel layer's allowlisted fetch follows no redirect).
+export function graphHostOnly(fetchImpl?: Fetch): Fetch {
+  const send: Fetch = fetchImpl ?? ((input, init) => fetch(input, init));
+  return async (input, init) => {
+    let url: URL;
+    try {
+      url = new URL(input);
+    } catch {
+      throw new AdPlatformError('unknown', 'HOST_NOT_ALLOWED');
+    }
+    if (url.protocol !== 'https:' || url.host !== META_GRAPH_HOST || url.username !== '' || url.password !== '') throw new AdPlatformError('unknown', 'HOST_NOT_ALLOWED');
+    return send(input, init);
+  };
+}
+
 export interface MetaAdsPlatformOptions {
   appSecret: string;
   graphVersion?: string;
@@ -156,7 +174,7 @@ export class MetaAdsPlatform implements AdPlatform {
   private readonly now: () => Date;
 
   constructor(options: MetaAdsPlatformOptions) {
-    this.graph = new Graph(options.appSecret, options.graphVersion ?? META_DEFAULT_GRAPH_VERSION, options.fetch);
+    this.graph = new Graph(options.appSecret, options.graphVersion ?? META_DEFAULT_GRAPH_VERSION, graphHostOnly(options.fetch));
     this.now = options.now ?? (() => new Date());
   }
 
@@ -265,7 +283,7 @@ export class MetaAdsConnector implements OAuthConnector {
   private readonly now: () => Date;
 
   constructor(app: MetaAppConfig, options: { fetch?: Fetch; now?: () => Date } = {}) {
-    this.login = new MetaLogin(app, META_ADS_SCOPES, options.fetch);
+    this.login = new MetaLogin(app, META_ADS_SCOPES, graphHostOnly(options.fetch));
     this.now = options.now ?? (() => new Date());
   }
 

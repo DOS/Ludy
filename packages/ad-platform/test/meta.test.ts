@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GraphError, type Fetch } from '@crove/channel';
-import { AdPlatformError, MetaAdsConnector, MetaAdsPlatform, META_ADS_SCOPES, adPlatforms, isAdPlatformProvider, metaAdsError } from '../src/index.ts';
+import { AdPlatformError, MetaAdsConnector, MetaAdsPlatform, META_ADS_SCOPES, adPlatforms, graphHostOnly, isAdPlatformProvider, metaAdsError } from '../src/index.ts';
 
 const SECRET = JSON.stringify({ accessToken: 'EAAB-token-not-in-urls' });
 const NOW = new Date('2026-11-02T08:00:00Z');
@@ -143,6 +143,45 @@ describe('the Meta ad platform', () => {
   });
 });
 
+describe('the host the Meta adapter reaches', () => {
+  it('lets a request to graph.facebook.com over https through, and refuses every other address before it leaves', async () => {
+    const { fetch, calls } = recorded([{ body: { ok: true } }]);
+    const bound = graphHostOnly(fetch);
+    await expect(bound('https://graph.facebook.com/v24.0/me/adaccounts')).resolves.toBeInstanceOf(Response);
+    expect(calls).toHaveLength(1);
+    for (const refused of [
+      'https://graph-video.facebook.com/v24.0/1/videos',
+      'https://rupload.facebook.com/video-upload/v24.0/1',
+      'https://www.facebook.com/v24.0/dialog/oauth',
+      'https://evil.example/graph.facebook.com',
+      'https://graph.facebook.com.evil.example/v24.0/me',
+      'https://graph.facebook.com@evil.example/v24.0/me',
+      'https://user:pass@graph.facebook.com/v24.0/me',
+      'http://graph.facebook.com/v24.0/me',
+      'https://graph.facebook.com:8443/v24.0/me',
+      'not a url',
+    ]) {
+      await expect(bound(refused), refused).rejects.toMatchObject({ kind: 'unknown', code: 'HOST_NOT_ALLOWED' });
+    }
+    // None of the refused requests reached the network.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('keeps every request of the platform and of the connection on that host', async () => {
+    const { fetch, calls } = recorded([
+      { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+      { body: { data: [] } },
+      { body: { data: [] } },
+    ]);
+    const meta = platform(fetch);
+    await meta.accounts(SECRET);
+    await meta.readDaily(SECRET, 'act_1001', { from: '2026-10-01', to: '2026-10-02' });
+    expect(calls.length).toBeGreaterThan(1);
+    for (const call of calls) expect(`${call.url.protocol}//${call.url.host}`).toBe('https://graph.facebook.com');
+    expect(meta.hosts).toEqual(['graph.facebook.com']);
+  });
+});
+
 describe('the Meta ad connection', () => {
   const app = { appId: '123456789', appSecret: 'app-secret', graphVersion: 'v24.0' };
   const redirectUri = 'https://ludy.example.test/channels/oauth/meta_ads/callback';
@@ -170,8 +209,8 @@ describe('the Meta ad connection', () => {
     const connector = new MetaAdsConnector(app, { fetch, now: () => NOW });
     const accounts = await connector.exchange({ code: 'the-code', redirectUri, codeVerifier: null });
     expect(accounts.map((a) => [a.provider, a.externalAccountId, a.displayName, a.scopes])).toEqual([
-      ['meta_ads', 'act_1001', 'Cửa hàng A', ['ads_read']],
-      ['meta_ads', 'act_1002', 'Cửa hàng B', ['ads_read']],
+      ['meta_ads', 'act_1001', 'Cửa hàng A', ['ads_read', 'public_profile']],
+      ['meta_ads', 'act_1002', 'Cửa hàng B', ['ads_read', 'public_profile']],
     ]);
     expect(accounts[0]?.expiresAt?.toISOString()).toBe('2027-01-01T08:00:00.000Z');
     expect(JSON.parse(accounts[0]?.secret ?? '{}')).toEqual({ accessToken: 'long-token' });

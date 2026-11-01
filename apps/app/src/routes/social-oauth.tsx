@@ -94,7 +94,7 @@ export function OAuthCallbackPage() {
         )}
         {finish.data && <p className="text-sm text-foreground">{connectedText(finish.data.connections.map((c) => c.displayName).join(', '))}</p>}
         {finish.data && (finish.data.failed?.length ?? 0) > 0 && <ErrorText>{ads ? ta('oauth.failed', { list: (finish.data.failed ?? []).map((c) => c.displayName).join(', ') }) : t('oauthFailed', { list: (finish.data.failed ?? []).map((c) => c.displayName).join(', ') })}</ErrorText>}
-        {finish.data && (finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT }) : t('oauthSkipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
+        {finish.data && (finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: String(finish.data.skipped), max: String(OAUTH_MAX_ACCOUNTS_PER_GRANT) }) : t('oauthSkipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
         {finish.error && <ErrorText>{errorMessage(finish.error)}</ErrorText>}
         {!busy && back}
       </Card>
