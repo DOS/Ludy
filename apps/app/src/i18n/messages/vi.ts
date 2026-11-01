@@ -2754,6 +2754,8 @@ export const vi = {
     contents: 'Trên trang này',
     title: 'Hướng dẫn nhanh',
     subtitle: 'Ba bước để ghi sổ hóa đơn đầu vào: tải lên, duyệt và xuất Excel.',
+    crmTitle: 'Hướng dẫn CRM',
+    crmSubtitle: 'Liên hệ, nhập liên hệ từ tệp và theo dõi cơ hội bán hàng trên bảng.',
     firmTitle: 'Hướng dẫn cho công ty dịch vụ kế toán',
     firmSubtitle: 'Một tháng của một doanh nghiệp khách hàng trong {brand}: thêm khách hàng, nhận và duyệt hóa đơn, ngân hàng, khóa sổ, tờ khai GTGT và chuyển số liệu sang phần mềm kế toán.',
     supportHint: 'Gặp lỗi hoặc cần hỗ trợ? Gửi cho chúng tôi qua',
