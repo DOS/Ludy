@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { CHANNEL_PROVIDERS } from '@crove/channel';
 import { KERNEL_NOTIFYING_EVENTS, kernelCommands } from '@crove/kernel';
 import { deriveRisk, type CommandDef } from '@crove/kernel-runtime';
+import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
 import { FINANCE_NOTIFYING_EVENTS, financeCommands } from '@crove/mod-finance';
 import { CHAT_ALERTING_EVENTS, CHAT_ALERT_TEST_EVENT, NOTIFYING_EVENTS, socialCommands } from '@crove/mod-social';
@@ -59,7 +60,7 @@ function workProblems(sites: readonly WorkSite[]): string[] {
 
 const RANK = { R0: 0, R1: 1, R2: 2, R3: 3 } as const;
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands] as Array<CommandDef<unknown, unknown>>;
 
 // Commands below R2 whose handlers emit an event that feeds a queue with egress, themselves or through a nested
 // command they run (ctx.run or ctx.tryRun, followed transitively). None since #1662 and #1698 (coordinator decision):
@@ -103,6 +104,10 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   // Mail a command queued; every command that queues mail declares an external effect (#1563).
   sweepMail: { command: 'kernel.mail.contact.queue' },
   [`${QUEUES.extract} handler`]: { reason: 'the same file again, once its org is back under its daily limit' },
+  // The hourly sweep queues the ad accounts that are due, each linked by an owner or admin through ads.account.link.
+  [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
+  // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
+  startWorker: { command: 'ads.account.link' },
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
