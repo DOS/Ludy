@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2305, plan docs/plan/conversations.md CV6): the org purge deletes the conversation settings too.
--- Idempotent; applied files stay untouched. This is the body of 20261117140000 (the newest) with crove_kernel.conversation_setting
--- added to the first list, with its signature, owner, grants and every list and step it had.
+-- Idempotent; applied files stay untouched. This is the body of 20261117150000 (the newest, which carries the conversations and
+-- Ads' spend caps and settings) with crove_kernel.conversation_setting added to the first list, with its signature, owner, grants
+-- and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -29,7 +30,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_kernel.conversation_setting', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
-    'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
+    'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',

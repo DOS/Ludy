@@ -4,9 +4,9 @@
 --
 -- The conversation tables go first, children before the rows they reference (notes and read marks, messages, threads,
 -- identities), with the org's other working rows and before the channel connections and members they name; crove_kernel.
--- channel_access (moved from Social, 20261117110000) goes with them and leaves crove_social's list. Otherwise this is the
--- body of 20261116090100 (the newest, which carries the contact import staging, the deals, the saved views and the ad
--- accounts), with its signature, owner, grants and every list and step it had.
+-- channel_access (moved from Social, 20261117130000) goes with them and leaves crove_social's list. Otherwise this is the body
+-- of 20261117120100 (the newest, which carries Ads' spend caps and settings, the contact import staging, the deals, the saved
+-- views and the ad accounts), with its signature, owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -34,7 +34,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
-    'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
+    'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
