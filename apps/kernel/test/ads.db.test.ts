@@ -704,14 +704,49 @@ suite('ads on PostgreSQL (#2217)', () => {
     }
   });
 
-  // W0a (#2294, ADR-0043): the org switch, the account flag, the spend caps, the kill switch and the block on launches. Nothing
-  // here calls a platform or spends; it is what a launch (W2) will have to pass.
-  describe('the switches and spend caps of running ads (W0a)', () => {
-    const asMfa = async (who: Account) => tokenFor(who, { mfa: true });
-    const callAs = async (who: Account, path: string, input: unknown, mfa = true) => rpc(path, mfa ? await asMfa(who) : await tokenFor(who), input);
+  // W0a-1 (#2294, ADR-0043): the stops, the state, and the database's guard of the switches and the spend caps. Nothing here
+  // calls a platform or spends. What opens the way to spend (the org switch on, an account enabled, a cap set or raised, launches
+  // opened again) is a proposal and comes with W0a-2, so the open state a test needs is made the way a proposal's effect will
+  // make it: SQL in a signed-in owner's context, committed. The guards fire for every role, the database owner included, so the
+  // admin connection of `row()` cannot make it.
+  describe('the stops, switches and spend caps of running ads (W0a-1)', () => {
+    const callAs = async (who: Account, path: string, input: unknown) => rpc(path, await tokenFor(who), input);
     const key = () => randomUUID();
-    const state = async (who: Account = owner) => (await ok('ads/writeState', who, undefined)) as { writeEnabled: boolean; launchesBlocked: boolean; caps: Array<{ scope: string; adAccountId: string | null; period: string; amount: string; currency: string }> };
+    const state = async (who: Account = owner) => (await ok('ads/writeState', who, undefined)) as { writeEnabled: boolean; launchesBlocked: boolean; updatedAt: string | null; caps: Array<{ scope: string; adAccountId: string | null; period: string; amount: string; currency: string; setBy: string }> };
     const settingRows = async () => row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_org_setting WHERE org_id = $1`, [orgId]);
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // SQL in a context of each kind. Rolled back unless `commit`, since a refused statement aborts the transaction it ran in.
+    async function inContext<T>(who: Account | 'system', fn: (c: pg.Client | pg.PoolClient) => Promise<T>, commit = false): Promise<T> {
+      const c = await (who === 'system' ? (workerPools[0] as pg.Pool) : pool).connect();
+      try {
+        await c.query('BEGIN');
+        if (who === 'system') await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+        else {
+          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+        }
+        await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
+        const out = await fn(c);
+        if (commit) await c.query('COMMIT');
+        return out;
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        c.release();
+      }
+    }
+    const refused = (c: pg.Client | pg.PoolClient, sqlText: string, params: unknown[] = [], message = 'ADS_SWITCH_FORBIDDEN') => expect(c.query(sqlText, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining(message) });
+    // The org's state as an owner's context leaves it: writing on, launches open, and the given accounts enabled.
+    const open = (adAccountIds: string[] = []) =>
+      inContext(
+        owner,
+        async (c) => {
+          await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
+          if (adAccountIds.length > 0) await c.query('UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = ANY ($2::uuid[])', [orgId, adAccountIds]);
+        },
+        true,
+      );
+    const closed = () => inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]), true);
 
     it('starts off, and only owners and admins read it', async () => {
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false, caps: [] });
@@ -722,135 +757,62 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await settingRows()).toEqual([{ n: '0' }]);
     });
 
-    it('turns writing on for the owner alone, behind a second factor, and once however many times it is asked', async () => {
-      const input = { idempotencyKey: key() };
-      expect(await callAs(owner, 'ads/writeEnable', input, false)).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
-      expect((await state()).writeEnabled).toBe(false);
-      // An admin may not, even with a second factor; nor a member.
-      expect((await callAs(adminAccount, 'ads/writeEnable', { idempotencyKey: key() })).status).toBe(403);
-      expect((await callAs(member, 'ads/writeEnable', { idempotencyKey: key() })).status).toBe(403);
-      expect(await callAs(owner, 'ads/writeEnable', input)).toMatchObject({ status: 200, body: { writeEnabled: true, changed: true } });
-      expect(await callAs(owner, 'ads/writeEnable', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { writeEnabled: true, changed: false } });
-      expect((await state()).writeEnabled).toBe(true);
-      expect(await settingRows()).toEqual([{ n: '1' }]);
-      const audit = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.write.enable' AND outcome = 'ok'`, [orgId]);
-      expect(Number(audit[0]?.n)).toBeGreaterThanOrEqual(1);
-    });
-
-    it('lets an account be enabled only while the org switch is on, by the owner, behind a second factor', async () => {
-      const { adAccountId } = await connect('Được phép chạy');
-      const other = await connect('Chưa bật');
-      expect((await view(owner, adAccountId))?.writeEnabled).toBe(false);
-      expect(await callAs(owner, 'ads/enableAccountWrite', { adAccountId, idempotencyKey: key() }, false)).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
-      expect((await callAs(adminAccount, 'ads/enableAccountWrite', { adAccountId, idempotencyKey: key() })).status).toBe(403);
-      expect(await callAs(owner, 'ads/enableAccountWrite', { adAccountId, idempotencyKey: key() })).toMatchObject({ status: 200, body: { adAccountId, writeEnabled: true } });
-      expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: true });
-      expect(await view(owner, other.adAccountId)).toMatchObject({ writeEnabled: false });
-      // Another org's account is not found.
-      expect((await callAs(owner, 'ads/enableAccountWrite', { adAccountId: randomUUID(), idempotencyKey: key() })).status).toBe(404);
-      // Withdrawn by the owner, no second factor needed to take it away.
-      expect(await callAs(owner, 'ads/disableAccountWrite', { adAccountId, idempotencyKey: key() }, false)).toMatchObject({ status: 200, body: { writeEnabled: false } });
-      expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: false });
-    });
-
-    it('sets a cap only in the account’s own currency, any ISO currency for the org’s, as a new row each time, and shows the latest', async () => {
-      const { connectionId, adAccountId } = await connect('Có hạn mức');
-      const cap = (input: Record<string, unknown>, mfa = true) => callAs(owner, 'ads/setCap', { idempotencyKey: key(), ...input }, mfa);
-      const orgCap = { scope: 'org', period: 'daily', amount: '5000000', currency: 'VND' };
-      expect(await cap(orgCap, false)).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
-      expect((await callAs(adminAccount, 'ads/setCap', { idempotencyKey: key(), ...orgCap })).status).toBe(403);
-      const first = await cap(orgCap);
-      expect(first).toMatchObject({ status: 200, body: { previous: null } });
-      // The same cap changed: a new row, the previous amount told.
-      expect(await cap({ ...orgCap, amount: '8000000.50' })).toMatchObject({ status: 200, body: { previous: '5000000' } });
-      expect(await row(`SELECT 1 FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId])).toHaveLength(2);
-      expect(await cap({ scope: 'org', period: 'monthly', amount: '100000000', currency: 'VND' })).toMatchObject({ status: 200 });
-      // Each cap has its own currency, so the org's currency can be changed by setting the cap again (a launch on an account in
-      // another currency is refused, W2); a code that is not an ISO currency, such as a typo, is not a cap.
-      expect((await cap({ scope: 'org', period: 'monthly', amount: '1000', currency: 'VDN' })).status).toBe(400);
-      expect(await cap({ scope: 'org', period: 'monthly', amount: '1000', currency: 'USD' })).toMatchObject({ status: 200, body: { previous: '100000000' } });
-      expect(await cap({ scope: 'org', period: 'monthly', amount: '100000000', currency: 'VND' })).toMatchObject({ status: 200, body: { previous: '1000' } });
-      // An account's cap waits for its first update (its currency is the platform's), then must be in it.
-      await row(`UPDATE crove_ads.ad_account SET currency = NULL WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
-      const accountCap = { scope: 'account', adAccountId, period: 'daily', amount: '1000000', currency: 'VND' };
-      expect(await cap(accountCap)).toMatchObject({ status: 422, body: { code: 'ADS_CAP_ACCOUNT_UNSYNCED' } });
-      await sync(connectionId);
-      expect(await cap({ ...accountCap, currency: 'USD' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_CURRENCY' } });
-      expect(await cap(accountCap)).toMatchObject({ status: 200, body: { previous: null } });
-      // The shapes the input refuses: an org cap naming an account, an account cap naming none, zero, negative, a third decimal.
-      for (const bad of [{ ...orgCap, adAccountId }, { scope: 'account', period: 'daily', amount: '1', currency: 'VND' }, { ...orgCap, amount: '0' }, { ...orgCap, amount: '0.00' }, { ...orgCap, amount: '-5' }, { ...orgCap, amount: '1.234' }, { ...orgCap, amount: '1e6' }, { ...orgCap, currency: 'vnd' }, { ...orgCap, period: 'weekly' }]) {
-        expect((await cap(bad)).status, JSON.stringify(bad)).toBe(400);
+    it('has no direct command that turns writing on, enables an account, sets a cap or opens launches again', async () => {
+      for (const path of ['ads/writeEnable', 'ads/enableAccountWrite', 'ads/setCap', 'ads/unblockLaunches']) {
+        expect((await rpc(path, await tokenFor(owner, { mfa: true }), { idempotencyKey: key() })).status, path).toBe(404);
       }
-      // The latest row of each is the cap, and nobody but owners and admins sees them.
-      const latest = await state();
-      expect(latest.caps.find((c) => c.scope === 'org' && c.period === 'daily')).toMatchObject({ amount: '8000000.50', currency: 'VND' });
-      expect(latest.caps.find((c) => c.scope === 'account' && c.adAccountId === adAccountId)).toMatchObject({ period: 'daily', amount: '1000000' });
-      expect(latest.caps).toHaveLength(3);
-      expect((await rpc('ads/writeState', await tokenFor(member), undefined)).status).toBe(403);
-      // The audit row keeps the amounts and the previous one, nothing else of the account.
-      const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.cap.set' AND outcome = 'ok' AND detail->>'amount' = '8000000.50'`, [orgId]);
-      expect(audit[0]?.detail).toMatchObject({ scope: 'org', period: 'daily', currency: 'VND', previous: '5000000' });
     });
 
-    it('stops everything for owners and admins at once, and lets only the owner open it again, behind a second factor', async () => {
-      expect((await state()).launchesBlocked).toBe(false);
-      // The kill switch only stops, so no second factor and an admin may; a member or viewer may not.
-      expect((await callAs(member, 'ads/pauseAll', { idempotencyKey: key() }, false)).status).toBe(403);
-      expect(await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() }, false)).toMatchObject({ status: 200, body: { launchesBlocked: true, paused: 0 } });
-      expect(await callAs(owner, 'ads/pauseAll', { idempotencyKey: key() }, false)).toMatchObject({ status: 200, body: { launchesBlocked: true } });
-      expect((await state()).launchesBlocked).toBe(true);
-      // Opening it again spends nothing but allows spend to start: the owner, behind a second factor.
-      expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() }, false)).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
-      expect((await callAs(adminAccount, 'ads/unblockLaunches', { idempotencyKey: key() })).status).toBe(403);
-      expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchesBlocked: false } });
-      expect((await state()).launchesBlocked).toBe(false);
-    });
-
-    it('turns writing off for the owner alone: every account flag off and launches blocked until an owner opens it', async () => {
+    it('switches writing off for the owner alone, with no second factor: every account flag off and launches blocked until an owner opens them', async () => {
       const { adAccountId } = await connect('Tắt cùng tổ chức');
-      await callAs(owner, 'ads/enableAccountWrite', { adAccountId, idempotencyKey: key() });
+      await open([adAccountId]);
+      expect(await state()).toMatchObject({ writeEnabled: true, launchesBlocked: false });
       expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: true });
-      expect((await callAs(adminAccount, 'ads/writeDisable', { idempotencyKey: key() }, false)).status).toBe(403);
-      const off = await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() }, false);
+      for (const who of [adminAccount, member, viewer]) expect((await callAs(who, 'ads/writeDisable', { idempotencyKey: key() })).status, who.email).toBe(403);
+      const off = await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() });
       expect(off).toMatchObject({ status: 200, body: { writeEnabled: false } });
       expect(off.body.accountsDisabled).toBeGreaterThanOrEqual(1);
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: true });
       expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: false });
-      // With it off, an account cannot be enabled, and turning it on again leaves the block for the owner to clear on purpose.
-      expect(await callAs(owner, 'ads/enableAccountWrite', { adAccountId, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
-      expect(await callAs(owner, 'ads/writeEnable', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { changed: true } });
-      expect((await state()).launchesBlocked).toBe(true);
-      expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })).toMatchObject({ status: 200 });
+      // The record names the owner and the audit row says what the switch-off closed.
+      expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, owner.userId])).toHaveLength(1);
+      const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.write.disable' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+      expect(audit[0]?.detail).toMatchObject({ writeEnabled: false, wasEnabled: true });
     });
 
-    // The database keeps the switches to their owners whatever path reaches the table (the Platform PO's condition on #2294): the
-    // commands check the role too, so these go to the table directly, in a context of each kind, and roll back.
-    async function inContext<T>(who: Account | 'system', fn: (c: pg.Client | pg.PoolClient) => Promise<T>): Promise<T> {
-      const c = await (who === 'system' ? (workerPools[0] as pg.Pool) : pool).connect();
-      try {
-        await c.query('BEGIN');
-        if (who === 'system') await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
-        else {
-          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
-          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
-        }
-        await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
-        return await fn(c);
-      } finally {
-        await c.query('ROLLBACK').catch(() => undefined);
-        c.release();
-      }
-    }
-    const refused = (c: pg.Client | pg.PoolClient, sqlText: string, params: unknown[] = []) => expect(c.query(sqlText, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_SWITCH_FORBIDDEN') });
+    it('withdraws one account for the owner alone, with no second factor, and leaves the others and another org’s alone', async () => {
+      const { adAccountId } = await connect('Thu hồi một tài khoản');
+      const other = await connect('Vẫn bật');
+      await open([adAccountId, other.adAccountId]);
+      for (const who of [adminAccount, member, viewer]) expect((await callAs(who, 'ads/disableAccountWrite', { adAccountId, idempotencyKey: key() })).status, who.email).toBe(403);
+      expect(await callAs(owner, 'ads/disableAccountWrite', { adAccountId, idempotencyKey: key() })).toMatchObject({ status: 200, body: { adAccountId, writeEnabled: false } });
+      expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: false });
+      expect(await view(owner, other.adAccountId)).toMatchObject({ writeEnabled: true });
+      // Withdrawing again changes nothing and is no error; an account of no org here is not found.
+      expect(await callAs(owner, 'ads/disableAccountWrite', { adAccountId, idempotencyKey: key() })).toMatchObject({ status: 200, body: { writeEnabled: false } });
+      expect((await callAs(owner, 'ads/disableAccountWrite', { adAccountId: randomUUID(), idempotencyKey: key() })).status).toBe(404);
+      expect((await state()).writeEnabled).toBe(true);
+    });
 
+    it('stops everything for owners and admins at once, with no second factor, and not for a member or viewer', async () => {
+      await open();
+      expect(await state()).toMatchObject({ writeEnabled: true, launchesBlocked: false });
+      for (const who of [member, viewer]) expect((await callAs(who, 'ads/pauseAll', { idempotencyKey: key() })).status, who.email).toBe(403);
+      expect(await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchesBlocked: true, paused: 0 } });
+      expect(await state()).toMatchObject({ writeEnabled: true, launchesBlocked: true });
+      // Stopping twice is no error.
+      expect(await callAs(owner, 'ads/pauseAll', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchesBlocked: true } });
+    });
+
+    // The database keeps the switches to their owners whatever path reaches the table (the Platform PO's conditions on #2294):
+    // the commands check the role too, so these go to the table directly, in a context of each kind.
     it('lets only a signed-in owner turn a switch on and only an owner or admin turn it off, in the database whatever the command says', async () => {
       const on = 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
       const blockOn = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1';
       const blockOff = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1';
       const off = 'UPDATE crove_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1';
-      // Start from writing off and launches open (the commands' own way), so every change below is a change.
-      await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() }, false);
-      expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })).toMatchObject({ status: 200 });
+      // Start from writing off and launches open, so every change below is a change.
+      await closed();
       expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false });
       // The owner: both ways.
       await inContext(owner, async (c) => {
@@ -870,11 +832,31 @@ suite('ads on PostgreSQL (#2217)', () => {
         await inContext(who, (c) => refused(c, on, [orgId]));
         await inContext(who, (c) => refused(c, blockOn, [orgId]));
       }
-      // A change that touches neither switch (the audit columns) is not the guard's concern.
-      await inContext(member, async (c) => {
-        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, member.userId]);
+      // Nothing above was committed: the switches stand as the commands left them.
+      expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false });
+    });
+
+    it('stamps who changed the switches and when, whatever the writer sent', async () => {
+      await closed();
+      const before = Date.now();
+      await inContext(owner, async (c) => {
+        await c.query(`UPDATE crove_ads.ad_org_setting SET write_enabled = true, updated_by = $2, updated_at = '2000-01-01T00:00:00Z' WHERE org_id = $1`, [orgId, member.userId]);
+        const stamped = (await c.query<{ updated_by: string; updated_at: Date }>('SELECT updated_by, updated_at FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0];
+        expect(stamped?.updated_by).toBe(owner.userId);
+        expect(new Date(stamped?.updated_at ?? 0).getTime()).toBeGreaterThanOrEqual(before - 5_000);
       });
-      // The same for one account's flag.
+      // A change that touches neither switch is stamped too: whoever sends it is on record, and the system leaves no user.
+      await inContext(member, async (c) => {
+        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
+        expect((await c.query<{ updated_by: string }>('SELECT updated_by FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBe(member.userId);
+      });
+      await inContext('system', async (c) => {
+        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, owner.userId]);
+        expect((await c.query<{ updated_by: string | null }>('SELECT updated_by FROM crove_ads.ad_org_setting WHERE org_id = $1', [orgId])).rows[0]?.updated_by).toBeNull();
+      });
+    });
+
+    it('guards an ad account’s flag the same way, on a row changed and on a row born with writing on', async () => {
       const { adAccountId } = await connect('Cổng ở cơ sở dữ liệu');
       const accountOn = 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
       await inContext(owner, async (c) => {
@@ -883,8 +865,22 @@ suite('ads on PostgreSQL (#2217)', () => {
       await inContext(adminAccount, (c) => refused(c, accountOn, [orgId, adAccountId]));
       await inContext(member, (c) => refused(c, accountOn, [orgId, adAccountId]));
       await inContext('system', (c) => refused(c, accountOn, [orgId, adAccountId]));
-      // Nothing above was committed: the switches stand as the commands left them.
-      expect((await state()).launchesBlocked).toBeDefined();
+      // A new row born with the flag on is an opening too (a connection of its own for each, made as the database owner).
+      const born = async (flag: boolean) => {
+        const connectionId = randomUUID();
+        await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Sinh ra đã bật', $4)`, [orgId, connectionId, `born-${connectionId}`, owner.userId]);
+        return [`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, write_enabled) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Sinh ra đã bật', '2025-10-01', ${flag})`, [orgId, randomUUID(), connectionId, `born-${connectionId}`]] as const;
+      };
+      const [insertOn, paramsOn] = await born(true);
+      await inContext(owner, async (c) => {
+        await c.query(insertOn, [...paramsOn]);
+      });
+      for (const who of [adminAccount, member, viewer, 'system'] as const) await inContext(who, (c) => refused(c, insertOn, [...paramsOn]));
+      // A row born with it off is no opening, whoever makes it.
+      const [insertOff, paramsOff] = await born(false);
+      await inContext(adminAccount, async (c) => {
+        await c.query(insertOff, [...paramsOff]);
+      });
     });
 
     it('keeps one row of switches per org in the database: a second row for the org is refused, whoever makes it', async () => {
@@ -895,21 +891,60 @@ suite('ads on PostgreSQL (#2217)', () => {
       }
     });
 
-    it('keeps the cap history append-only for every tenant role: no update and no delete of a row', async () => {
-      const insert = 'INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
-      // Each refusal in a transaction of its own: a refused statement aborts the one it ran in.
-      for (const who of [owner, adminAccount, member, 'system'] as const) {
-        for (const change of ['UPDATE crove_ads.ad_spend_cap SET amount = 1 WHERE org_id = $1 AND id = $2', 'DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2']) {
-          await inContext(who, async (c) => {
-            const id = ((await c.query(insert, [orgId, 'org', 'daily', '1000', 'VND', owner.userId])).rows[0] as { id: string }).id;
-            await expect(c.query(change, [orgId, id])).rejects.toMatchObject({ code: '42501' });
-          });
-        }
+    it('keeps the second way through the guards, the execution of an approved proposal, closed: it answers false and no login role can call it', async () => {
+      for (const command of ['ads.write.enable', 'ads.account.enable_write', 'ads.launches.unblock', 'ads.cap.set']) {
+        expect((await row<{ open: boolean }>('SELECT crove_ads.approved_execution($1) AS open', [command]))[0]?.open, command).toBe(false);
+      }
+      for (const who of [owner, adminAccount, 'system'] as const) {
+        await inContext(who, async (c) => {
+          await expect(c.query(`SELECT crove_ads.approved_execution('ads.cap.set')`)).rejects.toMatchObject({ code: '42501' });
+        });
       }
     });
 
+    describe('the spend caps', () => {
+      const crafted = 'ffffffff-ffff-7fff-bfff-ffffffffffff';
+      const insert = `INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, 'VND', $4, '2999-01-01T00:00:00Z') RETURNING id, set_by, set_at`;
+
+      it('lets only a signed-in owner insert a cap, and stamps its id, who set it and when, whatever the writer sent', async () => {
+        await inContext(owner, async (c) => {
+          const made = (await c.query<{ id: string; set_by: string; set_at: Date }>(insert, [orgId, crafted, '1000', member.userId])).rows[0];
+          expect(made?.id).not.toBe(crafted);
+          expect(made?.set_by).toBe(owner.userId);
+          expect(new Date(made?.set_at ?? 0).getTime()).toBeLessThan(Date.now() + 60_000);
+        });
+        for (const who of [adminAccount, member, viewer, 'system'] as const) await inContext(who, (c) => refused(c, insert, [orgId, crafted, '1000', owner.userId], 'ADS_CAP_FORBIDDEN'));
+        // A row of another org is left to row security, which refuses it for the owner of this one.
+        await inContext(owner, (c) => refused(c, insert, [otherOrgId, crafted, '1000', owner.userId], 'row-level security'));
+      });
+
+      it('shows the latest cap by the order the server stamped, whatever id a writer chose', async () => {
+        // The first cap is sent with an id from the far future, the second with one from the past: the later insert is the cap.
+        await inContext(owner, (c) => c.query(insert, [orgId, crafted, '5000000', owner.userId]), true);
+        await sleep(5);
+        await inContext(owner, (c) => c.query(insert, [orgId, '00000000-0000-7000-8000-000000000000', '8000000.50', owner.userId]), true);
+        const latest = await state();
+        expect(latest.caps.filter((c) => c.scope === 'org' && c.period === 'daily')).toEqual([expect.objectContaining({ amount: '8000000.50', currency: 'VND', setBy: owner.userId })]);
+        // The cap history stays: every insert is a row.
+        expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId]))[0]?.n).toBe('2');
+        expect((await rpc('ads/writeState', await tokenFor(member), undefined)).status).toBe(403);
+      });
+
+      it('keeps the cap history append-only for every tenant role: no update and no delete of a row', async () => {
+        const id = ((await inContext(owner, (c) => c.query<{ id: string }>(insert, [orgId, randomUUID(), '1000', owner.userId]), true)).rows[0] as { id: string }).id;
+        for (const who of [owner, adminAccount, member, 'system'] as const) {
+          for (const change of ['UPDATE crove_ads.ad_spend_cap SET amount = 1 WHERE org_id = $1 AND id = $2', 'DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2']) {
+            await inContext(who, async (c) => {
+              await expect(c.query(change, [orgId, id])).rejects.toMatchObject({ code: '42501' });
+            });
+          }
+        }
+      });
+    });
+
     it('keeps one row of switches per org however the commands interleave, and none for another org', async () => {
-      await Promise.all([callAs(owner, 'ads/pauseAll', { idempotencyKey: key() }, false), callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() }, false), callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })]);
+      await open();
+      await Promise.all([callAs(owner, 'ads/pauseAll', { idempotencyKey: key() }), callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() }), callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })]);
       expect(await settingRows()).toEqual([{ n: '1' }]);
       expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId])).toEqual([]);
       // The other org's owner reads their own, never ours.

@@ -39,7 +39,7 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
-const { AdsWriteCard, isCapAmount } = await import('../src/components/ads-write.tsx');
+const { AdsWriteCard } = await import('../src/components/ads-write.tsx');
 
 function render(node: ReactNode, locale: 'en' | 'vi' = 'en'): string {
   return renderToStaticMarkup(
@@ -327,7 +327,7 @@ describe('a paused ad account (#2219)', () => {
   });
 });
 
-describe('running ads: the switches and the caps (#2294, W0a)', () => {
+describe('running ads: the stops, the switches and the caps (#2294, W0a-1)', () => {
   const at2 = '2026-11-02T03:00:00.000Z';
   const stateOf = (over: Partial<AdsWriteState> = {}): AdsWriteState => ({ writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], ...over });
   const card = (state: AdsWriteState, role: 'owner' | 'admin', accounts: AdAccountView[] = [account()]) => {
@@ -336,21 +336,18 @@ describe('running ads: the switches and the caps (#2294, W0a)', () => {
   };
   const cap = (over: Partial<AdsWriteState['caps'][number]>): AdsWriteState['caps'][number] => ({ scope: 'org', adAccountId: null, period: 'daily', amount: '5000000', currency: 'VND', setBy: 'u1', setAt: at2, ...over });
 
-  it('says it is off, and offers the owner alone to turn it on behind a second factor', () => {
-    const html = card(stateOf(), 'owner');
-    expect(html).toContain(`>${en.ads.write.off}<`);
-    expect(html).toContain(en.ads.write.offHint);
-    expect(buttonBefore(html, en.ads.write.enable)).toBeDefined();
-    expect(html).not.toContain(en.ads.write.accounts);
-    expect(html).not.toContain(en.ads.write.pauseAll);
-    // The admin reads the same state and is offered none of the owner's switches or the cap form.
-    const admin = card(stateOf(), 'admin');
-    expect(admin).toContain(`>${en.ads.write.off}<`);
-    expect(admin).not.toContain(`>${en.ads.write.enable}<`);
-    expect(admin).not.toContain(en.ads.write.capSave);
+  it('says it is off and offers nobody a button to turn it on: that is a proposal, not a button of this card', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(stateOf(), role);
+      expect(html).toContain(`>${en.ads.write.off}<`);
+      expect(html).toContain(en.ads.write.offHint);
+      expect(html).not.toContain(en.ads.write.accounts);
+      expect(html).not.toContain(en.ads.write.pauseAll);
+      expect(html).not.toContain('<button');
+    }
   });
 
-  it('shows what is on: the owner may turn it off behind a confirmation, enable each account, and everyone may stop it all', () => {
+  it('shows what is on: the owner may turn it off behind a confirmation and an account off, and owners and admins may stop it all', () => {
     const html = card(stateOf({ writeEnabled: true }), 'owner', [account({ writeEnabled: true }), account({ id: 'a2', name: 'Tài khoản hai', writeEnabled: false })]);
     expect(html).toContain(`>${en.ads.write.on}<`);
     expect(buttonBefore(html, en.ads.write.disable)).toContain('aria-haspopup="dialog"');
@@ -358,61 +355,44 @@ describe('running ads: the switches and the caps (#2294, W0a)', () => {
     expect(html).toContain(en.ads.write.accounts);
     expect(html).toContain(`>${en.ads.write.accountOn}<`);
     expect(html).toContain(`>${en.ads.write.accountOff}<`);
+    // One withdraw button, for the enabled account only; nothing here enables an account.
+    expect(html.split(`>${en.ads.write.accountDisable}<`)).toHaveLength(2);
     expect(buttonBefore(html, en.ads.write.accountDisable)).toBeDefined();
-    expect(buttonBefore(html, en.ads.write.accountEnable)).toBeDefined();
     expect(buttonBefore(html, en.ads.write.pauseAll)).toContain('aria-haspopup="dialog"');
     // The admin: the state and the kill switch, none of the owner's buttons.
     const admin = card(stateOf({ writeEnabled: true }), 'admin', [account({ writeEnabled: true })]);
     expect(buttonBefore(admin, en.ads.write.pauseAll)).toBeDefined();
     expect(admin).not.toContain(`>${en.ads.write.disable}<`);
     expect(admin).not.toContain(`>${en.ads.write.accountDisable}<`);
-    expect(admin).not.toContain(`>${en.ads.write.accountEnable}<`);
   });
 
-  it('says launches are blocked and lets only the owner open them again; the kill switch is not offered while blocked', () => {
-    const owner = card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'owner');
-    expect(owner).toContain(en.ads.write.blocked);
-    expect(buttonBefore(owner, en.ads.write.unblock)).toBeDefined();
-    expect(owner).not.toContain(`>${en.ads.write.pauseAll}<`);
-    const admin = card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'admin');
-    expect(admin).toContain(en.ads.write.blocked);
-    expect(admin).not.toContain(`>${en.ads.write.unblock}<`);
+  it('says launches are blocked, with no button to open them again; the kill switch is not offered while blocked', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(stateOf({ writeEnabled: true, launchesBlocked: true }), role);
+      expect(html).toContain(en.ads.write.blocked);
+      expect(html).not.toContain(`>${en.ads.write.pauseAll}<`);
+    }
   });
 
-  it('lists the caps of the org and of each account in their currency, "not set" where there is none, and the owner alone can set one', () => {
+  it('lists the caps of the org and of each account in their currency and "not set" where there is none, with no way to set one', () => {
     const state = stateOf({
       caps: [cap({}), cap({ period: 'monthly', amount: '100000000' }), cap({ scope: 'account', adAccountId: 'a1', amount: '1000000' }), cap({ scope: 'account', adAccountId: 'a1', period: 'monthly', amount: '20.50', currency: 'USD' })],
     });
-    const html = card(state, 'owner', [account(), account({ id: 'a2', name: 'Tài khoản hai' })]);
-    expect(html).toContain(en.ads.write.capOrg);
-    expect(html).toContain('Quảng cáo cửa hàng');
-    expect(html).toContain('Tài khoản hai');
-    // Decimal strings through the money formatter, never a number; the account without a cap says so.
-    expect(html).toMatch(/5,000,000/);
-    expect(html).toMatch(/100,000,000/);
-    expect(html).toContain(en.ads.write.capNone);
-    expect(html).toContain(en.ads.write.capSave);
-    expect(card(state, 'admin', [account()])).not.toContain(en.ads.write.capSave);
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(state, role, [account(), account({ id: 'a2', name: 'Tài khoản hai' })]);
+      expect(html).toContain(en.ads.write.capOrg);
+      expect(html).toContain('Quảng cáo cửa hàng');
+      expect(html).toContain('Tài khoản hai');
+      // Decimal strings through the money formatter, never a number; the account without a cap says so.
+      expect(html).toMatch(/5,000,000/);
+      expect(html).toMatch(/100,000,000/);
+      expect(html).toContain(en.ads.write.capNone);
+      expect(html).not.toContain('<form');
+      expect(html).not.toContain('<input');
+    }
   });
 
-  it.each([
-    ['5000000', true],
-    ['0.5', true],
-    ['1234.56', true],
-    [' 10 ', true],
-    ['0', false],
-    ['0.00', false],
-    ['', false],
-    ['-5', false],
-    ['1.234', false],
-    ['1e6', false],
-    ['10,5', false],
-    ['1234567890123456', false],
-  ])('judges the amount %j of a cap as %s before it is sent', (text, accepted) => {
-    expect(isCapAmount(text)).toBe(accepted);
-  });
-
-  it('has the same words in Vietnamese as in English for the new card', () => {
+  it('has the same words in Vietnamese as in English for the card', () => {
     client.current.setQueryData(['ads', 'writeState'], stateOf({ writeEnabled: true }));
     const vi = render(<AdsWriteCard role="owner" accounts={[account({ writeEnabled: true })]} />, 'vi');
     expect(vi).toContain(viMessages.ads.write.title);

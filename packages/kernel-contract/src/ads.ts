@@ -105,27 +105,10 @@ export const zAdsSyncFailure = z.strictObject({
 });
 export type AdsSyncFailure = z.infer<typeof zAdsSyncFailure>;
 
-// Running ads (ADR-0043, #2294): the spend caps, in the currency's own units as a decimal string above zero, never a number.
+// Running ads (ADR-0043, #2294): the spend caps, in the currency's own units as a decimal string above zero, never a number. A
+// cap is set or raised by a proposal and lowered directly (the commands come after this view of them).
 export const ADS_CAP_SCOPES = ['org', 'account'] as const;
 export const ADS_CAP_PERIODS = ['daily', 'monthly'] as const;
-const zCapAmount = z.string().regex(/^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/, 'a decimal above zero');
-// A currency code of ISO 4217, from the platform's own list (a typo such as VDN is refused before it is a cap).
-const ISO_CURRENCIES: ReadonlySet<string> = new Set(Intl.supportedValuesOf('currency'));
-const zCapCurrency = zCurrency.refine((code) => ISO_CURRENCIES.has(code), 'an ISO 4217 currency code');
-const capShape = {
-  scope: z.enum(ADS_CAP_SCOPES),
-  adAccountId: zId.optional(),
-  period: z.enum(ADS_CAP_PERIODS),
-  amount: zCapAmount,
-  currency: zCapCurrency,
-};
-// An org cap names no account, an account cap names one.
-const capNamesAccount = (c: { scope: 'org' | 'account'; adAccountId?: string | undefined }) => (c.scope === 'org') === (c.adAccountId === undefined);
-const capNamesAccountIssue = { message: 'an org cap names no account, an account cap names one', path: ['adAccountId'] };
-export const zAdsCapSet = z.strictObject(capShape).refine(capNamesAccount, capNamesAccountIssue);
-// The same with the idempotency key of the API call.
-export const zAdsCapSetCall = z.strictObject({ ...capShape, idempotencyKey: zId }).refine(capNamesAccount, capNamesAccountIssue);
-export type AdsCapSet = z.infer<typeof zAdsCapSet>;
 
 export const zAdsCapView = z.object({
   scope: z.enum(ADS_CAP_SCOPES),

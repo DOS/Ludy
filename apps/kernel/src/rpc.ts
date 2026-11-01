@@ -2120,24 +2120,13 @@ export function createRpcHandler(
           return runtime.execute('ads.sync.request', rest, { actor, orgId, idempotencyKey });
         }),
       ),
-      // Running ads (ADR-0043, #2294, W0a): the switches and the spend caps. R3 commands wait for a second factor in the runtime.
+      // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
-      writeEnable: os.ads.writeEnable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.enable', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
       writeDisable: os.ads.writeDisable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.disable', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
-      enableAccountWrite: os.ads.enableAccountWrite.handler(({ context, input }) =>
-        inAds(context, (orgId, actor) => runtime.execute('ads.account.enable_write', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
-      ),
       disableAccountWrite: os.ads.disableAccountWrite.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => runtime.execute('ads.account.disable_write', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
       ),
-      setCap: os.ads.setCap.handler(({ context, input }) =>
-        inAds(context, (orgId, actor) => {
-          const { idempotencyKey, ...rest } = input;
-          return runtime.execute('ads.cap.set', rest, { actor, orgId, idempotencyKey });
-        }),
-      ),
       pauseAll: os.ads.pauseAll.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.pause_all', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
-      unblockLaunches: os.ads.unblockLaunches.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.launches.unblock', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
       // An owner's or admin's deletion of an account's stored figures and sync log (#2219).
       deleteHistory: os.ads.deleteHistory.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

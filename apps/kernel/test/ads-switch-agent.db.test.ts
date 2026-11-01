@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// No agent can open spend (ADR-0043, issue #2294, the Platform PO's condition on W0a): a live agent run, entered as the worker
-// enters one (crove_kernel.enter_agent_context with a run that is live), cannot turn writing on or off for the org or an ad
-// account, cannot block or unblock launches, and cannot add a spend cap, all refused by the database, not by a command's role
-// check (the SQL is run directly in the agent's context). The agent is installed from a template and given a run the way
-// apps/kernel/test/invariant/agents.db.test.ts does it. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops
-// its own database.
+// No agent can touch the switches of running ads (ADR-0043, issue #2294, the Platform PO's condition on W0a): a live agent run,
+// entered as the worker enters one (crove_kernel.enter_agent_context with a run that is live), cannot turn writing on or off for
+// the org or an ad account, cannot block or unblock launches, and cannot add a spend cap, all refused by the database, not by a
+// command's role check (the SQL is run directly in the agent's context); and none of the commands of running ads runs for it.
+// The agent is installed from a template and given a run the way apps/kernel/test/invariant/agents.db.test.ts does it. The open
+// state the test needs is made as a signed-in owner's context makes it, in SQL (what a proposal's effect will do), since the
+// guard fires for every role. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -12,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { Runtime, type AgentActor } from '@crove/kernel-runtime';
+import { mintContextToken, Runtime, type AgentActor } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { adsCommands, adsQueries } from '@crove/mod-ads';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -28,6 +29,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
   const dbName = `crove_test_ads_agent_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let workerUrl = '';
+  let appUrl = '';
   const pools: pg.Pool[] = [];
   let app: Runtime;
   let worker: Runtime;
@@ -65,6 +67,22 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
     }
   }
 
+  // Runs SQL as crove_app inside the owner's own context, committed: the way a proposal's effect will open the switches.
+  async function asOwnerSql(sqlText: string, params: unknown[] = []): Promise<void> {
+    const c = new pg.Client({ connectionString: appUrl });
+    await c.connect();
+    try {
+      await c.query('BEGIN');
+      const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+      await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+      await c.query(sqlText, params);
+      await c.query('COMMIT');
+    } finally {
+      await c.query('ROLLBACK').catch(() => undefined);
+      await c.end();
+    }
+  }
+
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
@@ -82,6 +100,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
       return url.toString();
     };
     workerUrl = login('crove_worker', 'test-worker-pw');
+    appUrl = login('crove_app', 'test-app-pw');
     const runtimeFor = (url: string): { db: Db; runtime: Runtime } => {
       const pool = createPool({ connectionString: url, max: 4 });
       pools.push(pool);
@@ -94,7 +113,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
         }),
       };
     };
-    const api = runtimeFor(login('crove_app', 'test-app-pw'));
+    const api = runtimeFor(appUrl);
     app = api.runtime;
     worker = runtimeFor(workerUrl).runtime;
     owner = await upsertIdentity(api.db, { issuer: 'ads-agent', subject: 'owner', email: 'owner@ads-agent.test', name: null });
@@ -156,10 +175,10 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
         await expect(c.query(text, params), what).rejects.toMatchObject({ code: expect.stringMatching(/^(42501|23505)$/) });
       });
     }
-    // Closing what is open is refused too: set the switches on as the database owner would not be able to (the guard fires for
-    // every role), so the owner turns them on through the commands, and the agent then tries to turn them off.
-    await app.execute('ads.write.enable', {}, { actor: asMfa(owner), orgId });
-    await app.execute('ads.account.enable_write', { adAccountId }, { actor: asMfa(owner), orgId });
+    // Closing what is open is refused too: the owner opens the switches in their own context (the guard fires for every role, so
+    // no other connection could), and the agent then tries to turn them off.
+    await asOwnerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1', [orgId]);
+    await asOwnerSql('UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2', [orgId, adAccountId]);
     const opened = await state();
     expect(opened.setting?.write_enabled).toBe(true);
     expect(opened.account?.write_enabled).toBe(true);
@@ -183,13 +202,9 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
 
   it('refuses a live agent run every command of running ads, audited as denied', async () => {
     for (const [name, input] of [
-      ['ads.write.enable', {}],
       ['ads.write.disable', {}],
-      ['ads.account.enable_write', { adAccountId }],
       ['ads.account.disable_write', { adAccountId }],
-      ['ads.cap.set', { scope: 'org', period: 'daily', amount: '1000', currency: 'VND' }],
       ['ads.pause_all', {}],
-      ['ads.launches.unblock', {}],
     ] as Array<[string, unknown]>) {
       await expect(worker.execute(name, input, { actor: agent, orgId }), name).rejects.toMatchObject({ status: 403 });
     }

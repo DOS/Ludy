@@ -148,14 +148,15 @@ describe('declared risk and side effects (#1563)', () => {
   });
 });
 
-// Running ads (ADR-0043, #2294): what can start or raise spend, or open the way to it, is R3 and the owner's; what only stops
-// it is R2. Pinned by name so an annotation cannot lower the first or raise the second.
+// Running ads (ADR-0043, #2294): what only stops or reduces spend is a direct R2 command; what starts or raises it, or opens the
+// way to it, is a proposal (W0a-2) and no direct command at all, so none of those names may exist as a command yet. Pinned by
+// name so an annotation cannot raise the first or a later change quietly add a direct opening.
 describe('the risk of the commands of running ads (#2294)', () => {
   const byName = () => new Map(all().map((c) => [c.name, c]));
 
-  it('keeps the owner switches R3 financial, owner only', () => {
+  it('has no direct command that opens the way to spend', () => {
     for (const name of ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock']) {
-      expect(byName().get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: ['owner'] });
+      expect(byName().has(name), name).toBe(false);
     }
   });
 
@@ -167,7 +168,7 @@ describe('the risk of the commands of running ads (#2294)', () => {
   });
 
   it('lets no agent run any of them', () => {
-    for (const name of ['ads.write.enable', 'ads.write.disable', 'ads.account.enable_write', 'ads.account.disable_write', 'ads.cap.set', 'ads.pause_all', 'ads.launches.unblock']) {
+    for (const name of ['ads.write.disable', 'ads.account.disable_write', 'ads.pause_all']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });
