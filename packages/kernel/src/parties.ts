@@ -173,10 +173,16 @@ export const createParty = defineCommand({
         }
         throw error;
       });
+    // The names of the fields that were given, never their values (the markers below stand for the classified ones).
+    const given = ['name'];
+    if (taxCode !== null) given.push('taxCode');
+    if (address !== null) given.push('address');
+    if (email !== null) given.push('email');
+    if (phone !== null) given.push('phone');
     ctx.audit({
       partyId: created.id,
       kind: input.kind,
-      fields: (['name', 'taxCode', 'address', 'email', 'phone'] as const).filter((f) => ({ name, taxCode, address, email, phone })[f] !== null),
+      fields: given,
       name: auditValue(PARTY, 'name', name),
       taxCode: auditValue(PARTY, 'tax_code', taxCode),
       address: auditValue(PARTY, 'address', address),
