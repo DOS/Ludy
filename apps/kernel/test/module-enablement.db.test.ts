@@ -143,8 +143,8 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
   });
 
   it('applies migrations to every schema, whatever CROVE_MODULES says', async () => {
-    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('crove_kernel', 'crove_finance', 'crove_crm')");
-    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_crm', 'crove_finance', 'crove_kernel']);
+    const schemas = await adminQuery<{ nspname: string }>("SELECT nspname FROM pg_namespace WHERE nspname IN ('crove_kernel', 'crove_finance', 'crove_crm', 'crove_ads')");
+    expect(schemas.map((s) => s.nspname).sort()).toEqual(['crove_ads', 'crove_crm', 'crove_finance', 'crove_kernel']);
   });
 
   it('registers only the enabled modules', () => {
@@ -164,6 +164,11 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const notesOnly = moduleDefinitions(configFor('notes'));
     expect([...new Set([...notesOnly.commands, ...notesOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['kernel', 'notes']);
     expect(names.filter((name) => name.startsWith('notes.'))).toEqual([]);
+    // And the ads module (#2217): nothing of it without it, and it alone brings only the kernel along.
+    expect(all.commands.map((c) => c.name)).toContain('ads.account.link');
+    const adsOnly = moduleDefinitions(configFor('ads'));
+    expect([...new Set([...adsOnly.commands, ...adsOnly.queries].map((d) => d.name.split('.')[0]))].sort()).toEqual(['ads', 'kernel']);
+    expect(names.filter((name) => name.startsWith('ads.'))).toEqual([]);
   });
 
   it('answers COMMAND_NOT_FOUND for a disabled module and not_installed for a lookup into it', async () => {
@@ -208,7 +213,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage });
     expect(kernel.modules).toEqual(['kernel']);
     // As an earlier run with finance and notes left them (#1471): their cron schedules, and a tick each queued.
-    const crons = [QUEUES.periodBalanceVerify, QUEUES.notesTrash, QUEUES.notesRemind];
+    const crons = [QUEUES.periodBalanceVerify, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
     for (const queue of crons) {
       await adminQuery("INSERT INTO crove_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
       await adminQuery('INSERT INTO crove_jobs.job (name) VALUES ($1)', [queue]);
@@ -242,6 +247,11 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       }
       // Nor are the notes module's (#1671): nothing of it loads.
       for (const [path, input] of [['notes/list', { view: 'mine' }], ['notes/create', { title: 'Ghi chú' }], ['notes/privateCounts', {}]] as const) {
+        expect((await rpc(path, input)).status, path).toBe(404);
+      }
+
+      // Nor are the ads module's (#2217): no screen data, no sandbox link.
+      for (const [path, input] of [['ads/accounts', {}], ['ads/summary', { adAccountId: randomUUID(), from: '2026-09-01', to: '2026-09-30' }], ['ads/syncRuns', { adAccountId: randomUUID() }], ['ads/connectSandbox', { displayName: 'Quảng cáo', idempotencyKey: randomUUID() }]] as const) {
         expect((await rpc(path, input)).status, path).toBe(404);
       }
 
