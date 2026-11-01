@@ -17,8 +17,8 @@
 --                          Set exactly when original_of_proposal_id is.
 --
 -- Both are written at insert and never change: the UPDATE grant of the table lists only the columns that finish a pending
--- run, which these are not, and extraction_guard freezes a finished run's content. Only the run's own method and status
--- may carry them: an e-invoice XML read, done.
+-- run, which these are not, and extraction_guard (replaced below, otherwise as it was) refuses a change of them for any
+-- role, the database owner included. Only a run of method einvoice_xml that is done may carry them.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.extraction ADD COLUMN IF NOT EXISTS original_of_proposal_id uuid;
@@ -34,3 +34,20 @@ ALTER TABLE crove_kernel.extraction ADD CONSTRAINT extraction_original_shape CHE
   AND (original_of_proposal_id IS NULL OR (method = 'einvoice_xml' AND status = 'done')));
 
 CREATE INDEX IF NOT EXISTS extraction_original_idx ON crove_kernel.extraction (org_id, original_of_proposal_id);
+
+-- The guard as before (a finished version never changes; a pending one changes once and keeps its file, number, requester
+-- and creation time), with the two new columns in the identity that never changes: the evidence link is set at insert only.
+CREATE OR REPLACE FUNCTION crove_kernel.extraction_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF (NEW.id, NEW.file_id, NEW.version, NEW.requested_by, NEW.created_at, NEW.tainted, NEW.original_of_proposal_id, NEW.original_differs)
+     IS DISTINCT FROM (OLD.id, OLD.file_id, OLD.version, OLD.requested_by, OLD.created_at, OLD.tainted, OLD.original_of_proposal_id, OLD.original_differs) THEN
+    RAISE EXCEPTION 'EXTRACTION_IMMUTABLE' USING ERRCODE = '42501';
+  END IF;
+  IF OLD.status <> 'pending'
+     AND (NEW.method, NEW.status, NEW.result, NEW.checks, NEW.error, NEW.completed_at)
+         IS DISTINCT FROM (OLD.method, OLD.status, OLD.result, OLD.checks, OLD.error, OLD.completed_at) THEN
+    RAISE EXCEPTION 'EXTRACTION_IMMUTABLE' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;

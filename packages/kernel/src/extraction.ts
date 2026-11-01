@@ -199,7 +199,9 @@ async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boo
 }
 
 // The file's newest proposal, locked. A file has one proposal unless an earlier one was rejected and the file was
-// read again. A proposal revised from the file's reading (the original of a PDF's invoice, #2269) is the file's too.
+// read again. A proposal revised from the file's reading (the original of a PDF's invoice, #2269) is the file's too, and so
+// is the executed proposal the file was attached to as its original (#2320): reading that file again changes nothing in
+// the books, so it is refused as for any posted invoice.
 async function lockFileProposal(ctx: CommandContext, fileId: string) {
   return ctx.trx
     .selectFrom('crove_kernel.proposal')
@@ -209,6 +211,11 @@ async function lockFileProposal(ctx: CommandContext, fileId: string) {
       eb.or([
         eb('source_file_id', '=', fileId),
         eb('extraction_id', 'in', eb.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId)),
+        eb(
+          'id',
+          'in',
+          eb.selectFrom('crove_kernel.extraction').select('original_of_proposal_id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).where('original_of_proposal_id', 'is not', null),
+        ),
       ]),
     )
     .orderBy('created_at', 'desc')

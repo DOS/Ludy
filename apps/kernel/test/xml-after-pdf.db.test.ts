@@ -293,18 +293,16 @@ suite('the original XML after the PDF on PostgreSQL (#2269)', () => {
     expect(await fileStatus(users.owner, pdf.fileId)).toMatchObject({ status: 'proposed' });
   });
 
-  it('keeps a posted PDF invoice as it was: the XML after it is a duplicate, flagged, and nothing is posted twice', async () => {
+  it('keeps a posted PDF invoice as it was: the XML after it is attached as evidence (#2320), nothing is posted twice', async () => {
     const pdf = await readPdf('5004');
     const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: pdf.proposalId }, { actor: asUser(users.approver), orgId });
     await rt.execute('kernel.proposal.approve', { id: pdf.proposalId, revision: detail.revision, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId });
     const xml = await readXml('5004');
-    expect(xml.proposalId).not.toBe(pdf.proposalId);
+    // No second proposal: the original is the evidence of the posted one (original-attach.db.test.ts).
+    expect(xml.proposalId).toBeNull();
     const all = await proposals('5004');
-    expect(all).toHaveLength(2);
-    const second = all.find((p) => p.id === xml.proposalId) as Row;
-    expect(second.duplicate_of).toBe(pdf.proposalId);
-    expect(second.payload.checks.map((c) => c.code)).toContain('duplicate.found');
-    expect(all.find((p) => p.id === pdf.proposalId)).toMatchObject({ status: 'executed', revision: 1 });
+    expect(all).toHaveLength(1);
+    expect(all[0]).toMatchObject({ id: pdf.proposalId, status: 'executed', revision: 1 });
   });
 
   it('leaves a PDF proposal of another legal entity alone', async () => {
