@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_NOTE_MAX, CONVERSATION_REPLY_MAX, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -16,7 +16,8 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { StepUpPrompt } from './two-factor.tsx';
 
 const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -46,7 +47,12 @@ function useMe() {
   const org = useQuery(orpc.org.get.queryOptions());
   const me = useQuery(orpc.me.get.queryOptions());
   const role = org.data?.role;
-  return { userId: me.data?.userId ?? null, members: (org.data?.members ?? []) as readonly Member[], canWrite: role === 'owner' || role === 'admin' || role === 'member' };
+  return {
+    userId: me.data?.userId ?? null,
+    members: (org.data?.members ?? []) as readonly Member[],
+    canWrite: role === 'owner' || role === 'admin' || role === 'member',
+    isAdmin: role === 'owner' || role === 'admin',
+  };
 }
 
 function useContactName() {
@@ -127,7 +133,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
 function ConversationThread({ conversationId, onGone }: { conversationId: string; onGone: () => void }) {
   const t = useTranslations('conversations');
   const contactName = useContactName();
-  const { userId, members, canWrite } = useMe();
+  const { userId, members, canWrite, isAdmin } = useMe();
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
   const data = detail.data;
   // The last message the sender has seen: where the thread stood when it was opened, and what they have since acknowledged.
@@ -166,6 +172,7 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
           </Badge>
           {canWrite && <AssignSelect conversation={c} members={members} />}
           {canWrite && <ResolveButton conversation={c} />}
+          {isAdmin && <EraseContactButton conversation={c} onErased={onGone} />}
         </div>
       </header>
       {newer && (
@@ -202,6 +209,90 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
       </NativeSelect>
       {assign.error && <ErrorText>{errorMessage(assign.error)}</ErrorText>}
     </div>
+  );
+}
+
+// Erases the customer of this thread: every thread of theirs with its messages and notes, and their name. Owners and admins, behind a
+// confirmation and a fresh second factor (the kernel asks for it); it cannot be undone.
+function EraseContactButton({ conversation, onErased }: { conversation: ConversationSummary; onErased: () => void }) {
+  const t = useTranslations('conversations');
+  const [asking, setAsking] = useState(false);
+  const erase = useMutation({
+    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, confirm: true }),
+    onSuccess: () => {
+      setAsking(false);
+      onErased();
+      refresh();
+    },
+  });
+  const stepUp = isStepUpRequired(erase.error);
+  if (!asking) {
+    return (
+      <Button type="button" size="sm" variant="ghost" data-testid="conversation-erase-open" onClick={() => setAsking(true)}>
+        {t('eraseOpen')}
+      </Button>
+    );
+  }
+  return (
+    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid="conversation-erase-confirm">
+      <p>{t('eraseWarn', { channel: conversation.channel.displayName })}</p>
+      <div className="flex gap-2">
+        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid="conversation-erase-yes" onClick={() => erase.mutate()}>
+          {t('eraseYes')}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => {
+            setAsking(false);
+            erase.reset();
+          }}
+        >
+          {t('cancel')}
+        </Button>
+      </div>
+      {stepUp && <StepUpPrompt action={t('eraseStepUp')} onVerified={() => erase.mutate()} onCancel={() => erase.reset()} />}
+      {erase.error && !stepUp && <ErrorText>{errorMessage(erase.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// How long threads are kept after their last message (CV6, #2305): every member sees it, owners and admins change it. Older threads
+// are deleted every night with their messages and notes; "keep" holds them until someone deletes them.
+export function ConversationRetentionSetting() {
+  const t = useTranslations('conversations');
+  const { isAdmin } = useMe();
+  const current = useQuery(orpc.conversations.retention.queryOptions({ input: {} }));
+  const set = useMutation({
+    mutationFn: (retentionMonths: 6 | 12 | 24 | null) => client.conversations.setRetention({ retentionMonths }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() }),
+  });
+  if (!current.data) return null;
+  const value = current.data.retentionMonths === null ? 'keep' : String(current.data.retentionMonths);
+  return (
+    <section className="space-y-1 rounded-md border border-border p-3 text-sm" aria-label={t('retention.title')} data-testid="conversation-retention">
+      <label className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">{t('retention.title')}</span>
+        <NativeSelect
+          aria-label={t('retention.title')}
+          value={value}
+          disabled={!isAdmin || set.isPending}
+          data-testid="conversation-retention-select"
+          onChange={(e) => set.mutate(e.target.value === 'keep' ? null : (Number(e.target.value) as 6 | 12 | 24))}
+        >
+          {CONVERSATION_RETENTION_MONTHS.map((m) => (
+            <option key={m} value={String(m)}>
+              {t(`retention.m${m}`)}
+              {current.data.isDefault && m === 24 ? ` ${t('retention.default')}` : ''}
+            </option>
+          ))}
+          <option value="keep">{t('retention.keep')}</option>
+        </NativeSelect>
+      </label>
+      <p className="text-xs text-muted-foreground">{t('retention.hint')}</p>
+      {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
+    </section>
   );
 }
 

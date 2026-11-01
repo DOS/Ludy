@@ -102,7 +102,8 @@ import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
 import { ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
-import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES, acceptAdsDeletion, adsDeletionStatus, renderAdsDeletionStatus } from './ads-deletion.ts';
+import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
+import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
@@ -181,6 +182,8 @@ export interface HttpDeps {
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
+  // The Pages app's secret for the conversations of the Facebook Pages and Instagram accounts, answered by the same callback (CV6, #2305).
+  conversationsDeletion?: { appSecret: string };
   // Requests per minute per client address for that callback and its status page.
   adsDeletionLimit?: RateLimiter;
   // Per-client budget for Supabase Auth's emails (#190). Unset: the database limiter on `pool`.
@@ -742,11 +745,14 @@ export function createHttpApp(deps: HttpDeps) {
     });
   }
 
-  // Meta's data deletion callback for the Ads connection (ads plan section 9, #2219). POST is Meta's signed request, checked
-  // before anything else, rate limited per client address, stored nowhere and only queued for the worker, which erases the
-  // accounts that person granted; GET is the status page Meta shows the person, answered by the confirmation code.
-  const adsDeletion = deps.adsDeletion;
-  if (adsDeletion && runtime.installed('ads')) {
+  // Meta's data deletion callback, the one URL of the deployment's Meta apps (ads plan section 9 #2219, conversations plan CV6
+  // #2305). POST is Meta's signed request, checked against every app secret held before anything else, rate limited per client
+  // address, stored nowhere and only queued for the worker, which erases the Ads accounts and the conversations of the connections
+  // that person granted; GET is the status page Meta shows the person, answered by the confirmation code.
+  const adsInstalled = runtime.installed('ads');
+  const adsDeletion = adsInstalled ? deps.adsDeletion : undefined;
+  const conversationsDeletion = deps.conversationsDeletion;
+  if (adsDeletion || conversationsDeletion) {
     const deletionLimit = deps.adsDeletionLimit ?? new RateLimiter({ perMinute: ADS_DELETION_PER_MINUTE });
     const take = (c: Context): Response | null => {
       const decision = deletionLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
@@ -759,7 +765,7 @@ export function createHttpApp(deps: HttpDeps) {
       const limited = take(c);
       if (limited) return limited;
       try {
-        const outcome = await acceptAdsDeletion(runtime, adsDeletion.appSecret, await c.req.text());
+        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, conversations: conversationsDeletion?.appSecret }, await c.req.text());
         if (outcome.status !== 200) return c.json({ code: outcome.code }, outcome.status);
         // What Meta asks for: where the person can see the request's status, and the code that names it.
         return c.json({ url: `${config.PUBLIC_URL}${ADS_DELETION_PATH}?code=${outcome.code}`, confirmation_code: outcome.code });
@@ -771,10 +777,10 @@ export function createHttpApp(deps: HttpDeps) {
       const limited = take(c);
       if (limited) return limited;
       try {
-        const status = await adsDeletionStatus(runtime, c.req.query('code') ?? '');
+        const status = await metaDeletionStatus(runtime, c.req.query('code') ?? '', adsInstalled);
         c.header('cache-control', 'no-store');
         c.header('x-robots-tag', 'noindex');
-        return c.html(renderAdsDeletionStatus(status), status ? 200 : 404);
+        return c.html(renderMetaDeletionStatus(status), status ? 200 : 404);
       } catch (error) {
         return problem(c, error);
       }

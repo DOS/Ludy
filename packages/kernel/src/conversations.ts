@@ -24,6 +24,8 @@ import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationEraseConnection,
+  zConversationEraseContact,
   zConversationGet,
   zConversationHide,
   zConversationId,
@@ -32,10 +34,16 @@ import {
   zConversationList,
   zConversationMarkRead,
   zConversationNoteAdd,
+  zConversationPurgeExpired,
   zConversationReply,
+  zConversationRetentionSet,
   zConversationSandboxComment,
   zConversationSettle,
+  CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationCounted,
+  type ConversationErased,
+  type ConversationPurged,
+  type ConversationRetention,
   type ConversationDetail,
   type ConversationEvent,
   type ConversationKind,
@@ -1187,6 +1195,132 @@ export const conversationSandboxComment = defineCommand({
   },
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Retention, erasure and purge (CV6, #2305). Nothing here reads a message out: the audit rows, the counts returned and the logs
+// carry ids and numbers only.
+// ---------------------------------------------------------------------------------------------------------------------
+
+async function retentionOf(ctx: QueryContext | CommandContext): Promise<ConversationRetention> {
+  const row = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('retention_months').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  if (!row) return { retentionMonths: CONVERSATION_RETENTION_DEFAULT_MONTHS as 24, isDefault: true };
+  const months = row.retention_months;
+  return { retentionMonths: months === 6 || months === 12 || months === 24 ? months : null, isDefault: false };
+}
+
+export const conversationRetention = defineQuery({
+  name: 'kernel.conversation.retention',
+  input: z.strictObject({}),
+  access: ALL,
+  handler: async (ctx): Promise<ConversationRetention> => retentionOf(ctx),
+});
+
+// How long the org keeps a thread after its last message (6, 12 or 24 months), or until a person deletes it. The daily retention job
+// deletes the threads past it. Shortening it deletes the older threads at the next run, so it is R2 and for owners and admins.
+export const conversationRetentionSet = defineCommand({
+  name: 'kernel.conversation.retention_set',
+  input: zConversationRetentionSet,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: ADMINS,
+  handler: async (ctx, input): Promise<ConversationRetention> => {
+    const me = requireUser(ctx);
+    await ctx.trx
+      .insertInto('crove_kernel.conversation_setting')
+      .values({ org_id: ctx.orgId, retention_months: input.retentionMonths, set_by: me })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet({ retention_months: input.retentionMonths, set_by: me, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ retention_months: input.retentionMonths });
+    return { retentionMonths: input.retentionMonths, isDefault: false };
+  },
+});
+
+// Deletes threads and what hangs on them (messages, notes and read marks go with a thread by the foreign keys). Returns counts.
+async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>): Promise<{ threads: number; messages: number }> {
+  const { rows } = await sql<{ threads: string; messages: string }>`
+    WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id, c.last_seq)
+    SELECT count(*)::text AS threads, COALESCE(sum(gone.last_seq), 0)::text AS messages FROM gone`.execute(ctx.trx);
+  return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
+}
+
+// Identities left with no thread: nothing the org holds names them any more.
+async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
+  const { rows } = await sql<{ n: string }>`
+    WITH gone AS (
+      DELETE FROM crove_kernel.conversation_identity i
+      WHERE i.org_id = ${ctx.orgId}::uuid AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+      RETURNING i.id)
+    SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Erases one customer at the org's request (a data subject asking, or the org's own decision): every thread of the person whose
+// thread this is, with its messages, notes and read marks, and the person's identity. A comment thread that others replied in goes
+// whole, since a reply is stored with its thread, not with its author. Irreversible, so R3 (a fresh second factor), owners and
+// admins only. If the customer writes again, a new thread opens: erasing is not blocking. A copy of a message in a backup is
+// outside this command's reach and goes with the backup's own retention (the runbook says so).
+export const conversationEraseContact = defineCommand({
+  name: 'kernel.conversation.erase_contact',
+  input: zConversationEraseContact,
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<ConversationErased> => {
+    requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    const filter = conversation.identity_id ? sql`c.identity_id = ${conversation.identity_id}::uuid` : sql`c.id = ${conversation.id}::uuid`;
+    const erased = await deleteThreads(ctx, filter);
+    if (conversation.identity_id) {
+      await ctx.trx.deleteFrom('crove_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).execute();
+    }
+    ctx.audit({ threads: erased.threads, messages: erased.messages, kind: conversation.kind });
+    return erased;
+  },
+});
+
+// The retention purge of the org in context (the worker, as the system): the threads whose last message is past the org's
+// retention, oldest first, at most `limit` a call, and the identities left with no thread. `more` says the batch was full, so the
+// job calls again. It deletes nothing of an org that keeps threads (retention NULL), and it never touches a thread of another org.
+export const conversationPurgeExpired = defineCommand({
+  name: 'kernel.conversation.purge_expired',
+  input: zConversationPurgeExpired,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<ConversationPurged> => {
+    const retention = await retentionOf(ctx);
+    if (retention.retentionMonths === null) return { threads: 0, messages: 0, identities: 0, more: false };
+    const { rows } = await sql<{ id: string }>`
+      SELECT c.id FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid
+        AND COALESCE(c.last_message_at, c.opened_at) < ${ctx.now}::timestamptz - pg_catalog.make_interval(months => ${retention.retentionMonths}::int)
+      ORDER BY COALESCE(c.last_message_at, c.opened_at), c.id LIMIT ${input.limit}
+      FOR UPDATE SKIP LOCKED`.execute(ctx.trx);
+    if (rows.length === 0) return { threads: 0, messages: 0, identities: 0, more: false };
+    const erased = await deleteThreads(ctx, sql`c.id = ANY (${rows.map((r) => r.id)}::uuid[])`);
+    const identities = await deleteOrphanIdentities(ctx);
+    ctx.audit({ threads: erased.threads, messages: erased.messages, identities, retention_months: retention.retentionMonths });
+    return { ...erased, identities, more: rows.length >= input.limit };
+  },
+});
+
+// Erases every conversation of one connection of the org in context and the identities left with no thread (the worker, as the
+// system, on Meta's data deletion callback: the person who granted the connection asked for their data to go). Idempotent.
+export const conversationEraseConnection = defineCommand({
+  name: 'kernel.conversation.erase_connection',
+  input: zConversationEraseConnection,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<ConversationPurged> => {
+    const erased = await deleteThreads(ctx, sql`c.channel_connection_id = ${input.connectionId}::uuid`);
+    const identities = await deleteOrphanIdentities(ctx);
+    ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities });
+    return { ...erased, identities, more: false };
+  },
+});
+
 export const conversationCommands = [
   conversationIngest,
   conversationReply,
@@ -1203,5 +1337,9 @@ export const conversationCommands = [
   conversationLinkContact,
   conversationMarkRead,
   conversationSandboxComment,
+  conversationRetentionSet,
+  conversationEraseContact,
+  conversationPurgeExpired,
+  conversationEraseConnection,
 ];
-export const conversationQueries = [conversationList, conversationCounts, conversationGet];
+export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention];

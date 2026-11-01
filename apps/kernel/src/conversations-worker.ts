@@ -261,3 +261,63 @@ async function runHide(deps: SendDeps, job: ConversationJob): Promise<string> {
   if (answer.kind === 'unknown') throw new Error('hide outcome unknown');
   return answer.kind;
 }
+
+// The batches of threads one org's purge may take in one daily run, and the orgs one run reaches: a backlog (a long retention just
+// shortened, a first run on old data) is worked off over days rather than in one long transaction chain.
+const PURGE_ORGS = 200;
+const PURGE_BATCHES_PER_ORG = 25;
+const PURGE_BATCH = 200;
+
+// The daily retention purge of the conversation core (CV6): each org that holds a thread past its retention (an owner's choice of
+// 6, 12 or 24 months, or none; the deployment default is 24) gets the purge command in its own system context, in batches. A failing
+// org is logged by name of the error and left for the next run, so one org cannot hold the others behind it. Returns the threads
+// deleted. Nothing a customer wrote is read or logged: only counts.
+export async function purgeExpiredConversations(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.conversation_purge_due(${PURGE_ORGS}::int)`.execute(deps.workerDb);
+  let threads = 0;
+  for (const { org_id: orgId } of rows) {
+    try {
+      for (let batch = 0; batch < PURGE_BATCHES_PER_ORG; batch++) {
+        const out = await deps.runtime.execute<{ threads: number; more: boolean }>('kernel.conversation.purge_expired', { limit: PURGE_BATCH }, { actor: SYSTEM, orgId });
+        threads += out.threads;
+        if (!out.more) break;
+      }
+    } catch (error) {
+      console.error(`[conversations] retention purge of org ${orgId.slice(0, 8)} failed`, error instanceof Error ? error.name : 'error');
+    }
+  }
+  return threads;
+}
+
+// The requests of Meta's data deletion callback that name conversations (crove_kernel.conversation_deletion_*): for each open
+// request that is due, the connections its keyed hash names are closed (as a platform's deletion closes them: the credential is
+// forgotten) and their conversations erased, each in the connection's own org, then the request is completed. A request that names
+// no connection is completed with none. Every step is idempotent, so a pass that dies half way is run again whole; a request that
+// fails is put off five minutes in the database. Returns how many requests it completed.
+export async function runConversationDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
+  const { rows } = await sql<{ code: string; org_id: string | null; connection_id: string | null }>`
+    SELECT code, org_id, connection_id FROM crove_kernel.conversation_deletion_claim(50::int)`.execute(deps.workerDb);
+  const byCode = new Map<string, Array<{ orgId: string; connectionId: string }>>();
+  for (const row of rows) {
+    const connections = byCode.get(row.code) ?? [];
+    if (row.org_id && row.connection_id) connections.push({ orgId: row.org_id, connectionId: row.connection_id });
+    byCode.set(row.code, connections);
+  }
+  let completed = 0;
+  for (const [code, connections] of byCode) {
+    try {
+      for (const c of connections) {
+        const options = { actor: SYSTEM, orgId: c.orgId };
+        await deps.runtime.execute('kernel.channel.revoke_by_platform', { connectionId: c.connectionId }, options);
+        await deps.runtime.execute('kernel.conversation.erase_connection', { connectionId: c.connectionId }, options);
+      }
+      await sql`SELECT crove_kernel.conversation_deletion_complete(${code}, ${connections.length}::int)`.execute(deps.workerDb);
+      completed++;
+    } catch (error) {
+      // By code only: nothing of the request or the connections goes to the log.
+      console.error(`[conversations] deletion request ${code.slice(0, 8)} not completed`, error instanceof Error ? error.name : 'error');
+      await sql`SELECT crove_kernel.conversation_deletion_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
+    }
+  }
+  return completed;
+}
