@@ -26,4 +26,4 @@ REVOKE ALL ON FUNCTION crove_crm.import_expired(timestamptz, integer) FROM PUBLI
 GRANT EXECUTE ON FUNCTION crove_crm.import_expired(timestamptz, integer) TO crove_worker;
 
 -- The worker's queue (apps/kernel/src/crm-worker.ts): the daily sweep, scheduled when the crm module is installed.
-SELECT crove_jobs.create_queue('crm-import-expire', '{"policy":"standard"}'::jsonb);
+SELECT crove_jobs.create_queue('crm-import-expire', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
