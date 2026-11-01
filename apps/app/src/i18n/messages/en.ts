@@ -6543,6 +6543,7 @@ export const en = {
       import: {
         cancel: 'Cancel a contact import',
         commit: 'Import contacts from a file',
+        expire: 'Delete contact import rows older than 7 days',
         preview: 'Preview a contact import',
         stage: 'Stage a contact file for preview',
       },

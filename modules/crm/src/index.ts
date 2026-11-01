@@ -14,7 +14,7 @@ export * from './bookings.ts';
 export * from './agent.ts';
 export * from './booking-feed.ts';
 export * from './contacts.ts';
-export { importCancel, importCommands, importCommit, importPreview, importQueries, importStage } from './import.ts';
+export { importCancel, importCommands, importCommit, importExpire, importPreview, importQueries, importStage } from './import.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands];
 export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...importQueries];

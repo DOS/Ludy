@@ -6542,6 +6542,7 @@ export const vi = {
       import: {
         cancel: 'Hủy lần nhập liên hệ',
         commit: 'Nhập liên hệ từ tệp',
+        expire: 'Xóa các dòng nhập liên hệ quá 7 ngày',
         preview: 'Xem trước lần nhập liên hệ',
         stage: 'Đọc tệp liên hệ để xem trước',
       },

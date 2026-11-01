@@ -213,7 +213,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage });
     expect(kernel.modules).toEqual(['kernel']);
     // As an earlier run with finance and notes left them (#1471): their cron schedules, and a tick each queued.
-    const crons = [QUEUES.periodBalanceVerify, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
+    const crons = [QUEUES.periodBalanceVerify, QUEUES.crmImportExpire, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
     for (const queue of crons) {
       await adminQuery("INSERT INTO crove_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
       await adminQuery('INSERT INTO crove_jobs.job (name) VALUES ($1)', [queue]);
