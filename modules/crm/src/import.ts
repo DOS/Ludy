@@ -194,10 +194,11 @@ async function expireStale(ctx: CommandContext): Promise<void> {
   if (stale.length === 0) return;
   const ids = stale.map((s) => s.id);
   await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).execute();
-  await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+  await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
 }
 
-const clip = (value: string | null, max: number): string | null => (value === null ? null : value.slice(0, max));
+// An invalid row is kept as read for the preview, minus the control characters (a NUL cannot be stored) and cut to the column.
+const clip = (value: string | null, max: number): string | null => (value === null ? null : value.replace(/\p{Cc}/gu, ' ').slice(0, max));
 
 export const importStage = defineCommand({
   name: 'crm.import.stage',
@@ -237,7 +238,7 @@ export const importStage = defineCommand({
         batch_id: batch.id,
         row_no: x.rowNo,
         kind: 'person' as const,
-        name: x.raw.name.trim().slice(0, 1000),
+        name: clip(x.raw.name.trim(), 1000) ?? '',
         tax_code: clip(cell(x.raw.taxCode), 40),
         email: clip(cell(x.raw.email), 1000),
         phone: clip(cell(x.raw.phone), 100),
@@ -260,14 +261,16 @@ export const importStage = defineCommand({
   },
 });
 
-async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId'>, input: { batchId: string; outcome?: ImportOutcome | undefined; after?: number | undefined; limit?: number | undefined }): Promise<ImportPreview> {
+async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>, input: { batchId: string; outcome?: ImportOutcome | undefined; after?: number | undefined; limit?: number | undefined }): Promise<ImportPreview> {
   const row = await ctx.trx
     .selectFrom('crove_crm.import_batch')
-    .select([...BATCH_COLUMNS, sql<boolean>`created_at < now() - ${sql.raw(`interval '${IMPORT_STAGED_DAYS} days'`)}`.as('stale')])
+    .select([...BATCH_COLUMNS, 'created_by', sql<boolean>`created_at < now() - ${sql.raw(`interval '${IMPORT_STAGED_DAYS} days'`)}`.as('stale')])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', input.batchId)
     .executeTakeFirst();
   if (!row) throw notFound();
+  // The rows are personal data read from a person's file: the person who staged them, an owner or an admin read them.
+  if (row.created_by !== userOf(ctx.actor) && ctx.role !== 'owner' && ctx.role !== 'admin') throw new DomainError('IMPORT_FORBIDDEN', 403, 'Chỉ người nhập tệp, chủ sở hữu hoặc quản trị viên mới xem được lần nhập này');
   const batch = batchView(row, row.stale);
   if (batch.status !== 'staged') return { batch, rows: [], more: false };
   const limit = input.limit ?? IMPORT_PREVIEW_PAGE;
@@ -345,6 +348,21 @@ interface StagedRow extends Candidate {
   reason: ImportReason | null;
 }
 
+// Sets a party's tax code when no party holds it; false when the unique index refuses. A savepoint keeps the refusal from
+// ending the commit's transaction.
+async function fillTaxCode(ctx: CommandContext, partyId: string, taxCode: string): Promise<boolean> {
+  await sql`SAVEPOINT import_tax_code`.execute(ctx.trx);
+  try {
+    await ctx.trx.updateTable('crove_kernel.party').set({ tax_code: taxCode }).where('org_id', '=', ctx.orgId).where('id', '=', partyId).where('tax_code', 'is', null).execute();
+    await sql`RELEASE SAVEPOINT import_tax_code`.execute(ctx.trx);
+    return true;
+  } catch (error) {
+    if ((error as { code?: string }).code !== '23505') throw error;
+    await sql`ROLLBACK TO SAVEPOINT import_tax_code`.execute(ctx.trx);
+    return false;
+  }
+}
+
 export const importCommit = defineCommand({
   name: 'crm.import.commit',
   input: zImportCommit,
@@ -381,6 +399,8 @@ export const importCommit = defineCommand({
 
     let created = 0;
     let updated = 0;
+    // What the rows created in this commit hold, so a duplicate row's fill never gives their tax code, email or phone to an old party.
+    const taken = { tax: new Set<string>(), email: new Set<string>(), phone: new Set<string>() };
     for (const c of live) {
       const v = verdicts.get(c.rowNo) as Verdict;
       if (v.outcome === 'new') {
@@ -397,6 +417,10 @@ export const importCommit = defineCommand({
           continue;
         }
         created++;
+        if (c.taxCode) taken.tax.add(c.taxCode);
+        if (c.email) taken.email.add(c.email.toLowerCase());
+        const pk = phoneKey(c.phone);
+        if (pk) taken.phone.add(pk);
         await ctx.activity('kernel.party', id, 'party.imported', 'Nhập từ tệp');
         continue;
       }
@@ -411,14 +435,16 @@ export const importCommit = defineCommand({
           .forUpdate()
           .executeTakeFirst();
         if (party && locked) {
-          const taxFree = c.taxCode !== null && locked.tax_code === null && !existing.some((p) => p.tax_code === c.taxCode);
+          const pk = phoneKey(c.phone);
           const set = {
-            ...(locked.email === null && c.email !== null ? { email: c.email } : {}),
-            ...(locked.phone === null && c.phone !== null ? { phone: c.phone } : {}),
+            ...(locked.email === null && c.email !== null && !taken.email.has(c.email.toLowerCase()) ? { email: c.email } : {}),
+            ...(locked.phone === null && c.phone !== null && !(pk && taken.phone.has(pk)) ? { phone: c.phone } : {}),
             ...(locked.address === null && c.address !== null ? { address: c.address } : {}),
-            ...(taxFree ? { tax_code: c.taxCode } : {}),
           };
-          if (Object.keys(set).length > 0) {
+          // The tax code is unique in the org, whoever holds it (a party out of reach of this member, one marked a duplicate, one
+          // made a moment ago): it is tried on its own, and a refusal by the unique index leaves it out and nothing else.
+          const taxFilled = c.taxCode !== null && locked.tax_code === null && !taken.tax.has(c.taxCode) && (await fillTaxCode(ctx, locked.id, c.taxCode));
+          if (Object.keys(set).length > 0 || taxFilled) {
             await ctx.trx
               .updateTable('crove_kernel.party')
               .set({ ...set, version: locked.version + 1, updated_at: ctx.now })

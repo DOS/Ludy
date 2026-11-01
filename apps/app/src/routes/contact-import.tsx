@@ -47,6 +47,8 @@ export function ContactImportPage() {
     orpc.crm.contactImport.stage.mutationOptions({
       onSuccess: (preview) => {
         setStaged(preview);
+        setMore([]);
+        setMoreHas(null);
         setOutcome('all');
         setStep('preview');
       },
@@ -70,12 +72,24 @@ export function ContactImportPage() {
     enabled: step === 'preview' && batchId !== undefined && outcome !== 'all',
   });
   const [more, setMore] = useState<ImportPreview['rows']>([]);
+  // Whether the pages loaded after the first one left rows unread; null until one is loaded.
+  const [moreHas, setMoreHas] = useState<boolean | null>(null);
+  // The batch and filter the screen shows now: an answer that comes back after either changed belongs to a list no longer there.
+  const viewKey = `${batchId ?? ''}|${outcome}`;
+  const shown = useRef(viewKey);
+  shown.current = viewKey;
   const loadMore = useMutation({
     mutationFn: async () => {
+      const key = viewKey;
       const last = (outcome === 'all' ? [...(staged?.rows ?? []), ...more] : [...(page.data?.rows ?? []), ...more]).at(-1)?.rowNo ?? 0;
-      return client.crm.contactImport.preview({ batchId: batchId as string, ...(outcome === 'all' ? {} : { outcome }), after: last, limit: 100 });
+      const next = await client.crm.contactImport.preview({ batchId: batchId as string, ...(outcome === 'all' ? {} : { outcome }), after: last, limit: 100 });
+      return { key, next };
     },
-    onSuccess: (next) => setMore((m) => [...m, ...next.rows]),
+    onSuccess: ({ key, next }) => {
+      if (key !== shown.current) return;
+      setMore((m) => [...m, ...next.rows]);
+      setMoreHas(next.more);
+    },
   });
 
   const reset = () => {
@@ -84,6 +98,8 @@ export function ContactImportPage() {
     setStaged(null);
     setDone(null);
     setMore([]);
+    setMoreHas(null);
+    setOnDuplicate('skip');
     setFilename('');
     setReadError(null);
     if (input.current) input.current.value = '';
@@ -103,7 +119,7 @@ export function ContactImportPage() {
   };
   const nameMapped = mapping.includes('name');
   const rows = outcome === 'all' ? [...(staged?.rows ?? []), ...more] : [...(page.data?.rows ?? []), ...more];
-  const hasMore = outcome === 'all' ? (more.length === 0 ? (staged?.more ?? false) : loadMore.data?.more ?? false) : more.length === 0 ? (page.data?.more ?? false) : loadMore.data?.more ?? false;
+  const hasMore = moreHas ?? (outcome === 'all' ? staged?.more : page.data?.more) ?? false;
   const counts = staged?.batch;
 
   return (
@@ -181,7 +197,7 @@ export function ContactImportPage() {
             <li><Badge variant="outline">{t('preview.conflict', { count: String(counts.conflictRows) })}</Badge></li>
             <li><Badge variant="outline">{t('preview.invalid', { count: String(counts.invalidRows) })}</Badge></li>
           </ul>
-          <Tabs value={outcome} onValueChange={(v) => { setOutcome(v as ImportOutcome | 'all'); setMore([]); }}>
+          <Tabs value={outcome} onValueChange={(v) => { setOutcome(v as ImportOutcome | 'all'); setMore([]); setMoreHas(null); }}>
             <TabsList aria-label={t('preview.filter')}>
               {OUTCOMES.map((o) => (
                 <TabsTrigger key={o} value={o}>

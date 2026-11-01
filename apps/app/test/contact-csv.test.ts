@@ -18,6 +18,13 @@ describe('parseContactCsv', () => {
     // A comma inside quotes does not decide the delimiter.
     expect(parseContactCsv('"a,b,c,d";"e"\n"x";"y"').rows).toEqual([['x', 'y']]);
   });
+
+  it('picks the delimiter that splits every line the same way, not the one that shows up most', () => {
+    // Semicolons separate the cells; the commas are in the addresses.
+    const parsed = parseContactCsv('Tên;Địa chỉ;Email\nAn;12 Lê Lợi, Quận 1, TP.HCM;an@khach.test\nBình;5 Hai Bà Trưng, Quận 3, TP.HCM, Việt Nam;binh@khach.test');
+    expect(parsed.header).toEqual(['Tên', 'Địa chỉ', 'Email']);
+    expect(parsed.rows[1]).toEqual(['Bình', '5 Hai Bà Trưng, Quận 3, TP.HCM, Việt Nam', 'binh@khach.test']);
+  });
 });
 
 describe('guessMapping', () => {
@@ -50,5 +57,12 @@ describe('rejectsCsv', () => {
     const back = parseContactCsv(csv);
     expect(back.header).toEqual(['Tên', 'Email', 'Lý do']);
     expect(back.rows[0]).toEqual(["'=SUM(A1)", 'a,"b"@x.test', 'Email chưa đúng']);
+  });
+
+  it('leaves a phone number or a plain number as it was, so the file can be imported again', () => {
+    const csv = rejectsCsv(['Tên', 'Điện thoại', 'Ghi chú'], [['An', '+84 912 345 678', '-5'], ['Bình', '+84 912', '@lệnh']], ['a', 'b'], 'Lý do');
+    const back = parseContactCsv(csv);
+    expect(back.rows[0]).toEqual(['An', '+84 912 345 678', '-5', 'a']);
+    expect(back.rows[1]).toEqual(['Bình', '+84 912', "'@lệnh", 'b']);
   });
 });

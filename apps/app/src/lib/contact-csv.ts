@@ -14,19 +14,27 @@ export interface ParsedCsv {
   rows: string[][];
 }
 
-// Comma, semicolon or tab: the one the first lines use most outside quotes.
+// Comma, semicolon or tab: the one that splits the header and the lines under it into the same number of cells (outside
+// quotes), the more the better; failing that, the one the header has most. A comma inside an address does not decide it.
 function delimiterOf(text: string): string {
-  const sample = text.split(/\r?\n/).slice(0, 20).join('\n');
-  const count = (d: string) => {
-    let n = 0;
-    let quoted = false;
-    for (const ch of sample) {
-      if (ch === '"') quoted = !quoted;
-      else if (ch === d && !quoted) n++;
-    }
-    return n;
-  };
-  return [',', ';', '\t'].map((d) => ({ d, n: count(d) })).sort((a, b) => b.n - a.n)[0]?.d ?? ',';
+  const lines = text.split(/\r?\n/).filter((l) => l.trim() !== '').slice(0, 20);
+  const counts = (d: string) =>
+    lines.map((line) => {
+      let n = 0;
+      let quoted = false;
+      for (const ch of line) {
+        if (ch === '"') quoted = !quoted;
+        else if (ch === d && !quoted) n++;
+      }
+      return n;
+    });
+  const scored = [',', ';', '\t'].map((d) => {
+    const n = counts(d);
+    const head = n[0] ?? 0;
+    return { d, head, consistent: head > 0 && n.every((x) => x === head) };
+  });
+  scored.sort((a, b) => Number(b.consistent) - Number(a.consistent) || b.head - a.head);
+  return scored[0]?.d ?? ',';
 }
 
 // Every cell is text; empty cells stay empty; blank lines are dropped. The first line is the header.
@@ -108,7 +116,9 @@ export function mappedRows(rows: readonly string[][], mapping: readonly (ImportF
 }
 
 // A cell that a spreadsheet would run as a formula is written as text.
-const safe = (cell: string): string => (/^[=+\-@\t\r]/.test(cell) ? `'${cell}` : cell);
+// A phone number such as +84 912 345 678 and a plain number are written as they are: they are no formula, and the file is
+// meant to be imported again.
+const safe = (cell: string): string => (/^[=+\-@\t\r]/.test(cell) && !/^[+-]?\d[\d ().,-]*$/.test(cell) ? `'${cell}` : cell);
 const quote = (cell: string): string => `"${safe(cell).replace(/"/g, '""')}"`;
 
 // The rows that were not imported, as a CSV with the file's own columns and a last column saying why.

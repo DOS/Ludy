@@ -120,13 +120,13 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     // Nothing reached party.
     expect((await o.parties()).map((p) => p.name)).toEqual(['Công ty Cũ']);
     // The preview pages in file order and filters by outcome.
-    const first = await o.query<ImportPreview>(o.viewer, 'crm.import.preview', { batchId: staged.batch.id, limit: 4 });
+    const first = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id, limit: 4 });
     expect(first.rows.map((r) => r.rowNo)).toEqual([1, 2, 3, 4]);
     expect(first.more).toBe(true);
-    const rest = await o.query<ImportPreview>(o.viewer, 'crm.import.preview', { batchId: staged.batch.id, after: 4 });
+    const rest = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id, after: 4 });
     expect(rest.rows.map((r) => r.rowNo)).toEqual([5, 6, 7, 8, 9]);
     expect(rest.more).toBe(false);
-    expect((await o.query<ImportPreview>(o.viewer, 'crm.import.preview', { batchId: staged.batch.id, outcome: 'invalid' })).rows.map((r) => r.rowNo)).toEqual([6, 7, 8]);
+    expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id, outcome: 'invalid' })).rows.map((r) => r.rowNo)).toEqual([6, 7, 8]);
   });
 
   it('calls a row that names two parties a conflict, and skips it', async () => {
@@ -191,6 +191,21 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const skipped = await o.commit(o.owner, second.batch.id, 'skip');
     expect(skipped.batch).toMatchObject({ updatedRows: 0 });
     expect((await admin((c) => c.query<{ address: string | null }>('SELECT address FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, other]))).rows[0]!.address).toBeNull();
+  });
+
+  it('never gives a duplicate a tax code, email or phone that a row created in the same commit holds', async () => {
+    const o = await org();
+    const id = await o.party({ name: 'Khách Cũ', email: 'cu@khach.test' });
+    const staged = await o.stage(o.owner, [
+      row({ name: 'Công ty Mới', taxCode: '0123456780', email: 'moi@khach.test', phone: '0903 111 222' }),
+      row({ name: 'Khách Cũ Lại', email: 'cu@khach.test', taxCode: '0123456780' }),
+      row({ name: 'Khách Cũ Nữa', email: 'cu@khach.test', phone: '0903 111 222' }),
+    ]);
+    const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
+    // The new row is made; the old party takes nothing the new one holds, and the commit does not fail on the tax code.
+    expect(done.batch).toMatchObject({ status: 'committed', createdRows: 1 });
+    const after = await admin((c) => c.query<{ tax_code: string | null; phone: string | null }>('SELECT tax_code, phone FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
+    expect(after.rows[0]).toEqual({ tax_code: null, phone: null });
   });
 
   it('judges the rows again at commit: a party made since the preview turns a new row into a skipped duplicate', async () => {
@@ -258,8 +273,12 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     await expect(o.stage(o.viewer, [row()])).rejects.toMatchObject({ status: 403 });
     const staged = await o.stage(o.lan, [row()]);
     await expect(o.commit(o.viewer, staged.batch.id)).rejects.toMatchObject({ status: 403 });
-    // The org's owner may decide a member's batch; the rows are readable by every role.
-    expect((await o.query<ImportPreview>(o.viewer, 'crm.import.preview', { batchId: staged.batch.id })).rows).toHaveLength(1);
+    // The rows are personal data from a person's file: the person who staged them, an owner or an admin read them, no one else.
+    await expect(o.query(o.viewer, 'crm.import.preview', { batchId: staged.batch.id })).rejects.toMatchObject({ code: 'IMPORT_FORBIDDEN', status: 403 });
+    await expect(o.query(o.huy, 'crm.import.preview', { batchId: staged.batch.id })).rejects.toMatchObject({ code: 'IMPORT_FORBIDDEN', status: 403 });
+    expect((await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id })).rows).toHaveLength(1);
+    expect((await o.query<ImportPreview>(o.owner, 'crm.import.preview', { batchId: staged.batch.id })).rows).toHaveLength(1);
+    // The org's owner may decide a member's batch.
     expect((await o.commit(o.owner, staged.batch.id)).batch.createdRows).toBe(1);
     await expect(rt.execute('crm.import.stage', { filename: 'x.csv', rows: [row()] }, { actor: { type: 'system', component: 'test' }, orgId: o.orgId })).rejects.toBeDefined();
   });
