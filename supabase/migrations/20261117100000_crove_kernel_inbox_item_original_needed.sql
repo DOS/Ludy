@@ -24,7 +24,8 @@ ALTER TABLE crove_kernel.inbox_item ADD CONSTRAINT inbox_item_kind_check
   CHECK (kind IN ('kernel.job.dead_lettered', 'finance.invoice.original_needed'));
 
 -- The detail of an original-needed item: provider, url and code, each a string or null (or absent), at least a url or a
--- code, shaped as the reader and zLookupHint (@crove/kernel-contract) write them. The size cap of the detail column (1 KB)
+-- code, shaped as the reader and zLookupHint (@crove/kernel-contract) write them (a link is printable ASCII after its host:
+-- the URL serializer percent-encodes the rest). The size cap of the detail column (1 KB)
 -- still holds. NOT VALID is not used: no row of the new kind exists yet.
 ALTER TABLE crove_kernel.inbox_item DROP CONSTRAINT IF EXISTS inbox_item_original_detail;
 ALTER TABLE crove_kernel.inbox_item ADD CONSTRAINT inbox_item_original_detail CHECK (
@@ -34,7 +35,7 @@ ALTER TABLE crove_kernel.inbox_item ADD CONSTRAINT inbox_item_original_detail CH
     AND COALESCE(pg_catalog.jsonb_typeof(detail -> 'url'), 'null') IN ('string', 'null')
     AND COALESCE(pg_catalog.jsonb_typeof(detail -> 'code'), 'null') IN ('string', 'null')
     AND ((detail ->> 'provider') IS NULL OR (detail ->> 'provider') IN ('misa', 'viettel', 'vnpt', 'bkav', 'easyinvoice', 'fpt'))
-    AND ((detail ->> 'url') IS NULL OR (pg_catalog.length(detail ->> 'url') <= 400 AND (detail ->> 'url') ~ '^https://[a-z0-9.-]+([/?][^[:space:]]*)?$'))
+    AND ((detail ->> 'url') IS NULL OR (pg_catalog.length(detail ->> 'url') <= 400 AND (detail ->> 'url') ~ '^https://[a-z0-9.-]+([/?][!-~]*)?$'))
     AND ((detail ->> 'code') IS NULL OR (detail ->> 'code') ~ '^[A-Za-z0-9]{6,40}$')
     AND ((detail ->> 'url') IS NOT NULL OR (detail ->> 'code') IS NOT NULL)));
 

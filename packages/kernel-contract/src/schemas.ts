@@ -202,7 +202,9 @@ export const zLookupHint = z.object({
   url: z
     .string()
     .max(400)
-    .regex(/^https:\/\/[a-z0-9.-]+(?:[/?][^\s]*)?$/)
+    // Printable ASCII after the host: what the reader writes (the URL serializer percent-encodes the rest) and what the
+    // database CHECK of an original-needed item's detail accepts (#2286).
+    .regex(/^https:\/\/[a-z0-9.-]+(?:[/?][!-~]*)?$/)
     .nullable(),
   code: z
     .string()

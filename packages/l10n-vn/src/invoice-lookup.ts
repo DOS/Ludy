@@ -41,6 +41,9 @@ export const LOOKUP_HINTS_MAX = 3;
 const URL_MAX = 400;
 // Text past this is not read: a hostile document must not make the reader slow.
 const TEXT_MAX = 200_000;
+// Links and codes kept before pairing: a mail made of thousands of them costs no more than this many (only 3 hints are
+// returned, so the rest could never be seen).
+const CANDIDATES_MAX = LOOKUP_HINTS_MAX * 3;
 
 // Labels (folded: no diacritics, lower case) that precede a lookup code. "Mã nhận hóa đơn" is what some providers call
 // it (the lookup code is the "mã nhận hóa đơn" of an E-invoice mail).
@@ -159,6 +162,7 @@ interface Found {
 function findLinks(text: string, sellerTaxCode: string | null | undefined): Array<Found & { provider: LookupProvider }> {
   const out: Array<Found & { provider: LookupProvider }> = [];
   for (const match of text.matchAll(TOKEN)) {
+    if (out.length >= CANDIDATES_MAX) break;
     let raw = match[0];
     if (raw.length > TOKEN_MAX || !raw.includes('.')) continue;
     // "Website:https://host/path" and "Website:host": cut the label that a missing space glued on.
@@ -180,6 +184,7 @@ function findCodes(text: string, sellerTaxCode: string | null | undefined): Arra
   for (const label of CODE_LABELS) {
     let from = 0;
     for (;;) {
+      if (out.length >= CANDIDATES_MAX) break;
       const at = folded.indexOf(label, from);
       if (at < 0) break;
       from = at + label.length;
