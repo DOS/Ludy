@@ -23,18 +23,18 @@ Tôi chỉ đọc các trang công khai, không nhập mã tra cứu nào và ch
 
 **Bước 2, để sau:** Ludy tự lấy CAPTCHA về cho người dùng gõ rồi tải XML (như cổng thuế). Việc này gọi ra ngoài tới trang chưa có tài liệu và điều khoản chưa đọc được, nên chỉ làm khi bước 1 chưa đủ, sau khi người thử tay từng nhà cung cấp, và tắt mặc định. Đã ghi thành ADR-0042, trạng thái Đề xuất.
 
-## Các việc dựng (sẽ tạo ở issue)
+## Các việc dựng (đã tạo, nối từ #2258)
 
-| Thứ tự | Việc | Mốc, ưu tiên |
-|---|---|---|
-| 1 | Đọc mã và đường dẫn tra cứu từ PDF và email | M3 Paid pilot, P2 |
-| 2 | Email chỉ có đường dẫn và mã trở thành mục Inbox; thẻ "Cần hóa đơn gốc" | M3 Paid pilot, P2 |
-| 3 | XML đến sau PDF: nâng cấp đề xuất đang chờ, hoặc đính kèm vào chứng từ đã ghi | M3 Paid pilot, P2 |
-| 4 | Thử tay các trang tra cứu bằng hóa đơn thử, điền bảng khảo sát | Icebox, P3, việc của con người |
-| 5 | Lõi lấy hóa đơn có người giải CAPTCHA | Icebox, P3 |
-| 6 | Bộ nối đầu tiên (MISA meInvoice) | Icebox, P3 |
+| Thứ tự | Việc | Mốc, ưu tiên | Issue |
+|---|---|---|---|
+| 1 | Đọc mã và đường dẫn tra cứu từ PDF và email | M3 Paid pilot, P2 | [#2267](https://github.com/DOS/Ludy/issues/2267) |
+| 2 | Email chỉ có đường dẫn và mã trở thành mục Inbox; thẻ "Cần hóa đơn gốc" | M3 Paid pilot, P2 | [#2268](https://github.com/DOS/Ludy/issues/2268) |
+| 3 | XML đến sau PDF: nâng cấp đề xuất đang chờ, hoặc đính kèm vào chứng từ đã ghi | M3 Paid pilot, P2 | [#2269](https://github.com/DOS/Ludy/issues/2269) |
+| 4 | Thử tay các trang tra cứu bằng hóa đơn thử, điền bảng khảo sát | Icebox, P3, việc của con người | [#2270](https://github.com/DOS/Ludy/issues/2270) |
+| 5 | Lõi lấy hóa đơn có người giải CAPTCHA | Icebox, P3 | [#2271](https://github.com/DOS/Ludy/issues/2271) |
+| 6 | Bộ nối đầu tiên (MISA meInvoice) | Icebox, P3 | [#2272](https://github.com/DOS/Ludy/issues/2272) |
 
 ## Việc cần ai
 
-- **Người thử tay (kế toán đối tác #61 hoặc chủ sở hữu tạo tài khoản thử):** thử từng trang tra cứu bằng một hóa đơn thử và đọc điều khoản (issue số 4). Chỉ cần khi muốn làm bước 2.
+- **Người thử tay (kế toán đối tác #61 hoặc chủ sở hữu tạo tài khoản thử):** thử từng trang tra cứu bằng một hóa đơn thử và đọc điều khoản ([#2270](https://github.com/DOS/Ludy/issues/2270)). Chỉ cần khi muốn làm bước 2.
 - **Chủ sở hữu hoặc PO Kế toán:** chấp nhận hay chưa ADR-0042 (bước 2). Nếu không trả lời, bước 2 không được dựng.

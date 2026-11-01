@@ -103,12 +103,12 @@ Open points for slice 1: how a PDF prints the code (layout varies by provider, s
 
 | Order | Slice | What | Milestone, priority | Issue |
 |---|---|---|---|---|
-| 1 | 1 | Reader of the lookup link and code (provider table, PDF and email text), no outbound call | M3 Paid pilot, P2 | TBD1 |
-| 2 | 1 | Email with only a link and code becomes an Inbox item; the "Cần hóa đơn gốc" card with the link, the code and the XML drop zone | M3 Paid pilot, P2 | TBD2 |
-| 3 | 1 | The XML that arrives after the PDF: upgrade a pending proposal, attach to a posted document | M3 Paid pilot, P2 | TBD3 |
-| 4 | check | Check the lookup pages by hand with test invoices and fill section 2 | Icebox, P3, `owner-action` | TBD4 |
-| 5 | 2 | The assisted fetch core: CAPTCHA relay, sealed session, egress allowlist, call ledger, flag | Icebox, P3 | TBD5 |
-| 6 | 2 | First provider adapter (MISA meInvoice, the clearest evidence) | Icebox, P3 | TBD6 |
+| 1 | 1 | Reader of the lookup link and code (provider table, PDF and email text), no outbound call | M3 Paid pilot, P2 | [#2267](https://github.com/DOS/Ludy/issues/2267) |
+| 2 | 1 | Email with only a link and code becomes an Inbox item; the "Cần hóa đơn gốc" card with the link, the code and the XML drop zone | M3 Paid pilot, P2 | [#2268](https://github.com/DOS/Ludy/issues/2268) |
+| 3 | 1 | The XML that arrives after the PDF: upgrade a pending proposal, attach to a posted document | M3 Paid pilot, P2 | [#2269](https://github.com/DOS/Ludy/issues/2269) |
+| 4 | check | Check the lookup pages by hand with test invoices and fill section 2 | Icebox, P3, `owner-action` | [#2270](https://github.com/DOS/Ludy/issues/2270) |
+| 5 | 2 | The assisted fetch core: CAPTCHA relay, sealed session, egress allowlist, call ledger, flag | Icebox, P3 | [#2271](https://github.com/DOS/Ludy/issues/2271) |
+| 6 | 2 | First provider adapter (MISA meInvoice, the clearest evidence) | Icebox, P3 | [#2272](https://github.com/DOS/Ludy/issues/2272) |
 
 More adapters (EasyInvoice, then VNPT with its per-seller host) are filed one at a time when the check issue shows their forms and terms. Slice 2 moves into a milestone only when a real user of slice 1 still has to open provider pages too often, or the pilot partner asks for it.
 
