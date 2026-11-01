@@ -34,6 +34,8 @@ Ludy already holds the books (Finance), the bank and card lines, the documents a
 
 ### Out of v1 (and stays out until the owner asks)
 
+> **Amended 2026-11-01 (#2283):** the owner asked for users to run ads from Ludy, with full campaigns. Creating and editing campaigns, budgets, pausing and resuming, and Boost move from this list into [ads-write.md](ads-write.md) and [ADR-0042](../adr/0042-ads-write-running-ads.md) (proposed, behind an approval before any spend; no build issue opens until the owner approves its first slice). Audiences, custom audiences and conversion events stay out, as its section 6 says. The rest of this table stands.
+
 | Out | Why |
 |---|---|
 | Creating or editing campaigns, ads, creatives | A write path to money. Needs its own risk model, approvals (R3, four-eyes) and each platform's write review |
