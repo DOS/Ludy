@@ -32,7 +32,7 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/contacts/import$`));
 
   await test.step('choosing the file shows its columns, already matched by their headers', async () => {
-    await page.getByLabel('Tệp CSV').setInputFiles({ name: 'khach-hang.csv', mimeType: 'text/csv', buffer: Buffer.from(CSV, 'utf-8') });
+    await page.getByLabel('Tệp Excel hoặc CSV').setInputFiles({ name: 'khach-hang.csv', mimeType: 'text/csv', buffer: Buffer.from(CSV, 'utf-8') });
     await expect(page.getByText('Tệp khach-hang.csv có 5 dòng')).toBeVisible();
     await expect(page.getByRole('combobox', { name: 'Thông tin của cột Mã số thuế' })).toHaveValue('taxCode');
     await expect(page.getByRole('combobox', { name: 'Thông tin của cột Số điện thoại' })).toHaveValue('phone');
