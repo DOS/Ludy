@@ -67,6 +67,14 @@ describe('configuration guards', () => {
     // The sandbox bank feed (ADR-0039): made-up bank lines, never on a deployment others reach.
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, BANK_FEED_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/BANK_FEED_SANDBOX/);
+    // The sandbox ad platform (ADR-0040): made-up ad spend next to the real books, never on a deployment others reach that
+    // runs the ads module. docker compose falls back to true, so a public deployment sets false, or leaves the module out.
+    const publicUrl = { PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/ADS_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance' })).not.toThrow();
     expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).not.toThrow();
   });
 

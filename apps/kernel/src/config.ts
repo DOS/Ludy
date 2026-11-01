@@ -645,6 +645,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.BANK_FEED_SANDBOX === 'true') {
       throw new Error('BANK_FEED_SANDBOX=true writes made-up bank lines into the books; it is for local development only');
     }
+    // ADR-0040: the sandbox ad platform reports made-up spend, which the Ads screen sets beside the real ledger. docker
+    // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
+    if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
+      throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
     if (config.AUTH_SESSION_CHECK === 'off') {
       throw new Error('AUTH_SESSION_CHECK=off keeps signed-out sessions working; use db (bundled Supabase Auth) or jwt');
     }
