@@ -205,7 +205,8 @@ REVOKE ALL ON FUNCTION crove_ads.ads_due(uuid, uuid, int) FROM PUBLIC, crove_ten
 GRANT EXECUTE ON FUNCTION crove_ads.ads_due(uuid, uuid, int) TO crove_worker;
 
 -- Removes the sync runs of every org older than p_before (the worker login's alone, from the daily sweep: 90 days), as
--- the retention sweep does for its tables. Returns how many it removed.
+-- the retention sweep does for its tables. Returns how many it removed. A cutoff newer than a day ago is refused, so a
+-- wrong clock or argument cannot clear every org's log in one statement.
 CREATE OR REPLACE FUNCTION crove_ads.sync_runs_prune(p_before timestamptz)
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -213,6 +214,9 @@ DECLARE
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF p_before IS NULL OR p_before > pg_catalog.now() - interval '1 day' THEN
+    RAISE EXCEPTION 'ADS_PRUNE_CUTOFF' USING ERRCODE = '22023';
   END IF;
   DELETE FROM crove_ads.ad_sync_run r WHERE r.started_at < p_before;
   GET DIAGNOSTICS v_n = ROW_COUNT;

@@ -2,10 +2,10 @@
 -- Crove kernel (issue #2217): the org purge deletes a closing org's ad accounts and their figures. Idempotent; applied files stay
 -- untouched.
 --
--- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115090000) hold what ad platforms reported for the org's ad
+-- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115100000) hold what ad platforms reported for the org's ad
 -- accounts: daily aggregates and the sync log. They name no person and nothing the books keep, so they go with the org's
--- other working rows, before the channel connections they reference. Otherwise this is the body of 20261114100100 (the
--- newest), with its signature, owner, grants and every list and step it had.
+-- other working rows, before the channel connections they reference. Otherwise this is the body of 20261115090100 (the
+-- newest, which added the deals), with its signature, owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -43,7 +43,7 @@ DECLARE
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.calendar_credential',
     'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
-    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.event_type'];
+    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
     'crove_social.calendar_feed', 'crove_social.calendar_note', 'crove_social.channel_policy',

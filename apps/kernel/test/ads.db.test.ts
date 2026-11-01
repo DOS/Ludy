@@ -16,7 +16,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
-import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { CredentialVault, DomainError, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
@@ -266,6 +266,10 @@ suite('ads on PostgreSQL (#2217)', () => {
     const first = (await ok('ads/connectSandbox', owner, { displayName: 'Hai lần', idempotencyKey: key })) as { connectionId: string; adAccountId: string };
     const second = (await ok('ads/connectSandbox', owner, { displayName: 'Hai lần', idempotencyKey: key })) as { connectionId: string; adAccountId: string };
     expect(second).toEqual(first);
+    expect(await live()).toBe(before + 1);
+    // A retry whose link is then refused (the same key with another entity) leaves the account's own connection alone.
+    const clash = await rpc('ads/connectSandbox', await tokenFor(owner), { displayName: 'Hai lần', legalEntityId: randomUUID(), idempotencyKey: key });
+    expect(clash.status).toBeGreaterThanOrEqual(400);
     expect(await live()).toBe(before + 1);
     accounts.set('Hai lần', first);
   });
@@ -524,6 +528,21 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(await view(owner, odd.adAccountId)).toMatchObject({ connectionStatus: 'active', lastErrorKind: 'bad_request' });
     const refusal = await row<{ error_code: string }>(`SELECT error_code FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2 AND status = 'failed'`, [orgId, odd.adAccountId]);
     expect(refusal).toEqual([{ error_code: 'ADS_ROWS_INVALID' }]);
+    // The database failing in a way that passes (here a deadlock the runtime names RETRY) is a passing failure: recorded as
+    // such, and left to the job's retry, not shown as a refusal that would come every hour.
+    const busy = await connect('Cơ sở dữ liệu bận');
+    const deadlocked = new Proxy(worker, {
+      get(target, prop) {
+        const value = Reflect.get(target, prop, target) as unknown;
+        if (prop === 'execute') {
+          return (name: string, input: unknown, options: unknown) =>
+            name === 'ads.sync.record' ? Promise.reject(new DomainError('RETRY', 409, 'deadlock')) : (target.execute as (...args: unknown[]) => Promise<unknown>).call(target, name, input, options);
+        }
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await expect(runAdsSync({ runtime: deadlocked, broker: vault, platforms: sandbox }, { orgId, connectionId: busy.connectionId })).rejects.toMatchObject({ code: 'RETRY' });
+    expect(await view(owner, busy.adAccountId)).toMatchObject({ connectionStatus: 'active', lastErrorKind: 'transient' });
   });
 
   it('reads an answer with too many rows in halves of its days', async () => {
@@ -636,6 +655,9 @@ suite('ads on PostgreSQL (#2217)', () => {
     const before = await total();
     expect(await pruneAdsRuns(workerDb, new Date())).toBeGreaterThanOrEqual(1);
     expect(await total()).toBeLessThan(before);
+    // A cutoff in the last day (a wrong clock) clears nothing and is refused.
+    await expect(pruneAdsRuns(workerDb, new Date(Date.now() + 100 * 86_400_000))).rejects.toThrow('ADS_PRUNE_CUTOFF');
+    expect(await total()).toBeGreaterThan(0);
     const appClient = await pool.connect();
     try {
       await expect(appClient.query(`SELECT crove_ads.sync_runs_prune(now())`)).rejects.toMatchObject({ code: '42501' });

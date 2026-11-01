@@ -2032,7 +2032,7 @@ export function createRpcHandler(
             expiresAt: null,
             credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
           };
-          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
           try {
             const { adAccountId } = await runtime.execute<{ adAccountId: string }>(
               'ads.account.link',
@@ -2042,8 +2042,9 @@ export function createRpcHandler(
             return { connectionId, adAccountId };
           } catch (error) {
             // The link was refused (an entity to choose, one the caller may not use): no connection is left behind that no screen
-            // lists, with its sealed credential.
-            await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+            // lists, with its sealed credential. A connection this call only reconnected (a retry of a call whose answer was
+            // lost) is the account's own, with its history: it stays.
+            if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
             throw error;
           }
         }),

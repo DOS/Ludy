@@ -141,6 +141,13 @@ export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ 
     } else if (error instanceof DomainError) {
       // The connection went away or the account was removed while the job ran: nothing to record.
       if (error.code === 'ADS_CONNECTION_INACTIVE' || error.code === 'ADS_ACCOUNT_NOT_FOUND') return none;
+      // The database failed in a way that passes (a deadlock or serialization failure, an overload, a lock or statement
+      // timeout, a dropped connection): the runtime says so with these codes, the cursor did not move, so it is a passing
+      // failure like the platform's own, left to the job's retry.
+      if (error.code === 'RETRY' || error.code === 'OVERLOADED' || error.code === 'INTERNAL') {
+        await deps.runtime.execute('ads.sync.record_failure', { adAccountId: target.adAccountId, errorKind: 'transient', errorCode: error.code, ...(window ? { window } : {}) }, options);
+        throw error;
+      }
       // The command refused what the platform handed it (a day outside the window, a changed currency, a row that does not
       // fit): the same answer would come every hour, so it is recorded on the account and shown, not retried into the
       // dead letters.
