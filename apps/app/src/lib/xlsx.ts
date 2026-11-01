@@ -415,7 +415,9 @@ export async function readFirstSheet(file: Uint8Array, options: ReadOptions = {}
   const sheetPath = firstSheetPath(await text('xl/workbook.xml'), await text('xl/_rels/workbook.xml.rels'));
   const sheet = await text(sheetPath);
   if (sheet === null) throw new XlsxError('not_xlsx', 'no worksheet');
-  if (options.refuseFormulas && /<(?:[A-Za-z_][\w.-]*:)?f[\s>/]/.test(sheet)) throw new XlsxError('formula', 'the sheet holds a formula cell');
+  // The extension lists (x14 data validations, conditional formats) hold formulas that belong to no cell: they are left out.
+  const cells = sheet.replace(/<((?:[A-Za-z_][\w.-]*:)?extLst)[\s>][\s\S]*?<\/\1>/g, '');
+  if (options.refuseFormulas && /<(?:[A-Za-z_][\w.-]*:)?f[\s>/]/.test(cells)) throw new XlsxError('formula', 'the sheet holds a formula cell');
   const strings = await text('xl/sharedStrings.xml');
   return sheetRows(sheet, strings ? sharedStrings(strings) : []);
 }

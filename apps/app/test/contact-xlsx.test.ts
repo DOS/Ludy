@@ -4,6 +4,8 @@
 // a file that is not a workbook or a zip bomb is refused. The sample workbook the page offers reads back as its own columns.
 import { describe, expect, it } from 'vitest';
 import { guessMapping, mappedRows, parseContactCsv, sheetToTable } from '../src/lib/contact-csv.ts';
+import { en } from '../src/i18n/messages/en.ts';
+import { vi } from '../src/i18n/messages/vi.ts';
 import { XlsxError, readFirstSheet, writeWorkbook, zipStored } from '../src/lib/xlsx.ts';
 
 const TABLE = [
@@ -37,6 +39,16 @@ describe('an .xlsx of contacts', () => {
     expect(table.header).toEqual(['Tên', '', 'Điện thoại']);
     expect(table.rows).toEqual([['An', '', '912345678'], ['Bình', '', '']]);
     expect(table.numeric).toEqual([[false, false, true], [false, false, false]]);
+  });
+
+  it('puts back the zero a landline and a branch tax code lost too', () => {
+    const rows = [['An', '2838123456', '123456789001'], ['Bình', '5838123456', '1234567890123'], ['Cường', '1838123456', '12345678']];
+    const numeric = [[false, true, true], [false, true, true], [false, true, true]];
+    const mapped = mappedRows(rows, ['name', 'phone', 'taxCode'], numeric);
+    expect(mapped[0]).toMatchObject({ phone: '02838123456', taxCode: '0123456789001' });
+    // A 10-digit number that cannot be a landline with its zero, and a tax code of another length, are left as they are.
+    expect(mapped[1]).toMatchObject({ phone: '05838123456', taxCode: '1234567890123' });
+    expect(mapped[2]).toMatchObject({ phone: '1838123456', taxCode: '12345678' });
   });
 
   it('puts back the zero a number cell lost, in a phone or tax code of nine digits only', () => {
@@ -80,10 +92,38 @@ describe('an .xlsx of contacts', () => {
     await expect(readFirstSheet(new Uint8Array(5 * 1024 * 1024 + 1), { refuseMacros: true, refuseFormulas: true })).rejects.toMatchObject({ reason: 'too_large' });
   });
 
+  it('does not call a sheet formula-bearing for the formulas of its validation lists', async () => {
+    const enc = (s: string) => new TextEncoder().encode(s);
+    const ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+    const sheet = `<worksheet ${ns}><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Tên</t></is></c></row></sheetData><extLst><ext><x14:dataValidations xmlns:x14="x" xmlns:xm="y"><x14:dataValidation><x14:formula1><xm:f>Sheet2!$A$1:$A$3</xm:f></x14:formula1></x14:dataValidation></x14:dataValidations></ext></extLst></worksheet>`;
+    const book = zipStored([
+      { name: 'xl/workbook.xml', data: enc(`<workbook ${ns}><sheets><sheet name="A" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`) },
+      { name: 'xl/_rels/workbook.xml.rels', data: enc('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="x/worksheet" Target="worksheets/sheet1.xml"/></Relationships>') },
+      { name: 'xl/worksheets/sheet1.xml', data: enc(sheet) },
+    ]);
+    expect((await readFirstSheet(book, { refuseFormulas: true })).size).toBe(1);
+  });
+
+  it('bounds the table it builds: a stray far cell and a huge sheet do not make millions of cells', () => {
+    const rows = new Map<number, Map<number, { kind: 'text' | 'number'; value: string }>>();
+    for (let r = 1; r <= 30_000; r++) rows.set(r, new Map([[0, { kind: 'text', value: r === 1 ? 'Tên' : `Khách ${r}` }], [18_000, { kind: 'text', value: 'x' }]]));
+    const table = sheetToTable(rows);
+    // The columns stop at 100, and the rows one past what the import takes: the page then says there are too many.
+    expect(table.header.length).toBeLessThanOrEqual(100);
+    expect(table.rows.length).toBeLessThanOrEqual(2001);
+    expect(table.rows.length).toBeGreaterThan(2000);
+  });
+
   it('reads back a sample workbook with the columns the import knows', async () => {
     const sample = writeWorkbook([{ name: 'Liên hệ', widths: [28, 22, 18, 28, 18, 36], headerRows: 1, textColumns: [2, 3], rows: [['Tên', 'Loại (công ty hay cá nhân)', 'Mã số thuế', 'Email', 'Điện thoại', 'Địa chỉ'], ['Công ty Mẫu', '', '', 'mau@example.com', '0900 000 000', '1 Đường Mẫu, Quận 1']] }]);
     const table = sheetToTable(await readFirstSheet(sample));
     expect(table.header).toHaveLength(6);
     expect(table.rows[0]?.[4]).toBe('0900 000 000');
+  });
+
+  it('maps the headers of the sample it offers, in both languages, to the fields they name', () => {
+    const fields = ['name', 'kind', 'taxCode', 'email', 'phone', 'address'] as const;
+    expect(guessMapping(fields.map((f) => vi.contactImport.field[f]))).toEqual([...fields]);
+    expect(guessMapping(fields.map((f) => en.contactImport.field[f]))).toEqual([...fields]);
   });
 });

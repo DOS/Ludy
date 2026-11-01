@@ -22,7 +22,7 @@ type FileState =
   | { status: 'none' }
   | { status: 'reading' }
   | { status: 'read'; name: string; rows: OpeningBalanceRow[]; extraColumns: boolean }
-  | { status: 'problem'; problem: SheetProblem | XlsxError['reason'] };
+  | { status: 'problem'; problem: SheetProblem | Exclude<XlsxError['reason'], 'macro' | 'formula'> };
 
 function saveBytes(bytes: Uint8Array, filename: string) {
   const blob = new Blob([bytes as Uint8Array<ArrayBuffer>], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -87,7 +87,7 @@ function OpeningBalanceForm() {
       setFile(result.ok ? { status: 'read', name: picked.name, rows: result.rows, extraColumns: result.extraColumns } : { status: 'problem', problem: result.problem });
     } catch (error) {
       if (current !== pick.current) return;
-      setFile({ status: 'problem', problem: error instanceof XlsxError ? error.reason : 'not_xlsx' });
+      setFile({ status: 'problem', problem: error instanceof XlsxError && error.reason !== 'macro' && error.reason !== 'formula' ? error.reason : 'not_xlsx' });
     }
   };
 
