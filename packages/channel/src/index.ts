@@ -60,10 +60,14 @@ export function isChannelProvider(value: string): value is ChannelProviderId {
   return (CHANNEL_PROVIDERS as readonly string[]).includes(value);
 }
 
+// The provider of an account an OAuth connector connects: a channel provider, or an ad platform of @crove/ad-platform
+// (ADR-0040), whose ids end in `_ads` and whose connections the Social screens leave out.
+export type ConnectorProviderId = ChannelProviderId | `${string}_ads`;
+
 // An account a provider connected, with the tokens the kernel seals. `secret` never leaves the server: the
 // caller seals it with the credential broker and drops it.
 export interface ConnectedAccount {
-  provider: ChannelProviderId;
+  provider: ConnectorProviderId;
   externalAccountId: string;
   displayName: string;
   scopes: string[];

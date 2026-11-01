@@ -102,6 +102,9 @@ export const zAdAccountView = z.object({
   id: zId,
   connectionId: zId,
   connectionStatus: z.enum(['active', 'expired', 'revoked', 'error']),
+  // The permissions the connection's token holds beyond reading ad reports (empty for the sandbox and for a token that holds
+  // only ads_read): the screen says when it can do more than read.
+  extraScopes: z.array(z.string()),
   provider: z.string(),
   name: z.string(),
   // The platform's, from the first sync: null before it.

@@ -224,6 +224,22 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, ...meta }).CHANNEL_META_APP_ID).toBe('1234567890');
   });
 
+  // #2218: the Meta app for ad accounts is its own pair (it may hold the same values as the Pages app), both or neither,
+  // a numeric id, and over https on a public URL like any channel OAuth app.
+  it('takes the Meta ads app as a pair with a numeric id, over https on a public URL', () => {
+    const ads = { CHANNEL_META_ADS_APP_ID: '1234567890', CHANNEL_META_ADS_APP_SECRET: 'meta-secret-0123456789abcdef' };
+    const auth = { PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
+    expect(loadConfig({ ...base, ...ads }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
+    expect(loadConfig(base).CHANNEL_META_ADS_APP_ID).toBeUndefined();
+    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_APP_ID: '1234567890' })).toThrow(/both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET/);
+    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_APP_SECRET: 'x' })).toThrow(/both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...ads, CHANNEL_META_ADS_APP_ID: 'not-a-number' })).toThrow(/numeric id/);
+    // The same app as the Pages one is fine.
+    expect(() => loadConfig({ ...base, ...ads, CHANNEL_META_APP_ID: ads.CHANNEL_META_ADS_APP_ID, CHANNEL_META_APP_SECRET: ads.CHANNEL_META_ADS_APP_SECRET })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...auth, ...ads, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
+    expect(loadConfig({ ...base, ...auth, ...ads, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
+  });
+
   // #212: org exports are sealed at rest on every public deployment; a key must be 32 bytes.
   it('requires a well-formed export key to serve a public URL', () => {
     const publicUrl = { ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };

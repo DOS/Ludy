@@ -11,7 +11,8 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
@@ -57,12 +58,36 @@ const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 const DAY_MS = 86_400_000;
 
+// The OAuth connector of Meta ads the API holds in these tests, made of fixed answers: Meta's dialog and token exchange are
+// not reached from a test. A grant covers two ad accounts.
+const META_GRANT = { write: false };
+const META_CONNECTOR: OAuthConnector = {
+  provider: 'meta_ads',
+  pkce: false,
+  authorizeUrl: ({ state, redirectUri }) => `https://www.facebook.com/v24.0/dialog/oauth?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=ads_read`,
+  exchange: async () => {
+    // The grant of a person whose token also holds ads_management: the connector refuses it, as MetaAdsConnector does.
+    if (META_GRANT.write) throw new ConnectorError('denied', 'the token holds ads_management', 'WRITE_PERMISSION_GRANTED');
+    // The second account's token also holds a Pages permission, which is accepted and shown.
+    return ['act_9001', 'act_9002'].map((id) => ({
+      provider: 'meta_ads' as const,
+      externalAccountId: id,
+      displayName: `Meta ${id}`,
+      scopes: id === 'act_9002' ? ['ads_read', 'pages_manage_posts'] : ['ads_read'],
+      expiresAt: new Date(Date.now() + 60 * DAY_MS),
+      secret: JSON.stringify({ accessToken: 'EAAB-grant-token' }),
+    }));
+  },
+};
+
 suite('ads on PostgreSQL (#2217)', () => {
   const dbName = `crove_test_ads_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let pool: pg.Pool;
   const workerPools: pg.Pool[] = [];
   let app: ReturnType<typeof createHttpApp>;
+  let appConfig: ReturnType<typeof loadConfig>;
+  let appDb: Db;
   let api: Runtime;
   let worker: Runtime;
   let workerDb: Db;
@@ -160,8 +185,10 @@ suite('ads on PostgreSQL (#2217)', () => {
       authenticate: createAuthenticator(config, db),
       pool,
       aiEnabled: false,
-      channels: { broker: vault, sandbox: true, adsPlatforms: sandbox },
+      channels: { broker: vault, sandbox: true, adsPlatforms: { ...sandbox, ...adPlatforms({ sandbox: false, meta: { appSecret: 'meta-app-secret' } }) }, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
     });
+    appConfig = config;
+    appDb = db;
     const workerUrl = new URL(adminUrl);
     workerUrl.username = 'crove_worker';
     workerUrl.password = 'test-worker-pw';
@@ -393,7 +420,9 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(summary.total.impressions).toBe(Number(sums[0]?.impressions));
     expect(summary.total.clicks).toBe(Number(sums[0]?.clicks));
     expect(summary.total.results).toBe(sums[0]?.purchases);
-    expect(Number(summary.total.costPerResult)).toBeCloseTo(Number(sums[0]?.spend) / Number(sums[0]?.purchases), 0);
+    // Dong have no decimals, so the cost per result is rounded to a whole dong: half a dong either way is exact (vitest's
+    // toBeCloseTo(.., 0) refuses a difference of exactly 0.5, which the figures of some days give).
+    expect(Math.abs(Number(summary.total.costPerResult) - Number(sums[0]?.spend) / Number(sums[0]?.purchases))).toBeLessThanOrEqual(0.5);
     // Months add up to the total, campaigns to the total too (the account row is their sum), and days to the total.
     const spendOf = (items: Array<{ spend: string }>) => items.reduce((n, i) => n + Number(i.spend), 0);
     expect(spendOf(summary.months)).toBe(Number(summary.total.spend));
@@ -666,5 +695,160 @@ suite('ads on PostgreSQL (#2217)', () => {
     } finally {
       appClient.release();
     }
+  });
+
+  // Meta (#2218): the OAuth grant connects each ad account and links it, the real adapter reads recorded Graph answers, a
+  // rate limit holds the account back, an expired token expires the connection, and connecting again resumes it with no day lost.
+  describe('Meta ad accounts', () => {
+    const meta = { appSecret: 'meta-app-secret', graphVersion: 'v24.0' } as const;
+    const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+    // Graph as Meta answers it for two ad accounts in dong: the same shape for any window asked.
+    // Every request the adapter makes, to show that none is a write.
+    const methods: string[] = [];
+    const graph = (mode: 'ok' | 'limited' | 'expired' = 'ok'): Fetch => async (input, init) => {
+      methods.push(init?.method ?? 'GET');
+      const url = new URL(input);
+      if (mode === 'expired') return json(400, { error: { code: 190, message: 'Error validating access token: Session has expired' } });
+      if (mode === 'limited') return json(400, { error: { code: 80004, message: 'There have been too many calls from this ad-account' } });
+      if (url.pathname.endsWith('/me/adaccounts')) {
+        return json(200, { data: ['act_9001', 'act_9002'].map((id) => ({ id, name: `Meta ${id}`, currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' })) });
+      }
+      const { since, until } = JSON.parse(url.searchParams.get('time_range') ?? '{}') as { since: string; until: string };
+      const level = url.searchParams.get('level');
+      const data: unknown[] = [];
+      for (let ms = Date.parse(`${since}T00:00:00Z`); ms <= Date.parse(`${until}T00:00:00Z`); ms += DAY_MS) {
+        const day = new Date(ms).toISOString().slice(0, 10);
+        if (level === 'account') data.push({ date_start: day, spend: '100000', impressions: '1000', clicks: '50', reach: '800', actions: [{ action_type: 'omni_purchase', value: '2' }] });
+        else for (const [id, spend] of [['2301', '60000'], ['2302', '40000']] as const) data.push({ date_start: day, campaign_id: id, campaign_name: `Chiến dịch ${id}`, spend, impressions: '500', clicks: '25', actions: [{ action_type: 'omni_purchase', value: '1' }] });
+      }
+      return json(200, { data });
+    };
+    const read = (mode: 'ok' | 'limited' | 'expired') => ({ meta_ads: new MetaAdsPlatform({ ...meta, fetch: graph(mode) }) }) as Readonly<Record<string, AdPlatform>>;
+    const metaRpc = async (path: string, who: Account, input: unknown) => rpc(path, await tokenFor(who), input);
+    const grant = async (who: Account) => {
+      const started = await metaRpc('channels/oauthStart', who, { provider: 'meta_ads' });
+      if (started.status !== 200) return { started, finished: null };
+      const finished = await metaRpc('channels/oauthFinish', who, { provider: 'meta_ads', state: started.body.state, code: 'the-code' });
+      return { started, finished };
+    };
+
+    it('connects every ad account of a grant and links it to the books, for an owner or admin only, once per attempt', async () => {
+      expect((await grant(member)).started.status).toBe(403);
+      expect((await grant(viewer)).started.status).toBe(403);
+      const { started, finished } = await grant(owner);
+      // The dialog is Meta's, asked for ads_read, and comes back to the one callback address of the deployment.
+      expect(started.body.authorizeUrl).toContain('scope=ads_read');
+      expect(decodeURIComponent(started.body.authorizeUrl)).toContain('https://ludy.example.test/channels/oauth/meta_ads/callback');
+      expect(finished?.status, JSON.stringify(finished?.body)).toBe(200);
+      expect(finished?.body.connections.map((c: { displayName: string }) => c.displayName).sort()).toEqual(['Meta act_9001', 'Meta act_9002']);
+      expect(finished?.body.failed).toEqual([]);
+      // The answer of the grant carries no token.
+      expect(JSON.stringify(finished?.body)).not.toContain('EAAB-grant-token');
+      const listed = (await ok('ads/accounts', owner, undefined)) as AdAccountView[];
+      const mine = listed.filter((a) => a.provider === 'meta_ads').sort((a, b) => a.name.localeCompare(b.name));
+      expect(mine.map((a) => [a.name, a.connectionStatus, a.resultKinds])).toEqual([
+        ['Meta act_9001', 'active', ['purchase', 'lead', 'message']],
+        ['Meta act_9002', 'active', ['purchase', 'lead', 'message']],
+      ]);
+      // A permission beyond ads_read (a Pages one) is accepted and shown; the other account holds none.
+      expect(mine.map((a) => a.extraScopes)).toEqual([[], ['pages_manage_posts']]);
+      // Sealed once per connection and in no answer, audit row or event; the first sync was queued by the link.
+      const sealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'meta_ads'`, [orgId]);
+      expect(sealed[0]?.n).toBe('2');
+      const leaks = await row<{ n: string }>(
+        `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%EAAB-grant-token%') + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND payload::text LIKE '%EAAB-grant-token%') AS n`,
+        [orgId],
+      );
+      expect(leaks[0]?.n).toBe('0');
+      const linked = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.account.linked' AND payload->>'ad_account_id' = ANY ($2)`, [orgId, mine.map((a) => a.id)]);
+      expect(linked[0]?.n).toBe('2');
+      // The attempt is single use.
+      const again = await metaRpc('channels/oauthFinish', owner, { provider: 'meta_ads', state: started.body.state, code: 'the-code' });
+      expect(again.status).toBeGreaterThanOrEqual(400);
+      // Social's channel list does not show them.
+      const channels = (await ok('channels/list', owner, {})) as Array<{ provider: string }>;
+      expect(channels.some((c) => c.provider === 'meta_ads')).toBe(false);
+    });
+
+    it('reads 13 months in the adapter\'s windows with only GET requests, and stores them in the account\'s currency and time zone', async () => {
+      const listed = (await ok('ads/accounts', owner, undefined)) as AdAccountView[];
+      const account = listed.find((a) => a.name === 'Meta act_9001') as AdAccountView;
+      const result = await sync(account.connectionId, read('ok'));
+      expect(result.rows).toBeGreaterThan(300 * 3);
+      const after = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id);
+      expect(after).toMatchObject({ currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh', lastErrorKind: null });
+      // Meta restates its latest 28 days: the newest day is not final, one older than that is.
+      expect(after?.settledThrough).toBe(new Date(Date.parse(todayIn('Asia/Ho_Chi_Minh', new Date())) - 29 * DAY_MS).toISOString().slice(0, 10));
+      const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+      // The owner picks the action that counts as a result; Meta's omni_purchase is the "purchase" of this adapter.
+      await ok('ads/configure', owner, { adAccountId: account.id, resultKind: 'purchase', idempotencyKey: randomUUID() });
+      const summary = (await ok('ads/summary', owner, { adAccountId: account.id, from: new Date(Date.parse(today) - 6 * DAY_MS).toISOString().slice(0, 10), to: today })) as AdsSummary;
+      expect(summary.total.spend).toBe('700000');
+      expect(summary.total.results).toBe('14');
+      expect(summary.campaigns.map((c) => c.name).sort()).toEqual(['Chiến dịch 2301', 'Chiến dịch 2302']);
+      // Everything the sync asked Meta was a read.
+      expect(methods.length).toBeGreaterThan(20);
+      expect(new Set(methods)).toEqual(new Set(['GET']));
+    });
+
+    it('holds an account back after a rate limit, expires it on a refused token, and resumes it when connected again, with no day lost', async () => {
+      const listed = (await ok('ads/accounts', owner, undefined)) as AdAccountView[];
+      const account = listed.find((a) => a.name === 'Meta act_9002') as AdAccountView;
+      // Nothing read yet for this account: a rate limit leaves its cursors alone and names when to try again.
+      await sync(account.connectionId, read('limited'));
+      let view2 = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id) as AdAccountView;
+      expect(view2).toMatchObject({ lastErrorKind: 'rate_limited', syncedThrough: null, settledThrough: null, connectionStatus: 'active' });
+      expect(Date.parse(view2.nextRunAt as string)).toBeGreaterThan(Date.now() + 50 * 60_000);
+      // A refused token ends the connection, kept as it is.
+      await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
+      await sync(account.connectionId, read('expired'));
+      view2 = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id) as AdAccountView;
+      expect(view2).toMatchObject({ connectionStatus: 'expired', lastErrorKind: 'token_expired' });
+      // Connecting again is the same connection and the same ad account, with its settings and history.
+      const { finished } = await grant(owner);
+      expect(finished?.status, JSON.stringify(finished?.body)).toBe(200);
+      const back = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).filter((a) => a.name === 'Meta act_9002');
+      expect(back).toHaveLength(1);
+      expect(back[0]).toMatchObject({ id: account.id, connectionId: account.connectionId, connectionStatus: 'active' });
+      await row(`UPDATE crove_ads.ad_account SET next_run_at = NULL WHERE org_id = $1 AND id = $2`, [orgId, account.id]);
+      const resumed = await sync(account.connectionId, read('ok'));
+      expect(resumed.rows).toBeGreaterThan(300 * 3);
+      const final = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id);
+      expect(final).toMatchObject({ lastErrorKind: null, connectionStatus: 'active' });
+      expect(final?.settledThrough).not.toBeNull();
+    });
+
+    it('refuses a grant whose token can change ads, says why in its own words, and connects nothing', async () => {
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]);
+      META_GRANT.write = true;
+      try {
+        const { finished } = await grant(owner);
+        expect(finished?.status).toBe(422);
+        expect(finished?.body.code).toBe('OAUTH_WRITE_PERMISSION');
+        expect(finished?.body.message).toContain('ads_management');
+      } finally {
+        META_GRANT.write = false;
+      }
+      const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]);
+      expect(after[0]?.n).toBe(before[0]?.n);
+    });
+
+    it('does not offer an ad platform where the Ads module is off, and refuses its OAuth then', async () => {
+      const offApp = createHttpApp({
+        config: appConfig,
+        runtime: new Runtime(appDb, { manifests: TEST_MANIFESTS, absentModules: ['ads'] }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) }),
+        store: new MemoryStore(),
+        authenticate: createAuthenticator(appConfig, appDb),
+        pool,
+        aiEnabled: false,
+        channels: { broker: vault, sandbox: true, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
+      });
+      const response = await offApp.request('/api/rpc/channels/oauthStart', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${await tokenFor(owner)}`, 'content-type': 'application/json', 'x-crove-org': slug },
+        body: JSON.stringify({ json: { provider: 'meta_ads' } }),
+      });
+      expect(response.status).toBe(404);
+    });
   });
 });

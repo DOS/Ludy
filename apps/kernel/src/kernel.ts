@@ -69,7 +69,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { adPlatforms } from '@crove/ad-platform';
+import { MetaAdsConnector, adPlatforms, type AdPlatform } from '@crove/ad-platform';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -261,7 +261,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
-type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
+type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
   Partial<Pick<Config, 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
@@ -284,6 +284,15 @@ export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID
   return adapters;
 }
 
+// The ad platforms this deployment offers (ADR-0040): the offline sandbox when ADS_SANDBOX is on, Meta when the deployment
+// has its ad app (#2218). Each is bound to its own hosts; the worker reads through them, and the API only asks which exist.
+export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
+  return adPlatforms({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+  });
+}
+
 export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>): Partial<Record<string, OAuthConnector>> {
   const connectors: Partial<Record<string, OAuthConnector>> = {};
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
@@ -291,6 +300,10 @@ export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>
     connectors.facebook_page = new FacebookPageConnector(app);
     // Instagram professional accounts linked to the user's Pages, through the same Meta app (S6.3).
     connectors.instagram = new InstagramConnector(app);
+  }
+  // Meta ad accounts, read only (ADR-0040, #2218): its own app credentials, which may be the same app as the Pages one.
+  if (config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET) {
+    connectors.meta_ads = new MetaAdsConnector({ appId: config.CHANNEL_META_ADS_APP_ID, appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
   }
   const zalo = zaloApp(config);
   if (zalo) connectors.zalo_oa = new ZaloOaConnector(zalo);
@@ -490,7 +503,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', adsPlatforms: adPlatforms({ sandbox: config.ADS_SANDBOX === 'true' }), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', adsPlatforms: adPlatformsOf(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: config.PUBLIC_URL, ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -537,7 +550,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatforms({ sandbox: config.ADS_SANDBOX === 'true' }) },
+            channels: { broker: resolved.broker, publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
             publicUrl: config.PUBLIC_URL,
             brand: config.BRAND_NAME,
             // Bounce reports reach this deployment only with both inbound settings (as for the invite mail).

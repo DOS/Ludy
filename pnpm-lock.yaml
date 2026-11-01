@@ -747,7 +747,11 @@ importers:
         specifier: 'catalog:'
         version: 4.10.2
 
-  packages/ad-platform: {}
+  packages/ad-platform:
+    dependencies:
+      '@crove/channel':
+        specifier: workspace:*
+        version: link:../channel
 
   packages/agent:
     dependencies:

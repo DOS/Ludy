@@ -5,7 +5,7 @@
 // network I/O.
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
-import type { ChannelProviderId, ConnectedAccount } from './index.ts';
+import type { ConnectedAccount, ConnectorProviderId } from './index.ts';
 
 export interface AuthorizeInput {
   state: string;
@@ -21,7 +21,7 @@ export interface ExchangeInput {
 }
 
 export interface OAuthConnector {
-  readonly provider: ChannelProviderId;
+  readonly provider: ConnectorProviderId;
   readonly pkce: boolean;
   authorizeUrl(input: AuthorizeInput): string;
   // The accounts the grant covers (a Facebook login covers every Page the user picked in Meta's dialog). Throws

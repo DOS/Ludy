@@ -421,7 +421,9 @@ export const zChannelConnection = z.object({
 export const OAUTH_CHANNEL_PROVIDERS = ['facebook_page', 'instagram', 'zalo_oa', 'threads', 'linkedin', 'youtube', 'tiktok', 'x', 'google_business', 'pinterest', 'linkedin_page'] as const;
 // Accounts one OAuth grant connects in a request, one command each (#375): a Meta user may manage hundreds of Pages.
 export const OAUTH_MAX_ACCOUNTS_PER_GRANT = 100;
-export const zOAuthProvider = z.enum(OAUTH_CHANNEL_PROVIDERS);
+// The ad platforms connected the same way (ADR-0040, #2218): the Ads screen offers them, never the Social channels one.
+export const OAUTH_AD_PROVIDERS = ['meta_ads'] as const;
+export const zOAuthProvider = z.enum([...OAUTH_CHANNEL_PROVIDERS, ...OAUTH_AD_PROVIDERS]);
 export const zOAuthState = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 
 // A Supabase Auth session as Crove tracks it (ADR-0028).

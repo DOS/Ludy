@@ -3,7 +3,7 @@
 // the ad account's own time zone, the comparison with the books as exact decimals, what the settings form changes, and
 // the few facts it reads from an account. The server decides every rule; these only choose what to show and what to send.
 // Money is a decimal string (AGENTS.md): the sums go through lib/decimal.ts, never through JS numbers.
-import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
+import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
 import { fromUnits, isZeroAmount, toUnits } from './decimal.ts';
 
 // The periods of the range control, in the order the control lists them.
@@ -96,6 +96,23 @@ export const REFRESH_WATCH_MS = 45_000;
 
 // The `sandbox_ads` platform makes up its figures, so the screen says so beside the account.
 export const isSandboxProvider = (provider: string): boolean => provider === 'sandbox_ads';
+
+// The ad platforms connected through their own OAuth dialog (ADR-0040, #2218): the Ads screen offers them, the Social
+// channels screen never does. `meta_ads` reads the ad accounts of a Meta user, read only (permission `ads_read`).
+export const AD_OAUTH_PROVIDERS: readonly string[] = OAUTH_AD_PROVIDERS;
+export const isAdOAuthProvider = (provider: string): boolean => AD_OAUTH_PROVIDERS.includes(provider);
+
+// Which of them the deployment offers: the ones `/api/config` lists among the channels' OAuth providers (the server has
+// app credentials for them). A config without the list offers none.
+export function adOAuthProviders(config: { channels?: { oauth?: readonly string[] | undefined } | undefined } | null | undefined): string[] {
+  const offered = config?.channels?.oauth;
+  return Array.isArray(offered) ? AD_OAUTH_PROVIDERS.filter((p) => offered.includes(p)) : [];
+}
+
+// The platform's name where the screen says which platform an account or a connection belongs to; the sandbox keeps its
+// own badge, so it has no name here, and an unknown platform is shown by its id.
+const AD_PROVIDER_NAMES: Record<string, string> = { meta_ads: 'Meta' };
+export const adProviderName = (provider: string): string => AD_PROVIDER_NAMES[provider] ?? provider;
 
 // The result kinds the screen has its own words for; any other key is shown as the platform gives it.
 export const NAMED_RESULT_KINDS = ['purchase', 'lead'] as const;

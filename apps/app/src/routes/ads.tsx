@@ -3,7 +3,8 @@
 // rail, with the ads module. It reads what the org's ad platforms report: per ad account the spend, impressions, clicks and
 // results of each day, by month and by campaign, and the cost per result worked out from the action the owner chose to
 // count as a result. Read only: nothing here creates, edits or pauses a campaign, and no figure is converted from the
-// account's own currency. Owners and admins connect (the offline sandbox platform today) and set an account up; owners,
+// account's own currency. Owners and admins connect (the offline sandbox platform, and Meta through its sign-in dialog,
+// #2218) and set an account up; owners,
 // admins and members ask for a refresh; every role reads. Next to the books, where finance runs, the platform's monthly
 // spend sits beside the ledger's advertising expense (components/ads-books-strip.tsx). The server and the row policies
 // decide each rule; the screen only offers what can succeed and shows the server's reason otherwise.
@@ -22,7 +23,7 @@ import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   ADS_RANGES,
   DEFAULT_ADS_RANGE,
@@ -30,11 +31,14 @@ import {
   FIRST_SYNC_POLL_MS,
   REFRESH_POLL_MS,
   REFRESH_WATCH_MS,
+  adOAuthProviders,
+  adProviderName,
   adsRange,
   awaitsFirstSync,
   configureChanges,
   expenseCodeProblem,
   hasFigures,
+  isAdOAuthProvider,
   isCalmRefusal,
   isNamedResultKind,
   isSandboxProvider,
@@ -48,6 +52,7 @@ import {
   type KeyHolder,
 } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
+import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -168,21 +173,76 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
   );
 }
 
-// No ad account yet: what Ads shows, and, for owners and admins where the sandbox platform is on, how to connect a test
-// account. Members and viewers read the explanation only; with no ad platform on the deployment, everyone is told so.
-export function AdsEmpty({ canManage, sandbox, entities, onConnected }: { canManage: boolean; sandbox: boolean; entities: readonly LegalEntity[]; onConnected: (adAccountId: string) => void }) {
+// Connecting a Meta ad account (#2218): Meta's own sign-in dialog runs in this tab and comes back to the callback screen,
+// which finishes the attempt for the org it was started in. Owners and admins only; the caller draws it where the
+// deployment has its Meta ads app (`meta_ads` among /api/config's channels.oauth). It says in plain words what Ludy asks
+// Meta for: only to read reports. `another` is the short form for an org that already has an ad account.
+export function ConnectMeta({ slug, another = false }: { slug: string; another?: boolean }) {
+  const t = useTranslations('ads');
+  const headingId = useId();
+  const start = useMutation({
+    mutationFn: () => client.channels.oauthStart({ provider: 'meta_ads' }),
+    onSuccess: (attempt) => {
+      rememberOAuthAttempt(attempt.state, slug);
+      window.location.assign(attempt.authorizeUrl);
+    },
+  });
+  return (
+    <div className="space-y-3" role="group" aria-labelledby={another ? undefined : headingId}>
+      {!another && (
+        <h2 id={headingId} className={H2}>
+          {t('connectMeta.title')}
+        </h2>
+      )}
+      <p className="text-sm text-muted-foreground">{t('connectMeta.note')}</p>
+      <p className="text-xs text-subtle-foreground">{t('connectMeta.expiry')}</p>
+      <div>
+        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+          {another ? t('connectMeta.another') : t('connectMeta.action')}
+        </Button>
+      </div>
+      {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// No ad account yet: what Ads shows, and, for owners and admins, how to connect one: a test account where the sandbox
+// platform is on, a Meta ad account where the deployment has its Meta ads app (`meta` names the org the dialog is started
+// for). Members and viewers read the explanation only; with no ad platform on the deployment, everyone is told so.
+export function AdsEmpty({
+  canManage,
+  sandbox,
+  meta,
+  entities,
+  onConnected,
+}: {
+  canManage: boolean;
+  sandbox: boolean;
+  meta?: { slug: string } | undefined;
+  entities: readonly LegalEntity[];
+  onConnected: (adAccountId: string) => void;
+}) {
   const t = useTranslations('ads');
   return (
     <div className="space-y-6">
       <Empty title={t('emptyTitle')} hint={t('emptyHint')} />
-      {!sandbox ? (
+      {!sandbox && !meta ? (
         <p className="text-sm text-muted-foreground" role="status">
           {t('noPlatform')}
         </p>
       ) : canManage ? (
-        <Card className="block p-4">
-          <ConnectSandboxForm entities={entities} onConnected={onConnected} />
-        </Card>
+        <div className="space-y-4">
+          {meta && (
+            <Card className="block p-4">
+              <ConnectMeta slug={meta.slug} />
+            </Card>
+          )}
+          {sandbox && (
+            <Card className="block p-4">
+              <ConnectSandboxForm entities={entities} onConnected={onConnected} />
+            </Card>
+          )}
+        </div>
       ) : (
         <p className="text-sm text-muted-foreground">{t('emptyMembers')}</p>
       )}
@@ -205,6 +265,12 @@ function SyncStatus({ account }: { account: AdAccountView }) {
     <div className="mt-3 space-y-1 text-sm">
       {account.syncedThrough && <p className="text-muted-foreground">{active ? t('syncedThrough', { day: f.date(account.syncedThrough) }) : t('storedThrough', { day: f.date(account.syncedThrough) })}</p>}
       {account.lastRunAt && <p className="text-xs text-subtle-foreground">{t('lastRun', { when: f.dateTime(account.lastRunAt) })}</p>}
+      {account.extraScopes.length > 0 && (
+        // The token can do more than read reports (the app was shared with another use that the person granted): say what.
+        <p className="text-warning" role="status">
+          {t('extraScopes', { list: account.extraScopes.join(', ') })}
+        </p>
+      )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
           {t(`connectionHint.${account.connectionStatus}`)}
@@ -267,6 +333,7 @@ export function AccountHeader({ account, canRefresh, onRequested }: { account: A
           </h2>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-subtle-foreground">
             {isSandboxProvider(account.provider) && <Badge variant="outline">{t('sandboxBadge')}</Badge>}
+            {isAdOAuthProvider(account.provider) && <Badge variant="outline">{adProviderName(account.provider)}</Badge>}
             {account.connectionStatus !== 'active' && (
               // A disconnect the owner chose is a quiet state; an expired connection or one in trouble is a warning.
               <Badge variant={account.connectionStatus === 'revoked' ? 'secondary' : 'warning'}>{t(`connection.${account.connectionStatus}`)}</Badge>
@@ -737,6 +804,7 @@ export function AdsPage() {
   const search: AdsSearch = useSearch({ strict: false });
   const config = getConfig();
   const sandbox = Boolean(config.ads?.sandbox);
+  const metaOffered = adOAuthProviders(config).includes('meta_ads');
   const financeOn = config.modules.includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
@@ -788,7 +856,7 @@ export function AdsPage() {
           <TableSkeleton columns={4} />
         </div>
       ) : list.length === 0 || !account ? (
-        <AdsEmpty canManage={canManage} sandbox={sandbox} entities={entities.data ?? []} onConnected={connected} />
+        <AdsEmpty canManage={canManage} sandbox={sandbox} meta={metaOffered ? { slug } : undefined} entities={entities.data ?? []} onConnected={connected} />
       ) : (
         <div className="space-y-8">
           {adding && (
@@ -796,6 +864,7 @@ export function AdsPage() {
               <ConnectSandboxForm entities={entities.data ?? []} onConnected={connected} onCancel={() => setAdding(false)} />
             </Card>
           )}
+          {canManage && metaOffered && <ConnectMeta slug={slug} another />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (

@@ -1,7 +1,7 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
 import type { AdAccountView } from '@crove/kernel-contract';
@@ -249,6 +249,11 @@ function connectorFailure(error: unknown): DomainError {
   if (error instanceof ConnectorError) {
     console.warn(`[channels] OAuth exchange failed: ${error.kind}${error.code ? ` (${error.code})` : ''}: ${error.message}`);
     if (error.kind === 'invalid_grant') return new DomainError('OAUTH_CODE_REJECTED', 400, 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn), hãy kết nối lại');
+    // A token that can change campaigns or the business (ads_management, business_management): the person granted more than
+    // reading reports to this app before. Said as it is, since accepting more permissions cannot help.
+    if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
+      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy dùng một ứng dụng Meta riêng chỉ có quyền ads_read, hoặc gỡ quyền đó trong Cài đặt Facebook (Ứng dụng và trang web) rồi kết nối lại');
+    }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
   }
@@ -361,6 +366,8 @@ export function createRpcHandler(
   const oauthConnector = async (context: RpcContext, provider: string) => {
     const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
     if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được kênh');
+    // An ad platform (ADR-0040) connects only where the Ads module runs: its accounts are linked as the grant is finished.
+    if (isAdProviderId(provider) && !runtime.installed('ads')) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Mô-đun Quảng cáo chưa được bật');
     const connector = channels?.connectors?.[provider];
     if (!channels || !connector) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed, and the user
@@ -1510,7 +1517,13 @@ export function createRpcHandler(
           const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
             throw connectorFailure(error);
           });
-          if (accounts.length === 0) throw new DomainError('CHANNEL_NO_ACCOUNTS', 422, 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này');
+          if (accounts.length === 0) {
+            throw new DomainError(
+              'CHANNEL_NO_ACCOUNTS',
+              422,
+              isAdProviderId(input.provider) ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để đọc báo cáo' : 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
+            );
+          }
           // Each account connects in its own command, so one that fails leaves the others connected: the answer says
           // which did and which did not (#375), and only a grant where none connected is an error. A grant covering
           // more accounts than a request should connect one by one is cut, and the answer says how many were left.
@@ -1530,6 +1543,22 @@ export function createRpcHandler(
             };
             try {
               const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+              // An ad account is also linked to the org's books as it connects (the entity the member reads by default), so
+              // its first sync starts at once; a link that is refused closes the connection it just made, which no screen would
+              // list, and the account is reported as failed. An account connected again keeps its row, history and settings.
+              if (isAdProviderId(account.provider)) {
+                try {
+                  await runtime.execute('ads.account.link', { connectionId: done.connectionId }, { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` });
+                } catch (linkError) {
+                  if (!done.reconnected) {
+                    // A connection that stays with no ad account is listed nowhere: say so in the log, by code only.
+                    await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+                      console.warn(`[ads] a connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+                    });
+                  }
+                  throw linkError;
+                }
+              }
               connections.push({ connectionId: done.connectionId, displayName: account.displayName, reconnected: done.reconnected });
             } catch (error) {
               // Only a refusal of this one account lets the others go on; a failure of the server (an outage, a bug)
