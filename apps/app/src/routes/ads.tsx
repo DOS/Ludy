@@ -20,6 +20,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { AdsWriteCard } from '../components/ads-write.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -917,6 +918,7 @@ export function AdsPage() {
             </Card>
           )}
           {canManage && metaOffered && <ConnectMeta slug={slug} another />}
+          {canManage && <AdsWriteCard role={role} accounts={list} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (

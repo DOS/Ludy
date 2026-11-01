@@ -45,6 +45,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   connectionStatus: 'active',
   pausedSince: null,
   pausedReason: null,
+  writeEnabled: false,
   extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',

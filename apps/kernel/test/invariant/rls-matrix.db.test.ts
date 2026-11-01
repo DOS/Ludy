@@ -324,6 +324,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
+  // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
+  // switch to itself.
+  'crove_ads.ad_org_setting': {
+    update: { set: 'write_enabled = write_enabled' },
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // A spend cap of the org or of one ad account, a row per change (the history, the latest is the cap): written once and never
+  // changed or deleted by a tenant role.
+  'crove_ads.ad_spend_cap': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), scope: 'account', ad_account_id: account, period: 'daily', amount: '1000000', currency: 'VND', set_by: o.owner },
+      };
+    },
+  },
   // A day of one object of an ad account, as its platform reported it: the entity is the account's (b_legal_entity, and the
   // composite foreign key). Tenant roles update the figures and the object's name only, never the keys (a column grant), so the
   // update probes assign the spend to itself: a column the role is granted, so a refusal can only come from the row policy.

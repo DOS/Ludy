@@ -264,7 +264,7 @@ export const adsAccountList = defineQuery({
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select([
         'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
-        'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at',
+        'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at', 'a.write_enabled',
       ])
       .where('a.org_id', '=', ctx.orgId)
       .orderBy('a.name')
@@ -277,6 +277,7 @@ export const adsAccountList = defineQuery({
       id: r.id,
       connectionId: r.channel_connection_id,
       connectionStatus: r.status as AdAccountView['connectionStatus'],
+      writeEnabled: r.write_enabled,
       pausedSince: r.status === 'active' ? null : stamp(r.connection_updated_at),
       pausedReason: r.status === 'active' ? null : pausedReason(r.status_reason),
       // What the sealed token can do beyond reading ad reports (a Meta token holds every permission the person granted the
