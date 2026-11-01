@@ -12,7 +12,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { APPROVAL_POLICY_VERSION, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime, type AgentActor } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
@@ -286,14 +286,19 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
+    const approvedAudit = await o.audit('kernel.proposal.approve', after);
+    expect(approvedAudit).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
-      // The version of the rules in approval.ts, whatever it is now: a change to who approves what raises it.
-      policy_version: APPROVAL_POLICY_VERSION,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
+    // The pinned number is the tripwire that sends every change to the approval rules through the two-step route and a
+    // security review, so it is a literal, never the constant. This is a dated allowance for #2294 (running ads, W0a-2): 2, as
+    // before, or 3, which W0a-2 raises it to with the ads commands' approval policy. The step-two change of W0a-2 pins 3 and
+    // removes this allowance; it expires with that PR and, failing that, fails on 2026-12-01.
+    expect(Date.now(), 'the allowance of #2294 for policy_version 2 or 3 has expired: pin the number').toBeLessThan(Date.parse('2026-12-01T00:00:00Z'));
+    expect([2, 3]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
