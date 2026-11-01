@@ -2,6 +2,8 @@ import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import { money, sum } from '@crove/l10n-vn';
 import {
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
@@ -782,5 +784,169 @@ describe('MISA SME cash vouchers (#657)', () => {
     const values = rowValues(sheet, 2, PAYMENT_HEADERS);
     expect(values['Diễn giải lý do chi']).toBe('=HYPERLINK("http://x")');
     expect(String(values['Người nhận']).length).toBe(255);
+  });
+});
+
+// The bank templates (#657), verbatim from the header rows of `Phieu_thu_tien_gui_VND.xls` (giấy báo Có, sheet
+// `Chứng từ thu tiền`, 25 columns) and `Phieu_chi_tien_gui_VND.xls` (giấy báo Nợ, sheet `Chứng từ Chi tiền gửi`, 47 columns),
+// the MISA SME 2026 files of source S9 in docs/integrations/misa-sme-import.md. "Diễn giải lý do thu " ends with a space in
+// MISA's file, and so does the header here.
+const BANK_CREDIT_HEADERS = [
+  'Hiển thị trên sổ',
+  'Ngày hạch toán (*)',
+  'Ngày chứng từ (*)',
+  'Số chứng từ (*)',
+  'Mã đối tượng',
+  'Tên đối tượng',
+  'Địa chỉ',
+  'Nộp vào TK',
+  'Mở tại NH',
+  'Lý do thu',
+  'Diễn giải lý do thu ',
+  'Nhân viên thu',
+  'Diễn giải',
+  'TK Nợ (*)',
+  'TK Có (*)',
+  'Số tiền',
+  'Đối tượng',
+  'Khoản mục CP',
+  'Đơn vị',
+  'Đối tượng THCP',
+  'Công trình',
+  'Đơn đặt hàng',
+  'Hợp đồng mua',
+  'Hợp đồng bán',
+  'Mã thống kê',
+];
+const BANK_DEBIT_HEADERS = [
+  'Hiển thị trên sổ',
+  'Phương thức thanh toán',
+  'Ngày hạch toán (*)',
+  'Ngày chứng từ (*)',
+  'Số chứng từ (*)',
+  'Tài khoản chi',
+  'Mở tại NH',
+  'Nội dung thanh toán',
+  'Diễn giải nội dung thanh toán',
+  'Mã đối tượng',
+  'Tên đối tượng',
+  'Địa chỉ',
+  'Tài khoản nhận',
+  'Tên NH nhận',
+  'Người lĩnh tiền',
+  'Số CMND',
+  'Ngày cấp CMND',
+  'Nơi cấp CMND',
+  'Nhân viên',
+  'Diễn giải',
+  'TK Nợ (*)',
+  'TK Có (*)',
+  'Số tiền',
+  'Mã đối tượng (Chi tiết)',
+  'Khoản mục chi phí',
+  'Đơn vị',
+  'ĐT tập hợp chi phí',
+  'Công trình',
+  'Đơn đặt hàng',
+  'Hợp đồng mua',
+  'Hợp đồng bán',
+  'Chi phí không hợp lý',
+  'Mã thống kê',
+  'Diễn giải (Thuế)',
+  'TK thuế GTGT',
+  'Tiền thuế GTGT',
+  '% thuế GTGT',
+  'Tỷ lệ tính thuế (Thuế suất KHAC)',
+  'Giá trị HHDV chưa thuế',
+  'Mẫu số hóa đơn',
+  'Ký hiệu hóa đơn',
+  'Số hóa đơn',
+  'Ngày hóa đơn',
+  'Nhóm HHDV mua vào',
+  'Mã NCC',
+  'Tên NCC',
+  'Mã số thuế NCC',
+];
+
+describe('MISA SME bank vouchers (#657)', () => {
+  it('uses the 25 columns of Chứng từ thu tiền and the 47 of Chứng từ Chi tiền gửi, in order, without duplicates', async () => {
+    expect(MISA_SME_BANK_CREDIT.columns.map((c) => c.header)).toEqual(BANK_CREDIT_HEADERS);
+    expect(MISA_SME_BANK_DEBIT.columns.map((c) => c.header)).toEqual(BANK_DEBIT_HEADERS);
+    for (const template of [MISA_SME_BANK_CREDIT, MISA_SME_BANK_DEBIT]) {
+      expect(new Set(template.columns.map((c) => c.header)).size).toBe(template.columns.length);
+      const sheet = await readBack(template, []);
+      expect(sheet.name).toBe(template === MISA_SME_BANK_CREDIT ? 'Chứng từ thu tiền' : 'Chứng từ Chi tiền gửi');
+      expect(sheet.rowCount).toBe(1);
+    }
+  });
+
+  it('writes a báo Có as one row per line: Dr the bank account, Cr the line, under one voucher number', async () => {
+    const credit = cashVoucher({
+      type: 'bank_credit',
+      code: 'BC00004',
+      cashAccount: '1121',
+      description: 'Khách trả tiền hàng tháng 9',
+      lines: [
+        { lineNo: 1, account: '131', amount: '5500000', memo: 'HĐ C26TAA/200' },
+        { lineNo: 2, account: '711', amount: '1000.25', memo: null },
+      ],
+    });
+    const rows = cashRows(credit);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBC00004', 'CRBC00004']);
+    const sheet = await readBack(MISA_SME_BANK_CREDIT, rows);
+    expect(sheet.rowCount).toBe(3);
+    expect(rowValues(sheet, 2, BANK_CREDIT_HEADERS)).toMatchObject({
+      'Hiển thị trên sổ': null,
+      'Ngày hạch toán (*)': new Date(Date.UTC(2026, 9, 7)),
+      'Ngày chứng từ (*)': new Date(Date.UTC(2026, 9, 7)),
+      'Số chứng từ (*)': 'CRBC00004',
+      'Tên đối tượng': 'Công ty TNHH ABC',
+      'Địa chỉ': '1 Láng Hạ, Hà Nội',
+      'Nộp vào TK': null,
+      'Lý do thu': null,
+      'Diễn giải lý do thu ': 'Khách trả tiền hàng tháng 9',
+      'Diễn giải': 'HĐ C26TAA/200',
+      'TK Nợ (*)': '1121',
+      'TK Có (*)': '131',
+      'Số tiền': 5500000,
+      'Mã thống kê': null,
+    });
+    // A line without its own memo takes the voucher's reason; fractional amounts stay exact.
+    expect(rowValues(sheet, 3, BANK_CREDIT_HEADERS)).toMatchObject({ 'Diễn giải': 'Khách trả tiền hàng tháng 9', 'TK Nợ (*)': '1121', 'TK Có (*)': '711', 'Số tiền': 1000.25 });
+  });
+
+  it('writes a báo Nợ with the bank account credited, the payee as Người lĩnh tiền and the VAT and invoice columns blank', async () => {
+    const debit = cashVoucher({ type: 'bank_debit', code: 'BN00009', cashAccount: '1121.VCB' });
+    const rows = cashRows(debit);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBN00009', 'CRBN00009']);
+    const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
+    expect(sheet.rowCount).toBe(3);
+    const first = rowValues(sheet, 2, BANK_DEBIT_HEADERS);
+    expect(first).toMatchObject({
+      'Số chứng từ (*)': 'CRBN00009',
+      'Tên đối tượng': 'Công ty TNHH ABC',
+      'Diễn giải nội dung thanh toán': 'Trả tiền hóa đơn tháng 9',
+      'Người lĩnh tiền': 'Nguyễn Văn An',
+      'Diễn giải': 'HĐ C26TAA/123',
+      'TK Nợ (*)': '331',
+      'TK Có (*)': '1121.VCB',
+      'Số tiền': 1650000,
+    });
+    // Everything MISA reads as a catalog entry or a code, and every VAT and invoice column, is left blank.
+    for (const header of ['Phương thức thanh toán', 'Tài khoản chi', 'Nội dung thanh toán', 'Tài khoản nhận', 'Tên NH nhận', 'Số CMND', 'TK thuế GTGT', 'Tiền thuế GTGT', '% thuế GTGT', 'Số hóa đơn', 'Mã số thuế NCC']) {
+      expect(first[header], header).toBeNull();
+    }
+    expect(rowValues(sheet, 3, BANK_DEBIT_HEADERS)).toMatchObject({ 'TK Nợ (*)': '6422', 'TK Có (*)': '1121.VCB', 'Số tiền': 35000.5 });
+  });
+
+  it('keeps voucher numbers within 20 characters, long text cut at the template limit, and formula-like text inert', async () => {
+    const rows = cashRows(cashVoucher({ type: 'bank_debit', code: 'BN1234567890123', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
+    expect(rows[0]?.voucherNo.length).toBeLessThanOrEqual(20);
+    const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
+    const values = rowValues(sheet, 2, BANK_DEBIT_HEADERS);
+    expect(values['Diễn giải nội dung thanh toán']).toBe('=HYPERLINK("http://x")');
+    expect(String(values['Người lĩnh tiền']).length).toBe(255);
+    const credit = await readBack(MISA_SME_BANK_CREDIT, cashRows(cashVoucher({ type: 'bank_credit', description: '=1+1' })));
+    expect(rowValues(credit, 2, BANK_CREDIT_HEADERS)['Diễn giải lý do thu ']).toBe('=1+1');
   });
 });

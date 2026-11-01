@@ -397,7 +397,8 @@ export const journalList = defineQuery({
 // The MISA SME voucher exports (GET /api/export/misa/purchases.xlsx, #317, and /api/export/misa/sales.xlsx, #313)
 // record themselves here too, with `format`, so the usage report counts every export to the accountant; `entries` is
 // then the number of vouchers. So do the cash receipts and payments (/api/export/misa/receipts.xlsx and
-// payments.xlsx, #657), and the goods purchases (/api/export/misa/goods-purchases.xlsx, #1398). Since #1398 the services
+// payments.xlsx, #657), the bank receipts and payments (bank-receipts.xlsx and bank-payments.xlsx, #657), and the goods
+// purchases (/api/export/misa/goods-purchases.xlsx, #1398). Since #1398 the services
 // file leaves out lines on a stock account, which go to the goods file; its audit row carries `stockLines: 'excluded'`,
 // so a document's history (#878) tells it from an older services file, which held every line.
 export const EXPORT_FORMATS = [
@@ -407,6 +408,8 @@ export const EXPORT_FORMATS = [
   'misa_sme_sales',
   'misa_sme_cash_receipts',
   'misa_sme_cash_payments',
+  'misa_sme_bank_credits',
+  'misa_sme_bank_debits',
 ] as const;
 export const journalExport = defineCommand({
   name: 'finance.journal.export',

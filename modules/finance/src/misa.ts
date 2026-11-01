@@ -1,5 +1,5 @@
 // Vouchers in the Excel import templates of MISA SME (issue #317). The firm keeps its system of record (decision
-// D10); Crove hands it purchase and sales vouchers, and cash receipts and payments (#657), in the layout MISA's
+// D10); Crove hands it purchase and sales vouchers, and cash and bank receipts and payments (#657), in the layout MISA's
 // "Tệp > Nhập khẩu từ Excel" reads. Purchase lines on a stock account (152, 153, 156) go to the goods purchase
 // template with the org's MISA item and warehouse codes; the other lines to the services template (#1398).
 //
@@ -87,16 +87,17 @@ export interface SalesVoucher {
 }
 
 /**
- * A posted cash voucher (issue #657, from #327), loaded by finance.vouchers.cash: a phiếu thu (Dr the cash account,
- * Cr each line) or a phiếu chi (Dr each line, Cr the cash account). Bank vouchers (báo Có, báo Nợ) have their own
- * MISA templates, not documented yet.
+ * A posted cash or bank voucher (issue #657, from #327), loaded by finance.vouchers.cash: a phiếu thu or giấy báo Có
+ * (Dr the cash or bank account, Cr each line), a phiếu chi or giấy báo Nợ (Dr each line, Cr the cash or bank account).
+ * Each type has its own MISA template.
  */
 export interface CashVoucher {
-  type: 'cash_receipt' | 'cash_payment';
-  /** Crove's voucher code, PT00001 or PC00001. */
+  type: 'cash_receipt' | 'cash_payment' | 'bank_credit' | 'bank_debit';
+  /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
   /** Voucher date, which is its journal entry's date. */
   date: string;
+  /** The account the money moves on: 111x for a cash voucher, 112x for a bank voucher. */
   cashAccount: string;
   party: VoucherParty | null;
   /** Người nộp or người nhận, as entered. */
@@ -297,8 +298,9 @@ export interface CashRow {
 }
 
 /**
- * Cash vouchers keep Crove's own number behind this prefix (CRPT00001, CRPC00001): the firm's MISA numbers its own
- * vouchers PT00001, PC00001 ..., so the bare code could collide with one of them. Same number on every export.
+ * Cash and bank vouchers keep Crove's own number behind this prefix (CRPT00001, CRPC00001, CRBC00001, CRBN00001): the
+ * firm's MISA numbers its own vouchers PT00001, PC00001 ..., so the bare code could collide with one of them. Same
+ * number on every export.
  */
 export const CASH_VOUCHER_PREFIX = 'CR';
 
@@ -584,6 +586,107 @@ export const MISA_SME_CASH_PAYMENT: MisaTemplate<CashRow> = {
     { header: 'Mã nhà cung cấp', cell: blank },
     { header: 'Tên nhà cung cấp', cell: blank },
     { header: 'Mã số thuế nhà cung cấp', cell: blank },
+  ],
+};
+
+/**
+ * MISA SME 2026 "Chứng từ thu tiền" (Tiền gửi > Thu tiền, the giấy báo Có): money into the bank account, Dr 112x, Cr each
+ * line. Headers from one source (S9, `Phieu_thu_tien_gui_VND.xls`), spelled as that file spells them, the trailing space
+ * of "Diễn giải lý do thu " included. The template has no "Người nộp" column, so the payer's name is not written. "Lý do
+ * thu" and the catalog columns stay blank. Length limits are the ones of the same fields in the cash templates (S6),
+ * unconfirmed for this file.
+ */
+export const MISA_SME_BANK_CREDIT: MisaTemplate<CashRow> = {
+  id: 'Phieu_thu_tien_gui',
+  sheetName: 'Chứng từ thu tiền',
+  columns: [
+    { header: 'Hiển thị trên sổ', cell: blank }, // blank: both books
+    { header: 'Ngày hạch toán (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Ngày chứng từ (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Số chứng từ (*)', maxLength: 20, cell: (r) => text(r.voucherNo) },
+    { header: 'Mã đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Tên đối tượng', maxLength: 128, cell: (r) => text(r.voucher.party?.name) },
+    { header: 'Địa chỉ', maxLength: 255, cell: (r) => text(r.voucher.party?.address) },
+    { header: 'Nộp vào TK', cell: blank }, // MISA bank account catalog entry
+    { header: 'Mở tại NH', cell: blank },
+    { header: 'Lý do thu', cell: blank }, // MISA code
+    { header: 'Diễn giải lý do thu ', maxLength: 255, cell: (r) => text(r.voucher.description) },
+    { header: 'Nhân viên thu', cell: blank }, // MISA catalog code
+    { header: 'Diễn giải', maxLength: 255, cell: (r) => text(r.line.memo || r.voucher.description) },
+    { header: 'TK Nợ (*)', cell: (r) => text(r.voucher.cashAccount) },
+    { header: 'TK Có (*)', cell: (r) => text(r.line.account) },
+    { header: 'Số tiền', cell: (r) => fixed(r.line.amount) },
+    { header: 'Đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Khoản mục CP', cell: blank },
+    { header: 'Đơn vị', cell: blank },
+    { header: 'Đối tượng THCP', cell: blank },
+    { header: 'Công trình', cell: blank },
+    { header: 'Đơn đặt hàng', cell: blank },
+    { header: 'Hợp đồng mua', cell: blank },
+    { header: 'Hợp đồng bán', cell: blank },
+    { header: 'Mã thống kê', cell: blank },
+  ],
+};
+
+/**
+ * MISA SME 2026 "Chứng từ Chi tiền gửi" (Tiền gửi > Chi tiền, the giấy báo Nợ): money out of the bank account, Dr each
+ * line, Cr 112x. Headers from one source (S9, `Phieu_chi_tien_gui_VND.xls`). The paying account, the payee's bank, the
+ * payment method and the VAT and invoice columns stay blank (catalog entries and codes Crove cannot know; a purchase
+ * invoice reaches the books as a purchase voucher, and the báo Nợ only settles it, Dr 331). "Người lĩnh tiền" carries
+ * the payee named on the voucher. Length limits are the ones of the same fields in the cash templates (S6), unconfirmed
+ * for this file.
+ */
+export const MISA_SME_BANK_DEBIT: MisaTemplate<CashRow> = {
+  id: 'Phieu_chi_tien_gui',
+  sheetName: 'Chứng từ Chi tiền gửi',
+  columns: [
+    { header: 'Hiển thị trên sổ', cell: blank }, // blank: both books
+    { header: 'Phương thức thanh toán', cell: blank }, // MISA code
+    { header: 'Ngày hạch toán (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Ngày chứng từ (*)', cell: (r) => date(r.voucher.date) },
+    { header: 'Số chứng từ (*)', maxLength: 20, cell: (r) => text(r.voucherNo) },
+    { header: 'Tài khoản chi', cell: blank }, // MISA bank account catalog entry
+    { header: 'Mở tại NH', cell: blank },
+    { header: 'Nội dung thanh toán', cell: blank }, // MISA code
+    { header: 'Diễn giải nội dung thanh toán', maxLength: 255, cell: (r) => text(r.voucher.description) },
+    { header: 'Mã đối tượng', cell: blank }, // MISA catalog code
+    { header: 'Tên đối tượng', maxLength: 128, cell: (r) => text(r.voucher.party?.name) },
+    { header: 'Địa chỉ', maxLength: 255, cell: (r) => text(r.voucher.party?.address) },
+    { header: 'Tài khoản nhận', cell: blank },
+    { header: 'Tên NH nhận', cell: blank },
+    { header: 'Người lĩnh tiền', maxLength: 255, cell: (r) => text(r.voucher.personName) },
+    { header: 'Số CMND', cell: blank },
+    { header: 'Ngày cấp CMND', cell: blank },
+    { header: 'Nơi cấp CMND', cell: blank },
+    { header: 'Nhân viên', cell: blank }, // MISA catalog code
+    { header: 'Diễn giải', maxLength: 255, cell: (r) => text(r.line.memo || r.voucher.description) },
+    { header: 'TK Nợ (*)', cell: (r) => text(r.line.account) },
+    { header: 'TK Có (*)', cell: (r) => text(r.voucher.cashAccount) },
+    { header: 'Số tiền', cell: (r) => fixed(r.line.amount) },
+    { header: 'Mã đối tượng (Chi tiết)', cell: blank },
+    { header: 'Khoản mục chi phí', cell: blank },
+    { header: 'Đơn vị', cell: blank },
+    { header: 'ĐT tập hợp chi phí', cell: blank },
+    { header: 'Công trình', cell: blank },
+    { header: 'Đơn đặt hàng', cell: blank },
+    { header: 'Hợp đồng mua', cell: blank },
+    { header: 'Hợp đồng bán', cell: blank },
+    { header: 'Chi phí không hợp lý', cell: blank },
+    { header: 'Mã thống kê', cell: blank },
+    { header: 'Diễn giải (Thuế)', cell: blank },
+    { header: 'TK thuế GTGT', cell: blank },
+    { header: 'Tiền thuế GTGT', cell: blank },
+    { header: '% thuế GTGT', cell: blank },
+    { header: 'Tỷ lệ tính thuế (Thuế suất KHAC)', cell: blank },
+    { header: 'Giá trị HHDV chưa thuế', cell: blank },
+    { header: 'Mẫu số hóa đơn', cell: blank },
+    { header: 'Ký hiệu hóa đơn', cell: blank },
+    { header: 'Số hóa đơn', cell: blank },
+    { header: 'Ngày hóa đơn', cell: blank },
+    { header: 'Nhóm HHDV mua vào', cell: blank },
+    { header: 'Mã NCC', cell: blank },
+    { header: 'Tên NCC', cell: blank },
+    { header: 'Mã số thuế NCC', cell: blank },
   ],
 };
 
