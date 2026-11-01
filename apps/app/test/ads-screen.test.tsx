@@ -37,7 +37,7 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
-const { AdsEmpty, AdsSettingsCard, Breakdowns, Totals } = await import('../src/routes/ads.tsx');
+const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, Totals } = await import('../src/routes/ads.tsx');
 
 function render(node: ReactNode, locale: 'en' | 'vi' = 'en'): string {
   return renderToStaticMarkup(
@@ -194,6 +194,93 @@ describe('the settings of an ad account', () => {
     expect(html).toContain(`>${en.ads.settings.legalEntity}<`);
     expect(html).toMatch(selectedOption('e2'));
   });
+
+  it.each(['active', 'expired', 'error'] as const)('offers to disconnect a %s connection, behind a confirmation that is not open yet', (connectionStatus) => {
+    const html = settings(account({ connectionStatus }));
+    expect(html).toContain(en.ads.settings.disconnectHint);
+    // The trigger opens a dialog; the question itself shows only once it is open.
+    expect(buttonBefore(html, en.ads.settings.disconnect)).toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain(en.ads.settings.disconnectTitle);
+    // Outside the form of the settings: opening it is not saving them.
+    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf(`>${en.ads.settings.disconnect}<`));
+  });
+
+  it('offers nothing to disconnect on an account that already is, and keeps its settings', () => {
+    const html = settings(account({ connectionStatus: 'revoked', resultKind: 'lead' }));
+    expect(html).not.toContain(`>${en.ads.settings.disconnect}<`);
+    expect(html).not.toContain('aria-haspopup="dialog"');
+    expect(html).not.toContain(en.ads.settings.disconnectHint);
+    expect(html).toMatch(selectedOption('lead'));
+    expect(buttonBefore(html, en.ads.settings.save)).toBeDefined();
+  });
+});
+
+describe('the header of an ad account', () => {
+  const header = (acc: AdAccountView, canRefresh = true) => render(<AccountHeader account={acc} canRefresh={canRefresh} onRequested={() => undefined} />);
+  const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
+  const anHourAgo = () => new Date(Date.now() - 3_600_000).toISOString();
+
+  it('says the sandbox figures are made up, how far they run, and offers a refresh to those who may ask', () => {
+    const html = header(account());
+    expect(html).toContain('>Quảng cáo cửa hàng<');
+    expect(html).toContain(`>${en.ads.sandboxBadge}<`);
+    expect(html).toContain('Figures are up to date through');
+    expect(buttonBefore(html, en.ads.refresh)).toBeDefined();
+    expect(buttonBefore(html, en.ads.refresh)).not.toContain('disabled=""');
+    expect(html).not.toContain(en.ads.refreshHold.replace(' {when}', ''));
+  });
+
+  it('offers no refresh to a viewer', () => {
+    expect(header(account(), false)).not.toContain('<button');
+  });
+
+  it('holds Refresh back while the platform limits the account, with the time beside it, and gives it back when that has passed', () => {
+    const held = header(account({ nextRunAt: inAnHour(), lastErrorKind: 'rate_limited' }));
+    expect(buttonBefore(held, en.ads.refresh)).toContain('disabled=""');
+    expect(buttonBefore(held, en.ads.refresh)).toContain('aria-describedby=');
+    expect(held).toContain('Refresh paused until');
+    expect(held).toContain(en.ads.errors.rate_limited);
+    const over = header(account({ nextRunAt: anHourAgo() }));
+    expect(buttonBefore(over, en.ads.refresh)).not.toContain('disabled=""');
+    expect(over).not.toContain('Refresh paused until');
+  });
+
+  it('shows a disconnected account quietly, with its figures as stored and nothing that claims it is live', () => {
+    // It had failed and had a try planned before it was disconnected: neither is said.
+    const html = header(account({ connectionStatus: 'revoked', lastErrorKind: 'transient', nextRunAt: inAnHour() }));
+    expect(html).toContain(`>${en.ads.connection.revoked}<`);
+    expect(html).toContain(en.ads.connectionHint.revoked);
+    expect(html).toContain('Stored figures run through');
+    expect(buttonBefore(html, en.ads.refresh)).toContain('disabled=""');
+    expect(html).not.toContain('up to date');
+    expect(html).not.toContain(en.ads.errors.transient);
+    expect(html).not.toContain(en.ads.errors.keptFigures);
+    expect(html).not.toContain('Next update');
+    expect(html).not.toContain('Refresh paused until');
+    // Quiet, not a warning: the warning color is for an expired connection or one in trouble.
+    expect(html).not.toContain('text-warning');
+  });
+
+  it.each(['expired', 'error'] as const)('says an %s connection is not updated, who can fix it, and cannot be refreshed', (connectionStatus) => {
+    const html = header(account({ connectionStatus }));
+    expect(html).toContain(`>${en.ads.connection[connectionStatus]}<`);
+    expect(html).toContain(en.ads.connectionHint[connectionStatus]);
+    expect(buttonBefore(html, en.ads.refresh)).toContain('disabled=""');
+    expect(html).not.toContain('up to date');
+  });
+
+  it('asks an owner or admin to connect an expired account again', () => {
+    expect(header(account({ connectionStatus: 'expired' }))).toContain('An owner or admin must connect the account again');
+    expect(render(<AccountHeader account={account({ connectionStatus: 'expired' })} canRefresh onRequested={() => undefined} />, 'vi')).toContain(
+      'Chủ sở hữu hoặc quản trị viên cần kết nối lại tài khoản',
+    );
+  });
+
+  it('says in words why an update failed, for an account that is live', () => {
+    const html = header(account({ lastErrorKind: 'token_expired' }));
+    expect(html).toContain(en.ads.errors.token_expired);
+    expect(html).toContain(en.ads.errors.keptFigures);
+  });
 });
 
 describe('the totals of a period', () => {
@@ -289,12 +376,23 @@ describe('the books strip', () => {
     { month: '2026-10', spend: '0' },
     { month: '2026-11', spend: '2000000' },
   ];
-  const ledger = (debit: string, credit = '0.0000') => ({ account: { code: '6421', name: 'Chi phí bán hàng' }, opening: '0', lines: [], debit, credit, closing: debit });
-  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true) => {
+  // The ledger of the expense account as ledger.account answers: the lines of the month (a debit against 331, a credit
+  // against 111 when given, and any more), whose debits less credits the strip adds up itself.
+  type Line = { debit: string; credit: string; counterAccounts: string[]; reversal: boolean };
+  const row = (debit: string, credit: string, counterAccounts: string[]): Line => ({ debit, credit, counterAccounts, reversal: false });
+  const ledger = (debit: string, credit = '0.0000', more: Line[] = []) => ({
+    account: { code: '6421', name: 'Chi phí bán hàng' },
+    opening: '0',
+    lines: [row(debit, '0.0000', ['331']), ...(credit === '0.0000' ? [] : [row('0.0000', credit, ['111'])]), ...more],
+    debit,
+    credit,
+    closing: debit,
+  });
+  const strip = (acc: Pick<AdAccountView, 'currency' | 'expenseAccountCode' | 'legalEntityId'>, seeds: Record<string, ReturnType<typeof ledger>> = {}, financeOn = true, list = months, todayMonth = '2026-11') => {
     for (const [period, data] of Object.entries(seeds)) {
       client.current.setQueryData(['ledger', 'account', { period, accountCode: acc.expenseAccountCode, legalEntityId: acc.legalEntityId }], data);
     }
-    return render(<AdsBooksStrip account={acc} months={months} todayMonth="2026-11" financeOn={financeOn} />);
+    return render(<AdsBooksStrip account={acc} months={list} todayMonth={todayMonth} financeOn={financeOn} />);
   };
   const vnd = { currency: 'VND', expenseAccountCode: '6421', legalEntityId: 'e1' };
 
@@ -333,6 +431,25 @@ describe('the books strip', () => {
     // The month that is still open says so, and the difference is shown, not explained away.
     expect(html.match(new RegExp(`>${en.ads.books.monthOpen}<`, 'g'))).toHaveLength(1);
     expect(html).toContain('only shows the difference');
+  });
+
+  it('leaves the year closing out of December, so the books hold the month and not the month less the year', () => {
+    // December's spend is 4,000,000 and the books hold exactly that; the closing entry of 31 December credits the whole
+    // year's 40,000,000 against 911, which is not December's expense.
+    const html = strip(
+      vnd,
+      { '2026-12': ledger('4000000.0000', '0.0000', [row('0.0000', '40000000.0000', ['911'])]) },
+      true,
+      [{ month: '2026-12', spend: '4000000' }],
+      '2027-01',
+    );
+    expect(html).toContain('12/2026');
+    expect(html).toMatch(/4[.,]000[.,]000/);
+    // Counted with the closing line the books would read -36,000,000 and the difference 40,000,000.
+    expect(html).not.toMatch(/36[.,]000[.,]000/);
+    expect(html).not.toMatch(/40[.,]000[.,]000/);
+    expect(html).toContain('year-end closing entry to account 911 is left out');
+    expect(html).not.toContain(`>${en.ads.books.monthOpen}<`);
   });
 
   it('waits for the ledger with a skeleton and does not draw a half-filled table', () => {

@@ -19,12 +19,14 @@ import {
   errorCode,
   expenseCodeProblem,
   hasFigures,
+  isCalmRefusal,
   isNamedResultKind,
   isSandboxProvider,
   keyFor,
   parseAdsSearch,
   recentlyRan,
   resultKindChoices,
+  syncHeld,
   todayIn,
   type AdsRangeKind,
 } from '../src/lib/ads.ts';
@@ -109,10 +111,34 @@ describe('adsRange', () => {
 });
 
 describe('the books comparison', () => {
-  it('works out what the books hold as debit less credit, exactly', () => {
-    expect(booksExpense({ debit: '12000000.0000', credit: '500000.0000' })).toBe('11500000');
-    expect(booksExpense({ debit: '0.0000', credit: '0.0000' })).toBe('0');
-    expect(booksExpense({ debit: '100.5000', credit: '200.2500' })).toBe('-99.75');
+  // A line of the account ledger as the books report it: the account's side, and the accounts on the other side.
+  const line = (debit: string, credit: string, counterAccounts: string[], reversal = false) => ({ debit, credit, counterAccounts, reversal });
+
+  it('works out what the books hold as the debits less the credits of the lines, exactly', () => {
+    expect(booksExpense({ lines: [line('12000000.0000', '0.0000', ['331']), line('0.0000', '500000.0000', ['111'])] })).toBe('11500000');
+    expect(booksExpense({ lines: [] })).toBe('0');
+    expect(booksExpense({ lines: [line('0.0000', '0.0000', ['331'])] })).toBe('0');
+    expect(booksExpense({ lines: [line('100.5000', '0.0000', ['331']), line('0.0000', '200.2500', ['111'])] })).toBe('-99.75');
+  });
+
+  it('leaves out the year closing in December: it credits the whole year against 911, which is not December spend', () => {
+    // December's own spend is 3,000,000 and 1,000,000; the closing entry of 31 December credits the year's 40,000,000.
+    const december = {
+      lines: [line('3000000.0000', '0.0000', ['331']), line('1000000.0000', '0.0000', ['112']), line('0.0000', '40000000.0000', ['911'])],
+    };
+    // Counted with the closing line, the month would read as December less the year: -36,000,000.
+    expect(booksExpense(december)).toBe('4000000');
+    expect(booksExpense({ lines: [line('0.0000', '40000000.0000', ['911'])] })).toBe('0');
+  });
+
+  it('counts a line against other accounts, and a reversal that is not a closing', () => {
+    // A credit against 331 or 111 is an ordinary correction: it stays.
+    expect(booksExpense({ lines: [line('5000000.0000', '0.0000', ['331']), line('0.0000', '1200000.0000', ['331'])] })).toBe('3800000');
+    // A reversal's credit (reversal: true, the original's accounts on the other side) stays too.
+    expect(booksExpense({ lines: [line('2000000.0000', '0.0000', ['112']), line('0.0000', '2000000.0000', ['112'], true)] })).toBe('0');
+    expect(booksExpense({ lines: [line('2500000.0000', '0.0000', ['112']), line('0.0000', '500000.0000', ['112', '1331'], true)] })).toBe('2000000');
+    // An entry with 911 among several counter accounts is still the closing's.
+    expect(booksExpense({ lines: [line('1000000.0000', '0.0000', ['331']), line('0.0000', '900000.0000', ['4212', '911'])] })).toBe('1000000');
   });
 
   it('shows the platform spend less the books, with no float error and no loss on large amounts', () => {
@@ -223,6 +249,22 @@ describe('what an account says about its figures', () => {
     expect(recentlyRan(account({ lastRunAt: null }), now)).toBe(false);
   });
 
+  it('holds the account back only while its next try is later than now', () => {
+    const now = Date.parse('2026-11-02T10:00:00Z');
+    expect(syncHeld(account({ nextRunAt: '2026-11-02T10:05:00Z' }), now)).toBe(true);
+    expect(syncHeld(account({ nextRunAt: '2026-11-02T10:00:00Z' }), now)).toBe(false);
+    expect(syncHeld(account({ nextRunAt: '2026-11-02T09:00:00Z' }), now)).toBe(false);
+    expect(syncHeld(account({ nextRunAt: null }), now)).toBe(false);
+  });
+
+  it('says calmly the two refusals of a refresh that are not faults, and alarms for any other', () => {
+    expect(isCalmRefusal(new ApiError('ADS_SYNC_TOO_SOON', 429, null))).toBe(true);
+    expect(isCalmRefusal(new ApiError('ADS_SYNC_ON_HOLD', 429, null))).toBe(true);
+    expect(isCalmRefusal(new ApiError('ADS_CONNECTION_INACTIVE', 422, null))).toBe(false);
+    expect(isCalmRefusal(new ApiError('FORBIDDEN', 403, null))).toBe(false);
+    expect(isCalmRefusal(null)).toBe(false);
+  });
+
   it('marks the sandbox platform as making its figures up', () => {
     expect(isSandboxProvider('sandbox_ads')).toBe(true);
     expect(isSandboxProvider('meta_ads')).toBe(false);
@@ -236,7 +278,7 @@ describe('what an account says about its figures', () => {
 });
 
 describe('the words of the screen', () => {
-  const CODES = ['ADS_ACCOUNT_NOT_FOUND', 'ADS_CONNECTION_NOT_FOUND', 'ADS_CONNECTION_INACTIVE', 'ADS_SYNC_TOO_SOON', 'ADS_RANGE_INVALID', 'ADS_SANDBOX_DISABLED', 'ADS_ROWS_INVALID', 'ADS_CURRENCY_CHANGED'] as const;
+  const CODES = ['ADS_ACCOUNT_NOT_FOUND', 'ADS_CONNECTION_NOT_FOUND', 'ADS_CONNECTION_INACTIVE', 'ADS_SYNC_TOO_SOON', 'ADS_SYNC_ON_HOLD', 'ADS_RANGE_INVALID', 'ADS_SANDBOX_DISABLED', 'ADS_ROWS_INVALID', 'ADS_CURRENCY_CHANGED'] as const;
 
   it('words every refusal of the ads module in both languages, the kernel Vietnamese when the reader reads Vietnamese', () => {
     for (const code of CODES) {
@@ -253,8 +295,21 @@ describe('the words of the screen', () => {
       for (const kind of ADS_ERROR_KINDS) expect(messages.errors[kind], kind).toBeTruthy();
       for (const currency of ADS_SANDBOX_CURRENCIES) expect(messages.currencies[currency], currency).toBeTruthy();
       for (const range of ADS_RANGES) expect(messages.ranges[range], range).toBeTruthy();
-      for (const status of ['expired', 'revoked', 'error'] as const) expect(messages.connection[status], status).toBeTruthy();
+      for (const status of ['expired', 'revoked', 'error'] as const) {
+        expect(messages.connection[status], status).toBeTruthy();
+        expect(messages.connectionHint[status], status).toBeTruthy();
+      }
     }
+    expect(describeError(new ApiError('ADS_SYNC_ON_HOLD', 429, null), inEn, 'en')).toBe(
+      'The platform is limiting how often this account is read; the system will try again when the limit ends.',
+    );
+  });
+
+  it('tells, before a disconnect, that the stored figures stay and that the account can be connected again', () => {
+    expect(vi.ads.settings.disconnectBody).toContain('Số liệu đã lưu vẫn được giữ; bạn có thể kết nối lại sau.');
+    expect(en.ads.settings.disconnectBody).toContain('The stored figures are kept, and you can connect the account again later.');
+    expect(vi.ads.connectionHint.expired).toContain('Chủ sở hữu hoặc quản trị viên cần kết nối lại');
+    expect(en.ads.connectionHint.expired).toContain('An owner or admin must connect the account again');
   });
 
   it('writes no tax or VAT figure and no em or en dash anywhere in the screen', () => {

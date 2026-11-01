@@ -4,7 +4,8 @@
 // their own: the totals with a spend and, once a result kind is chosen, a cost per result; the months, campaigns and days
 // (a day not final yet marked in words); the books strip beside the ledger's advertising expense, with its difference. A
 // second test account in dollars is not set beside the books in dong. The screen passes an axe scan with data, at desktop
-// and phone width, in both themes. Nothing here posts to the books or changes a campaign: Ads only reads.
+// and phone width, in both themes. Disconnecting an account asks first and leaves its stored figures readable, in a quiet
+// "disconnected" state with Refresh off. Nothing here posts to the books or changes a campaign: Ads only reads.
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { sql } from '../lib/db.ts';
@@ -180,5 +181,66 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     await expect(page.getByText('Vừa mới làm mới tài khoản này', { exact: false })).toBeVisible();
     // Told, not alarmed: no error alert.
     await expect(page.getByRole('alert').filter({ hasText: 'Vừa mới làm mới tài khoản này' })).toHaveCount(0);
+  });
+
+  await test.step('Disconnect asks first, keeps the stored figures readable, and leaves the account quiet and not refreshable', async () => {
+    // Ads is the only place to disconnect an ad account: the channels screen does not list it.
+    const trigger = page.getByRole('button', { name: 'Ngắt kết nối', exact: true });
+    const dialog = page.getByRole('dialog', { name: 'Ngắt kết nối tài khoản quảng cáo này?' });
+    await trigger.click();
+    await expect(dialog.getByText('Số liệu đã lưu vẫn được giữ; bạn có thể kết nối lại sau.', { exact: false })).toBeVisible();
+    // Cancel leaves everything as it was.
+    await dialog.getByRole('button', { name: 'Hủy' }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Làm mới ngay' })).toBeEnabled();
+
+    await trigger.click();
+    await dialog.getByRole('button', { name: 'Ngắt kết nối', exact: true }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Đã ngắt kết nối tài khoản quảng cáo.' })).toBeVisible();
+
+    // A quiet "disconnected" state: the account stays in the picker, Refresh is off, and nothing says it is live.
+    await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toBeVisible();
+    await expect(page.getByText('Tài khoản này đã được ngắt kết nối nên không được cập nhật nữa.', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Làm mới ngay' })).toBeDisabled();
+    await expect(page.getByText('Số liệu đã cập nhật đến')).toHaveCount(0);
+    await expect(page.getByText('Lần cập nhật tiếp theo')).toHaveCount(0);
+    await expect(page.getByText('Số liệu đã lưu đến hết ngày', { exact: false })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Ngắt kết nối', exact: true })).toHaveCount(0);
+    await expect(page.getByLabel('Tài khoản quảng cáo', { exact: true }).locator('option')).toHaveCount(2);
+
+    // The stored figures are still there to read, with their tables and the books strip.
+    await expect(stat(totals, 'Chi phí quảng cáo')).toHaveText(/[1-9]/);
+    await expect.poll(() => page.getByRole('region', { name: 'Theo tháng' }).getByRole('row').count(), { message: 'the months still listed' }).toBeGreaterThan(1);
+    await expect(books.getByRole('columnheader', { name: 'Chênh lệch' })).toBeVisible();
+
+    // In the database only that connection is revoked, and no figure was dropped.
+    const connections = sql<{ name: string; status: string }>(
+      `SELECT a.name, c.status FROM crove_ads.ad_account a
+         JOIN crove_kernel.channel_connection c ON c.org_id = a.org_id AND c.id = a.channel_connection_id
+         JOIN crove_kernel.tenant t ON t.org_id = a.org_id
+        WHERE t.slug = :'slug'`,
+      { slug },
+    );
+    expect(connections).toHaveLength(2);
+    expect(connections).toEqual(
+      expect.arrayContaining([
+        { name: 'Quảng cáo cửa hàng E2E', status: 'revoked' },
+        { name: 'Quảng cáo bằng đô la', status: 'active' },
+      ]),
+    );
+    const kept = sql<{ days: number }>(
+      `SELECT count(*)::int AS days FROM crove_ads.ad_spend_day d
+         JOIN crove_ads.ad_account a ON a.org_id = d.org_id AND a.id = d.ad_account_id
+         JOIN crove_kernel.tenant t ON t.org_id = d.org_id
+        WHERE t.slug = :'slug' AND a.name = 'Quảng cáo cửa hàng E2E' AND d.level = 'account'`,
+      { slug },
+    );
+    expect(kept[0]?.days).toBeGreaterThan(30);
+
+    // A reload shows the same.
+    await page.reload();
+    await expect(page.getByText('Đã ngắt kết nối', { exact: true })).toBeVisible();
+    await expect(stat(totals, 'Chi phí quảng cáo')).toHaveText(/[1-9]/);
   });
 });

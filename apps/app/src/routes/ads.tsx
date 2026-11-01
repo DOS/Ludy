@@ -19,6 +19,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -32,14 +33,15 @@ import {
   adsRange,
   awaitsFirstSync,
   configureChanges,
-  errorCode,
   expenseCodeProblem,
   hasFigures,
+  isCalmRefusal,
   isNamedResultKind,
   isSandboxProvider,
   keyFor,
   recentlyRan,
   resultKindChoices,
+  syncHeld,
   todayIn,
   type AdsRangeKind,
   type AdsSearch,
@@ -192,21 +194,23 @@ export function AdsEmpty({ canManage, sandbox, entities, onConnected }: { canMan
 // The account: its header, how its last update went, and a way to ask for another
 
 // How the last update of the account went: when the figures run to, what failed and why in plain words, and when the next
-// try is. Everything comes from the account's own row; the history of runs is below.
+// try is. Everything comes from the account's own row; the history of runs is below. An account whose connection is not
+// active (expired, disconnected, in trouble) claims nothing live: its figures are "stored", it will not retry, and a
+// line says why and who can fix it. A disconnect the owner chose is said quietly; the other two are a warning.
 function SyncStatus({ account }: { account: AdAccountView }) {
   const t = useTranslations('ads');
   const f = useFormat();
   const active = account.connectionStatus === 'active';
   return (
     <div className="mt-3 space-y-1 text-sm">
-      {account.syncedThrough && <p className="text-muted-foreground">{t('syncedThrough', { day: f.date(account.syncedThrough) })}</p>}
+      {account.syncedThrough && <p className="text-muted-foreground">{active ? t('syncedThrough', { day: f.date(account.syncedThrough) }) : t('storedThrough', { day: f.date(account.syncedThrough) })}</p>}
       {account.lastRunAt && <p className="text-xs text-subtle-foreground">{t('lastRun', { when: f.dateTime(account.lastRunAt) })}</p>}
-      {!active && (
-        <p className="text-warning" role="status">
-          {t('inactiveHint')}
+      {account.connectionStatus !== 'active' && (
+        <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
+          {t(`connectionHint.${account.connectionStatus}`)}
         </p>
       )}
-      {account.lastErrorKind && (
+      {active && account.lastErrorKind && (
         <div role="status" className="space-y-1">
           <p className="text-warning">{t(`errors.${account.lastErrorKind}`)}</p>
           {account.currency !== null && <p className="text-xs text-subtle-foreground">{t('errors.keptFigures')}</p>}
@@ -217,9 +221,26 @@ function SyncStatus({ account }: { account: AdAccountView }) {
   );
 }
 
-function AccountHeader({ account, canRefresh, onRequested }: { account: AdAccountView; canRefresh: boolean; onRequested: () => void }) {
+// The time now, read again when `until` (a time in ms, 0 for none) has passed, so what depends on a hold ending changes
+// by itself.
+function useNowUntil(until: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const wait = until - Date.now();
+    if (wait <= 0) return undefined;
+    // A timer holds at most about 24 days; a hold is minutes.
+    const timer = setTimeout(() => setNow(Date.now()), Math.min(wait + 100, 2_000_000_000));
+    return () => clearTimeout(timer);
+  }, [until]);
+  return now;
+}
+
+export function AccountHeader({ account, canRefresh, onRequested }: { account: AdAccountView; canRefresh: boolean; onRequested: () => void }) {
   const t = useTranslations('ads');
+  const f = useFormat();
   const headingId = useId();
+  const holdId = useId();
   const refresh = useMutation(
     orpc.ads.requestSync.mutationOptions({
       onSuccess: async () => {
@@ -229,9 +250,14 @@ function AccountHeader({ account, canRefresh, onRequested }: { account: AdAccoun
       },
     }),
   );
-  // Asking twice within a minute is not a fault: the server says so, and the screen says it calmly.
-  const tooSoon = errorCode(refresh.error) === 'ADS_SYNC_TOO_SOON';
+  // Asking twice within a minute, or while the platform holds the account back, is not a fault: the server says so, and
+  // the screen says it calmly.
+  const calm = isCalmRefusal(refresh.error);
   const active = account.connectionStatus === 'active';
+  // While the platform holds the account back (a rate limit, until its next try) the server refuses a refresh, so the
+  // button waits with it and the time is shown beside it.
+  const now = useNowUntil(account.nextRunAt === null ? 0 : Date.parse(account.nextRunAt));
+  const held = active && syncHeld(account, now);
   return (
     <section aria-labelledby={headingId}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -241,25 +267,36 @@ function AccountHeader({ account, canRefresh, onRequested }: { account: AdAccoun
           </h2>
           <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-subtle-foreground">
             {isSandboxProvider(account.provider) && <Badge variant="outline">{t('sandboxBadge')}</Badge>}
-            {account.connectionStatus !== 'active' && <Badge variant="warning">{t(`connection.${account.connectionStatus}`)}</Badge>}
+            {account.connectionStatus !== 'active' && (
+              // A disconnect the owner chose is a quiet state; an expired connection or one in trouble is a warning.
+              <Badge variant={account.connectionStatus === 'revoked' ? 'secondary' : 'warning'}>{t(`connection.${account.connectionStatus}`)}</Badge>
+            )}
             {account.currency !== null && account.timeZone !== null && <span>{t('currencyAndZone', { currency: account.currency, zone: account.timeZone })}</span>}
           </p>
         </div>
         {canRefresh && (
-          <Button
-            loading={refresh.isPending}
-            variant="outline"
-            size="lg"
-            disabled={!active}
-            onClick={() => refresh.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}
-          >
-            {t('refresh')}
-          </Button>
+          <div className="flex flex-col items-start gap-1 sm:items-end">
+            <Button
+              loading={refresh.isPending}
+              variant="outline"
+              size="lg"
+              disabled={!active || held}
+              aria-describedby={held ? holdId : undefined}
+              onClick={() => refresh.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}
+            >
+              {t('refresh')}
+            </Button>
+            {held && account.nextRunAt && (
+              <p id={holdId} className="text-xs text-subtle-foreground">
+                {t('refreshHold', { when: f.dateTime(account.nextRunAt) })}
+              </p>
+            )}
+          </div>
         )}
       </div>
       <SyncStatus account={account} />
       {refresh.error &&
-        (tooSoon ? (
+        (calm ? (
           <p className="mt-2 text-sm text-muted-foreground" role="status">
             {errorMessage(refresh.error)}
           </p>
@@ -475,6 +512,44 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
 // ---------------------------------------------------------------------------------------------------------------------
 // Settings (owners and admins)
 
+// Disconnecting the account's connection (kernel.channel.disconnect, owners and admins), asked first in a dialog: Ads is the
+// only place to do it, since the channels screen does not list ad accounts. The stored figures stay and the account stays
+// in the picker as "disconnected", read only; nothing is shown for one that already is.
+function DisconnectAction({ account }: { account: AdAccountView }) {
+  const t = useTranslations('ads');
+  const attempt = useRef<KeyHolder | null>(null);
+  const disconnect = useMutation(
+    orpc.channels.disconnect.mutationOptions({
+      onSuccess: async () => {
+        attempt.current = null;
+        toast(t('settings.disconnected'));
+        await Promise.all([refreshAccounts(), refreshFigures()]);
+      },
+    }),
+  );
+  if (account.connectionStatus === 'revoked') return null;
+  return (
+    <div className="space-y-2 border-t pt-4">
+      <p className="text-sm text-muted-foreground">{t('settings.disconnectHint')}</p>
+      <ConfirmDialog
+        render={<Button loading={disconnect.isPending} variant="outline" size="lg" />}
+        destructive
+        title={t('settings.disconnectTitle')}
+        description={t('settings.disconnectBody', { name: account.name })}
+        confirm={t('settings.disconnect')}
+        onConfirm={() => {
+          // A retry after a lost answer is the same request.
+          attempt.current = keyFor(attempt.current, account.connectionId);
+          disconnect.mutate({ connectionId: account.connectionId, idempotencyKey: attempt.current.key });
+        }}
+      >
+        {t('settings.disconnect')}
+      </ConfirmDialog>
+      {disconnect.error && <ErrorText>{errorMessage(disconnect.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // The action that counts as a result, the expense account of the books to compare with, and the legal entity whose books
 // those are. Only what changed is sent. The card starts from the account as the server has it: the caller keys it by the
 // account's settings, so a change made elsewhere shows here.
@@ -513,7 +588,7 @@ export function AdsSettingsCard({ account, entities }: { account: AdAccountView;
     save.mutate({ adAccountId: account.id, ...next, idempotencyKey: attempt.current.key });
   };
   return (
-    <Card className="block p-4">
+    <Card className="block space-y-4 p-4">
       <form className="space-y-4" onSubmit={submit} aria-labelledby={headingId} noValidate>
         <h2 id={headingId} className={H2}>
           {t('settings.title')}
@@ -565,6 +640,8 @@ export function AdsSettingsCard({ account, entities }: { account: AdAccountView;
         </Button>
         {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
       </form>
+      {/* Outside the form: opening the dialog is not part of saving the settings. */}
+      <DisconnectAction account={account} />
     </Card>
   );
 }
