@@ -1,12 +1,12 @@
 // The landing page's performance budget (#1655; DESIGN.md §6.3), measured on the built site in Chromium: LCP under
-// 2.5 s, CLS under 0.1 and INP under 200 ms on / and /en, on a throttled phone and on a desktop; at most two font
+// 2.5 s, CLS under 0.1 and INP under 200 ms on every page (the home page and the app pages, each in both languages), on a throttled phone and on a desktop; at most two font
 // families, each self-hosted, subset and preloaded; raster images only as AVIF or WebP, small, with their dimensions in
 // the markup; and a cap on the client JavaScript the page loads. The numbers are in perf-budget.ts.
 import { expect, test } from '@playwright/test';
 import { BUDGET, PROFILES } from './perf-budget';
 import { auditResources, measureVitals } from './perf-checks';
 
-for (const path of ['/', '/en']) {
+for (const path of ['/', '/en', '/ke-toan', '/en/accounting']) {
   for (const profile of PROFILES) {
     test(`${path} on ${profile.name} keeps LCP, CLS and INP in budget`, async ({ browser }) => {
       const { vitals, problems, summary } = await measureVitals(browser, path, profile, BUDGET.runs);

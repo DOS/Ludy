@@ -86,7 +86,7 @@ export const vi = {
       checks: ['Tổng dòng khớp', 'Thuế suất 8% đúng', 'MST hợp lệ', 'Có mã CQT', 'Không trùng hoá đơn đã nhập'],
       entryTitle: 'Bút toán đề xuất, TT133',
       balanced: 'Cân',
-      learn: 'Tài khoản 152 đã dùng 6 lần cho nhà cung cấp này',
+      learn: 'Theo quy tắc đã học: cùng mặt hàng của nhà cung cấp này',
       approve: 'Duyệt',
       edit: 'Sửa tài khoản',
       postedNote: 'Đã ghi sổ. Chị Lan duyệt lúc 16:05 14/10/2026 bằng mã hai lớp.',
@@ -153,7 +153,7 @@ export const vi = {
     proposal: {
       balanced: 'Cân',
       balancedNote: 'Nợ bằng Có',
-      foot: 'Tài khoản 152 đã dùng 6 lần cho nhà cung cấp này.',
+      foot: 'Theo quy tắc đã học: cùng mặt hàng của nhà cung cấp này.',
     },
     approve: {
       title: 'Duyệt HĐ 00001284',
@@ -328,9 +328,10 @@ export const vi = {
     title: 'Mỗi phòng một phân hệ, chung một sơ đồ',
     lead: 'Người và agent của từng phòng làm việc trên cùng dữ liệu, cùng quy trình duyệt và cùng nhật ký thay đổi. Bật phân hệ nào thì dùng phân hệ đó.',
     deptLabel: 'Phòng của',
+    pageLink: 'Xem trang giới thiệu',
     finance: {
       name: 'Ludy Kế toán',
-      body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tờ khai GTGT xuất XML cho HTKK, xuất sang MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
+      body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, bản nháp báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tệp XML tờ khai GTGT, Excel theo mẫu nhập liệu MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
       points: [
         'Hoá đơn bán ra: số bị hở trong dãy được chỉ ra trước khi nộp tờ khai',
         'Hoá đơn mua vào: gửi thư xin khách bổ sung hoá đơn còn thiếu',

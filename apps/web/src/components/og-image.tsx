@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ImageResponse } from 'next/og';
-import type { Dictionary } from '../content/vi';
 
 export const OG_SIZE = { width: 1200, height: 630 };
 
@@ -19,10 +18,17 @@ async function font(weight: 400 | 600, text: string): Promise<ArrayBuffer> {
   return (await fetch(src)).arrayBuffer();
 }
 
-// The social preview for one language: the brand, the hero line and the product promise, in the site's dark palette.
-// Colors are literal here because the image is drawn outside the page's CSS.
-export async function renderOgImage(dict: Dictionary): Promise<ImageResponse> {
-  const text = [...new Set(`Ludy ludy.vn ${dict.hero.title} ${dict.footer.tagline}`)].join('');
+export interface OgContent {
+  // The name beside the mark: "Ludy", or an app's own name on its page.
+  name?: string;
+  title: string;
+  tagline: string;
+}
+
+// The social preview of one page: the name, the headline and a line under it, in the site's dark palette. Colors are
+// literal here because the image is drawn outside the page's CSS.
+export async function renderOgImage({ name = 'Ludy', title, tagline }: OgContent): Promise<ImageResponse> {
+  const text = [...new Set(`${name} ludy.vn ${title} ${tagline}`)].join('');
   const [regular, semibold] = await Promise.all([font(400, text), font(600, text)]);
   // The dark mark, not favicon.svg: this image has a dark ground, and Satori ignores the color-scheme query inside that file.
   const mark = await readFile(join(process.cwd(), 'public', 'brand', 'ludy-mark-dark.svg'), 'utf8');
@@ -31,13 +37,13 @@ export async function renderOgImage(dict: Dictionary): Promise<ImageResponse> {
       <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: 72, background: '#141418', color: '#f6f6f8', fontFamily: 'Be Vietnam Pro' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
           <img src={`data:image/svg+xml;base64,${Buffer.from(mark).toString('base64')}`} width={56} height={56} alt="" />
-          <span style={{ fontSize: 40, fontWeight: 600 }}>Ludy</span>
+          <span style={{ fontSize: 40, fontWeight: 600 }}>{name}</span>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <span style={{ fontSize: 76, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.1, maxWidth: 980 }}>{dict.hero.title}</span>
+          <span style={{ fontSize: 76, fontWeight: 600, letterSpacing: '-0.02em', lineHeight: 1.1, maxWidth: 980 }}>{title}</span>
         </div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 26, color: '#a9a9b6' }}>
-          <span style={{ maxWidth: 820 }}>{dict.footer.tagline}</span>
+          <span style={{ maxWidth: 820 }}>{tagline}</span>
           <span style={{ color: '#b9a6ff' }}>ludy.vn</span>
         </div>
       </div>

@@ -6,5 +6,5 @@ export const size = OG_SIZE;
 export const contentType = 'image/png';
 
 export default function Image() {
-  return renderOgImage(vi);
+  return renderOgImage({ title: vi.hero.title, tagline: vi.footer.tagline });
 }
