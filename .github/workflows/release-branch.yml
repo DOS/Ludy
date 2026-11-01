@@ -1,0 +1,44 @@
+name: release-branch
+
+# The web app ships with the backend release (#2261, docs/runbooks/split-app-api.md): a tag v* on a commit of main moves
+# the `release` branch to that commit, and Vercel's Production Branch is `release`, so app.<domain> is built from a
+# release and never from a plain merge to main. The branch is only a pointer; nothing is committed to it.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-branch
+  cancel-in-progress: false
+
+jobs:
+  move:
+    name: Move the release branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Point release at the tagged commit
+        env:
+          TAG: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Only a commit of main is a release (the pilot deploy checks the same).
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::$TAG is not on a commit of main; the release branch stays where it is"
+            exit 1
+          fi
+          before="$(git ls-remote origin refs/heads/release | cut -f1)"
+          git push --force origin "$SHA:refs/heads/release"
+          echo "release: ${before:-none} -> $SHA ($TAG)" >> "$GITHUB_STEP_SUMMARY"

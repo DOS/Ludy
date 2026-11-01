@@ -376,6 +376,8 @@ export interface WorkerDeps {
   };
   // PUBLIC_URL, where Social short links (#706) point.
   publicUrl?: string;
+  // APP_URL, where the links in mail and chat alerts open the web app (#2261). Unset: publicUrl.
+  appUrl?: string;
   // The product name users see (BRAND_NAME, #1045), for the chat alert test line.
   brand?: string;
   // Queued mail (#548): the mailer, the templates queued mail is rendered from, and the bounce domain. Unset: queued
@@ -745,7 +747,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // time with a gap. Without a mailer (tests, an embedder) queued mail stays queued.
   const mail = deps.mail;
   if (mail) {
-    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, publicUrl: deps.publicUrl ?? '', workerDb: deps.workerDb };
+    const mailDeps: MailQueueDeps = { runtime: deps.runtime, ...mail, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', workerDb: deps.workerDb };
     const sendMail = async (job: { data: MailJob; retryCount: number } | undefined, gap: number) => {
       if (!job) return;
       const label = job.data.messageId.slice(0, 8);
@@ -1116,7 +1118,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
 
   // Team chat alerts (#863): one short line in the org's Telegram or Discord chat, sent apart from the notices and
   // their mail; the sender logs a failure and never throws, so the job is never retried.
-  const chatAlerts = social && deps.channels ? new ChatAlertSender({ runtime: deps.runtime, broker: deps.channels.broker, publicUrl: deps.publicUrl ?? '', ...(deps.brand ? { brand: deps.brand } : {}) }) : null;
+  const chatAlerts = social && deps.channels ? new ChatAlertSender({ runtime: deps.runtime, broker: deps.channels.broker, publicUrl: deps.appUrl ?? deps.publicUrl ?? '', ...(deps.brand ? { brand: deps.brand } : {}) }) : null;
   if (chatAlerts) {
     await boss.work<AgentDispatchJob & { test?: true }>(QUEUES.socialChatAlert, { batchSize: 1 }, async ([job]) => {
       if (!job) return;

@@ -18,6 +18,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { CardSkeleton, ErrorText, FieldError, fieldControl, focusFirstInvalid, isEmailAddress, Logo, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import type { Locale } from '../i18n/locale.ts';
+import { apiUrl } from '../lib/api-base.ts';
 import { getConfig } from '../lib/auth.ts';
 import { errorMessage } from '../lib/api.ts';
 import { dayLabel, manageTokenOf, slotsByDay, timeIn, visitorTimeZone, weekRange, type Slot } from '../lib/booking.ts';
@@ -29,7 +30,7 @@ const POLL_MS = 1000;
 const POLL_FOR_MS = 60_000;
 
 async function call<T>(path: string, init?: RequestInit): Promise<T | null> {
-  const res = await fetch(path, { credentials: 'omit', referrerPolicy: 'no-referrer', ...init });
+  const res = await fetch(apiUrl(path), { credentials: 'omit', referrerPolicy: 'no-referrer', ...init });
   if (res.status === 404) return null;
   if (!res.ok) throw await apiErrorFromResponse(res);
   return (await res.json()) as T;

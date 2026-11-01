@@ -51,8 +51,9 @@ services:
       API_EXTERNAL_URL: ${PUBLIC_URL:-http://localhost:8080}/auth/v1
       GOTRUE_DB_DRIVER: postgres
       GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:${AUTH_DB_PASSWORD:-local-auth-password}@db:5432/postgres?search_path=auth
-      GOTRUE_SITE_URL: ${PUBLIC_URL:-http://localhost:8080}
-      GOTRUE_URI_ALLOW_LIST: ${PUBLIC_URL:-http://localhost:8080}/**
+      # Where email links send people back: the web app (APP_URL, #2261), else the API's own origin.
+      GOTRUE_SITE_URL: ${APP_URL:-${PUBLIC_URL:-http://localhost:8080}}
+      GOTRUE_URI_ALLOW_LIST: ${APP_URL:-${PUBLIC_URL:-http://localhost:8080}}/**
       GOTRUE_JWT_SECRET: ${AUTH_JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
       # 15 minutes, defense in depth (ADR-0028); revocation does not rely on it.
       GOTRUE_JWT_EXP: '900'
@@ -130,6 +131,10 @@ services:
       # Signs every user context the app enters (#1822, ADR-0028 section 9); the value migrate installed.
       CROVE_CONTEXT_TOKEN_KEY: ${CROVE_CONTEXT_TOKEN_KEY:-}
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      # A web app served from another origin (#2261): where people open it, and the origins the API answers CORS for.
+      # Both empty (self-host): the app is served from PUBLIC_URL and no CORS header is sent.
+      APP_URL: ${APP_URL:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
       AUTH_UPSTREAM_URL: http://auth:9999
       # Modules to run (ADR-0031); empty runs every module.
       CROVE_MODULES: ${CROVE_MODULES:-}

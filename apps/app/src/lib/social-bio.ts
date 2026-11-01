@@ -1,5 +1,7 @@
 // The org's link-in-bio page (#707): its public address, and a first slug made from the org's name.
-export const bioUrl = (slug: string) => `${typeof location === 'undefined' ? '' : location.origin}/b/${slug}`;
+import { serverOrigin } from './api-base.ts';
+
+export const bioUrl = (slug: string) => `${typeof location === 'undefined' ? '' : serverOrigin()}/b/${slug}`;
 
 // The org's name as a slug: Vietnamese marks dropped (đ as d), lower case, letters and digits joined by single
 // hyphens, 3 to 40 characters.

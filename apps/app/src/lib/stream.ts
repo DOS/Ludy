@@ -4,6 +4,7 @@
 // tested; stream-hook.ts wires it to EventSource and the query client.
 import type { Query, QueryClient } from '@tanstack/react-query';
 import { STREAM_CLOSE_REASONS, STREAM_HINT_TYPES, type StreamCloseReason, type StreamHint } from '@crove/kernel-contract';
+import { apiUrl } from './api-base.ts';
 
 // oRPC query keys are [path, { type, input }], for example [['inbox', 'get'], { type: 'query', input: { id } }].
 function pathOf(query: Query): string {
@@ -201,7 +202,7 @@ export function startStreamClient(deps: StreamClientDeps): () => void {
       return;
     }
     if (stopped) return;
-    const es = deps.open(`/api/stream?ticket=${encodeURIComponent(ticket)}`);
+    const es = deps.open(apiUrl(`/api/stream?ticket=${encodeURIComponent(ticket)}`));
     source = es;
     es.addEventListener('ready', () => {
       if (source !== es) return;
