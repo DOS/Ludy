@@ -66,8 +66,8 @@ export function Section({ id, labelledBy, children, tinted = false }: { id?: str
   );
 }
 
-// The brand mark: four keycaps that spell L, U, D and y, the y key in teal (Vy, the AI assistant) with its acute accent
-// (ý, "idea"), in the brand colors. The same paths as public/brand/ludy-mark.svg; public/favicon.svg draws the keys alone.
+// The brand mark: four keycaps that spell L, U, D and Y, the Y key in teal (Vy, the AI assistant), in the brand colors.
+// The same paths as public/brand/ludy-mark.svg; public/favicon.svg draws the keys alone.
 export function LudyMark({ className = 'size-6' }: { className?: string }) {
   return (
     <svg viewBox="0 0 92 92" className={className} aria-hidden="true">
@@ -76,8 +76,7 @@ export function LudyMark({ className = 'size-6' }: { className?: string }) {
       <path className="fill-brand" d="M0 11A11 11 0 0 1 11 0H32A11 11 0 0 1 43 11V28A11 11 0 0 1 32 39H11A11 11 0 0 1 0 28ZM49 11A11 11 0 0 1 60 0H81A11 11 0 0 1 92 11V28A11 11 0 0 1 81 39H60A11 11 0 0 1 49 28ZM0 60A11 11 0 0 1 11 49H32A11 11 0 0 1 43 60V77A11 11 0 0 1 32 88H11A11 11 0 0 1 0 77Z" />
       <path className="fill-brand-spark" d="M49 60A11 11 0 0 1 60 49H81A11 11 0 0 1 92 60V77A11 11 0 0 1 81 88H60A11 11 0 0 1 49 77Z" />
       <path className="fill-none stroke-brand-ink" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" d="M14.85 8.1V30.9H28.15M61.95 8.1V22.35A8.55 8.55 0 0 0 79.05 22.35V8.1M12 57.1H19.6A11.4 11.4 0 0 1 19.6 79.9H12Z" />
-      <path className="fill-none stroke-brand-spark-ink" strokeWidth="6.4" strokeLinecap="round" strokeLinejoin="round" d="M61.99 64.05L69.73 74.88M79.01 61.72L64.61 82.12" />
-      <path className="fill-none stroke-brand-spark-ink" strokeWidth="5.4" strokeLinecap="round" strokeLinejoin="round" d="M71.95 59.96L76.09 54.38" />
+      <path className="fill-none stroke-brand-spark-ink" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" d="M61.95 57.1L70.5 69.1L79.05 57.1M70.5 69.1V79.9" />
     </svg>
   );
 }
