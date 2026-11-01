@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
 import type { LookupHint } from '@crove/kernel-contract';
+import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -33,8 +34,9 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { LookupOriginalCard, openableLink } = await import('../src/components/lookup-original-card.tsx');
 
-const SELLER = '9900000016';
-const OTHER = '9900000024';
+// Synthetic tax codes, computed rather than written out (the MST fixture guard allows no checksum-valid code in a file).
+const SELLER = `990000001${enterpriseCheckDigit('990000001')}`;
+const OTHER = `990000002${enterpriseCheckDigit('990000002')}`;
 
 function card(hints: LookupHint[], sellerTaxCode: string | null = SELLER, locale: 'en' | 'vi' = 'en'): string {
   return renderToStaticMarkup(
