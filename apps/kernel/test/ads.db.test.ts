@@ -173,7 +173,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       authenticate: createAuthenticator(config, db),
       pool,
       aiEnabled: false,
-      channels: { broker: vault, sandbox: true, adsPlatforms: sandbox, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
+      channels: { broker: vault, sandbox: true, adsPlatforms: { ...sandbox, ...adPlatforms({ sandbox: false, meta: { appSecret: 'meta-app-secret' } }) }, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
     });
     appConfig = config;
     appDb = db;
@@ -745,7 +745,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       const again = await metaRpc('channels/oauthFinish', owner, { provider: 'meta_ads', state: started.body.state, code: 'the-code' });
       expect(again.status).toBeGreaterThanOrEqual(400);
       // Social's channel list does not show them.
-      const channels = (await ok('channels/list', owner, undefined)) as Array<{ provider: string }>;
+      const channels = (await ok('channels/list', owner, {})) as Array<{ provider: string }>;
       expect(channels.some((c) => c.provider === 'meta_ads')).toBe(false);
     });
 
@@ -759,9 +759,12 @@ suite('ads on PostgreSQL (#2217)', () => {
       // Meta restates its latest 28 days: the newest day is not final, one older than that is.
       expect(after?.settledThrough).toBe(new Date(Date.parse(todayIn('Asia/Ho_Chi_Minh', new Date())) - 29 * DAY_MS).toISOString().slice(0, 10));
       const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+      // The owner picks the action that counts as a result; Meta's omni_purchase is the "purchase" of this adapter.
+      await ok('ads/configure', owner, { adAccountId: account.id, resultKind: 'purchase', idempotencyKey: randomUUID() });
       const summary = (await ok('ads/summary', owner, { adAccountId: account.id, from: new Date(Date.parse(today) - 6 * DAY_MS).toISOString().slice(0, 10), to: today })) as AdsSummary;
-      expect(summary.totals.spend).toBe('700000');
-      expect(summary.totals.results.purchase).toBe('14');
+      expect(summary.total.spend).toBe('700000');
+      expect(summary.total.results).toBe('14');
+      expect(summary.campaigns.map((c) => c.name).sort()).toEqual(['Chiến dịch 2301', 'Chiến dịch 2302']);
     });
 
     it('holds an account back after a rate limit, expires it on a refused token, and resumes it when connected again, with no day lost', async () => {
@@ -799,7 +802,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         authenticate: createAuthenticator(appConfig, appDb),
         pool,
         aiEnabled: false,
-        channels: { broker: vault, sandbox: true, connectors: { meta_ads: connector }, publicUrl: 'https://ludy.example.test' },
+        channels: { broker: vault, sandbox: true, connectors: { meta_ads: META_CONNECTOR }, publicUrl: 'https://ludy.example.test' },
       });
       const response = await offApp.request('/api/rpc/channels/oauthStart', {
         method: 'POST',

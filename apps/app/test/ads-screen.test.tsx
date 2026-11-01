@@ -33,11 +33,12 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), queryClient: client.current, errorMessage: (e: unknown) => String(e) };
+  // `client` is the plain oRPC client the Meta connect button starts its sign-in with; rendering never calls it.
+  return { orpc: node([]), queryClient: client.current, errorMessage: (e: unknown) => String(e), client: { channels: { oauthStart: () => Promise.reject(new Error('not called')) } } };
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
-const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, Totals } = await import('../src/routes/ads.tsx');
+const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
 
 function render(node: ReactNode, locale: 'en' | 'vi' = 'en'): string {
   return renderToStaticMarkup(
@@ -155,6 +156,72 @@ describe('the empty Ads screen', () => {
   });
 });
 
+describe('the empty Ads screen where Meta ads is offered', () => {
+  const meta = { slug: 'acme' };
+  const empty = (canManage: boolean, sandbox: boolean, offered: boolean, locale: 'en' | 'vi' = 'en') =>
+    render(<AdsEmpty canManage={canManage} sandbox={sandbox} meta={offered ? meta : undefined} entities={one} onConnected={() => undefined} />, locale);
+
+  it.each(['owner', 'admin'])('as %s: offers to connect a Meta ad account, and says it only reads reports', () => {
+    const html = empty(true, false, true);
+    expect(html).toContain(`>${en.ads.connectMeta.title}<`);
+    expect(buttonBefore(html, en.ads.connectMeta.action)).toBeDefined();
+    expect(buttonBefore(html, en.ads.connectMeta.action)).not.toContain('disabled=""');
+    expect(html).toContain('ads_read');
+    expect(html).toContain('never creates or changes a campaign');
+    expect(html).toContain(en.ads.connectMeta.expiry);
+    // Meta alone is a platform: no "no platform" notice, and no test form without the sandbox.
+    expect(html).not.toContain(en.ads.noPlatform);
+    expect(html).not.toContain(`>${en.ads.connectTitle}<`);
+    expect(html).not.toContain('<form');
+  });
+
+  it('keeps the test account form beside the Meta button where the sandbox is on too', () => {
+    const html = empty(true, true, true);
+    expect(buttonBefore(html, en.ads.connectMeta.action)).toBeDefined();
+    expect(html).toContain(`>${en.ads.connectTitle}<`);
+    expect(html).toContain(`>${en.ads.connect}<`);
+  });
+
+  it.each(['member', 'viewer'])('as %s: reads the explanation and has no Meta button', () => {
+    const html = empty(false, false, true);
+    expect(html).toContain(en.ads.emptyMembers);
+    expect(html).not.toContain(en.ads.connectMeta.action);
+    expect(html).not.toContain('<button');
+    expect(html).not.toContain(en.ads.noPlatform);
+  });
+
+  it.each([true, false])('offers no Meta button where the deployment has no Meta ads app (can manage: %s)', (canManage) => {
+    const html = empty(canManage, false, false);
+    expect(html).toContain(en.ads.noPlatform);
+    expect(html).not.toContain(en.ads.connectMeta.action);
+    expect(html).not.toContain('<button');
+  });
+
+  it('draws no Meta button beside the test form where only the sandbox is on', () => {
+    const html = empty(true, true, false);
+    expect(html).not.toContain(en.ads.connectMeta.action);
+    expect(html).not.toContain(`>${en.ads.connectMeta.title}<`);
+  });
+
+  it('has words in Vietnamese too', () => {
+    const html = empty(true, false, true, 'vi');
+    expect(buttonBefore(html, viMessages.ads.connectMeta.action)).toBeDefined();
+    expect(html).toContain('Kết nối tài khoản quảng cáo Meta');
+    expect(html).toContain('ads_read');
+    expect(html).toContain(viMessages.ads.connectMeta.expiry);
+  });
+});
+
+describe('the Meta connection button on its own', () => {
+  it('is the short form "connect another" for an org that has an ad account, without its own heading', () => {
+    const html = render(<ConnectMeta slug="acme" another />);
+    expect(buttonBefore(html, en.ads.connectMeta.another)).toBeDefined();
+    expect(html).not.toContain(`>${en.ads.connectMeta.title}<`);
+    expect(html).not.toContain('<h2');
+    expect(html).toContain('ads_read');
+  });
+});
+
 describe('the settings of an ad account', () => {
   const settings = (acc: AdAccountView, entities: readonly LegalEntity[] = one) => render(<AdsSettingsCard account={acc} entities={entities} />);
 
@@ -228,6 +295,17 @@ describe('the header of an ad account', () => {
     expect(buttonBefore(html, en.ads.refresh)).toBeDefined();
     expect(buttonBefore(html, en.ads.refresh)).not.toContain('disabled=""');
     expect(html).not.toContain(en.ads.refreshHold.replace(' {when}', ''));
+  });
+
+  it('shows a small Meta badge, not the sandbox one, for a Meta ad account, with its currency and time zone', () => {
+    const html = header(account({ provider: 'meta_ads', name: 'Meta cửa hàng' }));
+    expect(html).toContain('>Meta<');
+    expect(html).not.toContain(en.ads.sandboxBadge);
+    expect(html).toContain('Currency VND, time zone Asia/Ho_Chi_Minh');
+  });
+
+  it('shows no platform badge for the sandbox other than its own', () => {
+    expect(header(account())).not.toContain('>Meta<');
   });
 
   it('offers no refresh to a viewer', () => {
