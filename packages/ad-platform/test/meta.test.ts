@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { GraphError, type Fetch } from '@crove/channel';
-import { AdPlatformError, MetaAdsConnector, MetaAdsPlatform, META_ADS_SCOPES, adPlatforms, graphHostOnly, isAdPlatformProvider, metaAdsError } from '../src/index.ts';
+import { AdPlatformError, MetaAdsConnector, MetaAdsPlatform, META_ADS_SCOPES, adPlatforms, graphHostOnly, isAdPlatformProvider, metaAdsError, platformUserHash } from '../src/index.ts';
 
 const SECRET = JSON.stringify({ accessToken: 'EAAB-token-not-in-urls' });
 const NOW = new Date('2026-11-02T08:00:00Z');
@@ -204,6 +204,7 @@ describe('the Meta ad connection', () => {
       { body: { access_token: 'short-token' } },
       { body: { access_token: 'long-token' } },
       { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'public_profile', status: 'granted' }] } },
+      { body: { id: '4242' } },
       { body: { data: [{ id: 'act_1001', name: 'Cửa hàng A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }, { id: 'act_1002', name: 'Cửa hàng B', currency: 'USD', timezone_name: 'UTC' }] } },
     ]);
     const connector = new MetaAdsConnector(app, { fetch, now: () => NOW });
@@ -216,7 +217,27 @@ describe('the Meta ad connection', () => {
     expect(JSON.parse(accounts[0]?.secret ?? '{}')).toEqual({ accessToken: 'long-token' });
     expect(JSON.parse(accounts[1]?.secret ?? '{}')).toEqual({ accessToken: 'long-token' });
     // The exchange POSTs are Meta's token endpoint; what follows is read with GETs.
-    expect(calls.map((c) => c.method)).toEqual(['POST', 'POST', 'GET', 'GET']);
+    expect(calls.map((c) => c.method)).toEqual(['POST', 'POST', 'GET', 'GET', 'GET']);
+    // Each connection carries the keyed hash of the Meta user who granted it, never the id (plan section 9).
+    expect(accounts[0]?.grantedByHash).toBe(platformUserHash('app-secret', '4242'));
+    expect(accounts[0]?.grantedByHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(accounts[1]?.grantedByHash).toBe(accounts[0]?.grantedByHash);
+    expect(JSON.stringify(accounts)).not.toContain('4242');
+  });
+
+  it('connects without a hash when Meta does not name the person, and does not fail the login for it', async () => {
+    for (const me of [{ status: 500, body: { error: { code: 1, message: 'x' } } }, { body: {} }, { body: { id: 'not-digits' } }]) {
+      const { fetch } = recorded([
+        { body: { access_token: 'short' } },
+        { body: { access_token: 'long' } },
+        { body: { data: [{ permission: 'ads_read', status: 'granted' }] } },
+        me,
+        { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+      ]);
+      const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.grantedByHash).toBeUndefined();
+    }
   });
 
   it('refuses a grant without ads_read, and a login that reaches no ad account', async () => {
@@ -224,6 +245,7 @@ describe('the Meta ad connection', () => {
       { body: { access_token: 'short' } },
       { body: { access_token: 'long' } },
       { body: permissions },
+      { body: { id: '4242' } },
       { body: accounts },
     ];
     const denied = new MetaAdsConnector(app, { fetch: recorded(answers({ data: [{ permission: 'public_profile', status: 'granted' }] }, { data: [] })).fetch });
@@ -239,6 +261,7 @@ describe('the Meta ad connection', () => {
         { body: { access_token: 'short' } },
         { body: { access_token: 'long' } },
         { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: forbidden, status: 'granted' }, { permission: 'pages_manage_posts', status: 'granted' }] } },
+        { body: { id: '4242' } },
         { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
       ]);
       await expect(new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null }), forbidden).rejects.toMatchObject({ kind: 'denied', code: 'WRITE_PERMISSION_GRANTED' });
@@ -250,6 +273,7 @@ describe('the Meta ad connection', () => {
       { body: { access_token: 'short' } },
       { body: { access_token: 'long' } },
       { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'ads_management', status: 'declined' }] } },
+      { body: { id: '4242' } },
       { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
     ]);
     const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });
@@ -261,6 +285,7 @@ describe('the Meta ad connection', () => {
       { body: { access_token: 'short' } },
       { body: { access_token: 'long' } },
       { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'pages_manage_posts', status: 'granted' }, { permission: 'ads_management', status: 'declined' }] } },
+      { body: { id: '4242' } },
       { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
     ]);
     const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });

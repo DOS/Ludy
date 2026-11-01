@@ -43,7 +43,7 @@ The fetch is needed only when Ludy has no XML for the invoice, so the XML itself
 | The email body | The notification email holds the lookup link and code (VNPT blog, MISA help) | The `mime` result already carries the body text (`email.text`). The same reader runs on it. Whether the link's address survives in that text (an HTML link shows its label, not its `href`) is an open point for the first build (section 8) |
 | The person | Typed in when neither source has it | A field on the card (section 5) |
 
-Today an email with only a link and code is **not ingested** (an email without an invoice attachment is skipped; the spike said so). The first build step closes that: such an email becomes an Inbox item "needs the original" instead of vanishing.
+Today an email with only a link and code is **not ingested** (an email without an invoice attachment is skipped; the spike said so). The first build step closes that: such an email becomes an Inbox item "needs the original" instead of vanishing. Built in [#2286](https://github.com/DOS/Ludy/issues/2286): an Inbox item of kind `finance.invoice.original_needed` in `crove_kernel.inbox_item`, one per hint, whose `detail` holds only the provider, the link and the code; owners, admins and members whose scope is the whole org read and dismiss it (a database rule), and the code stays out of audit rows, logs and error texts.
 
 ## 4. Trust rules, for every slice
 

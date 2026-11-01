@@ -7,12 +7,14 @@
 //   made again after a disconnect takes over the account's row, so its history stays.
 // - ads.account.configure: owners and admins change those settings.
 // - ads.sync.request: owners, admins and members ask for a refresh of one account, at most one a minute.
+// - ads.account.delete_history: owners and admins delete an account's figures and sync log (Q4 of #2214); ads.account.erase is
+//   the platform's own deletion request (plan section 9), run by the worker.
 // - ads.account.list, ads.sync.runs: what the screens read.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { ADS_REQUEST_MIN_SECONDS, isAdProviderId, zAdsAccountConfigure, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { ADS_REQUEST_MIN_SECONDS, isAdProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { historyStart } from './domain.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -74,10 +76,16 @@ export const adsAccountLink = defineCommand({
       .executeTakeFirst();
     let adAccountId: string;
     if (existing) {
-      // The same platform account connected again (after a disconnect): its row, history and settings stay, on the new
-      // connection.
-      if (existing.channel_connection_id !== connection.id) {
-        await ctx.trx.updateTable('crove_ads.ad_account').set({ channel_connection_id: connection.id, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', existing.id).execute();
+      // The same platform account connected again (after a disconnect, or an expiry): its row, history and settings stay, on
+      // the connection now, so the next sync reads from the day after the last final one and no day is lost (#2219). The
+      // person who granted it this time is the one a deletion request would name.
+      if (existing.channel_connection_id !== connection.id || input.grantedByHash !== undefined) {
+        await ctx.trx
+          .updateTable('crove_ads.ad_account')
+          .set({ channel_connection_id: connection.id, ...(input.grantedByHash !== undefined ? { granted_by_hash: input.grantedByHash } : {}), updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing.id)
+          .execute();
       }
       adAccountId = existing.id;
     } else {
@@ -94,6 +102,7 @@ export const adsAccountLink = defineCommand({
           name: connection.display_name,
           expense_account_code: input.expenseAccountCode ?? null,
           backfill_from: historyStart(today),
+          ...(input.grantedByHash ? { granted_by_hash: input.grantedByHash } : {}),
           created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
         })
         .returning('id')
@@ -167,6 +176,82 @@ export const adsSyncRequest = defineCommand({
   },
 });
 
+// What the definer crove_ads.account_history_delete refuses, in the words of the screens.
+function historyError(error: unknown): never {
+  const message = (error as { message?: unknown } | null)?.message;
+  switch (message) {
+    case 'ADS_ACCOUNT_NOT_FOUND':
+      throw notFound();
+    case 'ADS_HISTORY_FORBIDDEN':
+      throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới xóa được lịch sử quảng cáo');
+    case 'ADS_CONNECTION_STILL_OPEN':
+      throw new DomainError('ADS_CONNECTION_STILL_OPEN', 409, 'Kết nối của tài khoản này còn mở; hãy ngắt kết nối trước khi xóa tài khoản');
+    default:
+      throw error;
+  }
+}
+
+async function deleteHistory(ctx: CommandContext, adAccountId: string, removeAccount: boolean, today: string): Promise<{ days: number; runs: number; removed: boolean }> {
+  const { rows } = await sql<{ days: string; runs: string; removed: boolean }>`
+    SELECT days, runs, removed FROM crove_ads.account_history_delete(${adAccountId}::uuid, ${removeAccount}, ${historyStart(today)}::date)`
+    .execute(ctx.trx)
+    .catch(historyError);
+  const row = rows[0];
+  if (!row) throw notFound();
+  return { days: Number(row.days), runs: Number(row.runs), removed: row.removed };
+}
+
+// An owner or admin deletes what Ads stored for one account (owner answer Q4 of #2214: the figures stay after a disconnect,
+// with this explicit action to delete them). Every figure and sync run goes; a connected account's cursors go back to the
+// start, so it reads its 13 months again at the next sync, and an account whose connection is closed (disconnected) also
+// loses its row, so nothing of it is left. The audit row names the account and the counts, never a figure.
+export const adsAccountDeleteHistory = defineCommand({
+  name: 'ads.account.delete_history',
+  input: zAdsAccountDeleteHistory,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
+  handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
+    const row = await ctx.trx
+      .selectFrom('crove_ads.ad_account as a')
+      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      .select(['a.id', 'c.status'])
+      .where('a.org_id', '=', ctx.orgId)
+      .where('a.id', '=', input.adAccountId)
+      .forUpdate('a')
+      .executeTakeFirst();
+    if (!row) throw notFound();
+    const done = await deleteHistory(ctx, row.id, row.status === 'revoked', ctx.now.toISOString().slice(0, 10));
+    ctx.audit({ adAccountId: row.id, days: done.days, runs: done.runs, removed: done.removed });
+    return { adAccountId: row.id, ...done };
+  },
+});
+
+// The platform's own data deletion request (plan section 9), run by the worker for each account the request names: the
+// account's row and everything under it go, whatever its connection's state (the connection is closed by its own command).
+export const adsAccountErase = defineCommand({
+  name: 'ads.account.erase',
+  input: z.strictObject({ adAccountId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
+  handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    const done = await deleteHistory(ctx, input.adAccountId, true, ctx.now.toISOString().slice(0, 10));
+    ctx.audit({ adAccountId: input.adAccountId, days: done.days, runs: done.runs, source: 'platform_deletion' });
+    return { adAccountId: input.adAccountId, ...done };
+  },
+});
+
+// Why a connection stopped, in one of the words the screen has text for: the status reason is the closer's own code
+// (kernel.channel.mark_expired, disconnect, revoke_by_platform), anything else is "other" (the text is not shown).
+const PAUSED_REASONS: readonly NonNullable<AdAccountView['pausedReason']>[] = ['token_expired', 'owner_left', 'disconnected', 'platform_deletion'];
+function pausedReason(reason: string | null): NonNullable<AdAccountView['pausedReason']> {
+  return PAUSED_REASONS.find((r) => r === reason) ?? 'other';
+}
+
 // The accounts of the entities the caller reads, with their connection's name and status. `resultKinds` is the adapter's
 // to say (the API route fills it from the deployment's platforms); the module has no adapter.
 export const adsAccountList = defineQuery({
@@ -178,7 +263,7 @@ export const adsAccountList = defineQuery({
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
       .select([
-        'a.id', 'a.channel_connection_id', 'c.status', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
+        'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
         'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at',
       ])
       .where('a.org_id', '=', ctx.orgId)
@@ -192,6 +277,8 @@ export const adsAccountList = defineQuery({
       id: r.id,
       connectionId: r.channel_connection_id,
       connectionStatus: r.status as AdAccountView['connectionStatus'],
+      pausedSince: r.status === 'active' ? null : stamp(r.connection_updated_at),
+      pausedReason: r.status === 'active' ? null : pausedReason(r.status_reason),
       // What the sealed token can do beyond reading ad reports (a Meta token holds every permission the person granted the
       // app): the screen says so. public_profile is the basic login permission and is not one of them.
       extraScopes: r.scopes.filter((s) => s !== 'ads_read' && s !== 'public_profile'),
@@ -242,5 +329,5 @@ export const adsSyncRuns = defineQuery({
   },
 });
 
-export const accountCommands = [adsAccountLink, adsAccountConfigure, adsSyncRequest];
+export const accountCommands = [adsAccountLink, adsAccountConfigure, adsSyncRequest, adsAccountDeleteHistory, adsAccountErase];
 export const accountQueries = [adsAccountList, adsSyncRuns];

@@ -55,6 +55,7 @@ import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from 
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
+import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { AdPlatform } from '@crove/ad-platform';
 
@@ -2028,6 +2029,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           if (claimed < BANK_FEED_NOTICE_CLAIM) break;
         }
       }
+      // Meta's data deletion requests for the Ads connection (plan section 9, #2219): the ad accounts a request names are
+      // closed and erased in their orgs, then the request is completed. Without the callback nothing is waiting.
+      if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
     } catch (error) {
       console.error('[relay]', error);
     } finally {

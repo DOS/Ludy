@@ -38,11 +38,11 @@ const { LookupOriginalCard, openableLink } = await import('../src/components/loo
 const SELLER = `990000001${enterpriseCheckDigit('990000001')}`;
 const OTHER = `990000002${enterpriseCheckDigit('990000002')}`;
 
-function card(hints: LookupHint[], sellerTaxCode: string | null = SELLER, locale: 'en' | 'vi' = 'en'): string {
+function card(hints: LookupHint[], sellerTaxCode: string | null = SELLER, locale: 'en' | 'vi' = 'en', onDismiss?: () => void): string {
   return renderToStaticMarkup(
     <QueryClientProvider client={client.current}>
       <IntlProvider locale={locale} messages={catalog(locale)}>
-        <LookupOriginalCard hints={hints} sellerTaxCode={sellerTaxCode} />
+        <LookupOriginalCard hints={hints} sellerTaxCode={sellerTaxCode} onDismiss={onDismiss} />
       </IntlProvider>
     </QueryClientProvider>,
   );
@@ -135,6 +135,13 @@ describe('the original invoice card', () => {
 
   it('says that the link opens in a new tab, for a screen reader', () => {
     expect(card([{ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: null }])).toContain('opens in a new tab');
+  });
+
+  it('offers a dismissal only on the card of an Inbox item, which has no seller to compare a VNPT link with', () => {
+    const hints: LookupHint[] = [{ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: '4F7K2M9QXA3' }];
+    expect(card(hints)).not.toContain('Dismiss');
+    expect(card(hints, null, 'en', () => undefined)).toContain('Dismiss');
+    expect(card(hints, null, 'vi', () => undefined)).toContain('Bỏ qua');
   });
 
   it('shows nothing when the proposal has no hint', () => {

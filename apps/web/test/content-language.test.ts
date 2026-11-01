@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { accountingEn } from '../src/content/accounting-en';
 import { crmEn } from '../src/content/crm-en';
 import { en } from '../src/content/en';
+import { notesEn } from '../src/content/notes-en';
 import { allowedPhrases, vietnameseLeft } from './vietnamese';
 
 function strings(value: unknown, path: string): Array<[path: string, text: string]> {
@@ -14,7 +15,7 @@ function strings(value: unknown, path: string): Array<[path: string, text: strin
   return [];
 }
 
-const copy = [...strings(en, 'en'), ...strings(accountingEn, 'accountingEn'), ...strings(crmEn, 'crmEn')].map(([path, text]) => [path, text.normalize('NFC')] as const);
+const copy = [...strings(en, 'en'), ...strings(accountingEn, 'accountingEn'), ...strings(crmEn, 'crmEn'), ...strings(notesEn, 'notesEn')].map(([path, text]) => [path, text.normalize('NFC')] as const);
 
 describe('the English copy (content/en.ts)', () => {
   it('has no Vietnamese but the allowed example names', () => {

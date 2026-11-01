@@ -40,7 +40,8 @@ export const kernelManifest = defineModule({
       idempotency_key: columns(['org_id', 'actor_key', 'key', 'command', 'request_sha256', 'created_at'], { response: 'pii' }),
       inbound_drop: columns(['org_id', 'address_id', 'dropped_count', 'first_dropped_at', 'last_dropped_at']),
       inbound_message: columns(['org_id', 'id', 'message_id', 'attachment_count', 'received_at'], { from_address: 'contact', subject: 'pii', body_text: 'pii' }),
-      inbox_item: columns(['org_id', 'id', 'kind', 'dedupe_key', 'detail', 'raised_at', 'dismissed_at', 'dismissed_by']),
+      // detail holds the seller's lookup code of an original-needed item (#2286), which opens an invoice for anyone who has it.
+      inbox_item: columns(['org_id', 'id', 'kind', 'dedupe_key', 'raised_at', 'dismissed_at', 'dismissed_by'], { detail: 'pii' }),
       kill_switch: columns(['org_id', 'id', 'scope', 'target', 'reason', 'engaged_by', 'engaged_at', 'released_by', 'released_at']),
       legal_entity: columns(['org_id', 'id', 'kind', 'parent_id', 'is_default', 'created_by', 'created_at', 'updated_by', 'updated_at'], { name: 'pii', tax_code: 'national_id_if_individual' }),
       mail_event: columns(['org_id', 'id', 'message_id', 'provider', 'provider_event_id', 'kind', 'occurred_at', 'created_at'], { detail: 'pii' }),

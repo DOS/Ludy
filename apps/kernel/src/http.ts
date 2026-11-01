@@ -100,6 +100,7 @@ import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES, acceptAdsDeletion, adsDeletionStatus, renderAdsDeletionStatus } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
@@ -168,6 +169,11 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
+  // (no Meta ads app configured): the route does not exist. With ads installed only.
+  adsDeletion?: { appSecret: string };
+  // Requests per minute per client address for that callback and its status page.
+  adsDeletionLimit?: RateLimiter;
   // Per-client budget for Supabase Auth's emails (#190). Unset: the database limiter on `pool`.
   emailLimiter?: EmailLimiter;
   // The member invite checks for AUTH_SIGNUP_POLICY (#350, #563). Unset: the database checks on `pool`.
@@ -359,6 +365,8 @@ const AUTH_PUBLIC_PATHS =
 const STATUS_CACHE_MS = 5_000;
 // Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
+// Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
+const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
 // A Social video (#409) is one file of up to 100 MB; a batch of documents stays under 60 MB.
 const UPLOAD_BODY_LIMIT = MAX_SOCIAL_VIDEO_BYTES + 2 * 1024 * 1024;
@@ -692,6 +700,45 @@ export function createHttpApp(deps: HttpDeps) {
         const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
         if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
         return c.json({ queued: outcome.queued }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Meta's data deletion callback for the Ads connection (ads plan section 9, #2219). POST is Meta's signed request, checked
+  // before anything else, rate limited per client address, stored nowhere and only queued for the worker, which erases the
+  // accounts that person granted; GET is the status page Meta shows the person, answered by the confirmation code.
+  const adsDeletion = deps.adsDeletion;
+  if (adsDeletion && runtime.installed('ads')) {
+    const deletionLimit = deps.adsDeletionLimit ?? new RateLimiter({ perMinute: ADS_DELETION_PER_MINUTE });
+    const take = (c: Context): Response | null => {
+      const decision = deletionLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.post(ADS_DELETION_PATH, bodyLimit({ maxSize: MAX_ADS_DELETION_BYTES }), async (c) => {
+      const limited = take(c);
+      if (limited) return limited;
+      try {
+        const outcome = await acceptAdsDeletion(runtime, adsDeletion.appSecret, await c.req.text());
+        if (outcome.status !== 200) return c.json({ code: outcome.code }, outcome.status);
+        // What Meta asks for: where the person can see the request's status, and the code that names it.
+        return c.json({ url: `${config.PUBLIC_URL}${ADS_DELETION_PATH}?code=${outcome.code}`, confirmation_code: outcome.code });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+    app.get(ADS_DELETION_PATH, async (c) => {
+      const limited = take(c);
+      if (limited) return limited;
+      try {
+        const status = await adsDeletionStatus(runtime, c.req.query('code') ?? '');
+        c.header('cache-control', 'no-store');
+        c.header('x-robots-tag', 'noindex');
+        return c.html(renderAdsDeletionStatus(status), status ? 200 : 404);
       } catch (error) {
         return problem(c, error);
       }

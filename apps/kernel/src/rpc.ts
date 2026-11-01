@@ -1549,7 +1549,11 @@ export function createRpcHandler(
               // list, and the account is reported as failed. An account connected again keeps its row, history and settings.
               if (isAdProviderId(account.provider)) {
                 try {
-                  await runtime.execute('ads.account.link', { connectionId: done.connectionId }, { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` });
+                  await runtime.execute(
+                    'ads.account.link',
+                    { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
+                    { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` },
+                  );
                 } catch (linkError) {
                   if (!done.reconnected) {
                     // A connection that stays with no ad account is listed nowhere: say so in the log, by code only.
@@ -1689,6 +1693,8 @@ export function createRpcHandler(
       timeline: os.inbox.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.proposal.timeline', input, { actor, orgId }))),
       raised: os.inbox.raised.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.raised', {}, { actor, orgId }))),
       dismiss: os.inbox.dismiss.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.dismiss', input, { actor, orgId }))),
+      originals: os.inbox.originals.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.inbox.originals', {}, { actor, orgId }))),
+      dismissOriginal: os.inbox.dismissOriginal.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.inbox.original_dismiss', input, { actor, orgId }))),
       approve: os.inbox.approve.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
@@ -2112,6 +2118,13 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.sync.request', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // An owner's or admin's deletion of an account's stored figures and sync log (#2219).
+      deleteHistory: os.ads.deleteHistory.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.account.delete_history', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       summary: os.ads.summary.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.spend.summary', input, { actor, orgId }))),

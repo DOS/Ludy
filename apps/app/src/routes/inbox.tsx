@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/t
 import { cn } from '@crove/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
+import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
@@ -144,6 +145,40 @@ function FailedJobs() {
       </ul>
       {data.total > data.items.length && <p className="mt-2 text-xs text-muted-foreground">{t('more', { count: data.total - data.items.length })}</p>}
     </Card>
+  );
+}
+
+// Mails with no invoice attached whose text held the seller's lookup link or code (#2286): each is a card to open the
+// provider's page, copy the code and upload the XML it gives. For members of the org (the list is empty for others); an
+// item stays until someone dismisses it or it is pruned. The card shows the code, which opens the invoice for anyone who
+// has it, so nothing here is logged or sent anywhere but to the provider's page the person opens.
+function OriginalsNeeded() {
+  const t = useTranslations('inbox.originalNeeded');
+  const live = useStreamLive();
+  const list = useQuery({ ...orpc.inbox.originals.queryOptions({ input: {} }), refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
+  const dismiss = useMutation(
+    orpc.inbox.dismissOriginal.mutationOptions({
+      onSuccess: () => void queryClient.invalidateQueries({ queryKey: orpc.inbox.originals.key() }),
+      onError: (error) => toast(errorMessage(error), 'error'),
+    }),
+  );
+  const data = list.data;
+  if (!data || data.total === 0) return null;
+  return (
+    <section className="mt-6" data-testid="originals-needed">
+      <h2 className="text-sm font-medium text-foreground">{t('title', { count: data.total })}</h2>
+      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('hint')}</p>
+      {data.items.map((item) => (
+        <LookupOriginalCard
+          key={item.id}
+          hints={[{ provider: item.provider, url: item.url, code: item.code }]}
+          sellerTaxCode={null}
+          onDismiss={() => dismiss.mutate({ id: item.id })}
+          dismissing={dismiss.isPending}
+        />
+      ))}
+      {data.total > data.items.length && <p className="text-xs text-muted-foreground">{t('more', { count: data.total - data.items.length })}</p>}
+    </section>
   );
 }
 
@@ -467,6 +502,7 @@ export function InboxPage() {
       <IntakePanel intake={intake} />
       {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
+      {config.modules.includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}
       {config.modules.includes('finance') && <OpenBankLines slug={slug} />}
       {config.modules.includes('social') && <SocialAttention slug={slug} />}
       {config.modules.includes('social') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <SocialMails slug={slug} />}

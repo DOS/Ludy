@@ -13,12 +13,15 @@ import { crmEn } from '../src/content/crm-en';
 import { crmVi } from '../src/content/crm-vi';
 import type { AppPageCopy } from '../src/content/app-page';
 import { en } from '../src/content/en';
+import { notesEn } from '../src/content/notes-en';
+import { notesVi } from '../src/content/notes-vi';
 import { APP_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
 import { vi } from '../src/content/vi';
 
 const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
   accounting: { vi: accountingVi, en: accountingEn },
   crm: { vi: crmVi, en: crmEn },
+  notes: { vi: notesVi, en: notesEn },
 };
 const KEYS = Object.keys(APP_PAGES) as AppPageKey[];
 const app = join(import.meta.dirname, '..', 'src', 'app');

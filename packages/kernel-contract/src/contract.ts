@@ -158,6 +158,7 @@ import {
   zNotificationKind,
   zNotifications,
   zRaisedInboxItems,
+  zOriginalNeededItems,
   zRole,
   zSession,
   zSessionRevoke,
@@ -232,7 +233,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1263,6 +1264,11 @@ export const contract = {
     // newest first (50 at most; total counts them all), and dismissing one. Members and viewers get an empty list.
     raised: oc.input(z.object({})).output(zRaisedInboxItems),
     dismiss: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
+    // Owners, admins and members whose scope is the whole org (#2286): the mails with no invoice attachment whose text held
+    // the seller's lookup link or code, one item per hint, newest first (50 at most; total counts them all), and
+    // dismissing one. Viewers and members limited to some legal entities get an empty list.
+    originals: oc.input(z.object({})).output(zOriginalNeededItems),
+    dismissOriginal: oc.input(z.strictObject({ id: zId })).output(z.object({ ok: z.literal(true) })),
     // Asks for a proposal that no file produced (kernel.proposal.request; owners, admins and members): reversing a
     // posted journal entry (#138, #165), or a cash or bank voucher entered by hand (#327). It posts nothing; the
     // proposal is approved like any other (R3, P10 four-eyes, P11 step-up). Reversing a purchase entry also voids
@@ -1598,6 +1604,9 @@ export const contract = {
     configure: oc.input(zAdsAccountConfigure.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
     // Asks for a refresh of one account, at most one a minute.
     requestSync: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
+    // Deletes an account's stored figures and sync log (owners and admins): a connected account reads its 13 months again, one
+    // whose connection is closed also loses its row (#2219).
+    deleteHistory: oc.input(zAdsAccountDeleteHistory.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId, days: z.number(), runs: z.number(), removed: z.boolean() })),
     summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
     syncRuns: oc.input(z.object({ adAccountId: zId })).output(z.array(zAdsSyncRunView)),
   },
