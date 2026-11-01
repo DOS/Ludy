@@ -4031,6 +4031,9 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
       return null;
     });
     if (!fresh || !live.current) return;
+    // The cached list is the list now, as the fetch through the cache left it, so the end-of-list check below never reads
+    // the list from before the approval.
+    queryClient.setQueryData(orpc.social.posts.list.queryKey({ input: reviewInput }), fresh);
     const target = nextAfterDecision(before, fresh.filter((r) => awaitsApprovalBy(r, userId)), postId);
     if (target) openPost(target);
     else setNoneLeft(true);
