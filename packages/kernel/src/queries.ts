@@ -9,6 +9,7 @@ import {
   zJournalReversal,
   zLocalDate,
   zMoney,
+  zProposalSignature,
   zProposalStatus,
   UNCLASSIFIED_ACCOUNT_CODE,
   zPurchaseProposal,
@@ -394,6 +395,21 @@ export const inboxGet = defineQuery({
     // The purchase this proposal recorded was voided by a reversal (#165); its file may then be read again.
     const voided = await executedButVoided(ctx, row);
     const newestReopened = newest?.id === row.id ? voided : await executedButVoided(ctx, newest);
+    // The originals (XML) that arrived after this invoice was posted (#2320): the runs that name it as the proposal they
+    // are the evidence of, newest first, with the seal result their run kept (read defensively).
+    const originalRuns =
+      row.status === 'executed'
+        ? await ctx.trx
+            .selectFrom('crove_kernel.extraction as x')
+            .innerJoin('crove_kernel.file as of', (join) => join.onRef('of.org_id', '=', 'x.org_id').onRef('of.id', '=', 'x.file_id'))
+            .select(['of.id as file_id', 'of.filename', 'x.created_at', 'x.original_differs', sql<unknown>`x.result -> 'signature'`.as('signature')])
+            .where('x.org_id', '=', ctx.orgId)
+            .where('x.original_of_proposal_id', '=', row.id)
+            .orderBy('x.created_at', 'desc')
+            .orderBy('x.id', 'desc')
+            .limit(20)
+            .execute()
+        : [];
     return {
       ...toInboxItem(row, agent?.display_name ?? null),
       revision: row.revision,
@@ -443,6 +459,16 @@ export const inboxGet = defineQuery({
         newest?.id === row.id &&
         (newest.status !== 'executed' || newestReopened) &&
         latest.version < MAX_EXTRACTION_VERSIONS,
+      originals: originalRuns.map((o) => {
+        const signature = zProposalSignature.safeParse(o.signature);
+        return {
+          fileId: o.file_id,
+          filename: o.filename,
+          receivedAt: new Date(o.created_at).toISOString(),
+          differs: o.original_differs === true,
+          signature: signature.success ? signature.data : null,
+        };
+      }),
     };
   },
 });

@@ -81,6 +81,11 @@ export interface InvoiceLookup {
   // The duplicate proposal is pending and was read from a PDF or a photo (#2269): an original (XML) of the same invoice
   // takes its place instead of being flagged as its duplicate.
   duplicateProposalUpgradable?: boolean;
+  // The duplicate proposal was read from a PDF or a photo and is already executed, and is the one match (#2320): an original
+  // (XML) of the same invoice is attached to it as evidence instead of being flagged. attachDiffers: the original's subtotal,
+  // VAT or total are not the posted document's, which the Inbox shows as a warning for a person (the entry is never changed).
+  duplicateProposalAttachable?: boolean;
+  attachDiffers?: boolean;
   // The document in force of the invoice a replacement or an adjustment corrects (#916), or null.
   relatedDocumentId: string | null;
 }
@@ -101,6 +106,8 @@ export const purchaseLookup = defineQuery({
     related: z.object({ series: z.string(), number: z.string() }).nullable().default(null),
     // The legal entity whose learned rules apply (#1280); omitted, the org's default entity.
     legalEntityId: zId.optional(),
+    // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's.
+    totals: z.object({ subtotal: z.string(), vatTotal: z.string(), total: z.string() }).optional(),
   }),
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
@@ -130,7 +137,7 @@ export const purchaseLookup = defineQuery({
     const inForce = (series: string, number: string) => {
       let documents = ctx.trx
         .selectFrom('crove_finance.purchase_document as d')
-        .select('d.id')
+        .select(['d.id', 'd.proposal_id', 'd.subtotal', 'd.vat_amount', 'd.total'])
         .where('d.org_id', '=', ctx.orgId)
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
         .where('d.invoice_series', '=', series)
@@ -207,6 +214,17 @@ export const purchaseLookup = defineQuery({
       // another legal entity, an executed one) keeps the original flagged as a duplicate.
       duplicateProposalUpgradable:
         anotherDuplicate === undefined && duplicate?.status === 'pending' && (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') && !document,
+      // An executed PDF or photo reading that is the one match and is the document in force's own proposal (#2320).
+      duplicateProposalAttachable:
+        anotherDuplicate === undefined &&
+        duplicate?.status === 'executed' &&
+        (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') &&
+        document !== undefined &&
+        document.proposal_id === duplicate.id,
+      attachDiffers:
+        document !== undefined && input.totals !== undefined
+          ? !(money(document.subtotal).equals(money(input.totals.subtotal)) && money(document.vat_amount).equals(money(input.totals.vatTotal)) && money(document.total).equals(money(input.totals.total)))
+          : false,
       relatedDocumentId: original?.id ?? null,
     };
   },
@@ -509,7 +527,9 @@ export async function extractAndPropose(
   // not a duplicate of it. The kernel decides again under its lock (the guard below) and flags it after all if the
   // proposal can no longer be revised.
   const upgrades = method === 'einvoice_xml' && lookup.duplicateProposalUpgradable === true && !lookup.duplicateDocumentId;
-  if ((lookup.duplicateDocumentId || lookup.duplicateProposalId) && !upgrades) checks.unshift(DUPLICATE_CHECK);
+  // Nor of one that is already posted from a PDF or a photo (#2320): the original is attached to it as evidence.
+  const attaches = method === 'einvoice_xml' && lookup.duplicateProposalAttachable === true;
+  if ((lookup.duplicateDocumentId || lookup.duplicateProposalId) && !upgrades && !attaches) checks.unshift(DUPLICATE_CHECK);
   const related = relatedRef(invoice, lookup.relatedDocumentId);
   if (related) checks.push(relatedCheck(related));
   // A sale (issue #313) books every line to revenue; a purchase proposes an expense or asset account per line.
@@ -591,14 +611,15 @@ export async function extractAndPropose(
         command: 'finance.purchase.record',
         title: `${memo}`.slice(0, 300),
         payload,
-        duplicateOf: upgrades ? null : lookup.duplicateProposalId,
+        duplicateOf: upgrades || attaches ? null : lookup.duplicateProposalId,
         // Documents are read at the same time: the record asks the lookup again under a lock on this invoice, so two
         // copies in one batch cannot both pass (#2137). The key is the identity the lookup matches on.
         duplicateGuard: {
           ...(method === 'einvoice_xml' ? { upgrades: true } : {}),
           // Hashed: a seller name can be 500 characters, and the key is only a name for the lock.
           key: sha256Hex(new TextEncoder().encode(JSON.stringify([lookup.direction === 'sale' ? 'sale' : 'purchase', lookup.direction === 'sale' ? '' : (sellerTaxCode ?? invoice.seller.name), invoice.series, invoice.number]))),
-          lookup: lookupInput,
+          // An original also gives the amounts it reads, so the guard can say whether they are the posted document's (#2320).
+          lookup: method === 'einvoice_xml' ? { ...lookupInput, totals: { subtotal: booked.subtotal, vatTotal: booked.vatTotal, total: booked.total } } : lookupInput,
           check: DUPLICATE_CHECK,
         },
       },

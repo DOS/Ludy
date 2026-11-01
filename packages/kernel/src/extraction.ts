@@ -352,6 +352,10 @@ interface DuplicateAnswer {
   duplicateProposalId: string | null;
   // The duplicate proposal is pending and was read from a PDF or a photo (#2269).
   duplicateProposalUpgradable?: boolean;
+  // The duplicate proposal is executed, was read from a PDF or a photo and is the one match (#2320), and whether the
+  // original's amounts are not the posted document's.
+  duplicateProposalAttachable?: boolean;
+  attachDiffers?: boolean;
 }
 
 // The readings of an invoice that a pending proposal can be revised from: the weak ones, read from a PDF or a photo.
@@ -363,18 +367,25 @@ const UPGRADABLE_METHODS: readonly unknown[] = ['pdf_text_ai', 'image_ai'];
 // time this one looks. Without a guard, or without a proposal, the input is returned as it is.
 // `flagged` is the input with a copy found now flagged; `input` is the input as it came, and `upgrade` the id of a pending
 // proposal this reading may take the place of (#2269) when the guard says it is the original's: the caller revises it
-// instead, and falls back to `flagged` when the proposal can no longer be revised.
+// instead, and falls back to `flagged` when the proposal can no longer be revised. `attach` is the executed proposal the
+// reading is the original of (#2320): the caller attaches the run to it as evidence, and falls back to `flagged` when the
+// proposal no longer qualifies.
 async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.infer<typeof zCheck>>; proposal: z.infer<typeof zProposalDraft> | null }>(
   ctx: CommandContext,
   input: T,
-): Promise<{ input: T; flagged: T; upgrade: string | null }> {
+): Promise<{ input: T; flagged: T; upgrade: string | null; attach: { proposalId: string; differs: boolean } | null }> {
   const guard = input.proposal?.duplicateGuard;
-  if (!input.proposal || !guard) return { input, flagged: input, upgrade: null };
+  if (!input.proposal || !guard) return { input, flagged: input, upgrade: null, attach: null };
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.extraction_duplicate:${ctx.orgId}:${guard.key}`}, 0))`.execute(ctx.trx);
   const answer = await ctx.query<DuplicateAnswer>(DUPLICATE_LOOKUP_QUERY, { ...guard.lookup, fileId: input.fileId });
-  if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null };
+  if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null, attach: null };
   const upgrade =
     guard.upgrades === true && answer.value.duplicateProposalUpgradable === true && !answer.value.duplicateDocumentId ? (answer.value.duplicateProposalId ?? null) : null;
+  // The posted case (#2320): the one match is an executed PDF or photo reading that is the document in force's own.
+  const attach =
+    guard.upgrades === true && answer.value.duplicateProposalAttachable === true && answer.value.duplicateProposalId
+      ? { proposalId: answer.value.duplicateProposalId, differs: answer.value.attachDiffers === true }
+      : null;
   // The input without the duplicate flag the worker may have set from its own, earlier lookup: an original that takes a
   // proposal's place is not its duplicate.
   const unflag = (checks: Array<z.infer<typeof zCheck>>) => checks.filter((c) => c.code !== guard.check.code);
@@ -388,12 +399,13 @@ async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.in
       payload: Array.isArray(payloadChecksIn) ? { ...input.proposal.payload, checks: unflag(payloadChecksIn as Array<z.infer<typeof zCheck>>) } : input.proposal.payload,
     },
   };
-  ctx.audit({ duplicate_guard: upgrade ? 'upgrade' : 'found', duplicate_of: answer.value.duplicateProposalId });
+  ctx.audit({ duplicate_guard: upgrade ? 'upgrade' : attach ? 'attach' : 'found', duplicate_of: answer.value.duplicateProposalId });
   const flagged = (checks: Array<z.infer<typeof zCheck>>) => (checks.some((c) => c.code === guard.check.code) ? checks : [guard.check, ...checks]);
   const payloadChecks = input.proposal.payload['checks'];
   return {
-    input: upgrade ? clean : input,
+    input: upgrade || attach ? clean : input,
     upgrade,
+    attach,
     flagged: {
       ...input,
       checks: flagged(input.checks),
@@ -421,6 +433,28 @@ async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.
   // What a person chose on the reading (an account for a line, an exchange rate, a legal entity) is theirs: the original
   // does not replace it silently, it is flagged for them to decide, as before.
   if (payload?.legalEntityId !== undefined || payload?.invoice?.foreign?.source === 'entered' || payload?.lines?.some((l) => l.accountRule?.source === 'user')) return undefined;
+  const entity =
+    file.upload_entity_id ??
+    (await uploaderEntity(ctx, file.created_by)) ??
+    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+  return row.legal_entity_id === entity ? row : undefined;
+}
+
+// The executed proposal an original is attached to (#2320), locked, or undefined when it cannot any more: it is not executed
+// (or was voided by a reversal, then the original is a new invoice to read), it is of another kind or command, it was not
+// read from a PDF or a photo, or it belongs to another legal entity than the original's. Shared, not exclusive: nothing of
+// the proposal changes; the lock only keeps a reversal from voiding it between this check and the run's insert.
+async function lockAttachable(
+  ctx: CommandContext,
+  proposalId: string,
+  draft: z.infer<typeof zProposalDraft>,
+  file: { created_by: string | null; upload_entity_id: string | null },
+) {
+  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forShare().executeTakeFirst();
+  if (!row || row.status !== 'executed' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
+  if (await executedButVoided(ctx, row)) return undefined;
+  const payload = row.payload as { extractionMethod?: unknown } | null;
+  if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
   const entity =
     file.upload_entity_id ??
     (await uploaderEntity(ctx, file.created_by)) ??
@@ -474,7 +508,13 @@ export const recordExtraction = defineCommand({
     // first run only; a re-read never does.
     const upgraded =
       guarded.upgrade !== null && original.version === undefined && original.proposal ? await lockUpgradable(ctx, guarded.upgrade, original.proposal, file) : undefined;
-    const input = upgraded ? guarded.input : guarded.flagged;
+    // The original of an invoice already posted from a PDF or a photo (#2320) is attached to the posted proposal: the first
+    // run only, and only while that proposal still qualifies.
+    const attachedTo =
+      !upgraded && guarded.attach !== null && original.version === undefined && original.proposal && original.status === 'done'
+        ? await lockAttachable(ctx, guarded.attach.proposalId, original.proposal, file)
+        : undefined;
+    const input = upgraded || attachedTo ? guarded.input : guarded.flagged;
     const outcome = {
       method: input.method,
       status: input.status,
@@ -499,6 +539,34 @@ export const recordExtraction = defineCommand({
       if (existing) return { extractionId: existing.id, proposalId: null, duplicate: true };
       // The entity the upload named (#1764), else the uploader's own.
       const entity = (original.statement === true ? original.legalEntityId : undefined) ?? file.upload_entity_id ?? (await uploaderEntity(ctx, file.created_by));
+      // The original of a posted invoice (#2320): the run is inserted done, tied to the posted proposal as its evidence, and
+      // nothing else happens. No proposal of its own (the invoice is not posted twice), the entry and the document are not
+      // touched, and a difference in the amounts is only a warning the Inbox shows to a person.
+      if (attachedTo && guarded.attach) {
+        const differs = guarded.attach.differs;
+        const attached = await ctx.trx
+          .insertInto('crove_kernel.extraction')
+          .values({
+            org_id: ctx.orgId,
+            file_id: input.fileId,
+            ...(entity ? { legal_entity_id: entity } : {}),
+            ...outcome,
+            original_of_proposal_id: attachedTo.id,
+            original_differs: differs,
+          })
+          .returning(['id', 'version'])
+          .executeTakeFirstOrThrow();
+        ctx.audit({ version: attached.version, status: input.status, attached_to_proposal_id: attachedTo.id, differs });
+        const signature = (input.result as { signature?: { status?: unknown } } | null)?.signature?.status;
+        await ctx.activity(
+          'kernel.proposal',
+          attachedTo.id,
+          'proposal.original_attached',
+          `Đã nhận hóa đơn gốc XML ${file.filename} cho hóa đơn đã ghi sổ (chữ ký: ${typeof signature === 'string' ? signature : 'không có'}; ${differs ? 'số liệu KHÁC chứng từ đã ghi sổ, cần người kiểm tra' : 'số liệu khớp chứng từ đã ghi sổ'})`.slice(0, 500),
+        );
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', `Hóa đơn gốc của hóa đơn đã ghi sổ từ tệp khác`);
+        return { extractionId: attached.id, proposalId: null, duplicate: false };
+      }
       run = await ctx.trx
         .insertInto('crove_kernel.extraction')
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
