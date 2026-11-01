@@ -98,6 +98,10 @@ const schema = z.object({
   // apps/kernel/src/log.ts); text: the plain lines, the default for a laptop. `pnpm pilot:check` recommends json on a public URL.
   LOG_FORMAT: z.enum(['json', 'text']).default('text'),
   ADMIN_DATABASE_URL: optional,
+  // The database holds other systems' schemas, roles and event triggers beside Ludy's (Ludy Cloud inside DOS's Supabase
+  // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
+  // false (the default, and every self-host) keeps every database-wide guard.
+  CROVE_SHARED_DATABASE: z.enum(['true', 'false']).default('false'),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.

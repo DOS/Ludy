@@ -50,14 +50,17 @@ async function runMigrate(config: Config) {
     ...(config.MIGRATE_LOCK_WAIT_SECONDS === undefined ? {} : { lockWaitMs: config.MIGRATE_LOCK_WAIT_SECONDS * 1000 }),
     // Installed after the migrations, as a bind parameter (#1822); unset installs none.
     contextTokenKey: config.CROVE_CONTEXT_TOKEN_KEY ?? null,
+    sharedDatabase: config.CROVE_SHARED_DATABASE === 'true',
   });
+  const shared = config.CROVE_SHARED_DATABASE === 'true';
   await setRolePasswords(adminUrl, {
     crove_app: config.CROVE_APP_DB_PASSWORD,
     crove_worker: config.CROVE_WORKER_DB_PASSWORD,
     crove_prober: config.CROVE_PROBER_DB_PASSWORD,
     crove_reporter: config.CROVE_REPORTER_DB_PASSWORD,
-    supabase_auth_admin: config.AUTH_DB_PASSWORD,
-  });
+    // Supabase Auth's role belongs to the other system in a shared database.
+    ...(shared ? {} : { supabase_auth_admin: config.AUTH_DB_PASSWORD }),
+  }, { sharedDatabase: shared });
   // The superuser step of the DDL watch (#1202): skipped, with a log line, where the admin role may not create event
   // triggers.
   await installDdlWatch({ adminUrl, log: (m) => console.log(`[migrate] ${m}`) });
@@ -67,7 +70,7 @@ async function runMigrate(config: Config) {
 async function runAuthGrants(config: Config) {
   const adminUrl = config.ADMIN_DATABASE_URL;
   if (!adminUrl) throw new Error('ADMIN_DATABASE_URL is required for auth-grants');
-  await applyAuthGrants({ adminUrl, log: (m) => console.log(`[auth-grants] ${m}`) });
+  await applyAuthGrants({ adminUrl, sharedDatabase: config.CROVE_SHARED_DATABASE === 'true', log: (m) => console.log(`[auth-grants] ${m}`) });
 }
 
 async function main() {

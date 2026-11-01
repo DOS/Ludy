@@ -3,15 +3,33 @@
 // Supabase CLI.
 import { createHash, createHmac } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import pg from 'pg';
 
 const FILE_PATTERN = /^(\d{14})_crove_[a-z0-9]+_[a-z0-9_]+\.sql$/;
+
+// CROVE_SHARED_DATABASE (#2284): Ludy lives in a database that other systems own schemas, roles and event triggers in
+// (Ludy Cloud inside DOS's Supabase project). Only the exact value `true` turns it on; unset, empty and `false` are the
+// owned-database mode, the default, which keeps every guard.
+export function sharedDatabaseSetting(value: string | undefined): boolean {
+  const v = (value ?? '').trim();
+  if (v === '' || v === 'false') return false;
+  if (v === 'true') return true;
+  throw new Error('CROVE_SHARED_DATABASE must be true or false');
+}
 
 export interface MigrateOptions {
   adminUrl: string;
   dir: string;
   log?: (message: string) => void;
+  // Shared-database mode (#2284, docs/runbooks/shared-database.md): every effect is limited to Ludy's own roles
+  // (`crove_*`) and schemas. A migration that has a variant in `sharedVariantsDir` runs the variant instead (the ledger
+  // records the original file's hash, so both modes share one ledger); the foreign roles' privileges on Ludy's objects
+  // are revoked after each run; the hardening guard skips the database-wide TEMPORARY rule and checks only what Ludy
+  // owns. Unset: CROVE_SHARED_DATABASE from the environment.
+  sharedDatabase?: boolean;
+  // Where the variants live; default `shared-variants` beside the migrations directory.
+  sharedVariantsDir?: string;
   // How long to wait for another run's migration lock before failing; unset waits as long as it takes (#1803).
   lockWaitMs?: number;
   // The deployment's context token key (#1822, ADR-0028 section 9), base64 of 32 to 64 bytes, installed after the
@@ -108,9 +126,95 @@ export async function readMigrations(dir: string): Promise<MigrationFile[]> {
   return files;
 }
 
+// The shared-database variants (#2284): `<variantsDir>/<migration file name>` holds the SQL that runs in place of that
+// migration when the database is shared. Applied migration files cannot be edited (the ledger holds their hash), so a
+// migration whose effect reaches beyond Ludy's own roles and schemas gets a variant instead; the ledger records the
+// original's hash either way. A missing directory means no variant. A variant needs its migration, and a migration
+// whose indexes build outside a transaction cannot have one.
+export async function readSharedVariants(dir: string, files: readonly MigrationFile[]): Promise<Map<string, string>> {
+  const names = await readdir(dir).catch((error: { code?: string }) => {
+    if (error?.code === 'ENOENT') return [] as string[];
+    throw error;
+  });
+  const byName = new Map(files.map((f) => [f.name, f]));
+  const variants = new Map<string, string>();
+  for (const name of names.filter((n) => n.endsWith('.sql')).sort()) {
+    const original = byName.get(name);
+    if (!original) throw new Error(`shared-database variant ${name} has no migration of that name`);
+    if (concurrentIndexes(name, original.sql) !== null) throw new Error(`shared-database variant ${name}: a migration that builds indexes concurrently cannot have one`);
+    variants.set(name, (await readFile(join(dir, name), 'utf8')).replaceAll('\r\n', '\n'));
+  }
+  return variants;
+}
+
+// The mode the database was last migrated in, for the SQL that behaves differently in a shared database (the DDL watch's
+// event function reads it). Written after the pipeline session is marked, so creating the table is not DDL outside the
+// pipeline.
+async function recordDeploymentMode(client: pg.ClientBase, shared: boolean): Promise<void> {
+  await client.query(`CREATE TABLE IF NOT EXISTS crove_meta.deployment (
+    key text PRIMARY KEY,
+    value text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+  )`);
+  await client.query(
+    `INSERT INTO crove_meta.deployment (key, value) VALUES ('shared_database', $1)
+     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now() WHERE crove_meta.deployment.value IS DISTINCT FROM excluded.value`,
+    [shared ? 'true' : 'false'],
+  );
+}
+
+// Roles that hold a privilege on an object of a `crove_*` schema although they are not Ludy's: not a `crove_*` role, not
+// the object's owner, not the role running the check, not a superuser (which needs no grant), not a built-in `pg_*` role,
+// and not PUBLIC (a function's PUBLIC EXECUTE is the runner's own revoke; vendored crove_jobs keeps its default). Explicit
+// entries only: that is where another system's default privileges land. One row per (schema, role).
+const FOREIGN_PRIVILEGES_SQL = `
+  WITH crove_ns AS (SELECT n.oid, n.nspname, n.nspowner AS owner FROM pg_catalog.pg_namespace n WHERE n.nspname LIKE 'crove\\_%'),
+  acls AS (
+    SELECT n.nspname AS schema, a.grantee, n.owner FROM crove_ns n
+      JOIN pg_catalog.pg_namespace s ON s.oid = n.oid, LATERAL pg_catalog.aclexplode(s.nspacl) a
+    UNION ALL
+    SELECT n.nspname, a.grantee, c.relowner FROM pg_catalog.pg_class c
+      JOIN crove_ns n ON n.oid = c.relnamespace, LATERAL pg_catalog.aclexplode(c.relacl) a
+      WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+    UNION ALL
+    SELECT n.nspname, a.grantee, p.proowner FROM pg_catalog.pg_proc p
+      JOIN crove_ns n ON n.oid = p.pronamespace, LATERAL pg_catalog.aclexplode(p.proacl) a
+  )
+  SELECT DISTINCT x.schema, r.rolname::text AS role FROM acls x
+  JOIN pg_catalog.pg_roles r ON r.oid = x.grantee
+  WHERE x.grantee <> x.owner AND r.rolname NOT LIKE 'crove\\_%' AND r.rolname NOT LIKE 'pg\\_%'
+    AND r.rolname <> current_user AND NOT r.rolsuper
+  ORDER BY 1, 2`;
+
+async function foreignPrivileges(client: pg.ClientBase): Promise<Array<{ schema: string; role: string }>> {
+  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL);
+  return rows;
+}
+
+// Shared database (#2284): takes back, from every role that is not Ludy's, what another system's default privileges
+// granted on Ludy's objects (Supabase grants each new table, sequence and function of its admin roles to anon,
+// authenticated and service_role), so a foreign role can read none of Ludy's data and run none of its functions. Only
+// Ludy's own schemas are touched; nothing of the other system's.
+async function isolateFromForeignRoles(client: pg.ClientBase, log: (message: string) => void): Promise<void> {
+  for (const { schema, role } of await foreignPrivileges(client)) {
+    const { rows } = await client.query<{ sql: string }>(
+      `SELECT pg_catalog.format(
+         'REVOKE ALL ON ALL TABLES IN SCHEMA %1$I FROM %2$I; REVOKE ALL ON ALL SEQUENCES IN SCHEMA %1$I FROM %2$I; ' ||
+         'REVOKE ALL ON ALL ROUTINES IN SCHEMA %1$I FROM %2$I; REVOKE ALL ON SCHEMA %1$I FROM %2$I', $1::text, $2::text) AS sql`,
+      [schema, role],
+    );
+    const sql = rows[0]?.sql;
+    if (sql) await client.query(sql);
+    log(`took back ${role}'s privileges on the objects of ${schema}`);
+  }
+}
+
 export async function migrate(options: MigrateOptions): Promise<string[]> {
   const log = options.log ?? (() => {});
   const files = await readMigrations(options.dir);
+  const shared = options.sharedDatabase ?? sharedDatabaseSetting(process.env['CROVE_SHARED_DATABASE']);
+  const variants = shared ? await readSharedVariants(options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants'), files) : new Map<string, string>();
+  if (shared) log('shared-database mode: effects are limited to crove_* roles and schemas');
   const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-migrate' });
   await client.connect();
   const applied: string[] = [];
@@ -133,6 +237,7 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         PRIMARY KEY (pid, backend_start)
       );`);
     await markPipelineSession(client, 'migrate');
+    await recordDeploymentMode(client, shared);
     const { rows } = await client.query<{ version: string; sha256: string }>(
       'SELECT version, sha256 FROM crove_meta.schema_migrations',
     );
@@ -159,10 +264,11 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         applied.push(file.name);
         continue;
       }
-      log(`applying ${file.name}`);
+      const variant = variants.get(file.name);
+      log(variant === undefined ? `applying ${file.name}` : `applying ${file.name} (shared-database variant)`);
       await client.query('BEGIN');
       try {
-        await client.query(file.sql);
+        await client.query(variant ?? file.sql);
         await client.query('INSERT INTO crove_meta.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)', [
           file.version,
           file.name,
@@ -189,9 +295,12 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         EXECUTE format('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA %I FROM PUBLIC', s);
       END LOOP;
     END $$;`);
+    // Shared database: the other systems' default privileges (Supabase grants every new object of its admin roles to its API
+    // roles) reach Ludy's new objects, so each run takes them back from every role that is not Ludy's own.
+    if (shared) await isolateFromForeignRoles(client, log);
     // Fails the run (and so the deploy) when a function or a privilege reopens the pg_temp hijack. The
     // files are already committed, so a function fix is a new forward migration; each item names its fix.
-    const violations = await hardeningViolations(client);
+    const violations = await hardeningViolations(client, { shared });
     if (violations.length > 0) {
       throw new Error(`database hardening check failed (External-tenant gate T17):\n  - ${violations.join('\n  - ')}`);
     }
@@ -655,8 +764,19 @@ export const PINNED_SEARCH_PATH = 'search_path=pg_catalog, pg_temp';
  * There is deliberately no bypass (no environment flag, no warn-only mode): a deploy that fails this check is
  * fixed with a forward migration or by the database owner, never skipped. A skipped check leaves a privilege
  * escalation open in that database, and a warning nobody acts on is the same as no check.
+ *
+ * Shared-database mode (`shared`, #2284), for a database other systems own schemas and roles in: the guard checks what
+ * Ludy owns and reaches, and nothing of the others'.
+ * - The database-wide TEMPORARY rules (the two above) are skipped: PUBLIC keeps TEMPORARY there (revoking it would change
+ *   every other role's session), so the pinned search_path of every function is the only layer against a planted
+ *   temporary object.
+ * - Casts are found by Ludy's own types only, not by built-in types such as text: another system's cast on a built-in
+ *   type is not reached by anything Ludy defines.
+ * - No role that is not Ludy's (not `crove_*`, not a superuser, not the owner) holds an explicit privilege on a `crove_*`
+ *   schema, table, sequence or function; the runner takes such privileges back after each run.
  */
-export async function hardeningViolations(client: pg.ClientBase): Promise<string[]> {
+export async function hardeningViolations(client: pg.ClientBase, options: { shared?: boolean } = {}): Promise<string[]> {
+  const shared = options.shared === true;
   // The catalog queries below cost enough to start JIT compilation, which took 0.8-0.9 s per call on the postgres:17
   // image (30-45 ms without it, issue #179) and gains nothing for a one-off query. Off for this session while the
   // check runs, then restored. In a transaction that an error here aborted, the restore fails too, but the caller's
@@ -665,13 +785,17 @@ export async function hardeningViolations(client: pg.ClientBase): Promise<string
   const { rows } = await client.query<{ jit: string }>("SELECT pg_catalog.current_setting('jit') AS jit");
   await client.query("SELECT pg_catalog.set_config('jit', 'off', false)");
   try {
-    return await listHardeningViolations(client);
+    return await listHardeningViolations(client, shared);
   } finally {
     await client.query("SELECT pg_catalog.set_config('jit', $1, false)", [rows[0]?.jit ?? 'on']).catch(() => {});
   }
 }
 
-async function listHardeningViolations(client: pg.ClientBase): Promise<string[]> {
+async function listHardeningViolations(client: pg.ClientBase, shared: boolean): Promise<string[]> {
+  // The types a cast is found by (see the shared-database note on hardeningViolations).
+  const castTypes = shared
+    ? 'SELECT u.t FROM used_types u JOIN pg_catalog.pg_type ty ON ty.oid = u.t WHERE ty.typnamespace IN (SELECT oid FROM crove_ns)'
+    : 'SELECT t FROM used_types';
   const { rows: functions } = await client.query<{ fn: string; kind: string; config: string | null; extra: boolean }>(
     `SELECT p.oid::pg_catalog.regprocedure::text AS fn, p.prokind::text AS kind,
             pg_catalog.array_to_string(p.proconfig, '; ') AS config,
@@ -728,7 +852,7 @@ async function listHardeningViolations(client: pg.ClientBase): Promise<string[]>
        UNION ALL
        SELECT k.castfunc, pg_catalog.pg_describe_object('pg_catalog.pg_cast'::pg_catalog.regclass, k.oid, 0)
        FROM pg_catalog.pg_cast k
-       WHERE k.castfunc <> 0 AND (k.castsource IN (SELECT t FROM used_types) OR k.casttarget IN (SELECT t FROM used_types))
+       WHERE k.castfunc <> 0 AND (k.castsource IN (${castTypes}) OR k.casttarget IN (${castTypes}))
      ),
      reached(fn, via) AS (
        SELECT fn, via FROM direct
@@ -753,17 +877,23 @@ async function listHardeningViolations(client: pg.ClientBase): Promise<string[]>
      ORDER BY x.fn COLLATE "C"`,
     [PINNED_SEARCH_PATH],
   );
-  const { rows: roles } = await client.query<{ rolname: string }>(
-    `SELECT r.rolname FROM pg_catalog.pg_roles r
+  // TEMPORARY is database-wide: in a shared database PUBLIC keeps it, so the two TEMPORARY rules do not apply (see above).
+  const none = { rows: [] as never[] };
+  const { rows: roles } = shared
+    ? (none as { rows: Array<{ rolname: string }> })
+    : await client.query<{ rolname: string }>(
+        `SELECT r.rolname FROM pg_catalog.pg_roles r
      WHERE r.rolname LIKE 'crove\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
        AND pg_catalog.has_database_privilege(r.oid, pg_catalog.current_database(), 'TEMPORARY')
      ORDER BY 1`,
-  );
+      );
   // "Acts as" y: uses y's privileges, may SET ROLE to y, or holds ADMIN OPTION on y and so may grant y to itself.
   const actsAs = (x: string, y: string) =>
     `(pg_catalog.pg_has_role(${x}, ${y}, 'USAGE') OR pg_catalog.pg_has_role(${x}, ${y}, 'SET')` +
     ` OR pg_catalog.pg_has_role(${x}, ${y}, 'MEMBER WITH ADMIN OPTION'))`;
-  const { rows: members } = await client.query<{ rolname: string; via: string; grants: string }>(
+  const { rows: members } = shared
+    ? (none as { rows: Array<{ rolname: string; via: string; grants: string }> })
+    : await client.query<{ rolname: string; via: string; grants: string }>(
     `WITH crove AS (SELECT c.oid, c.rolname FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%'),
      owners AS (
        SELECT DISTINCT p.proowner AS oid FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
@@ -790,6 +920,7 @@ async function listHardeningViolations(client: pg.ClientBase): Promise<string[]>
        AND pg_catalog.has_schema_privilege(r.oid, 'crove_jobs', 'CREATE')
      ORDER BY 1`,
   );
+  const foreign = shared ? await foreignPrivileges(client) : [];
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
@@ -809,6 +940,11 @@ async function listHardeningViolations(client: pg.ClientBase): Promise<string[]>
     ...jobCreators.map(
       (r) =>
         `role ${r.rolname} may CREATE in schema crove_jobs, so functions there cannot stay exempt; fix: REVOKE CREATE ON SCHEMA crove_jobs FROM ${r.rolname}`,
+    ),
+    ...foreign.map(
+      (f) =>
+        `role ${f.role} holds privileges on objects of the Ludy schema ${f.schema} and is not a Ludy role (a shared database); fix: ` +
+        `REVOKE ALL ON ALL TABLES, ALL SEQUENCES, ALL ROUTINES IN SCHEMA ${f.schema} and ON SCHEMA ${f.schema} FROM ${f.role}, which migrate does on every run`,
     ),
     ...roles.map(
       (r) =>
@@ -841,6 +977,8 @@ export async function schemaMissing(client: pg.ClientBase, dir: string): Promise
 
 export interface AuthGrantsOptions {
   adminUrl: string;
+  // Unset: CROVE_SHARED_DATABASE from the environment. True refuses the step.
+  sharedDatabase?: boolean;
   // How long to wait for Supabase Auth to create the tables and columns Crove reads (ADR-0028: 2 minutes).
   timeoutMs?: number;
   pollMs?: number;
@@ -874,6 +1012,11 @@ const AUTH_COLUMNS: ReadonlyArray<readonly [string, string]> = [
 // it re-applies the grant if Supabase Auth ever recreated a table.
 export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void> {
   const log = options.log ?? (() => {});
+  // It adds policies and column grants to the tables of Supabase Auth: in a shared database those belong to the other
+  // system, and its sessions are read by the JWT check (AUTH_SESSION_CHECK=jwt), which needs none of this (#2284).
+  if (options.sharedDatabase ?? sharedDatabaseSetting(process.env['CROVE_SHARED_DATABASE'])) {
+    throw new Error('auth-grants is not available in a shared database (CROVE_SHARED_DATABASE=true): it would change the other system\'s auth tables; use AUTH_SESSION_CHECK=jwt');
+  }
   const deadline = Date.now() + (options.timeoutMs ?? 120_000);
   const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-auth-grants' });
   await client.connect();
@@ -957,12 +1100,16 @@ export async function applyAuthGrants(options: AuthGrantsOptions): Promise<void>
 }
 
 // Sets login-role passwords from configuration. Values never appear in migrations or logs.
-export async function setRolePasswords(adminUrl: string, passwords: Record<string, string | undefined>): Promise<void> {
+// In a shared database (#2284) a role that is not Ludy's (supabase_auth_admin, say) belongs to the other system: a password
+// for it is refused, never applied.
+export async function setRolePasswords(adminUrl: string, passwords: Record<string, string | undefined>, options: { sharedDatabase?: boolean } = {}): Promise<void> {
+  const shared = options.sharedDatabase ?? sharedDatabaseSetting(process.env['CROVE_SHARED_DATABASE']);
   const client = new pg.Client({ connectionString: adminUrl, application_name: 'crove-migrate' });
   await client.connect();
   try {
     for (const [role, password] of Object.entries(passwords)) {
       if (!password) continue;
+      if (shared && !role.startsWith('crove_')) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
       const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
         role,
         password,

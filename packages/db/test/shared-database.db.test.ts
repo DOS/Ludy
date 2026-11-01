@@ -1,0 +1,235 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The shared-database mode (#2284) on the Supabase Postgres image: Ludy migrated into a database that another system owns a
+// schema, a role and default privileges in (Ludy Cloud inside DOS's Supabase project). Every effect must stay with Ludy's own
+// roles and schemas: the other system's roles keep TEMPORARY, its schema, ACLs and roles are left as they were, its DDL
+// raises no alert, and none of its roles can reach what Ludy built.
+//
+// Set CROVE_TEST_SUPABASE_URL to the `postgres` role on a throwaway supabase/postgres container (as for supabase.db.test.ts).
+// The test makes, uses and drops its own database in that container, and refuses any host but this machine.
+import { fileURLToPath } from 'node:url';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { applyAuthGrants, hardeningViolations, installDdlWatch, migrate, readMigrations, setRolePasswords } from '../src/migrate.ts';
+
+const URL_ENV = process.env.CROVE_TEST_SUPABASE_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const REVOKE_TEMP = '20261015120000_crove_kernel_revoke_temp.sql';
+const DB = 'ludy_shared_test';
+const suite = URL_ENV ? describe : describe.skip;
+
+function as(url: string, user: string, password: string, database: string): string {
+  const u = new URL(url);
+  u.username = user;
+  u.password = password;
+  u.pathname = `/${database}`;
+  return u.toString();
+}
+
+suite('shared-database mode beside a foreign schema and role (Supabase Postgres image)', () => {
+  const adminUrl = URL_ENV as string;
+  const sharedUrl = as(adminUrl, decodeURIComponent(new URL(adminUrl).username), decodeURIComponent(new URL(adminUrl).password), DB);
+  const FOREIGN_PASSWORD = 'foreign-test-password-1';
+  let admin: pg.Client;
+  let client: pg.Client;
+  const logs: string[] = [];
+  let before: Snapshot;
+
+  // What of the other system's must not change: its schema's ACLs, its roles' attributes and memberships, the database ACL.
+  type Snapshot = { acls: unknown[]; roles: unknown[]; members: unknown[]; datacl: unknown };
+  const snapshot = async (): Promise<Snapshot> => {
+    const acls = await client.query(
+      `SELECT c.relname AS name, c.relacl::text AS acl FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'dos_core'
+       UNION ALL SELECT p.proname, p.proacl::text FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'dos_core'
+       UNION ALL SELECT 'schema', n.nspacl::text FROM pg_namespace n WHERE n.nspname = 'dos_core' ORDER BY 1, 2`,
+    );
+    const roles = await client.query(
+      `SELECT rolname, rolsuper, rolcreaterole, rolcreatedb, rolcanlogin, rolinherit, rolbypassrls, rolconfig::text AS config, rolvaliduntil::text AS until
+       FROM pg_roles WHERE rolname NOT LIKE 'crove\\_%' ORDER BY 1`,
+    );
+    const members = await client.query(
+      `SELECT r.rolname AS role, m.rolname AS member, am.admin_option FROM pg_auth_members am JOIN pg_roles r ON r.oid = am.roleid JOIN pg_roles m ON m.oid = am.member
+       WHERE r.rolname NOT LIKE 'crove\\_%' AND m.rolname NOT LIKE 'crove\\_%' ORDER BY 1, 2`,
+    );
+    const datacl = await client.query('SELECT datacl::text AS acl FROM pg_database WHERE datname = current_database()');
+    return { acls: acls.rows, roles: roles.rows, members: members.rows, datacl: datacl.rows };
+  };
+  const migrateShared = () => migrate({ adminUrl: sharedUrl, dir: MIGRATIONS, sharedDatabase: true, log: (m) => logs.push(m) });
+  const withRole = async <T>(user: string, run: (c: pg.Client) => Promise<T>): Promise<T> => {
+    const c = new pg.Client({ connectionString: as(adminUrl, user, FOREIGN_PASSWORD, DB) });
+    await c.connect();
+    try {
+      return await run(c);
+    } finally {
+      await c.end();
+    }
+  };
+  const ddlEvents = async () => (await client.query<{ session_role: string; command_tag: string; object_identity: string | null }>(
+    'SELECT session_role, command_tag, object_identity FROM crove_kernel.ddl_event ORDER BY id',
+  )).rows;
+
+  beforeAll(async () => {
+    admin = new pg.Client({ connectionString: adminUrl });
+    if (!['127.0.0.1', 'localhost', '::1'].includes(admin.host)) throw new Error(`CROVE_TEST_SUPABASE_URL must point at a throwaway local container, not ${admin.host}`);
+    await admin.connect();
+    await admin.query(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`);
+    await admin.query(`CREATE DATABASE ${DB}`);
+    for (const role of ['dos_app', 'dos_reader', 'crove_probe_ddl']) await admin.query(`DROP ROLE IF EXISTS ${role}`);
+    await admin.query(`CREATE ROLE dos_app LOGIN PASSWORD '${FOREIGN_PASSWORD}'`);
+    await admin.query(`CREATE ROLE dos_reader LOGIN PASSWORD '${FOREIGN_PASSWORD}'`);
+    // A role named like Ludy's whose DDL must be recorded wherever it happens.
+    await admin.query(`CREATE ROLE crove_probe_ddl LOGIN PASSWORD '${FOREIGN_PASSWORD}'`);
+    client = new pg.Client({ connectionString: sharedUrl });
+    await client.connect();
+    // The other system's schema, a definer function that pins no search_path, a table with data, and the default
+    // privileges Supabase sets (global, for objects the migration role creates), which reach any schema it creates.
+    await client.query(`
+      CREATE SCHEMA dos_core;
+      GRANT USAGE, CREATE ON SCHEMA dos_core TO dos_app, crove_probe_ddl;
+      CREATE TABLE dos_core.accounts (id int PRIMARY KEY, email text);
+      INSERT INTO dos_core.accounts VALUES (1, 'someone@example.com');
+      GRANT SELECT ON dos_core.accounts TO dos_reader;
+      CREATE FUNCTION dos_core.touch() RETURNS int LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+      ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT SELECT ON TABLES TO dos_reader;
+      ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT EXECUTE ON FUNCTIONS TO dos_reader;
+      ALTER DEFAULT PRIVILEGES FOR ROLE postgres GRANT USAGE ON SEQUENCES TO dos_reader;`);
+    before = await snapshot();
+  }, 60_000);
+
+  afterAll(async () => {
+    await client?.end();
+    await admin?.query(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`).catch(() => {});
+    for (const role of ['dos_app', 'dos_reader', 'crove_probe_ddl']) await admin?.query(`DROP ROLE IF EXISTS ${role}`).catch(() => {});
+    await admin?.end();
+  });
+
+  it('applies every migration, the shared variant in place of the TEMPORARY revoke, and records the original in the ledger', async () => {
+    const files = await readMigrations(MIGRATIONS);
+    expect(await migrateShared()).toEqual(files.map((f) => f.name));
+    expect(logs).toContain(`applying ${REVOKE_TEMP} (shared-database variant)`);
+    expect(await migrateShared()).toEqual([]);
+    const original = files.find((f) => f.name === REVOKE_TEMP);
+    const row = await client.query('SELECT sha256 FROM crove_meta.schema_migrations WHERE name = $1', [REVOKE_TEMP]);
+    expect(row.rows[0]?.sha256).toBe(original?.sha256);
+    expect((await client.query("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows).toEqual([{ value: 'true' }]);
+  }, 180_000);
+
+  it('leaves TEMPORARY with PUBLIC: the other system keeps it, and so do its new roles', async () => {
+    const db = await client.query<{ grantee: string }>(
+      `SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee
+       FROM pg_database d, LATERAL aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) a
+       WHERE d.datname = current_database() AND a.privilege_type = 'TEMPORARY'`,
+    );
+    expect(db.rows.map((r) => r.grantee)).toContain('PUBLIC');
+    const { rows } = await client.query(`SELECT has_database_privilege('dos_reader', current_database(), 'TEMPORARY') AS reader, has_database_privilege('dos_app', current_database(), 'TEMPORARY') AS app`);
+    expect(rows).toEqual([{ reader: true, app: true }]);
+    await client.query('CREATE ROLE dos_new_role LOGIN');
+    try {
+      expect((await client.query("SELECT has_database_privilege('dos_new_role', current_database(), 'TEMPORARY') AS temp")).rows).toEqual([{ temp: true }]);
+    } finally {
+      await client.query('DROP ROLE dos_new_role');
+    }
+  });
+
+  it('passes the shared guard, while the default guard still reports the TEMPORARY rule (it is not vacuous)', async () => {
+    expect(await hardeningViolations(client, { shared: true })).toEqual([]);
+    const owned = await hardeningViolations(client);
+    expect(owned.length).toBeGreaterThan(0);
+    expect(owned.every((v) => v.includes('can create temporary objects'))).toBe(true);
+  });
+
+  it('leaves the other system as it was: its schema, ACLs, roles, memberships and the database ACL', async () => {
+    expect(await snapshot()).toEqual(before);
+    expect((await client.query('SELECT email FROM dos_core.accounts')).rows).toEqual([{ email: 'someone@example.com' }]);
+  });
+
+  it('lets no foreign role reach what Ludy built, although the other system grants every new object of the migration role', async () => {
+    // The precondition: the default privileges do reach a new object of this role in a Ludy schema.
+    await client.query('CREATE TABLE crove_kernel.t2284_probe (i int)');
+    try {
+      expect((await client.query("SELECT has_table_privilege('dos_reader', 'crove_kernel.t2284_probe', 'SELECT') AS reach")).rows).toEqual([{ reach: true }]);
+      expect((await hardeningViolations(client, { shared: true })).join('\n')).toMatch(/role dos_reader holds privileges on objects of the Ludy schema crove_kernel/);
+      await migrateShared();
+      expect(logs.some((l) => l.includes("took back dos_reader's privileges"))).toBe(true);
+    } finally {
+      await client.query('DROP TABLE crove_kernel.t2284_probe');
+    }
+    expect(await hardeningViolations(client, { shared: true })).toEqual([]);
+    const reach = await client.query(
+      `SELECT r.rolname,
+              bool_or(has_table_privilege(r.oid, c.oid, 'SELECT,INSERT,UPDATE,DELETE')) AS tables,
+              bool_or(has_schema_privilege(r.oid, n.oid, 'USAGE')) AS schemas,
+              bool_or(has_function_privilege(r.oid, p.oid, 'EXECUTE')) AS functions
+       FROM pg_roles r
+       CROSS JOIN pg_namespace n
+       LEFT JOIN pg_class c ON c.relnamespace = n.oid AND c.relkind IN ('r', 'p', 'v')
+       LEFT JOIN pg_proc p ON p.pronamespace = n.oid
+       WHERE r.rolname IN ('dos_reader', 'dos_app', 'anon', 'authenticated', 'service_role') AND n.nspname IN ('crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads')
+       GROUP BY r.rolname ORDER BY 1`,
+    );
+    for (const row of reach.rows) expect(row, row.rolname).toMatchObject({ tables: false, schemas: false });
+    expect(reach.rows.map((r) => r.rolname)).toContain('dos_reader');
+  }, 180_000);
+
+  it('records DDL that concerns Ludy and ignores the other system\'s, and the other way round in the owned mode', async () => {
+    const result = await installDdlWatch({ adminUrl: sharedUrl, log: (m) => logs.push(m) });
+    // On this image `postgres` may create event triggers (supautils' privileged role), as on a hosted project.
+    expect(result).toBe('installed');
+    await client.query('DELETE FROM crove_kernel.ddl_event');
+    // The other system's roles and the migration role in the other system's schema: no row.
+    await withRole('dos_app', async (c) => {
+      await c.query('CREATE TABLE dos_core.t1 (i int)');
+      await c.query('ALTER TABLE dos_core.t1 ADD COLUMN j int');
+      await c.query('DROP TABLE dos_core.t1');
+    });
+    await client.query('CREATE TABLE dos_core.t2 (i int)');
+    await client.query('GRANT SELECT ON dos_core.t2 TO dos_reader');
+    await client.query('DROP TABLE dos_core.t2');
+    expect(await ddlEvents()).toEqual([]);
+    // A foreign role that touches a Ludy schema, and a Ludy-named role anywhere, are recorded.
+    await client.query('GRANT USAGE, CREATE ON SCHEMA crove_kernel TO dos_app');
+    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await withRole('dos_app', async (c) => {
+      await c.query('CREATE TABLE crove_kernel.foreign_probe (i int)');
+      await c.query('DROP TABLE crove_kernel.foreign_probe');
+    });
+    await client.query('REVOKE ALL ON SCHEMA crove_kernel FROM dos_app');
+    await withRole('crove_probe_ddl', (c) => c.query('CREATE TABLE dos_core.ludy_probe (i int)'));
+    await client.query('DROP TABLE dos_core.ludy_probe');
+    const recorded = await ddlEvents();
+    expect(recorded).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ session_role: 'dos_app', command_tag: 'CREATE TABLE', object_identity: 'crove_kernel.foreign_probe' }),
+        expect.objectContaining({ session_role: 'crove_probe_ddl', command_tag: 'CREATE TABLE', object_identity: 'dos_core.ludy_probe' }),
+      ]),
+    );
+    expect(recorded.every((e) => (e.object_identity ?? '').startsWith('crove_') || e.session_role.startsWith('crove_') || e.session_role === 'postgres')).toBe(true);
+    // The owned mode records the other system's DDL, as before (the flag is what differs).
+    await client.query("UPDATE crove_meta.deployment SET value = 'false' WHERE key = 'shared_database'");
+    try {
+      await client.query('DELETE FROM crove_kernel.ddl_event');
+      await withRole('dos_app', (c) => c.query('CREATE TABLE dos_core.owned_probe (i int)'));
+      await client.query('DROP TABLE dos_core.owned_probe');
+      expect((await ddlEvents()).some((e) => e.session_role === 'dos_app' && e.object_identity === 'dos_core.owned_probe')).toBe(true);
+    } finally {
+      await client.query("UPDATE crove_meta.deployment SET value = 'true' WHERE key = 'shared_database'");
+    }
+    // The pipeline's own runs leave no row either way.
+    await client.query('DELETE FROM crove_kernel.ddl_event');
+    await migrateShared();
+    expect(await ddlEvents()).toEqual([]);
+  }, 180_000);
+
+  it('never sets a password on a role that is not Ludy\'s, and refuses auth-grants', async () => {
+    await expect(setRolePasswords(sharedUrl, { supabase_auth_admin: 'x'.repeat(24) }, { sharedDatabase: true })).rejects.toThrow(/not a Ludy role/);
+    await expect(applyAuthGrants({ adminUrl: sharedUrl, sharedDatabase: true, timeoutMs: 1 })).rejects.toThrow(/not available in a shared database/);
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it('keeps a Ludy-owned migration idempotent and the other system\'s default privileges untouched', async () => {
+    const { rows } = await client.query<{ n: string }>(
+      "SELECT count(*)::text AS n FROM pg_default_acl d JOIN pg_roles r ON r.oid = d.defaclrole WHERE r.rolname = 'postgres' AND d.defaclnamespace = 0",
+    );
+    expect(Number(rows[0]?.n)).toBeGreaterThan(0);
+    expect(await migrateShared()).toEqual([]);
+  });
+});
