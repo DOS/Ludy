@@ -145,3 +145,33 @@ export const zDeal = z.object({
   updatedAt: z.string(),
 });
 export const zDealPage = z.object({ items: z.array(zDeal), next: zDealCursor.nullable() });
+
+// The pipeline's stages, edited by owners and admins (#2226, docs/plan/crm.md step K2). Every command answers the
+// stages as they are afterwards.
+export const PIPELINE_STAGE_NAME_MAX = 40;
+const zStageName = z.string().trim().min(1).max(PIPELINE_STAGE_NAME_MAX);
+export const zStageAdd = z.strictObject({ name: zStageName });
+export const zStageRename = z.strictObject({ stageId: zId, name: zStageName });
+// Every open stage once, in the order wanted; Won and Lost stay last.
+export const zStageReorder = z.strictObject({ stageIds: z.array(zId).min(1).max(PIPELINE_STAGE_MAX) });
+export const zStageRemove = z.strictObject({ stageId: zId });
+
+// The board (#2226): a column per stage in order, with how many deals the stage holds and what they add up to. An open
+// stage lists every deal in it (up to BOARD_CARD_LIMIT); Won and Lost list the deals closed in the last
+// BOARD_CLOSED_DAYS days, the totals counting the same ones.
+export const BOARD_CARD_LIMIT = 200;
+export const BOARD_CLOSED_DAYS = 30;
+export interface BoardColumn {
+  stage: PipelineStage;
+  count: number;
+  // The sum of the amounts, a decimal string.
+  total: string;
+  cards: Deal[];
+  // More deals than the cards shown: the list view shows them all.
+  truncated: boolean;
+}
+export interface Board {
+  columns: BoardColumn[];
+}
+export const zBoardColumn = z.object({ stage: zPipelineStage, count: z.number().int(), total: zDealAmount, cards: z.array(zDeal), truncated: z.boolean() });
+export const zBoard = z.object({ columns: z.array(zBoardColumn) });

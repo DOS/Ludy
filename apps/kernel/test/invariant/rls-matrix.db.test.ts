@@ -57,6 +57,8 @@ const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_account',
   'crove_ads.ad_spend_day',
   'crove_ads.ad_sync_run',
+  'crove_crm.import_batch',
+  'crove_crm.import_row',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -268,6 +270,8 @@ let calendarHour = 0;
 let bankAccountNumber = 0;
 // A pipeline stage's place is unique per org (#2225): every factory row takes the next one.
 let stagePosition = 1;
+// A staged import row's number is unique per batch (#2229): each factory row takes the next one.
+let importRowNo = 1;
 // An org's weekly digest is marked sent once per ISO week (#1104): each row its own year.
 let digestWeekYear = 2000;
 const portalListRow = (o: { id: string; file: string }) => ({
@@ -401,6 +405,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
+  },
+  // A contact import in progress (#2229): a staged batch made by a member (the file is read in the browser and never stored). Tenant roles read and
+  // write it whole; the import commands are the only writers.
+  'crove_crm.import_batch': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), filename: 'rls-matrix.csv', created_by: o.owner } }),
+  },
+  // One staged row of that import: the fields as read, how it was classified and why. A row number is unique per batch, so
+  // every factory row gets a batch of its own.
+  'crove_crm.import_row': {
+    make: (o) => {
+      const batch = randomUUID();
+      return {
+        setup: [{ table: 'crove_crm.import_batch', values: { org_id: o.id, id: batch, filename: 'rls-matrix.csv', created_by: o.owner } }],
+        row: { org_id: o.id, id: randomUUID(), batch_id: batch, row_no: importRowNo++, name: 'RLS matrix import row', outcome: 'new' },
+      };
+    },
   },
   // A stage of the CRM pipeline (#2225): open stages only here, since an org has one won and one lost stage at most.
   'crove_crm.pipeline_stage': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } }) },

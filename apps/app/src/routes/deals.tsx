@@ -1,163 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The deals screen (#2225, docs/plan/crm.md step K1): every deal of the org as a list, with its party, stage, amount and
-// expected close. A member adds, edits, moves (through the stage menu) and deletes deals; a viewer reads. The pipeline
-// board with drag and drop is step K2. Amounts are decimal strings and are shown as the reader's language groups them.
+// The deals screen (#2225, #2226, docs/plan/crm.md steps K1 and K2): the org's deals as the pipeline board (a column per
+// stage, cards dragged between them) or as a list with party, stage, amount and expected close. A member adds, edits,
+// moves and deletes deals; owners and admins edit the stages; a viewer reads. The board is the default on a wide screen,
+// the list on a phone. Amounts are decimal strings and are shown as the reader's language groups them.
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { DEAL_LOST_REASON_MAX, DEAL_TITLE_MAX, zDealAmount, type Deal, type DealCursor, type PartyChoice, type PipelineStage } from '@crove/kernel-contract';
+import { DEAL_LOST_REASON_MAX, type Deal, type DealCursor, type PipelineStage } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
-import { AmountInput } from '../components/amount-input.tsx';
+import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
-import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton, focusFirstInvalid, useFieldErrors } from '../components/ui.tsx';
+import { DealBoard } from '../components/deal-board.tsx';
+import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { PipelineSettings } from '../components/pipeline-settings.tsx';
+import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { formatMoney } from '../lib/format.ts';
-import { normalizeAmount } from '../lib/vouchers.ts';
 
-const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
-
-interface Member {
-  userId: string;
-  displayName: string | null;
-  email: string;
-}
-
-type FormField = 'title' | 'party' | 'amount';
-
-// Picks a party by typing part of its name or tax code.
-function PartyPicker({ value, onPick, invalid, describedBy }: { value: PartyChoice | null; onPick: (party: PartyChoice | null) => void; invalid: boolean; describedBy?: string | undefined }) {
-  const t = useTranslations('deals');
-  const [q, setQ] = useState('');
-  const [open, setOpen] = useState(false);
-  const found = useQuery({ ...orpc.crm.parties.search.queryOptions({ input: { q: q.trim(), limit: 8 } }), enabled: open, placeholderData: keepPreviousData });
-  if (value && !open) {
-    return (
-      <div className="flex items-center gap-2 text-sm">
-        <span className="font-medium text-foreground">{value.name}</span>
-        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(true)}>
-          {t('form.changeParty')}
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-1">
-      <Input
-        type="search"
-        placeholder={t('form.partySearch')}
-        aria-label={t('form.party')}
-        aria-invalid={invalid || undefined}
-        aria-describedby={describedBy}
-        maxLength={100}
-        value={q}
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setOpen(true);
-        }}
-      />
-      {open && (
-        <ul className="max-h-48 overflow-auto rounded-md border border-border text-sm" aria-label={t('form.partyResults')}>
-          {found.data?.length === 0 && <li className="px-3 py-2 text-muted-foreground">{t('form.partyNone')}</li>}
-          {found.data?.map((p) => (
-            <li key={p.id}>
-              <button
-                type="button"
-                className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left hover:bg-muted"
-                onClick={() => {
-                  onPick(p);
-                  setOpen(false);
-                  setQ('');
-                }}
-              >
-                <span>{p.name}</span>
-                {p.taxCode && <span className="text-xs text-muted-foreground">{p.taxCode}</span>}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function DealForm({ deal, members, onDone }: { deal: Deal | null; members: readonly Member[]; onDone: () => void }) {
-  const t = useTranslations('deals');
-  const [title, setTitle] = useState(deal?.title ?? '');
-  const [party, setParty] = useState<PartyChoice | null>(deal ? { id: deal.partyId, name: deal.partyName, kind: 'organization', taxCode: null } : null);
-  const [amount, setAmount] = useState(deal ? deal.amount.replace(/\.00$/, '') : '');
-  const [expectedClose, setExpectedClose] = useState(deal?.expectedClose ?? '');
-  const [ownerUserId, setOwnerUserId] = useState(deal ? (deal.ownerUserId ?? '') : 'me');
-  const done = () => {
-    void refresh();
-    onDone();
-  };
-  const create = useMutation(orpc.crm.deals.create.mutationOptions({ onSuccess: done }));
-  // A refused edit (someone saved first) reloads the list; the form is keyed by the deal's version, so it reopens on the new one.
-  const update = useMutation(orpc.crm.deals.update.mutationOptions({ onSuccess: done, onError: () => void refresh() }));
-  const pending = create.isPending || update.isPending;
-  const fields = useFieldErrors<FormField>((field) => {
-    if (field === 'title') return title.trim() ? null : t('form.titleRequired');
-    if (field === 'party') return party ? null : t('form.partyRequired');
-    return zDealAmount.safeParse(normalizeAmount(amount || '0')).success ? null : t('form.amountInvalid');
-  });
-  const submit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!fields.checkAll(['title', 'party', 'amount']) || !party) {
-      focusFirstInvalid(e.currentTarget);
-      return;
-    }
-    const base = { partyId: party.id, title: title.trim(), amount: normalizeAmount(amount || '0'), expectedClose: expectedClose || null };
-    if (deal) update.mutate({ ...base, dealId: deal.id, version: deal.version, ownerUserId: ownerUserId || null });
-    else create.mutate({ ...base, ...(ownerUserId === 'me' ? {} : { ownerUserId: ownerUserId || null }) });
-  };
-  const error = create.error ?? update.error;
-  return (
-    <form onSubmit={submit} noValidate className="grid gap-3 rounded-lg border border-border p-4 sm:grid-cols-2" aria-label={deal ? t('form.editTitle') : t('form.newTitle')}>
-      <Field label={t('form.title')} error={fields.of('title')} className="sm:col-span-2">
-        {(c) => <Input {...c} maxLength={DEAL_TITLE_MAX} value={title} onChange={(e) => (setTitle(e.target.value), fields.edit('title'))} />}
-      </Field>
-      <Field label={t('form.party')} error={fields.of('party')}>
-        {(c) => <PartyPicker value={party} invalid={Boolean(fields.of('party'))} describedBy={c['aria-describedby']} onPick={(p) => (setParty(p), fields.edit('party'))} />}
-      </Field>
-      <Field label={t('form.amount')} hint={t('form.amountHint')} error={fields.of('amount')}>
-        {(c) => <AmountInput {...c} value={amount} onChange={(v) => (setAmount(v), fields.edit('amount'))} />}
-      </Field>
-      <Field label={t('form.expectedClose')}>{(c) => <Input {...c} type="date" value={expectedClose} onChange={(e) => setExpectedClose(e.target.value)} />}</Field>
-      <Field label={t('form.owner')}>
-        {(c) => (
-          <NativeSelect {...c} className="w-full" value={ownerUserId} onChange={(e) => setOwnerUserId(e.target.value)}>
-            {!deal && <option value="me">{t('form.ownerMe')}</option>}
-            <option value="">{t('form.ownerNone')}</option>
-            {members.map((m) => (
-              <option key={m.userId} value={m.userId}>
-                {m.displayName ?? m.email}
-              </option>
-            ))}
-          </NativeSelect>
-        )}
-      </Field>
-      {error && (
-        <div className="sm:col-span-2">
-          <ErrorText>{errorMessage(error)}</ErrorText>
-        </div>
-      )}
-      <div className="flex gap-2 sm:col-span-2">
-        <Button type="submit" loading={pending}>
-          {deal ? t('form.save') : t('form.create')}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onDone}>
-          {t('form.cancel')}
-        </Button>
-      </div>
-    </form>
-  );
-}
+const refresh = refreshDeals;
 
 function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal: Deal; stages: readonly PipelineStage[]; members: readonly Member[]; canEdit: boolean; canDelete: boolean; columns: number }) {
   const t = useTranslations('deals');
@@ -271,16 +136,33 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   );
 }
 
+type View = 'board' | 'list';
+// The board is the default where there is room for columns; on a phone the list is.
+const wideScreen = (): boolean => {
+  try {
+    return window.matchMedia('(min-width: 640px)').matches;
+  } catch {
+    return true;
+  }
+};
+
 export function DealsPage() {
   const t = useTranslations('deals');
   const org = useQuery(orpc.org.get.queryOptions());
   const role = org.data?.role;
   const canEdit = role === 'owner' || role === 'admin' || role === 'member';
   const members = org.data?.members ?? [];
+  const canManage = role === 'owner' || role === 'admin';
   const [adding, setAdding] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [view, setView] = useState<View>(wideScreen() ? 'board' : 'list');
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   // The first member to open the screen in an org with no pipeline gets the default stages.
-  const setup = useMutation(orpc.crm.pipeline.setup.mutationOptions({ onSuccess: (data) => queryClient.setQueryData(orpc.crm.pipeline.stages.queryKey({ input: {} }), data) }));
+  const setup = useMutation(orpc.crm.pipeline.setup.mutationOptions({ onSuccess: (data) => {
+        queryClient.setQueryData(orpc.crm.pipeline.stages.queryKey({ input: {} }), data);
+        refreshDeals();
+      },
+    }));
   const { mutate: setupStages } = setup;
   const needsSetup = canEdit && stages.data?.length === 0;
   useEffect(() => {
@@ -304,19 +186,39 @@ export function DealsPage() {
         title={t('title')}
         subtitle={t('subtitle')}
         actions={
-          canEdit ? (
-            <Button onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
-              {t('add')}
-            </Button>
-          ) : undefined
+          <div className="flex flex-wrap gap-2">
+            <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+              <TabsList aria-label={t('view.label')}>
+                <TabsTrigger value="board">{t('view.board')}</TabsTrigger>
+                <TabsTrigger value="list">{t('view.list')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
+            {canManage && (
+              <Button variant="outline" onClick={() => setSettings((s) => !s)} aria-expanded={settings}>
+                {t('view.settings')}
+              </Button>
+            )}
+            {canEdit && (
+              <Button onClick={() => setAdding((a) => !a)} aria-expanded={adding}>
+                {t('add')}
+              </Button>
+            )}
+          </div>
         }
       />
+      {settings && canManage && (
+        <div className="mb-4">
+          <PipelineSettings />
+        </div>
+      )}
       {adding && (
         <div className="mb-4">
           <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
         </div>
       )}
-      {deals.isPending || stages.isPending ? (
+      {view === 'board' ? (
+        <DealBoard members={members} canEdit={canEdit} />
+      ) : deals.isPending || stages.isPending ? (
         <TableSkeleton columns={6} />
       ) : (deals.error || stages.error) && rows.length === 0 ? (
         <ErrorText>{errorMessage(deals.error ?? stages.error)}</ErrorText>
