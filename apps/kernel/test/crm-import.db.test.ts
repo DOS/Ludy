@@ -132,8 +132,8 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
   it('calls a row that names two parties a conflict, and skips it', async () => {
     const o = await org();
     await o.party({ name: 'Bên A', email: 'a@khach.test' });
-    await o.party({ name: 'Bên B', phone: '0988 000 111' });
-    const staged = await o.stage(o.owner, [row({ name: 'Hai bên', email: 'a@khach.test', phone: '0988000111' })]);
+    await o.party({ name: 'Bên B', phone: '0900 000 111' });
+    const staged = await o.stage(o.owner, [row({ name: 'Hai bên', email: 'a@khach.test', phone: '0900000111' })]);
     expect(staged.rows[0]).toMatchObject({ outcome: 'conflict', reason: 'CONFLICT_PARTIES', match: null });
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     expect(done.batch).toMatchObject({ status: 'committed', createdRows: 0, updatedRows: 0 });
@@ -146,7 +146,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     await o.party({ name: 'Sẵn có', email: 'san@khach.test' });
     const staged = await o.stage(o.lan, [
       row({ name: 'Công ty Mới', taxCode: '0123456780' }),
-      row({ name: 'Trần Thị Bình', email: 'binh@khach.test', phone: '0903 111 222' }),
+      row({ name: 'Trần Thị Bình', email: 'binh@khach.test', phone: '0900 111 111' }),
       row({ name: 'Trùng', email: 'san@khach.test' }),
       row({ name: 'Cá nhân rõ', kind: 'Cá nhân', taxCode: '0123456780' }),
       row({ name: 'Hỏng', email: 'x' }),
@@ -162,7 +162,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(await o.parties()).toEqual([
       { name: 'Công ty Mới', kind: 'organization', tax_code: '0123456780', email: null, phone: null, source_trust: 'external' },
       { name: 'Sẵn có', kind: 'organization', tax_code: null, email: 'san@khach.test', phone: null, source_trust: 'user' },
-      { name: 'Trần Thị Bình', kind: 'person', tax_code: null, email: 'binh@khach.test', phone: '0903 111 222', source_trust: 'external' },
+      { name: 'Trần Thị Bình', kind: 'person', tax_code: null, email: 'binh@khach.test', phone: '0900 111 111', source_trust: 'external' },
     ]);
     expect(await o.stagedRows(staged.batch.id)).toBe(0);
     // A second commit creates nothing and answers the first one's counts.
@@ -197,9 +197,9 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const o = await org();
     const id = await o.party({ name: 'Khách Cũ', email: 'cu@khach.test' });
     const staged = await o.stage(o.owner, [
-      row({ name: 'Công ty Mới', taxCode: '0123456780', email: 'moi@khach.test', phone: '0903 111 222' }),
+      row({ name: 'Công ty Mới', taxCode: '0123456780', email: 'moi@khach.test', phone: '0900 111 111' }),
       row({ name: 'Khách Cũ Lại', email: 'cu@khach.test', taxCode: '0123456780' }),
-      row({ name: 'Khách Cũ Nữa', email: 'cu@khach.test', phone: '0903 111 222' }),
+      row({ name: 'Khách Cũ Nữa', email: 'cu@khach.test', phone: '0900 111 111' }),
     ]);
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     // The new row is made; the old party takes nothing the new one holds, and the commit does not fail on the tax code.

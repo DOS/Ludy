@@ -12,7 +12,7 @@ test.use({ timezoneId: 'Asia/Ho_Chi_Minh' });
 const CSV = [
   'Tên,Mã số thuế,Email,Số điện thoại,Địa chỉ',
   'Công ty ABC,0123456780,abc@khach.test,0901 111 222,"12 Lê Lợi, Quận 1"',
-  'Nguyễn Văn An,,an@khach.test,0902 333 444,',
+  'Nguyễn Văn An,,an@khach.test,0900 333 333,',
   'Trùng Email,,co@khach.test,,',
   'Email hỏng,,khong-phai-email,,',
   'Công ty ABC lần nữa,0123456780,,,',
