@@ -252,7 +252,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1647,6 +1647,14 @@ export const contract = {
     // Deletes an account's stored figures and sync log (owners and admins): a connected account reads its 13 months again, one
     // whose connection is closed also loses its row (#2219).
     deleteHistory: oc.input(zAdsAccountDeleteHistory.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId, days: z.number(), runs: z.number(), removed: z.boolean() })),
+    // Running ads (ADR-0043, #2294, W0a-1): the switches, the spend caps and the stops. Owners and admins read the state and stop
+    // everything with pauseAll; the owner switches writing off and an account's flag off. What opens the way to spend (the org
+    // switch, an account's flag, a cap set or raised, launches opened again) is a proposal and comes in the next PR. Nothing
+    // here calls a platform yet.
+    writeState: oc.output(zAdsWriteState),
+    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number() })),
+    disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false) })),
+    pauseAll: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ launchesBlocked: z.literal(true), paused: z.number() })),
     summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
     syncRuns: oc.input(z.object({ adAccountId: zId })).output(z.array(zAdsSyncRunView)),
   },

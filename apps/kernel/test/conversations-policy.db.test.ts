@@ -273,7 +273,7 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     // A database migrated only up to the version before the move.
     const dir = mkdtempSync(join(tmpdir(), 'crove-migrations-'));
     mkdirSync(dir, { recursive: true });
-    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f < '20261117120000')) copyFileSync(join(MIGRATIONS, file), join(dir, file));
+    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f < '20261117130000')) copyFileSync(join(MIGRATIONS, file), join(dir, file));
     const moveDb = `${dbName}_move`;
     await withClient(ADMIN as string, async (c) => void (await c.query(`CREATE DATABASE ${moveDb}`)));
     const base = new URL(ADMIN as string);

@@ -69,7 +69,7 @@ export const QUEUES = {
   bankFeedSync: 'finance-bank-feed-sync',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
-  // Created by the conversations migration (20261117130000): a reply or a hide of the conversation core, ids only in its data (#2303).
+  // Created by the conversations migration (20261117140000): a reply or a hide of the conversation core, ids only in its data (#2303).
   conversationsReply: 'kernel-conversation-reply',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
