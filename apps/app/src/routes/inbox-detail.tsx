@@ -15,6 +15,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useLegalEntity } from '../components/entity-switcher.tsx';
+import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, ProposalSkeleton, RowsSkeleton, Spinner } from '../components/ui.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
@@ -847,6 +848,11 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                 : t('blockedAi')}
           </ErrorText>
         </div>
+      )}
+      {/* An invoice read from a PDF whose text carried the seller's lookup link and code (#2268): the original XML is a few
+          clicks away on the provider's page, and dropped here it replaces this reading's weak source. */}
+      {!plain && pending && payload && payload.extractionMethod !== 'einvoice_xml' && (payload.lookupHints?.length ?? 0) > 0 && (
+        <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} />
       )}
       {!plain && unverified && (
         <Card className="mb-4 block space-y-2 border border-destructive/60 p-4 ring-0" data-testid="signature-unverified">
