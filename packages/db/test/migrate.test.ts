@@ -184,7 +184,8 @@ describe('shared-database mode (#2284)', () => {
     const files = await readMigrations(migrations);
     const found = await readSharedVariants(variants, files);
     expect([...found.keys()]).toEqual(['20261015120000_crove_kernel_revoke_temp.sql']);
-    expect(found.get('20261015120000_crove_kernel_revoke_temp.sql')).not.toContain('REVOKE TEMPORARY');
+    expect(found.get('20261015120000_crove_kernel_revoke_temp.sql')?.sql).not.toContain('REVOKE TEMPORARY');
+    expect(found.get('20261015120000_crove_kernel_revoke_temp.sql')?.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect((await readSharedVariants(join(tmpdir(), 'crove-no-such-variants'), files)).size).toBe(0);
   });
 
@@ -199,10 +200,17 @@ describe('shared-database mode (#2284)', () => {
     await expect(readSharedVariants(dir2, indexed)).rejects.toThrow(/cannot have one/);
   });
 
+  it('refuses a variant of a migration that does not change the whole database', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'crove-variants-'));
+    const files = [{ version: '20260101000000', name: '20260101000000_crove_kernel_a.sql', sql: 'SELECT 1;', sha256: 'x' }];
+    await writeFile(join(dir, '20260101000000_crove_kernel_a.sql'), 'SELECT 2;');
+    await expect(readSharedVariants(dir, files)).rejects.toThrow(/only a migration that changes state for the whole database may have one/);
+  });
+
   it('keeps the variant free of anything database-wide: no statement on the database, PUBLIC or another role', async () => {
     const files = await readMigrations(migrations);
-    for (const [name, sql] of await readSharedVariants(variants, files)) {
-      const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+    for (const [name, variant] of await readSharedVariants(variants, files)) {
+      const code = variant.sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
       expect(code, name).not.toMatch(/ON DATABASE|FROM PUBLIC|GRANT|REVOKE|CREATE ROLE|ALTER ROLE|EVENT TRIGGER|ALTER DEFAULT|CREATE EXTENSION/i);
     }
   });

@@ -16,6 +16,10 @@ This runbook covers what the mode changes, what it needs from the database, and 
 | Other systems' default privileges (Supabase grants each new object of its admin roles to `anon`, `authenticated`, `service_role`) reaching Ludy's new objects | Not applicable | After each run `migrate` revokes, from every role that is not Ludy's, what it holds on `crove_*` schemas, tables, sequences and routines, and the guard fails the run when any remain. Nothing of the other system's schemas or default privileges is touched. |
 | `auth-grants` (policies and column grants on the tables of Supabase Auth) | Self-host's database session check | **Refused.** Use `AUTH_SESSION_CHECK=jwt`, which reads no `auth` table. |
 | Role passwords from the environment (`setRolePasswords`) | `crove_*` roles and `supabase_auth_admin` (bundled Auth) | `crove_*` roles only; a password for any other role is refused. |
+| Temporary objects left on a connection | None can exist (no TEMPORARY) | A Ludy login can create them, so the pool clears them on every release (`DISCARD TEMP`, `createPool` with `discardTemp`, set from `CROVE_SHARED_DATABASE`). The kernel therefore **refuses `DB_RESET_ON_RELEASE=false`** in this mode: a transaction-mode pooler sends the reset to another backend. Use a direct or session-mode connection. |
+| Which roles are Ludy's | The pattern `crove_*` (guard, DDL watch) | **An explicit list of the eight roles the migrations create** (`LUDY_ROLES` in `packages/db/src/migrate.ts`, repeated in the DDL watch's function): `crove_tenant`, `crove_app`, `crove_worker`, `crove_prober`, `crove_reporter`, `crove_auth_reader`, `crove_definer_tenant`, `crove_definer_system`. Another system's role called `crove_something` is a foreign role: its privileges on Ludy's objects are taken back and its DDL is not attributed to Ludy. Schemas keep the `crove_*` pattern, since the check is that nothing foreign lives there. |
+| The mode itself | Not recorded | Recorded in `crove_meta.deployment` and **locked to the database**: a run that asks for the other mode is refused, both ways, unless `CROVE_SHARED_DATABASE_SWITCH=true` is set for that run. |
+| Variants of migrations | None | Only a migration listed in `DATABASE_WIDE_MIGRATIONS` (today the TEMPORARY revoke) may have a variant; any other is refused when the variants are read. The ledger records the variant's own hash. |
 | Cluster roles | `crove_*` created if absent; `supabase_auth_admin` (with its `auth` schema and `GRANT CREATE ON DATABASE`) only when absent | The same: a project has `supabase_auth_admin`, so nothing outside `crove_*` is created or changed. A database without it, which is not a Supabase one, would get it as before. |
 | Extensions | None created | None. |
 | The event triggers themselves | Fire on every DDL statement of the database | The same triggers, but the function records only Ludy's DDL and, in shared mode, an error while recording is a warning, never a failure of the other system's statement. A logical replication publication `FOR ALL TABLES` of the other system would stream Ludy's tables too: have the project's owner list tables instead. |
@@ -24,11 +28,22 @@ This runbook covers what the mode changes, what it needs from the database, and 
 
 **Schema names.** Ludy keeps its `crove_*` names in a shared database (`crove_kernel`, `crove_finance`, `crove_social`, `crove_crm`, `crove_notes`, `crove_ads`, `crove_jobs`, `crove_meta`); renaming them belongs to the rebrand (#1682). They do not collide with another system's names as long as it has none starting with `crove_`: check it before the first run (the query is below). Nothing else is created in the database.
 
+## Who can read Ludy's data in a shared database
+
+Row-level security keeps one org's rows from another org's members. It does not keep them from the host's own privileged roles, and in a shared database those belong to someone else. Anyone who holds one of these can read and write the data of every org, and no Ludy setting changes that:
+
+- the host's **superusers** and every role with **BYPASSRLS** (on a Supabase project: `supabase_admin`, `service_role`, `postgres`, and any role the project adds);
+- members of **`pg_read_all_data`** and **`pg_write_all_data`**;
+- roles with **CREATEROLE** (they can make themselves a member of any role they can administer) and holders of **ADMIN OPTION** on a Ludy role;
+- whoever holds the project's API keys or database passwords that map to the roles above.
+
+Ludy does two things about them. Every `migrate` run logs the list (`warning: these roles of the host can read and write the data of every org ...`), so the owner of the project knows who they are, and the guard refuses a run where a role that is not Ludy's can act as one of Ludy's roles (the definer owners among them). Whether those roles may stay is the project owner's decision; a customer whose contract needs more than this should be on a database of its own ([plan Decision 23](../plan/crove-os-kernel.md)).
+
 ## What the database needs
 
 - **A migration login of its own**, not the project's admin role (`postgres`, `supabase_admin`). Supabase sets default privileges for those roles that hand every new object to its API roles; `migrate` takes them back from Ludy's objects, but a dedicated role keeps Ludy's objects out of those defaults to begin with. The login needs `CREATEROLE` (it creates the `crove_*` roles) and `CREATE` on the database (it creates the `crove_*` schemas), is not a superuser, and owns what it creates. **It must be the one that creates the `crove_*` roles** (the first `migrate` run does): a role holds `ADMIN OPTION` on the roles it creates, and the guard fails the run when any other non-superuser role, `postgres` included, can act as a `crove_*` role. If the roles already exist, made by another login, that login revokes its memberships and gives the migration login `ADMIN OPTION` on each role first.
 - **The DDL watch needs a role that may create event triggers** (a superuser, or on hosted Supabase the privileged `postgres` role): `migrate` runs that step with the same URL and logs `DDL watch skipped` where the role may not, in which case Ludy runs without the watch (docs/runbooks/alerts.md). The event function must be owned by a superuser or by the role that attaches the triggers.
-- **A pooler in transaction mode** (Supavisor, PgBouncer) for the API and the worker: `DB_RESET_ON_RELEASE=false` (`.env.example`). `migrate` needs a direct or session connection (an advisory lock).
+- **A direct or session-mode connection** for the API, the worker and `migrate`, with `DB_RESET_ON_RELEASE=true` (the default): the pool clears each connection's temporary objects when it goes back, which a transaction-mode pooler (Supavisor's transaction mode, PgBouncer) cannot do, so the kernel refuses to start with the reset off in this mode.
 - **Connections:** the pools are sized against the whole database's `max_connections`, which the other systems share (`DATABASE_POOL_MAX`, `WORKER_DATABASE_POOL_MAX`, docs/runbooks/observability.md).
 
 Check the schema and role names before the first run (both queries return no row):
@@ -40,11 +55,11 @@ SELECT rolname FROM pg_roles WHERE rolname LIKE 'crove\_%';
 
 ## Switching modes
 
-The ledger records the original hash of the TEMPORARY revoke whichever way it ran, and a variant is not hashed, so the mode is a decision made on the first run:
+The mode is locked to the database. `migrate` records it in `crove_meta.deployment` and refuses a run that asks for the other one, in both directions; a database that has a ledger and no recorded mode is an owned one that predates the mode, and is refused as shared. `CROVE_SHARED_DATABASE_SWITCH=true` lets one run change it, logs that it did, and is for a person to set for that run only. What a switch leaves:
 
-- **Owned to shared:** the revoke that already ran in the owned mode stays in place (PUBLIC has lost TEMPORARY; the roles that held it were given it directly). The shared guard does not mind.
-- **Shared to owned:** the revoke never ran, and the ledger says it did, so it is not run again: the owned guard then fails on the TEMPORARY rule until the database owner revokes by hand, as its message says. Do not switch back without that decision.
-- A first run with `CROVE_SHARED_DATABASE` forgotten on a shared project would run the revoke against it. `migrate` therefore refuses, in shared mode, to apply that migration without its variant, but cannot tell the two cases apart in owned mode: the log line `shared-database mode` is the first check of every run.
+- **Owned to shared:** the revoke that already ran in the owned mode stays in place (PUBLIC has lost TEMPORARY; the roles that held it were given it directly), and the ledger keeps its original hash, which the runner accepts for that migration in both modes.
+- **Shared to owned:** the revoke never ran, and the ledger says the variant did, so it is not run again: the owned guard then fails on the TEMPORARY rule until the database owner revokes by hand, as its message says. Do not switch back without that decision.
+- A first run with `CROVE_SHARED_DATABASE` forgotten on a shared project would run the revoke against it. A database that already has a ledger is protected by the lock; a brand-new one is not, so the log line `shared-database mode` is the first check of every first run.
 
 ## Backup: Ludy's schemas only
 

@@ -102,6 +102,9 @@ const schema = z.object({
   // project, #2284): `migrate` then limits every effect to the `crove_*` roles and schemas (docs/runbooks/shared-database.md).
   // false (the default, and every self-host) keeps every database-wide guard.
   CROVE_SHARED_DATABASE: optional.pipe(z.enum(['true', 'false']).default('false')),
+  // The mode is locked to the database once `migrate` has recorded it: a run that asks for the other one is refused unless
+  // this is true, for the one run a person decides to switch it in.
+  CROVE_SHARED_DATABASE_SWITCH: optional.pipe(z.enum(['true', 'false']).default('false')),
   MIGRATIONS_DIR: z.string().default(here('../../../supabase/migrations')),
   // How long `migrate` waits for another run's migration lock before it fails; unset waits as long as it takes (#1803).
   // Empty (a compose `${VAR:-}`) counts as unset; coerced, it would be 0 and fail every role's config.
@@ -661,6 +664,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (appOrigin !== new URL(config.PUBLIC_URL).origin && !config.CORS_ALLOWED_ORIGINS.includes(appOrigin)) {
       throw new Error(`APP_URL is another origin than PUBLIC_URL, so the app calls this API cross-origin: list ${appOrigin} in CORS_ALLOWED_ORIGINS`);
     }
+  }
+  // Temporary objects can exist in a shared database (PUBLIC keeps TEMPORARY), and only the pool's own reset after each
+  // checkout (DISCARD TEMP) clears them, which a transaction-mode pooler would send to another backend.
+  if (config.CROVE_SHARED_DATABASE === 'true' && config.DB_RESET_ON_RELEASE === 'false') {
+    throw new Error('CROVE_SHARED_DATABASE=true needs DB_RESET_ON_RELEASE=true: temporary objects are cleared after each checkout, which a transaction-mode pooler cannot do; use a direct or session-mode connection');
   }
   if (!isLocalUrl(config.PUBLIC_URL)) {
     if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
