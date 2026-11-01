@@ -28,7 +28,7 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
 
   const slug = await test.step('create the first org', async () => {
     const created = await createOrg(page, 'Công ty E2E');
-    await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     return created;
   });
 
@@ -44,8 +44,8 @@ test('sign up, upload an e-invoice, approve it, then find it in the lists, the e
     for (const step of ['Bước 1. Tải hóa đơn lên', 'Bước 2. Kiểm tra và duyệt', 'Bước 3. Xuất Excel cho kế toán']) {
       await expect(page.getByRole('heading', { name: step })).toBeVisible();
     }
-    await page.getByRole('link', { name: '← Hộp thư chứng từ' }).click();
-    await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
+    await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
   });
 
   await test.step('upload the e-invoice and wait for the proposal', async () => {

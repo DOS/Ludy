@@ -138,7 +138,7 @@ describe('brand name (#1040)', () => {
       for (const key of named(locale)) expect(filled[key], `${locale} ${key}`).toMatch(/\bVy\b/);
       expect(Object.values(filled).join('\n'), locale).not.toContain('{assistant}');
     }
-    expect(catalog('vi').auth.tagline).toBe('Hộp thư chứng từ: chuyển tiếp hóa đơn, trợ lý AI Vy đề xuất hạch toán, bạn duyệt.');
+    expect(catalog('vi').auth.tagline).toBe('Chứng từ chờ duyệt: chuyển tiếp hóa đơn, trợ lý AI Vy đề xuất hạch toán, bạn duyệt.');
     expect(catalog('en').auth.tagline).toBe('Document inbox: forward invoices; Vy, your AI assistant, proposes the entries; you approve.');
     expect(withBrand('{assistant} của {brand}')).toBe('Vy của Tên Mới');
   });

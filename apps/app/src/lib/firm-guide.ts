@@ -25,7 +25,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     id: 'client',
     title: 'Bước 1. Thêm doanh nghiệp khách hàng',
     items: [
-      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, hộp thư chứng từ và thành viên riêng. Bấm ${q(vi.nav.addOrg)} dưới ô chọn tổ chức ở đầu menu.`,
+      `Mỗi khách hàng là một tổ chức riêng trong {brand}, với sổ sách, chứng từ chờ duyệt và thành viên riêng. Bấm ${q(vi.nav.addOrg)} dưới ô chọn tổ chức ở đầu menu.`,
       `Thanh dọc bên trái chia theo ứng dụng: ${q(vi.nav.apps.home)} có ${q(vi.nav.inbox)}, ${q(vi.nav.tasks)} và thông báo; ${q(vi.nav.apps.accounting)} có chứng từ, sổ sách và thuế. Các màn hình kế toán nhắc tới dưới đây nằm trong ${q(vi.nav.apps.accounting)}; ${q(vi.nav.settings)} ở cuối thanh.`,
       `Nhập ${q(vi.onboarding.taxCodeLabel)} của khách hàng rồi bấm ${q(vi.onboarding.lookUp)}: {brand} điền tên và địa chỉ theo dữ liệu đăng ký thuế, bạn kiểm tra lại. Mã số thuế giúp {brand} nhận ra hóa đơn bán ra của khách hàng.`,
       `Nếu có ${q(vi.onboarding.contactLabel)}, nhập vào: sau khi bấm ${q(vi.onboarding.create)}, trang mời thành viên mở sẵn với email này. Chọn vai trò rồi bấm ${q(vi.settings.invite)}; người được mời phải chấp nhận lời mời thì mới vào tổ chức.`,

@@ -67,7 +67,7 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
   await test.step('the right password fetches the list and the XML', async () => {
     await fillLogin(page, FAKE_PORTAL_PASSWORD);
     await expect(panel.getByText('Đã lấy 5 hóa đơn từ cổng thuế.')).toBeVisible({ timeout: 120_000 });
-    await expect(panel.getByText('Đã tải 3 tệp XML về Hộp thư chứng từ', { exact: false })).toBeVisible();
+    await expect(panel.getByText('Đã tải 3 tệp XML về Chứng từ chờ duyệt', { exact: false })).toBeVisible();
     const list = page.getByRole('row').filter({ hasText: 'Cổng thuế 2026-09.json' });
     await expect(list.getByText('Đã đọc 5 hóa đơn')).toBeVisible({ timeout: 60_000 });
   });
@@ -79,7 +79,7 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
 
   await test.step('the downloaded invoices wait in the Inbox', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await expect(page.getByRole('row').filter({ has: page.getByRole('link', { name: SELLER }) })).toHaveCount(2, { timeout: 120_000 });
     await expect(page.getByRole('row').filter({ hasText: 'CÔNG TY CỔ PHẦN VẬT TƯ MẪU' })).toHaveCount(1, { timeout: 60_000 });
   });
@@ -90,7 +90,7 @@ test('fetch the period purchase list and invoice XML from the tax portal', async
     // A fresh read: the screen's cached comparison is from before the proposals existed.
     await page.reload();
     await choosePeriod(page);
-    await expect(page.getByRole('heading', { name: 'Đang chờ duyệt trong Hộp thư (3)' })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByRole('heading', { name: 'Chứng từ đang chờ duyệt (3)' })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole('heading', { name: 'Cơ quan thuế có, Ludy chưa có (2)' })).toBeVisible();
   });
 });

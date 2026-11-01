@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { filterPalette, fold, isPaletteShortcut, moveActive, searchTerm, withFound, type PaletteItem } from '../src/lib/palette.ts';
 
 const items: PaletteItem[] = [
-  { id: 'go:inbox', group: 'go', label: 'Hộp thư chứng từ' },
+  { id: 'go:inbox', group: 'go', label: 'Chứng từ chờ duyệt' },
   { id: 'go:ledger', group: 'go', label: 'Sổ sách' },
   { id: 'go:vat', group: 'go', label: 'Tờ khai GTGT', keywords: 'vat thue' },
   { id: 'p1', group: 'proposals', label: 'Công ty CP Bao Bì Phú Thịnh', detail: 'HĐ 00001284, 32.832.000 ₫' },
