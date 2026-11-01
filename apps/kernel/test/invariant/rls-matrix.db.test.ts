@@ -54,6 +54,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_kernel.saved_view',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -884,6 +885,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // row gives the org's owner the chief accountant role for the whole org (no legal entity).
   'crove_kernel.role_assignment': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, role_key: 'finance.chief_accountant', granted_by: o.owner } }),
+  },
+  // A member's saved view of a list (#2227): a name, the filter conditions and sort it applies, private or shared with the
+  // org, under restrictive policies that show a private view to its owner alone, as crove_social.saved_view does; the
+  // factory's rows belong to the owner, the user every member-context actor enters as. One name per member and scope, so
+  // every row gets its own.
+  'crove_kernel.saved_view': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, scope: 'crm.deal', name: `rls-${tag()}`, filters: '{"v":1,"all":[]}' } }),
   },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),
