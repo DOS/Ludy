@@ -1135,7 +1135,7 @@ DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
 | Module | Replaces fork / reference | Contents |
 |---|---|---|
 | CRM (`crm`) | Twenty; Cal.com, Calendly | Contacts, companies, deals, pipelines, timeline; Calendar and booking pages |
-| Service (`service`) | Go Desk; Zendesk | Unified inbox: email, social messages and comments; tickets, SLA |
+| Service (`service`) | Go Desk; Zendesk | Unified inbox: email and private messages (comments are answered in Social, [conversations.md](conversations.md)); tickets, SLA |
 | Social (`social`) | Postiz; Publer, Nuelink, Buffer | Compose, schedule, queues, reposting, analytics |
 | Email (`email`) | Mailchimp, Brevo, listmonk; Postmark, Amazon SES | Transactional templates and message log, sender domains, contacts with consent, campaigns, unsubscribe, analytics ([email.md](email.md)) |
 | Sign (`sign`) | Documenso; Docusign | Digital signatures via Vietnamese CAs, templates, signing order, audit certificate |
@@ -1146,7 +1146,7 @@ DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
 Every module shares from the kernel: `party`, `activity`, `task`, `file`, `calendar`, `channel`, permissions, `execute()` and the org's agent.
 
 - **Calendar lives in CRM.** The core (events, availability, external calendar sync) is the kernel `calendar` service, so HRM (interviews, leave) and Service (customer appointments) share it. The Calendly-style booking page is a CRM feature.
-- **Service and Social share the `channel` layer but are two modules.** Each Facebook, Instagram, Zalo OA or TikTok page connects once. Messages and comments land in Service's inbox; Social only publishes. They are split because the users and permissions differ (customer support vs marketing) and so does the cadence (SLA-driven replies vs scheduled posting). In the UI, a post shows its comment count and opens straight into the conversation.
+- **Service and Social share the `channel` layer but are two modules.** Each Facebook, Instagram, Zalo OA or TikTok page connects once. Comments on the org's own posts are read and answered in Social; private messages land in Service's inbox (owner decision, 2026-11-01, #2213). Both sit on one conversation core in the kernel (`conversation`, `conversation_message` with a kind), so either module runs alone: [conversations.md](conversations.md), [ADR-0041](../adr/0041-conversation-core.md). They are split because the users and permissions differ (marketing vs customer support) and so does the cadence (scheduled posting vs SLA-driven replies). A comment can start a private conversation ("reply privately") and be handed to Service. In the UI, Social, Service and Ads are groups of one rail app, each shown only when its module is enabled.
 - **Sending mail is a kernel service; Email is the module that manages it.** Every module sends mail through the kernel pipeline (queue, log, suppression, one send per mail), so it works with `email` off; the Email module adds domains, templates, consent and campaigns ([ADR-0034](../adr/0034-outbound-email.md)). Replies to campaigns go to the org's Reply-To address until Service's inbox can take them.
 
 ## 6. Core data model
@@ -1912,7 +1912,7 @@ Calendar started early, on its own (Decision 20, 2026-10-24); its detailed plan 
 **Kernel additions:** the `channel` layer: one OAuth connection per page or account (Facebook Page, Instagram, Zalo OA, TikTok, email), shared by Service (inbound) and Social (publishing). Connectors sit behind adapters; Cloud uses platform-approved apps, self-hosters register their own.
 
 **Scope:**
-- Unified inbox: email, messages and comments from Facebook Page, Instagram, Zalo OA, TikTok. Each conversation links to a `party` and becomes a ticket when needed.
+- Unified inbox: email and private messages from Facebook Page, Instagram, Zalo OA, TikTok (comments are answered in Social, on the shared conversation core of [conversations.md](conversations.md)). Each conversation links to a `party` and becomes a ticket when needed.
 - Record-based tickets with per-org numbering; SLA, assignment, reply templates; automation v1 with loop protection.
 - AI triage, summaries, reply drafts. Outbound sends are R2 and need approval, unless the org enables auto-reply for approved question classes. Customer messages are tainted input.
 
@@ -1930,7 +1930,7 @@ Detailed plan, dependencies and steps: [social.md](social.md). The `channel` lay
 - Reuses the Phase 4 `channel` layer; adds LinkedIn, YouTube, X.
 - Compose, per-channel variants, publishing calendar, time-slot queues, evergreen reposting, multi-step approval, media library.
 - AI drafts, per-channel rewrites, posting-time suggestions. Publishing is R2 and needs approval, unless the org enables auto-publishing for untainted content.
-- Engagement metrics pulled by jobs; comments and messages already live in Service.
+- Engagement metrics pulled by jobs; comments are read and answered in Social and private messages in Service, both on one conversation core ([conversations.md](conversations.md)).
 
 **Exit criteria:**
 - Each post is published exactly once per channel: idempotency through `external_call`; a mid-flight timeout reconciles by the channel's post id, never double-posts.
@@ -2015,8 +2015,8 @@ No fork has real users. The owner archived the five fork repositories on 2026-10
 |---|---|---|
 | Twenty (CRM) | CRM | Phase 3, on demand |
 | Cal (from Cal.com) | CRM calendar and booking pages | Phase 3, on demand |
-| Go Desk | Service, including the social inbox | Phase 4, on demand |
-| Post (from Postiz) | Social; comments and messages go to Service | Phase 5, on demand |
+| Go Desk | Service, including the private-message inbox | Phase 4, on demand |
+| Post (from Postiz) | Social, including comment replies; private messages go to Service | Phase 5, on demand |
 | Documenso (Sign) | Sign, with Vietnamese CAs | Phase 6, on demand |
 
 ## 14. Major risks and mitigations
@@ -2108,6 +2108,7 @@ ADRs live in `docs/adr/`, using the MADR template. They keep the "why"; this pla
 | [0018](../adr/0018-untrusted-content.md) | Untrusted content, as built (#2047): parsing only in `crove-extract` (the dependency rule, per-parse process under the Node permission model, slots and limits, the container, the environment allowlist, strict answers), inbound email (the API only stores and queues, the worker resolves the org and files), tainted AI output and the agent rules, the queue egress declarations and the guard for tenant-supplied URLs, and what is not covered (no OCR, the sender is not authenticated, the Cloud deployment of the sandbox is private) | Accepted (records the decided design of §7.6, §7.7 and §4.7) |
 | [0039](../adr/0039-bank-feed-connectors.md) | Bank feed connectors (#2044, #2045): a bank-feed port in `modules/finance` through which statement files and API feeds store the same bank lines with the ADR-0021 keys; read-only provider adapters behind a capability interface with the channel layer's connections, sealed credentials and egress allowlist; switched on per deployment and per org; Tingee first, in the core or in Crove Cloud as the owner decides | Proposed 2026-10-30 |
 | [0040](../adr/0040-ads-read-only-sources.md) | Ads (#2214, [plan](ads.md)): a module of its own in the Marketing line, read-only by construction (no write capability in the adapter interface); adapters in a sibling package on the channel layer's connections and sealed credentials, separate platform apps by default; daily aggregates in the account's currency and time zone, restated days updated in place; never posts to the books, which meet it through two queries composed by the app; no personal data in v1 | Proposed 2026-11-01 |
+| [0041](../adr/0041-conversation-core.md) | Conversation core (#2213, [plan](conversations.md)): comments answered in Social and private messages in Service on one kernel store with a kind; a signed webhook enqueues and a worker stores (the org from the stored connection, never the notice), a reconcile job is the safety net; replies on the exactly-once pipeline; direct messages readable only with a Service permission, enforced by the database; Social, Service and Ads as groups of one rail app; no text in audit rows, retention and erasure for third parties' personal data | Proposed 2026-11-01 |
 | [0007](../adr/0007-tenancy-and-context.md) | Tenancy and context, as built (#2046): the login roles and what each may enter, `enter_context` and the other entry functions, the re-entry guard (T10), the sealed context and its helpers (T11), the RLS template (T8), the pinned `search_path` and the connection reset (T17), and what is not covered (`crove_app` naming another member until #1822 step 2) | Accepted (records the decided design of §4.5, §7.1 and §7.2) |
 
 **To write** (the ones the External-tenant gate depends on first):
