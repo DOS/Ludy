@@ -24,22 +24,22 @@ export const notesVi = {
     title: 'Bốn việc với ghi chú và việc cần làm',
     lead: 'Ghi chú và Việc của tôi là hai màn hình cạnh nhau, cùng bảng ghi chú trên các màn hình khác.',
     steps: [
-      { name: 'Viết ghi chú', body: 'Viết bằng Markdown, riêng cho bạn hoặc dùng chung với cả tổ chức.', outcome: 'Riêng tư lúc đầu', tone: 'neutral' },
-      { name: 'Gắn vào bản ghi', body: 'Viết từ bảng Ghi chú trên màn hình khách hàng, nhà cung cấp, chứng từ, bút toán hay lịch hẹn.', outcome: 'Hiện đúng chỗ', tone: 'accent' },
+      { name: 'Viết ghi chú', body: 'Viết bằng Markdown, riêng cho bạn hoặc dùng chung với cả tổ chức.', outcome: 'Bạn chọn ai đọc', tone: 'neutral' },
+      { name: 'Gắn vào bản ghi', body: 'Viết từ bảng Ghi chú trên màn hình khách hàng, nhà cung cấp, chứng từ, bút toán hay lịch hẹn. Ghi chú bắt đầu dùng chung; tick ô "Chỉ mình tôi xem" để giữ riêng.', outcome: 'Hiện đúng chỗ', tone: 'accent' },
       { name: 'Ghi việc', body: 'Thêm việc của tôi với hạn, giờ nhắc và các bước.', outcome: 'Chỉ mình bạn thấy', tone: 'ok' },
       { name: 'Giao việc', body: 'Cần người khác làm thì giao cho một vị trí, việc thành việc nhóm.', outcome: 'Đã giao', tone: 'ok' },
     ],
   },
   groups: {
     title: 'Việc Ludy Notes làm hôm nay',
-    lead: 'Ghi chú, ghi chú ngay chỗ làm việc, việc của riêng bạn, và dữ liệu của bạn.',
+    lead: 'Viết ghi chú, giữ nó ngay chỗ làm việc, ghi việc của riêng bạn và tải dữ liệu về.',
     items: [
       {
         id: 'ghi-chu',
         title: 'Ghi chú',
         lead: 'Riêng cho bạn hoặc dùng chung, viết nhanh và tìm lại dễ.',
         points: [
-          'Ghi chú mới luôn riêng tư. Chỉ người viết sửa được nội dung',
+          'Ghi chú tạo ở màn hình Ghi chú bắt đầu riêng tư. Chỉ người viết sửa được nội dung',
           'Ghi chú riêng chỉ bạn xem được trong tổ chức này, kể cả chủ sở hữu và quản trị viên cũng không. Chuyển thành dùng chung thì mọi thành viên, trừ người chỉ xem, đọc được',
           'Viết bằng Markdown: tiêu đề, danh sách, ô đánh dấu và liên kết',
           'Thẻ, ghim, lưu trữ và thùng rác (dọn sau 30 ngày), có nút Hoàn tác khi lưu trữ hoặc xoá',
@@ -61,7 +61,7 @@ export const notesVi = {
         lead: 'Danh sách việc riêng, có hạn và giờ nhắc.',
         points: [
           'Mỗi việc có hạn, giờ, các bước và hộp nhắc. Chỉ mình bạn thấy, chủ sở hữu và quản trị viên cũng không',
-          'Chia sẵn theo Quá hạn, Hôm nay và 7 ngày tới',
+          'Chia sẵn theo ngày đến hạn, từ Quá hạn đến 7 ngày tới',
           'Nhắc hiện trong chuông thông báo của Ludy, vào 8:00 ngày đến hạn hoặc 30 phút trước giờ bạn đặt',
           'Giao cho một vị trí thì việc thành việc nhóm. Bạn sửa tên và mô tả trước khi giao; mọi thành viên đọc được việc nhóm, và vị trí có thể do agent AI giữ',
         ],
@@ -95,7 +95,7 @@ export const notesVi = {
       },
       {
         title: 'Kế toán và dịch vụ kế toán',
-        body: 'Để lại ghi chú trên hoá đơn hay bút toán của khách. Trong tổ chức của một khách hàng, trang tổng quan hiện các ghi chú về khách đó.',
+        body: 'Để lại ghi chú trên hoá đơn hay bút toán của khách. Trong tổ chức của một khách hàng, trang tổng quan hiện các ghi chú đã ghim và ghi chú dùng chung mới nhất của tổ chức đó.',
       },
       {
         title: 'Người tự cài đặt',
@@ -116,7 +116,7 @@ export const notesVi = {
       },
       {
         q: 'Việc tôi giao cho một vị trí thì ai thấy?',
-        a: 'Người giữ vị trí và mọi thành viên của tổ chức đều đọc được việc nhóm. Chi tiết và các bước của việc riêng không tự chuyển sang, bạn gõ vào mô tả nếu cần.',
+        a: 'Người giữ vị trí và mọi thành viên của tổ chức đều đọc được việc nhóm. Việc nhóm nhận tên và mô tả bạn xác nhận trong hộp thoại, đã điền sẵn chi tiết và các bước của việc riêng để bạn sửa, cùng hạn của việc.',
       },
       {
         q: 'Tôi không thấy Ghi chú trong menu?',
@@ -133,6 +133,7 @@ export const notesVi = {
   // What the page draws of the product, as example data (the home page's sample company, Gạo Sạch Mekong).
   fragments: {
     sample: 'Dữ liệu mẫu',
+    screenLabel: 'Màn hình Ghi chú',
     note: {
       label: 'Một ghi chú đang mở',
       title: 'Hoá đơn điện về trễ, nhắc bên khách ngày 5',
@@ -176,7 +177,7 @@ export const notesVi = {
       title: 'Giao việc này thành việc nhóm',
       hint: 'Mọi thành viên trong tổ chức và người giữ vị trí (kể cả agent AI) sẽ đọc được tên việc và mô tả dưới đây. Hãy sửa trước khi giao.',
       positionLabel: 'Giao cho vị trí',
-      position: 'Kế toán trưởng, Chị Lan',
+      position: 'Kế toán trưởng',
       taskLabel: 'Tên việc nhóm',
       task: 'Đối chiếu công nợ Bao Bì Phú Thịnh',
       descLabel: 'Mô tả cho nhóm',
@@ -188,8 +189,6 @@ export const notesVi = {
       note: 'Ghi chú và việc của riêng bạn trong tổ chức này, cả bộ.',
       markdown: 'Tải về Markdown',
       json: 'Tải về JSON',
-      leaveTitle: 'Khi một thành viên rời tổ chức',
-      leave: 'Ghi chú riêng và việc của họ được giữ kín 30 ngày rồi xoá. Ghi chú dùng chung ở lại.',
     },
   },
 } satisfies AppPageCopy & { fragments: object };

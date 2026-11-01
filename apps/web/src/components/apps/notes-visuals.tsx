@@ -80,7 +80,7 @@ function NotePreview({ copy }: { copy: NotesCopy }) {
 // The hero: the Notes screen, the list of notes with their private or shared mark beside the open note.
 export function NotesHero({ dict, copy }: Props) {
   return (
-    <figure aria-label={copy.fragments.note.label} className="rounded-lg border border-line bg-surface p-4 sm:p-5">
+    <figure aria-label={copy.fragments.screenLabel} className="rounded-lg border border-line bg-surface p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2 pb-4 text-xs text-subtle">
         <span>{dict.shell.org}</span>
         <Chip tone="neutral">{copy.fragments.sample}</Chip>
@@ -215,10 +215,6 @@ export function DataVisual({ copy }: Props) {
           <FauxButton primary>{f.markdown}</FauxButton>
           <FauxButton primary>{f.json}</FauxButton>
         </div>
-      </div>
-      <div className="border-t border-line px-4 py-3 text-xs">
-        <p className="font-semibold text-fg">{f.leaveTitle}</p>
-        <p className="mt-1 text-muted">{f.leave}</p>
       </div>
     </figure>
   );

@@ -23,22 +23,22 @@ export const notesEn: NotesCopy = {
     title: 'Four things to do with notes and to-dos',
     lead: 'Notes and My work are two screens side by side, and the notes panel sits on the other screens.',
     steps: [
-      { name: 'Write a note', body: 'Write in Markdown, private to you or shared with the whole organization.', outcome: 'Private at first', tone: 'neutral' },
-      { name: 'Attach it to a record', body: 'Write from the Notes panel on the screen of a customer, a vendor, a document, a journal entry or a booking.', outcome: 'Shown right there', tone: 'accent' },
+      { name: 'Write a note', body: 'Write in Markdown, private to you or shared with the whole organization.', outcome: 'You choose who reads it', tone: 'neutral' },
+      { name: 'Attach it to a record', body: 'Write from the Notes panel on the screen of a customer, a vendor, a document, a journal entry or a booking. A note starts shared; tick the box to keep it just for you.', outcome: 'Shown right there', tone: 'accent' },
       { name: 'Add a to-do', body: 'Add to My work with a due date, a reminder and steps.', outcome: 'Only you see it', tone: 'ok' },
       { name: 'Hand it over', body: 'If someone else must do it, hand it to a position and it becomes a team task.', outcome: 'Handed over', tone: 'ok' },
     ],
   },
   groups: {
     title: 'What Ludy Notes does today',
-    lead: 'Notes, notes where you work, your own to-dos, and your data.',
+    lead: 'Write notes, keep them where you work, track your own to-dos, and download your data.',
     items: [
       {
         id: 'notes',
         title: 'Notes',
         lead: 'Private to you or shared, quick to write and easy to find again.',
         points: [
-          'A new note is always private. Only its author edits the text',
+          'A note created on the Notes screen starts private. Only its author edits the text',
           'A private note can be read by you alone in this organization, not even by owners and admins. Make it shared and every member except viewers can read it',
           'Write in Markdown: headings, lists, check boxes and links',
           'Tags, pin, archive and trash (emptied after 30 days), with an Undo button when you archive or delete',
@@ -60,7 +60,7 @@ export const notesEn: NotesCopy = {
         lead: 'Your own to-do list, with due dates and reminders.',
         points: [
           'Each to-do has a due date, a time, steps and a reminder box. Only you see it, not even owners and admins',
-          'Grouped for you as Overdue, Today and Next 7 days',
+          'Grouped by due day, from Overdue to the next 7 days',
           'The reminder shows in Ludy’s notification bell, at 8:00 on the due day or 30 minutes before the time you set',
           'Hand a to-do to a position and it becomes a team task. You edit its title and description first; every member can read a team task, and the position may be held by an AI agent',
         ],
@@ -94,7 +94,7 @@ export const notesEn: NotesCopy = {
       },
       {
         title: 'Accountants and accounting firms',
-        body: 'Leave a note on a client’s invoice or journal entry. In a client’s organization, the overview shows the notes about that client.',
+        body: 'Leave a note on a client’s invoice or journal entry. In a client’s organization, the overview shows that organization’s pinned notes and its latest shared notes.',
       },
       {
         title: 'People who self-host',
@@ -115,7 +115,7 @@ export const notesEn: NotesCopy = {
       },
       {
         q: 'Who sees a to-do I hand to a position?',
-        a: 'The person holding the position and every member of the organization can read a team task. The details and steps of your own to-do do not carry over; type them into the description if you need them.',
+        a: 'The person holding the position and every member of the organization can read a team task. It gets the title and description you confirm in the dialog, which is pre-filled with the details and steps of your own to-do for you to edit, and the due date.',
       },
       {
         q: 'I do not see Notes in the menu?',
@@ -131,6 +131,7 @@ export const notesEn: NotesCopy = {
   },
   fragments: {
     sample: 'Example data',
+    screenLabel: 'The Notes screen',
     note: {
       label: 'An open note',
       title: 'Power bills arrive late, remind the client on the 5th',
@@ -174,7 +175,7 @@ export const notesEn: NotesCopy = {
       title: 'Hand this over as a team task',
       hint: 'Every member of the organization and the person holding the position (an AI agent included) will be able to read the title and description below. Edit them before you hand it over.',
       positionLabel: 'Hand over to position',
-      position: 'Chief accountant, Chị Lan',
+      position: 'Chief accountant',
       taskLabel: 'Team task title',
       task: 'Reconcile payables with Bao Bì Phú Thịnh',
       descLabel: 'Description for the team',
@@ -186,8 +187,6 @@ export const notesEn: NotesCopy = {
       note: 'Your own notes and to-dos in this organization, the whole set.',
       markdown: 'Download as Markdown',
       json: 'Download as JSON',
-      leaveTitle: 'When a member leaves the organization',
-      leave: 'Their private notes and to-dos are kept sealed for 30 days and then deleted. Shared notes stay.',
     },
   },
 };
