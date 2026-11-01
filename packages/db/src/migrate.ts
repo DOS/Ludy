@@ -11,6 +11,10 @@ const FILE_PATTERN = /^(\d{14})_crove_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 // Migrations that change state for the whole database, not for Ludy's roles and schemas: in a shared database one of them runs
 // only through a variant (#2284). A pending one without a variant stops the run, so a missing or mislocated variants
 // directory can never silently apply the original to the other system's database.
+// Ludy's own roles, by name (#2284): the roles the migrations create. A shared database may hold another system's role named
+// `crove_something`; only these are trusted as Ludy's.
+export const LUDY_ROLES: readonly string[] = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter', 'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_system'];
+
 export const DATABASE_WIDE_MIGRATIONS: ReadonlySet<string> = new Set(['20261015120000_crove_kernel_revoke_temp.sql']);
 
 // CROVE_SHARED_DATABASE (#2284): Ludy lives in a database that other systems own schemas, roles and event triggers in
@@ -35,6 +39,9 @@ export interface MigrateOptions {
   sharedDatabase?: boolean;
   // Where the variants live; default `shared-variants` beside the migrations directory.
   sharedVariantsDir?: string;
+  // The mode is locked to the database once it is recorded (crove_meta.deployment): a run that asks for the other one is
+  // refused unless this is set (CROVE_SHARED_DATABASE_SWITCH=true), a decision a person makes for that run.
+  allowModeSwitch?: boolean;
   // How long to wait for another run's migration lock before failing; unset waits as long as it takes (#1803).
   lockWaitMs?: number;
   // The deployment's context token key (#1822, ADR-0028 section 9), base64 of 32 to 64 bytes, installed after the
@@ -136,18 +143,27 @@ export async function readMigrations(dir: string): Promise<MigrationFile[]> {
 // migration whose effect reaches beyond Ludy's own roles and schemas gets a variant instead; the ledger records the
 // original's hash either way. A missing directory means no variant. A variant needs its migration, and a migration
 // whose indexes build outside a transaction cannot have one.
-export async function readSharedVariants(dir: string, files: readonly MigrationFile[]): Promise<Map<string, string>> {
+export interface SharedVariant {
+  sql: string;
+  sha256: string;
+}
+
+export async function readSharedVariants(dir: string, files: readonly MigrationFile[]): Promise<Map<string, SharedVariant>> {
   const names = await readdir(dir).catch((error: { code?: string }) => {
     if (error?.code === 'ENOENT') return [] as string[];
     throw error;
   });
   const byName = new Map(files.map((f) => [f.name, f]));
-  const variants = new Map<string, string>();
+  const variants = new Map<string, SharedVariant>();
   for (const name of names.filter((n) => n.endsWith('.sql')).sort()) {
     const original = byName.get(name);
     if (!original) throw new Error(`shared-database variant ${name} has no migration of that name`);
     if (concurrentIndexes(name, original.sql) !== null) throw new Error(`shared-database variant ${name}: a migration that builds indexes concurrently cannot have one`);
-    variants.set(name, (await readFile(join(dir, name), 'utf8')).replaceAll('\r\n', '\n'));
+    // Only a migration that changes the whole database may have one: a variant of any other could differ from it in what the
+    // invariant suite (which runs the originals) checks, such as row-level security.
+    if (!DATABASE_WIDE_MIGRATIONS.has(name)) throw new Error(`shared-database variant ${name}: only a migration that changes state for the whole database may have one (DATABASE_WIDE_MIGRATIONS)`);
+    const sql = (await readFile(join(dir, name), 'utf8')).replaceAll('\r\n', '\n');
+    variants.set(name, { sql, sha256: createHash('sha256').update(sql).digest('hex') });
   }
   return variants;
 }
@@ -155,12 +171,25 @@ export async function readSharedVariants(dir: string, files: readonly MigrationF
 // The mode the database was last migrated in, for the SQL that behaves differently in a shared database (the DDL watch's
 // event function reads it). Written after the pipeline session is marked, so creating the table is not DDL outside the
 // pipeline.
-async function recordDeploymentMode(client: pg.ClientBase, shared: boolean): Promise<void> {
+async function recordDeploymentMode(client: pg.ClientBase, shared: boolean, allowSwitch: boolean, log: (message: string) => void): Promise<void> {
   await client.query(`CREATE TABLE IF NOT EXISTS crove_meta.deployment (
     key text PRIMARY KEY,
     value text NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
   )`);
+  // The mode the database was last migrated in. A database with a ledger and no mode is an owned one that predates the mode.
+  const recorded = (await client.query<{ value: string }>("SELECT value FROM crove_meta.deployment WHERE key = 'shared_database'")).rows[0]?.value ?? null;
+  const known = recorded ?? ((await client.query('SELECT 1 FROM crove_meta.schema_migrations LIMIT 1')).rowCount ? 'false' : null);
+  const wanted = shared ? 'true' : 'false';
+  if (known !== null && known !== wanted) {
+    if (!allowSwitch) {
+      throw new Error(
+        `this database was migrated in ${known === 'true' ? 'shared' : 'owned'}-database mode and CROVE_SHARED_DATABASE asks for ${shared ? 'shared' : 'owned'}: ` +
+          'the mode is locked to the database because the two differ in the guards they keep (docs/runbooks/shared-database.md, "Switching modes"); set CROVE_SHARED_DATABASE_SWITCH=true for a run that changes it on purpose',
+      );
+    }
+    log(`switching the database from ${known === 'true' ? 'shared' : 'owned'} to ${shared ? 'shared' : 'owned'}-database mode (CROVE_SHARED_DATABASE_SWITCH)`);
+  }
   await client.query(
     `INSERT INTO crove_meta.deployment (key, value) VALUES ('shared_database', $1)
      ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = now() WHERE crove_meta.deployment.value IS DISTINCT FROM excluded.value`,
@@ -187,12 +216,34 @@ const FOREIGN_PRIVILEGES_SQL = `
   )
   SELECT DISTINCT x.schema, r.rolname::text AS role FROM acls x
   JOIN pg_catalog.pg_roles r ON r.oid = x.grantee
-  WHERE x.grantee <> x.owner AND r.rolname NOT LIKE 'crove\\_%' AND r.rolname NOT LIKE 'pg\\_%'
+  WHERE x.grantee <> x.owner AND r.rolname <> ALL ($1::text[]) AND r.rolname NOT LIKE 'pg\\_%'
     AND r.rolname <> current_user AND NOT r.rolsuper
   ORDER BY 1, 2`;
 
 async function foreignPrivileges(client: pg.ClientBase): Promise<Array<{ schema: string; role: string }>> {
-  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL);
+  const { rows } = await client.query<{ schema: string; role: string }>(FOREIGN_PRIVILEGES_SQL, [LUDY_ROLES]);
+  return rows;
+}
+
+// Shared database (#2284): the roles of the host that can read and write every org's data whatever row-level security says, or
+// can make themselves able to. Ludy cannot stop them; the run reports them so the owner knows who they are (the runbook says
+// so too). Not a violation: a Supabase project's own admin roles are among them.
+export async function sharedPrivilegedRoles(client: pg.ClientBase): Promise<Array<{ role: string; why: string }>> {
+  const { rows } = await client.query<{ role: string; why: string }>(
+    `SELECT r.rolname::text AS role,
+            pg_catalog.concat_ws(', ',
+              CASE WHEN r.rolsuper THEN 'superuser' END,
+              CASE WHEN r.rolbypassrls THEN 'BYPASSRLS' END,
+              CASE WHEN pg_catalog.pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER') THEN 'pg_read_all_data' END,
+              CASE WHEN pg_catalog.pg_has_role(r.oid, 'pg_write_all_data', 'MEMBER') THEN 'pg_write_all_data' END,
+              CASE WHEN r.rolcreaterole THEN 'CREATEROLE' END) AS why
+     FROM pg_catalog.pg_roles r
+     WHERE r.rolname <> ALL ($1::text[]) AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> current_user
+       AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole
+            OR pg_catalog.pg_has_role(r.oid, 'pg_read_all_data', 'MEMBER') OR pg_catalog.pg_has_role(r.oid, 'pg_write_all_data', 'MEMBER'))
+     ORDER BY 1`,
+    [LUDY_ROLES],
+  );
   return rows;
 }
 
@@ -219,7 +270,8 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
   const files = await readMigrations(options.dir);
   const shared = options.sharedDatabase ?? sharedDatabaseSetting(process.env['CROVE_SHARED_DATABASE']);
   const variantsDir = options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants');
-  const variants = shared ? await readSharedVariants(variantsDir, files) : new Map<string, string>();
+  // Read in both modes: a ledger hash of a database-wide migration may be the original's or its variant's.
+  const variants = await readSharedVariants(variantsDir, files);
   if (shared) log('shared-database mode: effects are limited to crove_* roles and schemas');
   const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-migrate' });
   await client.connect();
@@ -243,15 +295,16 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         PRIMARY KEY (pid, backend_start)
       );`);
     await markPipelineSession(client, 'migrate');
-    await recordDeploymentMode(client, shared);
+    await recordDeploymentMode(client, shared, options.allowModeSwitch ?? process.env['CROVE_SHARED_DATABASE_SWITCH'] === 'true', log);
     const { rows } = await client.query<{ version: string; sha256: string }>(
       'SELECT version, sha256 FROM crove_meta.schema_migrations',
     );
     const ledger = new Map(rows.map((r) => [r.version, r.sha256]));
     for (const file of files) {
       const known = ledger.get(file.version);
+      const variantOf = variants.get(file.name);
       if (known !== undefined) {
-        if (known !== file.sha256) {
+        if (known !== file.sha256 && known !== variantOf?.sha256) {
           throw new Error(`migration ${file.name} was edited after it was applied; add a new migration instead`);
         }
         continue;
@@ -270,18 +323,19 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         applied.push(file.name);
         continue;
       }
-      const variant = variants.get(file.name);
+      const variant = shared ? variantOf : undefined;
       if (shared && variant === undefined && DATABASE_WIDE_MIGRATIONS.has(file.name)) {
         throw new Error(`shared database: ${file.name} changes state for the whole database and has no shared-database variant (looked in ${variantsDir}); refusing to apply it`);
       }
       log(variant === undefined ? `applying ${file.name}` : `applying ${file.name} (shared-database variant)`);
       await client.query('BEGIN');
       try {
-        await client.query(variant ?? file.sql);
+        await client.query(variant?.sql ?? file.sql);
+        // A variant's own hash is what the ledger records, so a database-wide migration that ran in shared mode shows it.
         await client.query('INSERT INTO crove_meta.schema_migrations (version, name, sha256) VALUES ($1, $2, $3)', [
           file.version,
           file.name,
-          file.sha256,
+          variant?.sha256 ?? file.sha256,
         ]);
         await client.query('COMMIT');
       } catch (error) {
@@ -306,7 +360,13 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     END $$;`);
     // Shared database: the other systems' default privileges (Supabase grants every new object of its admin roles to its API
     // roles) reach Ludy's new objects, so each run takes them back from every role that is not Ludy's own.
-    if (shared) await isolateFromForeignRoles(client, log);
+    if (shared) {
+      await isolateFromForeignRoles(client, log);
+      const privileged = await sharedPrivilegedRoles(client);
+      if (privileged.length > 0) {
+        log(`warning: these roles of the host can read and write the data of every org whatever row-level security says: ${privileged.map((p) => `${p.role} (${p.why})`).join('; ')}`);
+      }
+    }
     // Fails the run (and so the deploy) when a function or a privilege reopens the pg_temp hijack. The
     // files are already committed, so a function fix is a new forward migration; each item names its fix.
     const violations = await hardeningViolations(client, { shared });
@@ -939,11 +999,12 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
     ? await client.query<{ rolname: string; via: string }>(
         `SELECT r.rolname::text AS rolname,
                 (SELECT pg_catalog.string_agg(c.rolname::text, ', ' ORDER BY c.rolname::text COLLATE "C")
-                 FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%' AND ${actsAs('r.oid', 'c.oid')}) AS via
+                 FROM pg_catalog.pg_roles c WHERE c.rolname = ANY ($1::text[]) AND ${actsAs('r.oid', 'c.oid')}) AS via
          FROM pg_catalog.pg_roles r
-         WHERE r.rolname NOT LIKE 'crove\\_%' AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
-           AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%' AND ${actsAs('r.oid', 'c.oid')})
+         WHERE r.rolname <> ALL ($1::text[]) AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
+           AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles c WHERE c.rolname = ANY ($1::text[]) AND ${actsAs('r.oid', 'c.oid')})
          ORDER BY r.rolname::text COLLATE "C"`,
+        [LUDY_ROLES],
       )
     : { rows: [] as Array<{ rolname: string; via: string }> };
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
@@ -1139,7 +1200,7 @@ export async function setRolePasswords(adminUrl: string, passwords: Record<strin
   try {
     for (const [role, password] of Object.entries(passwords)) {
       if (!password) continue;
-      if (shared && !role.startsWith('crove_')) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
+      if (shared && !LUDY_ROLES.includes(role)) throw new Error(`shared database: refusing to set the password of ${role}, which is not a Ludy role`);
       const { rows } = await client.query<{ sql: string }>('SELECT format($$ALTER ROLE %I PASSWORD %L$$, $1::text, $2::text) AS sql', [
         role,
         password,

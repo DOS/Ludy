@@ -51,6 +51,7 @@ async function runMigrate(config: Config) {
     // Installed after the migrations, as a bind parameter (#1822); unset installs none.
     contextTokenKey: config.CROVE_CONTEXT_TOKEN_KEY ?? null,
     sharedDatabase: config.CROVE_SHARED_DATABASE === 'true',
+    allowModeSwitch: config.CROVE_SHARED_DATABASE_SWITCH === 'true',
   });
   const shared = config.CROVE_SHARED_DATABASE === 'true';
   await setRolePasswords(adminUrl, {

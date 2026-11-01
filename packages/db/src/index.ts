@@ -25,6 +25,9 @@ export interface PoolOptions {
   // Run SESSION_RESET_SQL before a connection goes back to the pool (default true). Set false only behind a
   // transaction-mode pooler, whose own reset governs there (plan §3.3); the taint check below stays on either way.
   resetOnRelease?: boolean;
+  // Also clear the connection's temporary objects on release (DISCARD TEMP). A shared database (CROVE_SHARED_DATABASE, #2284)
+  // keeps TEMPORARY with PUBLIC, so a Ludy login may create temporary objects and none may outlive its checkout.
+  discardTemp?: boolean;
 }
 
 // Session state a checkout may leave on its connection, cleared before the connection goes back to the pool
@@ -48,6 +51,10 @@ export interface PoolOptions {
 // session mode unless server_reset_query_always is set).
 export const SESSION_RESET_SQL =
   'CLOSE ALL; RESET ALL; RESET ROLE; UNLISTEN *; SELECT pg_catalog.pg_advisory_unlock_all()';
+
+// The same, plus the temporary objects, for a shared database where TEMPORARY is not revoked (see discardTemp). DISCARD TEMP
+// may run in the implicit transaction of a multi-statement simple query (only DISCARD ALL may not).
+export const SESSION_RESET_SQL_SHARED = `${SESSION_RESET_SQL}; DISCARD TEMP`;
 
 // The context errors that mean this connection's session state may block the sealed context (both SQLSTATE
 // 42501). A checkout that sees one is tainted: on release its connection is closed instead of pooled, with or
@@ -101,7 +108,7 @@ type ConnectCallback = (err: Error | undefined, client: pg.PoolClient | undefine
 // without an error, not tainted, outside a transaction and, with reset, after SESSION_RESET_SQL has run on it.
 // Otherwise it is destroyed: a RESET inside an open transaction would be undone by its ROLLBACK. The caller does
 // not wait for the reset. Without reset, a query still in flight at release (an unawaited BEGIN) is not seen.
-function guardCheckout(client: pg.PoolClient, reset: boolean): pg.PoolClient {
+function guardCheckout(client: pg.PoolClient, reset: string | null): pg.PoolClient {
   watchQueries(client);
   const checkout: Checkout = { tainted: null };
   checkouts.set(client, checkout);
@@ -125,12 +132,12 @@ function guardCheckout(client: pg.PoolClient, reset: boolean): pg.PoolClient {
     released = true;
     if (err) return release(err);
     if (destroyed()) return;
-    if (!reset) return release();
+    if (reset === null) return release();
     // While the reset runs nobody holds the client, so a lost connection must not reach the process as an unhandled
     // 'error' event; the reset query fails with the same error, and that destroys the client.
     const ignore = () => {};
     client.on('error', ignore);
-    client.query(SESSION_RESET_SQL).then(
+    client.query(reset).then(
       () => {
         client.removeListener('error', ignore);
         // A query sent before release and still in flight then (an unawaited BEGIN) ran before the reset.
@@ -147,9 +154,9 @@ function guardCheckout(client: pg.PoolClient, reset: boolean): pg.PoolClient {
 
 // pg.Pool whose every checkout, including pool.query(), goes through guardCheckout.
 class CrovePool extends pg.Pool {
-  readonly #reset: boolean;
+  readonly #reset: string | null;
 
-  constructor(config: pg.PoolConfig, reset: boolean) {
+  constructor(config: pg.PoolConfig, reset: string | null) {
     super(config);
     this.#reset = reset;
   }
@@ -176,7 +183,7 @@ export function createPool(options: PoolOptions): pg.Pool {
       idle_in_transaction_session_timeout: 10_000,
       types,
     },
-    options.resetOnRelease ?? true,
+    (options.resetOnRelease ?? true) ? (options.discardTemp ? SESSION_RESET_SQL_SHARED : SESSION_RESET_SQL) : null,
   );
   // An idle client losing its connection (database restart) emits 'error'; unhandled, it would exit the process.
   pool.on('error', (error) => console.error('[db] idle client error', error.message));

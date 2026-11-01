@@ -398,7 +398,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
   };
 
   function buildRuntime(connectionString: string, applicationName: string, max: number) {
-    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true' });
+    const pool = createPool({ connectionString, applicationName, max, resetOnRelease: config.DB_RESET_ON_RELEASE === 'true', discardTemp: config.CROVE_SHARED_DATABASE === 'true' });
     const db = createDb(pool);
     // One database is the control plane and the only cell (Decision 14, plan §3.6).
     const runtime = serverRuntime(singleCell(db), config, {
