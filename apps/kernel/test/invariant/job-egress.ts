@@ -79,6 +79,8 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
   publicUrl: [],
+  // Where the links in mail and chat alerts open the web app (APP_URL, #2261): a string, no egress.
+  appUrl: [],
   brand: [],
   mail: ['provider:mail'],
   push: ['tenant_url'],
@@ -96,7 +98,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  // 2026-11-01: the field lands in the PR that closes #2261; remove this entry once it is on the base branch.
+  appUrl: '#2261',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a
