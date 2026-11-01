@@ -582,10 +582,10 @@ describe('pilot-check CORS probe (#2261)', () => {
   const API = 'https://api.example.com';
   const APP = 'https://app.example.com';
   // A fetch that answers a preflight the way an API with CORS_ALLOWED_ORIGINS=APP does, or a broken variant of it.
-  const preflight = (allow: (origin: string) => string | null): Fetch => async (_input, init) => {
+  const preflight = (allow: (origin: string) => string | null, status = 204, headers = 'authorization, content-type, x-crove-org'): Fetch => async (_input, init) => {
     const origin = new Headers(init?.headers).get('origin') ?? '';
     const given = allow(origin);
-    return new Response(null, { status: 204, headers: given === null ? {} : { 'access-control-allow-origin': given } });
+    return new Response(null, { status, headers: given === null ? {} : { 'access-control-allow-origin': given, 'access-control-allow-headers': headers } });
   };
 
   it('passes when the app origin is answered and any other is not', async () => {
@@ -596,6 +596,13 @@ describe('pilot-check CORS probe (#2261)', () => {
     for (const given of [null, '*', 'https://other.example.com']) {
       expect(await probeCors(API, APP, preflight(() => given)), String(given)).toMatchObject({ status: 'fail' });
     }
+  });
+
+  it('fails when the preflight is not 2xx, or does not allow the headers the app sends', async () => {
+    const only = (o: string) => (o === APP ? APP : null);
+    expect(await probeCors(API, APP, preflight(only, 403))).toMatchObject({ status: 'fail', message: expect.stringMatching(/answered 403/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'content-type'))).toMatchObject({ status: 'fail', message: expect.stringMatching(/does not allow the header\(s\) authorization, x-crove-org/) });
+    expect(await probeCors(API, APP, preflight(only, 204, 'Authorization,Content-Type,X-Crove-Org'))).toMatchObject({ status: 'pass' });
   });
 
   it('fails when an origin off the list is answered too', async () => {

@@ -15,7 +15,8 @@ export function VersionBanner() {
     const check = async () => {
       last = Date.now();
       const server = await fetchServerBuild();
-      if (isStaleBuild(BUILD, server)) setStale(true);
+      // A rollback or a finished rollout that makes the two builds match again clears the bar; an unreadable answer leaves it.
+      if (server !== null) setStale(isStaleBuild(BUILD, server));
     };
     void check();
     const timer = window.setInterval(() => void check(), VERSION_POLL_MS);

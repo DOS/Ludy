@@ -7,6 +7,7 @@
 //
 // Exit codes: 0 every automatic check passed, 1 a check failed, 2 the check could not run (bad arguments).
 import { randomBytes } from 'node:crypto';
+import { ORG_HEADER } from '@crove/kernel-contract';
 import { S3BlobStore, parseVaultKey, type S3Sender } from '@crove/kernel-runtime';
 import { AVAILABLE_MODULES, SAMPLE_DB_PASSWORDS } from './config.ts';
 import { parseAllowedOrigins } from './cors.ts';
@@ -571,6 +572,12 @@ export async function probeCors(origin: string, appOrigin: string, fetchFn: Fetc
     const app = await fetchFn(`${origin}/api/rpc`, init(appOrigin));
     const given = app.headers.get('access-control-allow-origin');
     if (given !== appOrigin) return { item, status: 'fail', message: `a preflight from ${appOrigin} to ${origin}/api/rpc got Access-Control-Allow-Origin ${given === null ? 'none' : given} (status ${app.status}): the app cannot call the API; check CORS_ALLOWED_ORIGINS and what sits in front of the API` };
+    // A browser also needs a 2xx preflight that allows the headers the app sends.
+    const allowed = (app.headers.get('access-control-allow-headers') ?? '').toLowerCase().split(',').map((h) => h.trim());
+    const missing = ['authorization', 'content-type', ORG_HEADER].filter((h) => !allowed.includes(h));
+    if (!app.ok || missing.length > 0) {
+      return { item, status: 'fail', message: `the preflight from ${appOrigin} to ${origin}/api/rpc answered ${app.status}${missing.length > 0 ? ` and does not allow the header(s) ${missing.join(', ')}` : ''}: browsers block the app's calls; check what sits in front of the API` };
+    }
     const stranger = await fetchFn(`${origin}/api/rpc`, init(CORS_STRANGER));
     if (stranger.headers.get('access-control-allow-origin') !== null) return { item, status: 'fail', message: `a preflight from ${CORS_STRANGER} got an Access-Control-Allow-Origin header: the API answers CORS for an origin off the list; allow only ${appOrigin}` };
     return { item, status: 'pass', message: `${origin} answers CORS for ${appOrigin} only` };
