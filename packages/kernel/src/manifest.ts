@@ -84,6 +84,7 @@ export const kernelManifest = defineModule({
       worker_heartbeat: columns(['instance', 'beat_at', 'modules', 'build', 'build_time']),
     },
     crove_meta: {
+      deployment: columns(['key', 'value', 'updated_at']),
       pipeline_session: columns(['pid', 'backend_start', 'step', 'marked_at']),
       schema_migrations: columns(['version', 'name', 'sha256', 'applied_at']),
     },

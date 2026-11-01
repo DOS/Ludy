@@ -158,6 +158,48 @@ jobs:
           # shellcheck disable=SC2086
           pnpm exec vitest run --project db $PART_ARGS
 
+  # The core invariants with CROVE_SHARED_DATABASE=true (#2284): the same migrations in shared-database mode, where PUBLIC keeps
+  # TEMPORARY. The cross-org RLS matrix, the EXECUTE matrix of the login roles and the definer search_path hijack test (all in
+  # these two files) must hold there too, with temporary objects available. The one test that asserts the login roles have no
+  # temporary schema is the owned database's property and is the one left out.
+  shared-mode-invariants:
+    name: Core invariants in shared-database mode
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      CROVE_TEST_ADMIN_URL: postgres://postgres:ci-postgres@localhost:5432/postgres
+      CROVE_SHARED_DATABASE: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+
+      - name: Install pnpm
+        run: npm install -g pnpm@10.34.7 --no-fund --no-audit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "crove-monorepo"
+
+      - name: RLS matrix, EXECUTE matrix and search_path hijack test, shared mode
+        run: >-
+          pnpm exec vitest run --project db
+          apps/kernel/test/invariant/rls-matrix.db.test.ts apps/kernel/test/invariant/kernel-invariants.db.test.ts
+          -t '^(?!.*gives the login roles no temporary schema)'
+
   # Unused files, exports and dependencies, and dependencies used but not listed (knip, G5, #1602), over every workspace
   # package, the marketing site included: its own job, with the whole workspace installed.
   knip:
@@ -300,6 +342,14 @@ jobs:
           CROVE_TEST_SUPABASE_URL: ${{ env.SUPABASE_DB_URL }}
           CROVE_REQUIRE_SUPABASE_TEST: "1"
         run: pnpm exec vitest run --project db packages/db/test/supabase.db.test.ts
+
+      # Shared-database mode (#2284): Ludy migrated beside another system's schema, role and default privileges, in a database
+      # of its own in the same container; the other system keeps its privileges and raises no DDL alert.
+      - name: Shared-database mode beside a foreign schema and role
+        env:
+          CROVE_TEST_SUPABASE_URL: ${{ env.SUPABASE_DB_URL }}
+          CROVE_REQUIRE_SUPABASE_TEST: "1"
+        run: pnpm exec vitest run --project db packages/db/test/shared-database.db.test.ts
 
       - name: The kernel migrate role, twice, so the guard also checks pg-boss's crove_jobs schema
         env:
