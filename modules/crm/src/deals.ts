@@ -36,7 +36,7 @@ import { DomainError, defineCommand, defineQuery, type CommandContext, type Quer
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
-type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
+export type Reader = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 
 function userOf(actor: QueryContext['actor']): string {
   if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -50,7 +50,7 @@ const day = (value: Date | string | null): string | null => (value === null ? nu
 // Stages
 // ---------------------------------------------------------------------------------------------------------------
 
-async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
+export async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
   const rows = await ctx.trx.selectFrom('crove_crm.pipeline_stage').select(['id', 'name', 'kind', 'position']).where('org_id', '=', ctx.orgId).orderBy('position').execute();
   return rows.map((r) => ({ id: r.id, name: r.name, kind: r.kind as DealStageKind, position: r.position }));
 }
@@ -58,13 +58,13 @@ async function loadStages(ctx: Reader): Promise<PipelineStage[]> {
 // One lock per org for everything that places a deal or touches the pipeline (creating the defaults, creating a deal,
 // moving one), taken before any deal row is locked: two moves into one crowded stage then never rebalance rows the other
 // holds, and two creates never take the same sort key. It is held to the end of the transaction.
-async function lockPipeline(ctx: CommandContext): Promise<void> {
+export async function lockPipeline(ctx: CommandContext): Promise<void> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${'crm.pipeline:' + ctx.orgId}, 0))`.execute(ctx.trx);
 }
 
 // Creates the defaults when the org has none. Two first uses at once wait for each other on the pipeline lock, so the
 // second sees the first one's stages.
-async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]> {
+export async function ensureStages(ctx: CommandContext): Promise<PipelineStage[]> {
   await lockPipeline(ctx);
   const existing = await loadStages(ctx);
   if (existing.length > 0) return existing;
@@ -102,7 +102,7 @@ export const pipelineSetup = defineCommand({
 
 const COLUMNS = ['d.id', 'd.party_id', 'd.title', 'd.amount', 'd.currency', 'd.stage_id', 'd.expected_close', 'd.owner_user_id', 'd.lost_reason', 'd.closed_at', 'd.version', 'd.created_by', 'd.created_at', 'd.updated_at'] as const;
 
-interface Row {
+export interface Row {
   id: string;
   party_id: string;
   title: string;
@@ -122,9 +122,9 @@ interface Row {
 }
 
 // Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
-const mayDelete = (ctx: Reader, createdBy: string): boolean => ctx.role === 'owner' || ctx.role === 'admin' || (ctx.role === 'member' && ctx.actor.type === 'user' && ctx.actor.userId === createdBy);
+export const mayDelete = (ctx: Reader, createdBy: string): boolean => ctx.role === 'owner' || ctx.role === 'admin' || (ctx.role === 'member' && ctx.actor.type === 'user' && ctx.actor.userId === createdBy);
 
-function view(r: Row, canDelete: boolean): Deal {
+export function view(r: Row, canDelete: boolean): Deal {
   return {
     id: r.id,
     partyId: r.party_id,
@@ -145,7 +145,7 @@ function view(r: Row, canDelete: boolean): Deal {
   };
 }
 
-function base(ctx: Reader) {
+export function base(ctx: Reader) {
   return ctx.trx
     .selectFrom('crove_crm.deal as d')
     .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
