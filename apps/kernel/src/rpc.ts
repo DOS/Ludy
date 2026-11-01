@@ -626,9 +626,14 @@ export function createRpcHandler(
       pipeline: {
         stages: os.crm.pipeline.stages.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.stage.list', {}, { actor, orgId }))),
         setup: os.crm.pipeline.setup.handler(crmCommand('crm.pipeline.setup')),
+        addStage: os.crm.pipeline.addStage.handler(crmCommand('crm.stage.add')),
+        renameStage: os.crm.pipeline.renameStage.handler(crmCommand('crm.stage.rename')),
+        reorderStages: os.crm.pipeline.reorderStages.handler(crmCommand('crm.stage.reorder')),
+        removeStage: os.crm.pipeline.removeStage.handler(crmCommand('crm.stage.remove')),
       },
       parties: { search: os.crm.parties.search.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.search', input, { actor, orgId }))) },
       deals: {
+        board: os.crm.deals.board.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.board', input, { actor, orgId }))),
         list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
         get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
         byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
