@@ -114,6 +114,28 @@ export const zBankImportResult = z.object({
 });
 export type BankImportResult = z.infer<typeof zBankImportResult>;
 
+// The number of a bank account (#2183): what an owner or admin records on a bank account of an entity so a statement file
+// that names the number goes to that account without a bank feed. Typed as the bank prints it (spaces, dots or dashes
+// between digit groups are dropped); the module keeps the digits, 6 to 20 of them. One number belongs to one bank account
+// of an org; a bank account may have several numbers.
+export const zBankAccountNumberSet = z.object({
+  bankAccount: zAccountCode,
+  accountNumber: z.string().trim().min(1).max(40),
+  // The entity whose books the account belongs to (as zLegalEntityChoice): the default one when omitted.
+  legalEntityId: zId.optional(),
+});
+export type BankAccountNumberSet = z.infer<typeof zBankAccountNumberSet>;
+
+export const zBankAccountNumberView = z.object({
+  id: zId,
+  bankAccount: z.string(),
+  // The digits; shown in full to the managers who record it, masked everywhere else (audit rows, the statement card).
+  accountNumber: z.string(),
+  legalEntityId: zId,
+  createdAt: z.string(),
+});
+export type BankAccountNumberView = z.infer<typeof zBankAccountNumberView>;
+
 // A batch of bank transactions from a feed (ADR-0039, #2044): one bank account of one legal entity, each line as the
 // provider reports it, in any order. The finance module checks and stores them as it does a statement's lines
 // (ADR-0021 section 6). Every line carries the bank's reference, which makes its key: a feed pulls overlapping windows

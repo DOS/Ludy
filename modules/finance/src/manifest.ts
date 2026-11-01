@@ -10,6 +10,7 @@ export const financeManifest = defineModule({
   tables: {
     crove_finance: {
       account: columns(['code', 'name', 'parent_code', 'standard']),
+      bank_account_number: columns(['org_id', 'id', 'legal_entity_id', 'created_by', 'created_at'], { bank_account: 'payment', account_number: 'payment' }),
       bank_feed_account: columns(['org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'cursor', 'last_synced_at', 'created_by', 'created_at'], { bank_account: 'payment', external_account_id: 'payment' }),
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),

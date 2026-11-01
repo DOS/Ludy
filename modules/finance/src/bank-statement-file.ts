@@ -24,6 +24,7 @@ import type { MemberRole } from '@crove/db';
 import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, STATEMENT_LINES_SHOWN, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow, type StatementLines } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { Decimal } from '@crove/l10n-vn';
+import { maskAccountNumber } from './account-number.ts';
 import { importStatement, previewStatement } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -61,26 +62,27 @@ export type StatementStageOutcome =
 
 type Place = { kind: 'none' } | { kind: 'ambiguous' } | { kind: 'one'; bankAccount: string; legalEntityId: string };
 
-// The bank account and legal entity an account number is mapped to. The mapping's account number is the digits of its
-// external account id: banks print it with spaces or dots.
+// The bank account and legal entity an account number is mapped to: by a bank feed mapping (#2099), whose account number is
+// the digits of its external account id (banks print it with spaces or dots), or by a number an owner or admin recorded on
+// the bank account itself (#2183, the way without a bank feed). The same account named by both is one place; two
+// different accounts are ambiguous, and nothing is staged against a guess.
 async function mappedPlace(ctx: QueryContext, accountNumber: string): Promise<Place> {
-  const mapped = await ctx.trx
+  const fed = await ctx.trx
     .selectFrom('crove_finance.bank_feed_account')
     .select(['bank_account', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${accountNumber}`)
     .execute();
-  const places = new Map(mapped.map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
+  const recorded = await ctx.trx
+    .selectFrom('crove_finance.bank_account_number')
+    .select(['bank_account', 'legal_entity_id'])
+    .where('org_id', '=', ctx.orgId)
+    .where('account_number', '=', accountNumber)
+    .execute();
+  const places = new Map([...fed, ...recorded].map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
   if (places.size > 1) return { kind: 'ambiguous' };
   const [place] = [...places.values()];
   return place ? { kind: 'one', bankAccount: place.bank_account, legalEntityId: place.legal_entity_id } : { kind: 'none' };
-}
-
-// The account number with all but its last four digits hidden (#2191): enough to tell which account a file says it is for.
-export function maskAccountNumber(digits: string): string {
-  // Four digits, or fewer for a short number, so most of it is always hidden.
-  const shown = Math.min(4, digits.length - 2);
-  return `${'*'.repeat(Math.min(digits.length - shown, 8))}${digits.slice(-shown)}`;
 }
 
 // Refusals the file can be told about; anything else is a fault and the job is retried.
@@ -270,7 +272,7 @@ const TOO_MANY = `Sao kê có hơn ${vnNumber(EXTRACT_LIMITS.maxStatementRows)} 
 export function unmappedMessage(accountNumber: string | null): string {
   return accountNumber === null
     ? 'Không tìm thấy số tài khoản trong sao kê (dòng "Số tài khoản" phía trên bảng); hãy nhập sao kê ở màn Ngân hàng và chọn tài khoản'
-    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; hãy liên kết trong Cài đặt, mục nguồn giao dịch ngân hàng, rồi bấm Đọc lại ở tệp này`;
+    : `Số tài khoản ${accountNumber} chưa được liên kết với tài khoản ngân hàng nào của tổ chức; nếu đây đúng là số tài khoản của tổ chức, hãy ghi số vào tài khoản ngân hàng ở Cài đặt, mục Số tài khoản ngân hàng (hoặc liên kết nguồn giao dịch ngân hàng), rồi bấm Đọc lại ở tệp này; thư gửi đến không chứng minh người gửi là ai`;
 }
 
 function failureMessage(outcome: Exclude<StatementStageOutcome, { outcome: 'staged' }>): string {

@@ -20,6 +20,7 @@ export interface CroveCrmSchema {
 
 export interface CroveFinanceSchema {
   'crove_finance.account': FinanceAccountTable;
+  'crove_finance.bank_account_number': FinanceBankAccountNumberTable;
   'crove_finance.bank_feed_account': FinanceBankFeedAccountTable;
   'crove_finance.bank_feed_listed_account': FinanceBankFeedListedAccountTable;
   'crove_finance.bank_line': FinanceBankLineTable;
@@ -233,6 +234,17 @@ export interface FinanceAccountTable {
   name: ColumnType<string, NotGranted, NotGranted>;
   parent_code: ColumnType<string | null, NotGranted, NotGranted>;
   standard: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.bank_account_number */
+export interface FinanceBankAccountNumberTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  bank_account: ColumnType<string, string, NotGranted>;
+  account_number: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.bank_feed_account */

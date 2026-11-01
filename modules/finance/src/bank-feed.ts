@@ -19,6 +19,7 @@ import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { isBankFeedProviderId, zBankFeedMap, zBankFeedRecordAccounts, zBankFeedRecordPull, zId, type BankFeedAccountView, type BankFeedConnectionView, type BankFeedListedAccount, type BankImportResult } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { accountNumberDigits, feedAccountDigits } from './account-number.ts';
 import { bankAccount, ingestFeedLines } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -58,6 +59,24 @@ export const bankFeedMap = defineCommand({
       .where('external_account_id', '=', input.externalAccountId)
       .executeTakeFirst();
     if (!listed) throw new DomainError('BANK_FEED_ACCOUNT_UNKNOWN', 422, 'Kết nối này không có tài khoản đó; hãy chọn một tài khoản trong danh sách');
+    // A number recorded on a bank account (#2183) is on that account alone: the feed account's digits, when they are one,
+    // may not put it on another. The digits are taken as the statement path takes them (every non-digit dropped), so an id
+    // such as SBX-7770001111 counts as the number 7770001111. The lock is the recording's own (bank-account-number.ts), so
+    // the two cannot race. Owners and admins, the only callers, always hold the org-wide entity scope (enter_context seals
+    // '*' for them), so no recorded number of another entity is hidden from this lookup.
+    const feedDigits = accountNumberDigits(feedAccountDigits(input.externalAccountId));
+    if (feedDigits !== null) {
+      await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.bank_account_number:${ctx.orgId}:${feedDigits}`}, 0))`.execute(ctx.trx);
+      const recorded = await ctx.trx
+        .selectFrom('crove_finance.bank_account_number')
+        .select(['bank_account', 'legal_entity_id'])
+        .where('org_id', '=', ctx.orgId)
+        .where('account_number', '=', feedDigits)
+        .execute();
+      if (recorded.some((r) => r.bank_account !== input.bankAccount || r.legal_entity_id !== legalEntityId)) {
+        throw new DomainError('BANK_ACCOUNT_NUMBER_TAKEN', 409, 'Số tài khoản này đã gắn với một tài khoản ngân hàng khác của tổ chức; hãy gỡ số đó ở tài khoản kia trước');
+      }
+    }
     const existing = await ctx.trx
       .selectFrom('crove_finance.bank_feed_account')
       .select(['id', 'legal_entity_id'])
