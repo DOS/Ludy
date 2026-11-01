@@ -157,7 +157,9 @@ export const zAdsCapSetPayload = z
     previousCurrency: z.string().nullable(),
   })
   .refine(capNamesAccount, capNamesAccountIssue);
-export const zAdsLaunchesUnblockPayload = z.strictObject({});
+// The moment of the last change of the switches when launches were blocked (as text, with its microseconds): the approval
+// refuses when they changed since, so a stop made after the request is not undone by it.
+export const zAdsLaunchesUnblockPayload = z.strictObject({ blockedSince: z.string().min(1).max(64) });
 
 // A pending or decided proposal of this kind as the screens show it: what it changes, in one shape.
 export const zAdsChange = z.discriminatedUnion('change', [

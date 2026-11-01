@@ -2,7 +2,7 @@
 // The switches and the spend caps of running ads on the Ads screen (ADR-0043, issue #2294, W0a). Owners and admins only: the
 // caller draws it. Nothing here calls an ad platform and nothing spends. It says whether running ads is on for the org, which
 // accounts are allowed and which caps a launch must stay inside. What opens the way to spend (the org switch, an account's
-// flag, a cap set or raised, launches opened again) is asked for here, by owners and admins, and is a proposal that someone
+// flag, a cap set or raised, launches opened again) is asked for here by the owner and is a proposal that an owner or an admin
 // approves in the Inbox (ADR-0043 point 1): no button on this card changes it. What only stops or reduces spend is direct:
 // the owner switches running ads off, withdraws one account and lowers a cap; owners and admins stop everything at once.
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -67,12 +67,14 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
           (waiting('write_enable') ? (
             <Badge variant="proposal">{t('waitingBadge')}</Badge>
           ) : (
-            <div>
-              <Button loading={enable.isPending} variant="outline" size="lg" onClick={() => enable.mutate({ change: 'write_enable', idempotencyKey: crypto.randomUUID() })}>
-                {t('request')}
-              </Button>
-              {enable.error && <ErrorText>{errorMessage(enable.error)}</ErrorText>}
-            </div>
+            owner && (
+              <div>
+                <Button loading={enable.isPending} variant="outline" size="lg" onClick={() => enable.mutate({ change: 'write_enable', idempotencyKey: crypto.randomUUID() })}>
+                  {t('request')}
+                </Button>
+                {enable.error && <ErrorText>{errorMessage(enable.error)}</ErrorText>}
+              </div>
+            )
           ))}
         {owner && writeEnabled && (
           <div>
@@ -97,12 +99,14 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
           {waiting('launches_unblock') ? (
             <Badge variant="proposal">{t('waitingBadge')}</Badge>
           ) : (
-            <div>
-              <Button loading={unblock.isPending} variant="outline" size="lg" onClick={() => unblock.mutate({ change: 'launches_unblock', idempotencyKey: crypto.randomUUID() })}>
-                {t('unblockRequest')}
-              </Button>
-              {unblock.error && <ErrorText>{errorMessage(unblock.error)}</ErrorText>}
-            </div>
+            owner && (
+              <div>
+                <Button loading={unblock.isPending} variant="outline" size="lg" onClick={() => unblock.mutate({ change: 'launches_unblock', idempotencyKey: crypto.randomUUID() })}>
+                  {t('unblockRequest')}
+                </Button>
+                {unblock.error && <ErrorText>{errorMessage(unblock.error)}</ErrorText>}
+              </div>
+            )
           )}
         </section>
       )}
@@ -171,7 +175,7 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
           ))}
         </ul>
         {caps.length > 0 && <p className="text-xs text-subtle-foreground">{t('capsSet', { when: f.dateTime(caps.reduce((late, c) => (c.setAt > late ? c.setAt : late), caps[0]?.setAt ?? '')) })}</p>}
-        <CapForm owner={owner} accounts={accounts} caps={caps} pending={pending} orgCurrency={orgCapCurrency} />
+        {owner && <CapForm owner={owner} accounts={accounts} caps={caps} pending={pending} orgCurrency={orgCapCurrency} />}
       </section>
     </Card>
   );
@@ -212,9 +216,11 @@ function AccountRow({ account, owner, waiting }: { account: AdAccountView; owner
             : waiting ? (
                 <Badge variant="proposal">{t('waitingBadge')}</Badge>
               ) : (
-                <Button loading={ask.isPending} variant="outline" onClick={() => ask.mutate({ change: 'account_enable', adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
-                  {t('accountRequest')}
-                </Button>
+                owner && (
+                  <Button loading={ask.isPending} variant="outline" onClick={() => ask.mutate({ change: 'account_enable', adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
+                    {t('accountRequest')}
+                  </Button>
+                )
               )}
         </span>
       </div>

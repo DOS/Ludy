@@ -162,9 +162,9 @@ describe('the risk of the commands of running ads (#2294)', () => {
     }
   });
 
-  it('asks for each of them through an R1 preparer of owners and admins that posts nothing', () => {
+  it('asks for each of them through an R1 preparer of the owner alone that posts nothing (an owner or an admin approves)', () => {
     for (const name of PREPARERS) {
-      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner'] });
     }
   });
 

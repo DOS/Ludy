@@ -67,12 +67,23 @@ async function lockedSetting(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promis
 }
 
 // The org's switches as they stand, without making the row or locking it (the preparers only look).
+// `updated_at_text` is the moment of the last change of any switch, as text with its microseconds: a request to open launches
+// again carries it, and the approval refuses when the switches changed since (a stop in between is not undone).
 const currentSetting = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) =>
-  ctx.trx.selectFrom('crove_ads.ad_org_setting').select(['write_enabled', 'launches_blocked']).where('org_id', '=', ctx.orgId).orderBy('id').limit(1).executeTakeFirst();
+  ctx.trx
+    .selectFrom('crove_ads.ad_org_setting')
+    .select(['write_enabled', 'launches_blocked', sql<string>`updated_at::text`.as('updated_at_text')])
+    .where('org_id', '=', ctx.orgId)
+    .orderBy('id')
+    .limit(1)
+    .executeTakeFirst();
 
 // One question at a time: a request is refused while a pending proposal of the same command (and, where the change names a
 // target, for the same target: an account, or a cap's scope, account and period) waits in the Inbox.
 async function refuseOpenRequest(ctx: Pick<CommandContext, 'trx' | 'orgId'>, command: string, match: Record<string, string> | null): Promise<void> {
+  // The org's lock, held to the end of the request, which inserts the proposal: two identical requests at once queue here, so
+  // the second sees the first's.
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
   let query = ctx.trx.selectFrom('crove_kernel.proposal').select('id').where('org_id', '=', ctx.orgId).where('command', '=', command).where('status', '=', 'pending');
   if (match) query = query.where(sql<boolean>`payload @> ${JSON.stringify(match)}::jsonb`);
   if (await query.limit(1).executeTakeFirst()) {
@@ -86,6 +97,8 @@ interface CapRow {
   // How the new amount compares with this one, decided in the database (money is never compared as a JS number).
   not_above: boolean;
   below: boolean;
+  // This cap is the one a request was made against (its `previous`), when that is given.
+  is_previous: boolean;
 }
 
 // The cap in force for a scope, account and period (the newest row, whose id the database stamped at insert), and whether the
@@ -93,9 +106,11 @@ interface CapRow {
 async function currentCap(
   ctx: Pick<CommandContext, 'trx' | 'orgId'>,
   cap: { scope: 'org' | 'account'; adAccountId?: string | undefined; period: 'daily' | 'monthly'; amount: string },
+  previous: string | null = null,
 ): Promise<CapRow | undefined> {
   const { rows } = await sql<CapRow>`
-    SELECT c.amount::text AS amount, c.currency, (${cap.amount}::numeric <= c.amount) AS not_above, (${cap.amount}::numeric < c.amount) AS below
+    SELECT c.amount::text AS amount, c.currency, (${cap.amount}::numeric <= c.amount) AS not_above, (${cap.amount}::numeric < c.amount) AS below,
+           (${previous}::numeric = c.amount) AS is_previous
     FROM crove_ads.ad_spend_cap c
     WHERE c.org_id = ${ctx.orgId}::uuid AND c.scope = ${cap.scope} AND c.period = ${cap.period}
       AND c.ad_account_id IS NOT DISTINCT FROM ${cap.adAccountId ?? null}::uuid
@@ -127,7 +142,8 @@ export const adsWritePrepareEnable = defineCommand({
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',
-  access: MANAGERS,
+  // The owner asks (ADR-0043 points 2, 3 and 7a: the switches and the caps are the owner's); an owner or an admin approves.
+  access: OWNERS,
   handler: async (ctx) => {
     if ((await currentSetting(ctx))?.write_enabled) throw new DomainError('ADS_WRITE_ALREADY_ON', 409, 'Việc chạy quảng cáo đã được bật cho tổ chức');
     await refuseOpenRequest(ctx, ADS_WRITE_ENABLE_COMMAND, null);
@@ -140,7 +156,8 @@ export const adsAccountPrepareEnableWrite = defineCommand({
   input: z.strictObject({ adAccountId: zId }),
   risk: 'R1',
   sideEffect: 'internal',
-  access: MANAGERS,
+  // The owner asks (ADR-0043 points 2, 3 and 7a: the switches and the caps are the owner's); an owner or an admin approves.
+  access: OWNERS,
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input) => {
     // One spelling of the id in every payload, so open requests are found by it and the database's check matches it.
@@ -166,7 +183,8 @@ export const adsCapPrepareSet = defineCommand({
   input: zAdsCapRequest,
   risk: 'R1',
   sideEffect: 'internal',
-  access: MANAGERS,
+  // The owner asks (ADR-0043 points 2, 3 and 7a: the switches and the caps are the owner's); an owner or an admin approves.
+  access: OWNERS,
   target: (input) => (input.adAccountId ? { type: 'ads.ad_account', id: input.adAccountId } : null),
   handler: async (ctx, input) => {
     const adAccountId = input.adAccountId?.toLowerCase();
@@ -208,11 +226,13 @@ export const adsLaunchesPrepareUnblock = defineCommand({
   input: z.strictObject({}),
   risk: 'R1',
   sideEffect: 'internal',
-  access: MANAGERS,
+  // The owner asks (ADR-0043 points 2, 3 and 7a: the switches and the caps are the owner's); an owner or an admin approves.
+  access: OWNERS,
   handler: async (ctx) => {
-    if (!(await currentSetting(ctx))?.launches_blocked) throw new DomainError('ADS_LAUNCHES_NOT_BLOCKED', 409, 'Các lần chạy quảng cáo hiện không bị chặn');
+    const setting = await currentSetting(ctx);
+    if (!setting?.launches_blocked) throw new DomainError('ADS_LAUNCHES_NOT_BLOCKED', 409, 'Các lần chạy quảng cáo hiện không bị chặn');
     await refuseOpenRequest(ctx, ADS_LAUNCHES_UNBLOCK_COMMAND, null);
-    return { kind: ADS_LAUNCHES_UNBLOCK_KIND, command: ADS_LAUNCHES_UNBLOCK_COMMAND, title: 'Mở lại việc chạy quảng cáo sau khi bị chặn', payload: {} };
+    return { kind: ADS_LAUNCHES_UNBLOCK_KIND, command: ADS_LAUNCHES_UNBLOCK_COMMAND, title: 'Mở lại việc chạy quảng cáo sau khi bị chặn', payload: { blockedSince: setting.updated_at_text } };
   },
 });
 
@@ -277,7 +297,11 @@ export const adsCapSet = defineCommand({
     const adAccountId = payload.adAccountId?.toLowerCase();
     // The account and its currency as they are now: the proposal may be old.
     if (payload.scope === 'account') await capAccount(ctx, adAccountId as string, payload.currency, true);
-    const previous = await currentCap(ctx, { scope: payload.scope, adAccountId, period: payload.period, amount: payload.amount });
+    const previous = await currentCap(ctx, { scope: payload.scope, adAccountId, period: payload.period, amount: payload.amount }, payload.previous);
+    // The cap it was asked against must still be the cap in force: a stop in between (the owner lowered it during an incident)
+    // is not undone by an approval of a request made before it.
+    const unchanged = previous ? payload.previous !== null && previous.is_previous && previous.currency === payload.previousCurrency : payload.previous === null;
+    if (!unchanged) throw new DomainError('ADS_CAP_CHANGED', 409, 'Hạn mức đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     const inserted = await ctx.trx
       .insertInto('crove_ads.ad_spend_cap')
       // The database stamps the id, who set it and when (crove_ads.cap_guard); set_by is the approver's, the one whose
@@ -297,10 +321,14 @@ export const adsLaunchesUnblock = defineCommand({
   sideEffect: 'financial',
   access: 'proposal',
   proposalKind: ADS_LAUNCHES_UNBLOCK_KIND,
-  handler: async (ctx): Promise<{ launchesBlocked: false }> => {
+  handler: async (ctx, { payload }): Promise<{ launchesBlocked: false }> => {
     if (!ctx.proposalId) throw onlyApproved();
     const setting = await lockedSetting(ctx);
     if (setting.launches_blocked) {
+      // The block it was asked against: a stop since (the owner switched writing off, which blocks again) is not undone by an
+      // approval of a request made before it.
+      const { rows } = await sql<{ same: boolean }>`SELECT (updated_at = ${payload.blockedSince}::timestamptz) AS same FROM crove_ads.ad_org_setting WHERE org_id = ${ctx.orgId}::uuid AND id = ${setting.id}::uuid`.execute(ctx.trx);
+      if (rows[0]?.same !== true) throw new DomainError('ADS_BLOCK_CHANGED', 409, 'Các lần chạy quảng cáo đã bị chặn lại từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
       await ctx.trx.updateTable('crove_ads.ad_org_setting').set({ launches_blocked: false }).where('org_id', '=', ctx.orgId).where('id', '=', setting.id).execute();
     }
     ctx.audit({ launchesBlocked: false });

@@ -321,6 +321,9 @@ export const KERNEL_ERROR_CODES = [
   'ADS_CAP_NOT_RAISED',
   'ADS_CAP_NOT_SET',
   'ADS_CAP_NOT_LOWER',
+  'ADS_CAP_CHANGED',
+  'ADS_BLOCK_CHANGED',
+  'BULK_NOT_ALLOWED',
   // The chart of accounts and vendor defaults (#319).
   'ACCOUNT_CODE_TAKEN',
   'ACCOUNT_HAS_SUB_ACCOUNTS',

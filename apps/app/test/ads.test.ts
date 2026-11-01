@@ -329,6 +329,8 @@ describe('the words of the screen', () => {
     'ADS_CAP_NOT_RAISED',
     'ADS_CAP_NOT_SET',
     'ADS_CAP_NOT_LOWER',
+    'ADS_CAP_CHANGED',
+    'ADS_BLOCK_CHANGED',
   ] as const;
 
   it('words every refusal of the ads module in both languages, the kernel Vietnamese when the reader reads Vietnamese', () => {

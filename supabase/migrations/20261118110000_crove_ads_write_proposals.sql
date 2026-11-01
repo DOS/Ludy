@@ -43,6 +43,10 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     WHERE p.org_id = crove_kernel.ctx_org_id()
       AND p.command = p_command
       AND p.status = 'approved'
+      -- The revision that was approved: the status guard lets a content change through on a row that is not terminal when the
+      -- revision grows, so an approved row whose payload was rewritten in the same transaction has moved past revision 1. Ads
+      -- proposals have no reviser (no edit makes a new revision), and asking again is a new row at revision 1.
+      AND p.revision = 1
       AND p.executed_command_id IS NOT NULL
       AND crove_kernel.ctx_actor_type() = 'user'
       AND p.decided_by IS NOT NULL
@@ -127,7 +131,17 @@ BEGIN
       RAISE EXCEPTION 'ADS_CAP_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
   END IF;
-  NEW.id := crove_kernel.uuid_v7();
+  -- "The latest cap" is the newest id, so the id is made strictly above every id the org has (two ids made in the same
+  -- millisecond may sort either way, and a clock that stepped back would give an older one): wait for the next millisecond
+  -- until it is. The commands insert under the org's lock, so no other insert is in flight; a clock that stays behind refuses.
+  FOR i IN 1 .. 50 LOOP
+    NEW.id := crove_kernel.uuid_v7();
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM crove_ads.ad_spend_cap c WHERE c.org_id = NEW.org_id AND c.id >= NEW.id);
+    IF i = 50 THEN
+      RAISE EXCEPTION 'ADS_CAP_CLOCK' USING ERRCODE = '55000';
+    END IF;
+    PERFORM pg_catalog.pg_sleep(0.002);
+  END LOOP;
   NEW.set_by := COALESCE(v_user, NEW.set_by);
   NEW.set_at := pg_catalog.clock_timestamp();
   RETURN NEW;
@@ -136,3 +150,12 @@ REVOKE ALL ON FUNCTION crove_ads.cap_guard() FROM PUBLIC, crove_tenant, crove_ap
 
 -- The one-argument stub of W0a-1 (always false) is gone: the guards above call the real function.
 DROP FUNCTION IF EXISTS crove_ads.approved_execution(text);
+
+-- An amount is a finite number above zero: `NaN` ranks above every number in PostgreSQL, so `amount > 0` alone accepts it, and
+-- `Infinity` too. Only raw SQL reaches this (the contract admits decimal strings), which is what the guard is for.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'ad_spend_cap_amount_finite' AND conrelid = 'crove_ads.ad_spend_cap'::regclass) THEN
+    ALTER TABLE crove_ads.ad_spend_cap ADD CONSTRAINT ad_spend_cap_amount_finite CHECK (amount < 'Infinity'::numeric AND amount <> 'NaN'::numeric);
+  END IF;
+END $$;

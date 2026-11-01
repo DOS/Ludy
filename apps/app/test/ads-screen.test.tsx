@@ -351,22 +351,25 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
   const waiting = (proposalId: string, change: AdsChange): AdsWriteState['pending'][number] => ({ proposalId, change, requestedAt: at2 });
   const a2 = () => account({ id: 'a2', name: 'Tài khoản hai', writeEnabled: false });
 
-  it('says it is off and lets owners and admins ask to turn it on: a request for the Inbox, never a button that turns it on', () => {
+  it('says it is off and lets the owner alone ask to turn it on: a request for the Inbox, never a button that turns it on', () => {
     for (const role of ['owner', 'admin'] as const) {
       const html = card(stateOf(), role);
       expect(html, role).toContain(`>${en.ads.write.off}<`);
       expect(html, role).toContain(en.ads.write.offHint);
-      expect(buttonBefore(html, en.ads.write.request), role).toBeDefined();
-      // Asking opens no confirmation and no second-factor prompt; it is not the change itself.
-      expect(buttonBefore(html, en.ads.write.request), role).not.toContain('aria-haspopup');
       expect(html, role).not.toContain(`>${en.ads.write.disable}<`);
       expect(html, role).not.toContain(en.ads.write.accounts);
       expect(html, role).not.toContain(en.ads.write.pauseAll);
       expect(html, role).not.toContain(en.ads.write.pending);
     }
+    const owner = card(stateOf(), 'owner');
+    expect(buttonBefore(owner, en.ads.write.request)).toBeDefined();
+    // Asking opens no confirmation and no second-factor prompt; it is not the change itself.
+    expect(buttonBefore(owner, en.ads.write.request)).not.toContain('aria-haspopup');
+    // The admin does not ask (the owner does, and an admin approves it in the Inbox).
+    expect(card(stateOf(), 'admin')).not.toContain(`>${en.ads.write.request}<`);
   });
 
-  it('shows what is on: the owner may turn it off behind a confirmation and an account off, both roles may ask to allow another, and owners and admins may stop it all', () => {
+  it('shows what is on: the owner may turn it off behind a confirmation, an account off and ask to allow another, and owners and admins may stop it all', () => {
     const html = card(stateOf({ writeEnabled: true }), 'owner', [account({ writeEnabled: true }), a2()]);
     expect(html).toContain(`>${en.ads.write.on}<`);
     // Turned on: nothing to ask for at the top.
@@ -382,10 +385,10 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     expect(html.split(`>${en.ads.write.accountRequest}<`)).toHaveLength(2);
     expect(buttonBefore(html, en.ads.write.accountRequest)).not.toContain('aria-haspopup');
     expect(buttonBefore(html, en.ads.write.pauseAll)).toContain('aria-haspopup="dialog"');
-    // The admin: the state, the request to allow an account and the kill switch, none of the owner's stops.
+    // The admin: the state and the kill switch, none of the owner's stops and none of the owner's requests.
     const admin = card(stateOf({ writeEnabled: true }), 'admin', [account({ writeEnabled: true }), a2()]);
     expect(buttonBefore(admin, en.ads.write.pauseAll)).toBeDefined();
-    expect(buttonBefore(admin, en.ads.write.accountRequest)).toBeDefined();
+    expect(admin).not.toContain(`>${en.ads.write.accountRequest}<`);
     expect(admin).not.toContain(`>${en.ads.write.disable}<`);
     expect(admin).not.toContain(`>${en.ads.write.accountDisable}<`);
   });
@@ -398,20 +401,22 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     }
   });
 
-  it('says launches are blocked and lets owners and admins ask to open them again; the kill switch is not offered while blocked', () => {
+  it('says launches are blocked and lets the owner alone ask to open them again; the kill switch is not offered while blocked', () => {
     for (const role of ['owner', 'admin'] as const) {
       const html = card(stateOf({ writeEnabled: true, launchesBlocked: true }), role);
       expect(html, role).toContain(en.ads.write.blocked);
-      expect(buttonBefore(html, en.ads.write.unblockRequest), role).toBeDefined();
-      expect(buttonBefore(html, en.ads.write.unblockRequest), role).not.toContain('aria-haspopup');
       expect(html, role).not.toContain(`>${en.ads.write.pauseAll}<`);
     }
+    const owner = card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'owner');
+    expect(buttonBefore(owner, en.ads.write.unblockRequest)).toBeDefined();
+    expect(buttonBefore(owner, en.ads.write.unblockRequest)).not.toContain('aria-haspopup');
+    expect(card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'admin')).not.toContain(`>${en.ads.write.unblockRequest}<`);
     // Without a block there is nothing to open again.
     expect(card(stateOf({ writeEnabled: true }), 'owner')).not.toContain(`>${en.ads.write.unblockRequest}<`);
   });
 
   it('says "request sent" in place of a button for what already waits in the Inbox, so the same request is not made twice', () => {
-    const enabling = card(stateOf({ pending: [waiting('p1', { change: 'write_enable' })] }), 'admin');
+    const enabling = card(stateOf({ pending: [waiting('p1', { change: 'write_enable' })] }), 'owner');
     expect(enabling).toContain(`>${en.ads.write.waitingBadge}<`);
     expect(enabling).not.toContain(`>${en.ads.write.request}<`);
     const unblocking = card(stateOf({ writeEnabled: true, launchesBlocked: true, pending: [waiting('p2', { change: 'launches_unblock' })] }), 'owner');
@@ -471,23 +476,22 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     }
   });
 
-  it('offers owners and admins the form to ask for a cap, and the owner alone the choice to lower one at once', () => {
+  it('offers the owner the form to ask for a cap and the choice to lower one at once, and the admin neither', () => {
     const state = stateOf({ caps: [cap({})] });
-    for (const role of ['owner', 'admin'] as const) {
-      const html = card(state, role);
-      expect(html, role).toContain(`aria-label="${en.ads.write.capForm}"`);
-      expect(html, role).toContain('<input');
-      expect(buttonBefore(html, en.ads.write.capRequest), role).toBeDefined();
-      // The cap in force beside the form: the org's daily one is the form's first choice.
-      expect(html, role).toMatch(new RegExp(`${en.ads.write.capInForce.replace('{amount}', '[^<]*5,000,000')}`));
-      expect(html, role).not.toContain(`>${en.ads.write.capLower}<`);
-    }
     const owner = card(state, 'owner');
+    expect(owner).toContain(`aria-label="${en.ads.write.capForm}"`);
+    expect(owner).toContain('<input');
+    expect(buttonBefore(owner, en.ads.write.capRequest)).toBeDefined();
+    // The cap in force beside the form: the org's daily one is the form's first choice.
+    expect(owner).toMatch(new RegExp(`${en.ads.write.capInForce.replace('{amount}', '[^<]*5,000,000')}`));
+    expect(owner).not.toContain(`>${en.ads.write.capLower}<`);
     expect(owner).toContain(`>${en.ads.write.capAction}<`);
     expect(owner).toContain(`>${en.ads.write.capActions.raise}<`);
     expect(owner).toContain(`>${en.ads.write.capActions.lower}<`);
+    // The admin reads the caps and approves a request in the Inbox; the form is the owner's.
     const admin = card(state, 'admin');
-    expect(admin).not.toContain(`>${en.ads.write.capAction}<`);
+    expect(admin).not.toContain(`aria-label="${en.ads.write.capForm}"`);
+    expect(admin).not.toContain('<input');
     expect(admin).not.toContain(en.ads.write.capActions.lower);
   });
 
