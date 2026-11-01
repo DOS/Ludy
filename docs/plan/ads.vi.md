@@ -22,7 +22,7 @@ Ludy Ads đọc số liệu từ nền tảng (chỉ đọc, không sửa gì b�
 
 Tham chiếu (JOY, 2026-11-01, ảnh chụp bảng điều khiển Hootsuite): Ads không phải một sản phẩm riêng trên thanh bên. Nó là một nhóm bên trong sản phẩm đăng bài, cạnh Plan (lịch, bản nháp, nội dung) và Analytics, gồm hai mục là Ads và Boost.
 
-**Đề xuất: Ads là một nhóm bên trong ứng dụng Social (đăng bài) trên thanh bên, không có mục riêng.** Cùng một người xem lịch đăng bài và số liệu quảng cáo, cả hai dùng chung kết nối nền tảng, và thêm mục thứ tư hoặc thứ năm cho một module chỉ có một hai màn hình làm thanh bên của doanh nghiệp nhỏ rối thêm. Mỗi nhóm **chỉ hiện khi module của nó được bật**: tắt `ads` thì nhóm Ads biến mất và Social giữ nguyên như hôm nay; tắt `social` mà bật `ads` thì Ads không có nhóm mẹ nên quay lại thành một mục riêng.
+**Đề xuất: Ads là một nhóm bên trong ứng dụng Social (đăng bài) trên thanh bên, không có mục riêng.** Cùng một người xem lịch đăng bài và số liệu quảng cáo, cả hai dùng chung kết nối nền tảng, và thêm mục thứ tư hoặc thứ năm cho một module chỉ có một hai màn hình làm thanh bên của doanh nghiệp nhỏ rối thêm. Mỗi nhóm **chỉ hiện khi module của nó được bật**: tắt `ads` thì nhóm Ads biến mất và Social giữ nguyên như hôm nay; tắt `social` mà bật `ads` thì ứng dụng vẫn hiện, chỉ có nhóm Ads (khung giao diện giữ ứng dụng khi còn một nhóm có mục đã cài), nên không cần mục riêng.
 
 **Boost** (trả tiền đẩy một bài đăng tự nhiên) **nằm ngoài v1** vì nó ghi vào tài khoản quảng cáo và tiêu tiền, và cần nền tảng duyệt quyền ghi. Lát A1 kiểm tra xem khung giao diện có cho một module đặt mục của mình vào ứng dụng của module khác không; nếu không thì sửa khung nhỏ trong cùng PR.
 

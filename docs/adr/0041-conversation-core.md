@@ -83,7 +83,7 @@ Names, avatars, external user ids and bodies are classed `pii`. No party is crea
 
 ## Decisions for the owner
 
-The seven questions in [the plan, section 16](../plan/conversations.md#16-questions-for-joy): layout (Q1), comments in Service (Q2), the app's name (Q3), approval of members' replies (Q4), retention (Q5), Zalo's paid plan (Q6), build order (Q7). Without an answer: one rail app, comments only in Social, the working name "Kênh", no approval, 24 months, a clear Zalo plan message, the order of the plan.
+The seven questions in [the plan, section 16](../plan/conversations.md#16-questions-for-joy): layout (Q1), comments in Service (Q2), the app's name (Q3), approval of members' replies (Q4), retention (Q5), Zalo's paid plan (Q6), build order (Q7). Without an answer: one rail app, comments only in Social, the working name "Kênh", no approval, 24 months, a clear Zalo plan message, the order of the plan. In every order, **no live channel handles a real customer's messages before retention, erasure, export and purge are built and accepted** (CV6): until then live channels run only on the owner's own accounts.
 
 ## Consequences
 

@@ -247,7 +247,7 @@ Priority P2 for CV1 to CV5, P3 after; the milestone is the Marketing line's curr
 | **CV8** AI reply drafts and saved replies | A draft appears in the reply box, tainted, and a person sends it | `conversation_draft`, the ADR-0029 allowlist addition, `SocialWriter`-style drafting in `packages/agent`, tests that an agent cannot send |
 | **CV9** Send to Service as a case, and Service-only comments filter | Depends on Service's tickets and Q2 | Later |
 
-**Order** (Q7): CV1, CV2, CV3, CV4, CV5, CV6, then CV7 to CV9. Zalo can move ahead of Messenger if the owner prefers it.
+**Order** (Q7): CV1, CV2, CV3, CV4, CV5, CV6, then CV7 to CV9. Zalo can move ahead of Messenger if the owner prefers it. **No live channel (CV2, CV4, CV5) handles a real customer's messages before CV6 is accepted**: until retention, erasure, export and purge exist, those channels run only on the owner's own Page and OA with test accounts, and CV6 can be built in the same sitting as CV2 if the owner wants a customer earlier.
 
 ## 14. Edits to existing documents (in the same PR)
 
