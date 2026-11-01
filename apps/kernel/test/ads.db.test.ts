@@ -994,7 +994,8 @@ suite('ads on PostgreSQL (#2217)', () => {
         await open();
         const orgCap = { change: 'cap_set', scope: 'org', period: 'monthly', amount: '5000000', currency: 'VND' };
         expect((await approve(adminAccount, proposalId(await ask(owner, orgCap)))).status).toBe(200);
-        expect(await orgMonthly()).toEqual([expect.objectContaining({ amount: '5000000', currency: 'VND', setBy: owner.userId })]);
+        // Who set it is the approver, the one whose approval it is.
+        expect(await orgMonthly()).toEqual([expect.objectContaining({ amount: '5000000', currency: 'VND', setBy: adminAccount.userId })]);
         // A raise is a proposal; a cap that is not above the one in force is refused, with the way to lower it.
         expect(await ask(owner, { ...orgCap, amount: '5000000.00' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_NOT_RAISED' } });
         expect(await ask(owner, { ...orgCap, amount: '4000000' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_NOT_RAISED' } });
@@ -1129,7 +1130,8 @@ suite('ads on PostgreSQL (#2217)', () => {
           });
         await approvedCap((c) => refused(c, capSql, capParams('95000000', 'daily'), 'ADS_CAP_FORBIDDEN'));
         await approvedCap((c) => refused(c, capSql, capParams('90000000', 'monthly'), 'ADS_CAP_FORBIDDEN'));
-        await approvedCap((c) => refused(c, on, [orgId]));
+        // Another opening, an account's flag, is not the cap that was approved.
+        await approvedCap((c) => refused(c, flag, [orgId, other.adAccountId]));
         await approvedCap((c) => c.query(capSql, capParams('90000000', 'daily')));
         // Rewriting the approved proposal's payload in the same transaction does not make another change pass: the guard
         // reads the revision that was approved, and the rewrite is refused or the new amount is.

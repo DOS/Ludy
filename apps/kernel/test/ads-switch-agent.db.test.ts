@@ -215,7 +215,7 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
       ['ads.write.enable', { payload: {} }],
       ['ads.account.enable_write', { payload: { adAccountId, adAccountName: 'x' } }],
       ['ads.cap.set', { payload: { scope: 'org', period: 'daily', amount: '1', currency: 'VND', previous: null, previousCurrency: null } }],
-      ['ads.launches.unblock', { payload: {} }],
+      ['ads.launches.unblock', { payload: { blockedSince: '2026-11-02 00:00:00+00' } }],
     ] as Array<[string, unknown]>) {
       await expect(worker.execute(name, input, { actor: agent, orgId }), name).rejects.toMatchObject({ status: 403 });
     }

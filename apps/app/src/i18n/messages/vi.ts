@@ -6337,7 +6337,6 @@ export const vi = {
       ADS_CAP_NOT_LOWER: 'Hạn mức mới phải thấp hơn hạn mức đang áp dụng.',
       ADS_CAP_CHANGED: 'Hạn mức đã thay đổi từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
       ADS_BLOCK_CHANGED: 'Các lần chạy quảng cáo đã bị chặn lại từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
-      BULK_NOT_ALLOWED: 'Đề nghị này phải được duyệt riêng từng cái, không duyệt hàng loạt.',
       ADS_CURRENCY_CHANGED: 'Nền tảng báo một đơn vị tiền khác với đơn vị đã ghi cho tài khoản này nên số liệu chưa được ghi',
       ACCOUNT_CODE_TAKEN: 'Mã tài khoản này đã có trong hệ thống tài khoản',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'Tài khoản còn tài khoản con đang dùng; hãy ngừng dùng chúng trước',

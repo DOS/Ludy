@@ -6339,7 +6339,6 @@ export const en = {
       ADS_CAP_NOT_LOWER: 'The new cap must be below the one in force.',
       ADS_CAP_CHANGED: 'The cap changed after this request was made. Reject the request and make a new one.',
       ADS_BLOCK_CHANGED: 'Ad launches were blocked again after this request was made. Reject the request and make a new one.',
-      BULK_NOT_ALLOWED: 'This request must be approved on its own, not in a batch.',
       ACCOUNT_CODE_TAKEN: 'This account code is already in the chart of accounts.',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'The account still has sub-accounts in use. Stop using them first.',
       ACCOUNT_INACTIVE: 'The account is no longer in use. Choose another account.',
