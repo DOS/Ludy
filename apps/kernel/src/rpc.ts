@@ -637,6 +637,9 @@ export function createRpcHandler(
         update: os.crm.eventTypes.update.handler(crmCommand('crm.event_type.update')),
         setActive: os.crm.eventTypes.setActive.handler(crmCommand('crm.event_type.set_active')),
       },
+      contacts: {
+        list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+      },
       bookings: {
         list: os.crm.bookings.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.booking.list', input, { actor, orgId }))),
         cancel: os.crm.bookings.cancel.handler(crmCommand('crm.booking.cancel')),
@@ -1720,6 +1723,8 @@ export function createRpcHandler(
       customers: os.parties.customers.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.customers.list', input, { actor, orgId })),
       ),
+      timeline: os.parties.timeline.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.timeline', input, { actor, orgId }))),
+      create: os.parties.create.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.create', input, { actor, orgId }))),
       update: os.parties.update.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.update', input, { actor, orgId }))),
       markDuplicate: os.parties.markDuplicate.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.party.mark_duplicate', input, { actor, orgId })),

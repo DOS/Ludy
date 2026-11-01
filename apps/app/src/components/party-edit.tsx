@@ -12,19 +12,22 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, useFieldErrors } from './ui.tsx';
 
-export type PartyScreen = 'vendors' | 'customers';
+export type PartyScreen = 'vendors' | 'customers' | 'contacts';
 // What the forms need of a party: a vendor of the vendors list or a customer of the customers list.
 export type EditableParty = Pick<Party, 'id' | 'name' | 'taxCode' | 'address' | 'email' | 'phone' | 'version' | 'duplicates'>;
+// What the edit form needs: the contacts list has no duplicates to show.
+export type EditableFields = Omit<EditableParty, 'duplicates'>;
 
 // Both lists, and the duplicate hints, show parties.
 export const refreshParties = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.parties.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.key() });
 };
 
 // A party's name and contact details, edited in a row under it by owners, admins and members. The version read goes
 // back with the save, so an edit made meanwhile by someone else is refused rather than overwritten. A tax code can be
 // added but not changed: it is how invoices find their party.
-export function EditParty({ party, ns, onDone }: { party: EditableParty; ns: PartyScreen; onDone: () => void }) {
+export function EditParty({ party, ns, onDone }: { party: EditableFields; ns: PartyScreen; onDone: () => void }) {
   const t = useTranslations(ns);
   const tc = useTranslations('common');
   const [form, setForm] = useState({
