@@ -2763,6 +2763,17 @@ export const en = {
       newTab: 'opens in a new tab',
       dismiss: 'Dismiss',
     },
+    originals: {
+      title: 'Original invoice (XML) received',
+      hint: 'This invoice was posted from its PDF or photo. The XML file of the seller that came later is kept as its evidence; the books are not changed.',
+      received: 'received {date}',
+      download: 'Download',
+      signatureVerified: 'The digital signature is valid.',
+      signatureUnverified: 'The digital signature of this file could not be verified.',
+      signatureNone: 'This file has no signature check result.',
+      matches: 'The amounts in the XML match the posted document.',
+      differs: 'The amounts in the XML DIFFER from the posted document (subtotal, VAT or total). The books are not changed; an accountant should take a look.',
+    },
     signatureUnverifiedTitle: 'The digital signature of this invoice could not be verified',
     signatureUnverifiedHint:
       'The invoice may have been edited after it was signed, or signed with a certificate {brand} does not trust. Look the invoice up on the tax authority portal or ask the seller for the original before approving.',

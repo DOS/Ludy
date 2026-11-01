@@ -20,6 +20,7 @@ import { StepUpPrompt } from '../components/two-factor.tsx';
 import { CardSkeleton, DocumentSkeleton, ErrorText, ListSkeleton, PageHeader, ProposalSkeleton, RowsSkeleton, Spinner } from '../components/ui.tsx';
 import { accountLabel, pickableAccounts } from '../lib/accounts.ts';
 import { errorMessage, fetchFile, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { AttachedOriginalsCard } from '../components/attached-originals-card.tsx';
 import { getConfig } from '../lib/auth.ts';
 import { PROPOSAL_STATUS_VARIANT } from '../lib/status.ts';
 import { isZeroAmount, linesBalance, previewPurchaseJournal, previewSalesJournal } from '../lib/decimal.ts';
@@ -854,6 +855,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       {!plain && pending && payload && payload.extractionMethod !== 'einvoice_xml' && (payload.lookupHints?.length ?? 0) > 0 && (
         <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} legalEntityId={detail.data?.legalEntityId ?? undefined} />
       )}
+      {/* The original XML that came after this invoice was posted (#2320): evidence beside the posting, which it never changes. */}
+      {!plain && (detail.data?.originals?.length ?? 0) > 0 && <AttachedOriginalsCard originals={detail.data?.originals ?? []} />}
       {!plain && unverified && (
         <Card className="mb-4 block space-y-2 border border-destructive/60 p-4 ring-0" data-testid="signature-unverified">
           <p className="text-sm font-medium text-foreground">{t('signatureUnverifiedTitle')}</p>
