@@ -14,6 +14,7 @@ export * from './text.ts';
 export * from './meta.ts';
 export * from './instagram.ts';
 export * from './zalo.ts';
+export * from './zalo-conversation.ts';
 export * from './bluesky.ts';
 export * from './threads.ts';
 export * from './linkedin.ts';

@@ -100,6 +100,8 @@ import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES, acceptAdsDeletion, adsDeletionStatus, renderAdsDeletionStatus } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
@@ -169,6 +171,11 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
+  // not exist.
+  zaloWebhook?: ZaloWebhookConfig;
+  // Notices per minute per client address for that route.
+  zaloWebhookLimit?: RateLimiter;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -365,6 +372,7 @@ const AUTH_PUBLIC_PATHS =
 const STATUS_CACHE_MS = 5_000;
 // Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
+const ZALO_WEBHOOKS_PER_MINUTE = 600;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
@@ -700,6 +708,29 @@ export function createHttpApp(deps: HttpDeps) {
         const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
         if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
         return c.json({ queued: outcome.queued }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
+  // body is capped before it is read, and a verified message is only parked for the worker (the org comes from the stored connection).
+  // Rate limited per client address first, which reads nothing. Every refusal of the signature is the same 401.
+  const zaloWebhook = deps.zaloWebhook;
+  if (zaloWebhook) {
+    const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });
+    app.post(ZALO_WEBHOOK_PATH, bodyLimit({ maxSize: ZALO_MAX_NOTICE_BYTES }), async (c) => {
+      const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (!decision.allowed) {
+        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+        c.header('retry-after', String(decision.retryAfterSeconds));
+        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+      }
+      try {
+        const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) });
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {
         return problem(c, error);
       }
