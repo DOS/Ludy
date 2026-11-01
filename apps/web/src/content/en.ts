@@ -86,7 +86,7 @@ export const en: Dictionary = {
       checks: ['Line totals match', 'VAT rate 8% is correct', 'Tax code is valid', 'Has an authority code', 'Not a duplicate'],
       entryTitle: 'Proposed entry, TT133',
       balanced: 'Balanced',
-      learn: 'Account 152 used 6 times for this vendor',
+      learn: 'By a learned rule: the same item from this vendor',
       approve: 'Approve',
       edit: 'Change account',
       postedNote: 'Posted. Chị Lan approved at 16:05 on 14/10/2026 with a two-factor code.',
@@ -153,7 +153,7 @@ export const en: Dictionary = {
     proposal: {
       balanced: 'Balanced',
       balancedNote: 'Debit equals credit',
-      foot: 'Account 152 has been used 6 times for this vendor.',
+      foot: 'By a learned rule: the same item from this vendor.',
     },
     approve: {
       title: 'Approve invoice 00001284',
@@ -331,7 +331,7 @@ export const en: Dictionary = {
     pageLink: 'See the product page',
     finance: {
       name: 'Ludy Accounting',
-      body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, the VAT return as XML for HTKK, exports to MISA SME, books per legal entity and a monthly period lock.',
+      body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, drafts of the B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, an XML file of the VAT return, Excel in the MISA SME import layouts, books per legal entity and a monthly period lock.',
       points: [
         'Sales invoices: numbers missing from the series are pointed out before you file the return',
         'Purchase invoices: email a client to ask for the invoices that are missing',

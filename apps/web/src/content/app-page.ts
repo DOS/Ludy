@@ -11,6 +11,8 @@ export interface AppPageCopy {
   ogTitle: string;
   crumbLabel: string;
   hero: { title: string; lead: string; primary: string; secondary: string; note: string };
+  // The sequence the product follows, as numbered steps with what each one leaves behind.
+  how: { title: string; lead: string; steps: ReadonlyArray<{ name: string; body: string; outcome: string; tone: 'ok' | 'warn' | 'accent' | 'neutral' }> };
   groups: {
     title: string;
     lead: string;

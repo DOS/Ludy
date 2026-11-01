@@ -11,35 +11,38 @@ import { ButtonLink, Chip, Section, SectionHead } from '../landing/ui';
 // The page of one app (DESIGN.md 6.1 anatomy, per app): the promise with the product working, how it works, what it
 // does today grouped by job, what is coming, what the AI assistant does here, who it is for, questions and the call to
 // action. Server-rendered, no client JavaScript of its own. An app supplies its copy (AppPageCopy), its product visual
-// for the hero, one visual per group of features, and optionally its how-it-works section.
+// for the hero and one visual per group of features.
 export interface AppPageProps {
   dict: Dictionary;
   copy: AppPageCopy;
   // The same page in the other language, for the language switch.
   otherLangHref: string;
   hero: ReactNode;
-  how?: ReactNode;
   // One visual per group, by the group's id in the copy.
   visuals: Readonly<Record<string, ReactNode>>;
 }
 
-export function AppPage({ dict, copy, otherLangHref, hero, how, visuals }: AppPageProps) {
+export function AppPage({ dict, copy, otherLangHref, hero, visuals }: AppPageProps) {
   const home = dict.lang === 'vi' ? '/' : '/en';
   const selfHost = `${home}#tu-host`;
   return (
     <>
-      <SiteHeader dict={dict} otherLangHref={otherLangHref} fromHome />
+      <SiteHeader dict={dict} otherLangHref={otherLangHref} linkToHome />
       <main id="main">
         <section aria-labelledby="app-title" className="pt-10 pb-16 sm:pt-14 sm:pb-24">
           <div className="wrap">
-            <nav aria-label={copy.crumbLabel} className="mx-auto max-w-[880px] text-center text-sm text-muted">
-              <a href={home} className="hover:text-fg">
-                Ludy
-              </a>
-              <span aria-hidden="true"> / </span>
-              <span aria-current="page" className="font-medium text-fg">
-                {copy.appName}
-              </span>
+            <nav aria-label={copy.crumbLabel} className="mx-auto max-w-[880px] text-sm text-muted">
+              <ol className="flex flex-wrap justify-center gap-x-2">
+                <li>
+                  <a href={home} className="hover:text-fg">
+                    Ludy
+                  </a>
+                  <span aria-hidden="true"> /</span>
+                </li>
+                <li aria-current="page" className="font-medium text-fg">
+                  {copy.appName}
+                </li>
+              </ol>
             </nav>
             <div className="mx-auto mt-8 max-w-[880px] text-center">
               <h1 id="app-title" className="font-display text-[2.375rem] leading-[1.12] font-semibold tracking-[-0.025em] text-fg sm:text-5xl lg:text-[3.5rem]">
@@ -58,9 +61,27 @@ export function AppPage({ dict, copy, otherLangHref, hero, how, visuals }: AppPa
           </div>
         </section>
 
-        {how}
+        <Section id="how" labelledBy="how-title" tinted>
+          <SectionHead id="how-title" title={copy.how.title} lead={copy.how.lead} />
+          <ol className="grid gap-8 md:grid-cols-2 lg:grid-cols-4 lg:gap-10">
+            {copy.how.steps.map((step, i) => (
+              <li key={step.name} className="min-w-0 border-t border-line-strong/60 pt-4">
+                <div className="flex items-center gap-3">
+                  <span className="num inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-accent-ink" aria-hidden="true">
+                    {i + 1}
+                  </span>
+                  <h3 className="font-display text-lg font-semibold">{step.name}</h3>
+                </div>
+                <p className="mt-3 text-sm text-muted">{step.body}</p>
+                <div className="mt-4">
+                  <Chip tone={step.tone}>{step.outcome}</Chip>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </Section>
 
-        <Section id="features" labelledBy="features-title" tinted={how === undefined}>
+        <Section id="features" labelledBy="features-title">
           <SectionHead id="features-title" title={copy.groups.title} lead={copy.groups.lead} />
           <div className="flex flex-col">
             {copy.groups.items.map((group, i) => (
@@ -128,7 +149,7 @@ export function AppPage({ dict, copy, otherLangHref, hero, how, visuals }: AppPa
           </div>
         </Section>
 
-        <Section id="audience" labelledBy="audience-title" tinted>
+        <Section id="audience" labelledBy="audience-title">
           <SectionHead id="audience-title" title={copy.audience.title} lead={copy.audience.lead} />
           <div className="grid gap-8 md:grid-cols-3 md:gap-10">
             {copy.audience.items.map((item) => (

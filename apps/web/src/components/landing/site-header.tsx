@@ -5,12 +5,12 @@ import { ThemeToggle } from './theme-toggle';
 import { LudyMark } from './ui';
 
 // `otherLangHref` is where the language switch goes: the other language's home page unless a page names its own
-// counterpart. `fromHome` is false on the home page, whose section links are anchors on the page itself; any other page
-// points them at the home page's sections.
-export function SiteHeader({ dict, otherLangHref = dict.nav.otherLangHref, fromHome = false }: { dict: Dictionary; otherLangHref?: string; fromHome?: boolean }) {
+// counterpart. On the home page the section links are anchors on the page itself; any other page
+// points them at the home page's sections (`linkToHome`).
+export function SiteHeader({ dict, otherLangHref = dict.nav.otherLangHref, linkToHome = false }: { dict: Dictionary; otherLangHref?: string; linkToHome?: boolean }) {
   const { nav } = dict;
   const home = dict.lang === 'vi' ? '/' : '/en';
-  const base = fromHome ? home : '';
+  const base = linkToHome ? home : '';
   const sections = [
     { label: nav.product, href: `${base}#san-pham` },
     { label: nav.openSource, href: `${base}#ma-nguon-mo` },

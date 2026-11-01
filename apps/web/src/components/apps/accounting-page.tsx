@@ -3,12 +3,11 @@ import { accountingVi } from '../../content/accounting-vi';
 import { APP_PAGES } from '../../content/site';
 import { en } from '../../content/en';
 import { vi } from '../../content/vi';
-import { HowItWorks } from '../landing/how-it-works';
 import { AccountingHero, BooksVisual, IntakeVisual, PostingVisual, TaxVisual } from './accounting-visuals';
 import { AppPage } from './app-page';
 
-// The Ludy Kế toán page in either language: the shared app page with this app's copy, its hero picture, the home
-// page's four-step flow and one visual per group of features. The group ids are those of the copy.
+// The Ludy Kế toán page in either language: the shared app page with this app's copy, its hero picture and one visual
+// per group of features. The group ids are those of the copy.
 export function AccountingPage({ lang }: { lang: 'vi' | 'en' }) {
   const dict = lang === 'vi' ? vi : en;
   const copy = lang === 'vi' ? accountingVi : accountingEn;
@@ -19,7 +18,6 @@ export function AccountingPage({ lang }: { lang: 'vi' | 'en' }) {
       copy={copy}
       otherLangHref={APP_PAGES.accounting[lang === 'vi' ? 'en' : 'vi']}
       hero={<AccountingHero {...props} />}
-      how={<HowItWorks dict={dict} />}
       visuals={{
         [copy.groups.items[0]!.id]: <IntakeVisual {...props} />,
         [copy.groups.items[1]!.id]: <PostingVisual {...props} />,

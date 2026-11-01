@@ -73,6 +73,7 @@ describe('app pages', () => {
       expect(b.groups.items.length).toBe(a.groups.items.length);
       a.groups.items.forEach((group, i) => expect(b.groups.items[i]?.points.length, `${key} group ${i}`).toBe(group.points.length));
       expect(b.faq.items.length).toBe(a.faq.items.length);
+      expect(b.how.steps.length).toBe(a.how.steps.length);
       expect(b.soon.items.length).toBe(a.soon.items.length);
     }
   });

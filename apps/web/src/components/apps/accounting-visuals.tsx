@@ -102,7 +102,9 @@ export function AccountingHero({ dict, copy }: Props) {
           </div>
           <p className="mt-3 border-t border-line pt-3 text-xs text-subtle">{f.learned}</p>
           <div className="mt-auto pt-4">
-            <span className="flex h-9 items-center justify-center rounded-md bg-accent text-sm font-medium text-accent-fg">{dict.flow.approve.button}</span>
+            <span className="flex h-9 items-center justify-center rounded-md border border-line-strong/70 bg-surface-2 text-sm font-medium" aria-hidden="true">
+              {dict.flow.approve.button}
+            </span>
             <p className="mt-2 flex items-center gap-1.5 text-xs text-subtle">
               <Lock className="size-3.5 shrink-0" aria-hidden="true" />
               {f.approveNote}
