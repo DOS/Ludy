@@ -108,7 +108,7 @@ export const inboxDismiss = defineCommand({
       .executeTakeFirst();
     if (Number(done.numUpdatedRows) === 0) {
       const exists = await ctx.trx.selectFrom('crove_kernel.inbox_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
-      if (!exists) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy mục này trong hộp thư');
+      if (!exists) throw new DomainError('NOT_FOUND', 404, 'Không tìm thấy mục này trong Chứng từ chờ duyệt');
     }
     return { ok: true as const };
   },

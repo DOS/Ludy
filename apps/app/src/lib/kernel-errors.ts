@@ -120,6 +120,10 @@ export const KERNEL_ERROR_CODES = [
   'EVENT_TYPE_TEAM_FORBIDDEN',
   'EVENT_TYPE_TEAM_INVALID',
   'EVENT_TYPE_HOST_INVALID',
+  // Contact import (#2229).
+  'IMPORT_NOT_FOUND',
+  'IMPORT_FORBIDDEN',
+  'IMPORT_NOT_STAGED',
   // Deals and the pipeline of the crm module (#2225).
   'DEAL_NOT_FOUND',
   'DEAL_OWNER_INVALID',
@@ -256,7 +260,7 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_LEGAL_ENTITY',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
-  // A VND invoice with an amount below one dong; the rounding policy is the accountant's decision (#1308).
+  // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).
   'AMOUNT_BELOW_DONG',
   // Period lock (#329).
   'PERIOD_LOCKED',

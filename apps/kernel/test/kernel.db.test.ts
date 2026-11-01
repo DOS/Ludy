@@ -462,29 +462,68 @@ suite('kernel on PostgreSQL', () => {
       code: 'CHECKS_BLOCKING',
     });
 
-    // In VND with half a dong on a line (#1282): every amount adds up, but VND books hold no fraction and how to round
-    // is the accountant's decision (#1308), so the proposal carries a blocking amount_scale check and approval is
-    // refused before anything is written, even when confirmed; the posting definer is never reached.
-    const halfDong = await propose(
+    // In VND with amounts below one dong (#2235, owner decision #1308): lines 10.4 + 20.4 + 30.4 under a subtotal of 61
+    // and VAT of 6. The proposal is made rounded, 10 + 20 + 31 (the difference on the largest line), the VAT as the invoice
+    // has it, and carries a warning naming the dong and the line, so it is approved and posts, with no fraction anywhere.
+    const rounded = await propose(
       variant('1301', (xml) =>
         xml
-          .replace('<DGia>1000000</DGia><ThTien>1000000</ThTien>', '<DGia>1000000.5</DGia><ThTien>1000000.5</ThTien>')
-          .replace('<ThTien>1800000</ThTien>', '<ThTien>1800000.5</ThTien>')
-          .replace('<TgTCThue>1800000</TgTCThue>', '<TgTCThue>1800000.5</TgTCThue>')
+          .replace('<DGia>1000000</DGia><ThTien>1000000</ThTien>', '<DGia>10.4</DGia><ThTien>10.4</ThTien>')
+          .replace('<DGia>500000</DGia><ThTien>1000000</ThTien>', '<DGia>10.2</DGia><ThTien>20.4</ThTien>')
+          .replace('<TChat>3</TChat><STT>3</STT><THHDVu>Chiết khấu thương mại</THHDVu><ThTien>200000</ThTien>', '<TChat>1</TChat><STT>3</STT><THHDVu>Phí khác</THHDVu><ThTien>30.4</ThTien>')
+          .replace('<ThTien>1800000</ThTien><TThue>180000</TThue>', '<ThTien>61</ThTien><TThue>6</TThue>')
+          .replace('<TgTCThue>1800000</TgTCThue>', '<TgTCThue>61</TgTCThue>')
+          .replace('<TgTThue>180000</TgTThue>', '<TgTThue>6</TgTThue>')
+          .replace('<TgTTTBSo>1980000</TgTTTBSo>', '<TgTTTBSo>67</TgTTTBSo>'),
+      ),
+    );
+    const roundedDetail = await runtime.query<{
+      payload: { invoice: { subtotal: string; vatTotal: string; total: string }; lines: Array<{ lineNo: number; amount: string }>; checks: Array<{ id: string; status: string; code: string; params?: Record<string, string> }> };
+    }>('kernel.inbox.get', { id: rounded.id }, asAdmin);
+    expect(roundedDetail.payload.lines.map((l) => [l.lineNo, l.amount])).toEqual([[1, '10'], [2, '20'], [3, '31']]);
+    expect(roundedDetail.payload.invoice).toMatchObject({ subtotal: '61', vatTotal: '6', total: '67' });
+    expect(roundedDetail.payload.checks.filter((c) => c.status === 'fail')).toEqual([]);
+    expect(roundedDetail.payload.checks.find((c) => c.id === 'amount_scale')).toMatchObject({
+      status: 'warn',
+      code: 'amount_scale.rounded',
+      params: { amount: '10.4', difference: '1', line: '3' },
+    });
+    const roundedRecorded = await runtime.execute<{ journalEntryId: string }>('kernel.proposal.approve', rounded, asAdmin);
+    const roundedBooks = await withAdmin(async (c) => ({
+      lines: (await c.query(`SELECT l.line_no, l.amount::text FROM crove_finance.purchase_line l JOIN crove_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id WHERE d.org_id = $1 AND d.proposal_id = $2 ORDER BY l.line_no`, [orgA, rounded.id])).rows,
+      document: (await c.query(`SELECT subtotal::text, vat_amount::text, total::text FROM crove_finance.purchase_document WHERE org_id = $1 AND proposal_id = $2`, [orgA, rounded.id])).rows[0],
+      entry: (await c.query(`SELECT account_code, debit::text, credit::text FROM crove_finance.journal_line WHERE org_id = $1 AND entry_id = $2 ORDER BY account_code`, [orgA, roundedRecorded.journalEntryId])).rows,
+    }));
+    expect(roundedBooks.lines.map((l: { line_no: number; amount: string }) => [l.line_no, Number(l.amount)])).toEqual([[1, 10], [2, 20], [3, 31]]);
+    expect(roundedBooks.document).toEqual({ subtotal: '61.0000', vat_amount: '6.0000', total: '67.0000' });
+    // Dr expense 61, Dr 1331 VAT 6 (the invoice's own), Cr 331 for the invoice total 67.
+    const booked = (code: string) => roundedBooks.entry.filter((l: { account_code: string }) => l.account_code === code);
+    expect(booked('1331')).toMatchObject([{ debit: '6.0000', credit: '0.0000' }]);
+    expect(booked('331')).toMatchObject([{ debit: '0.0000', credit: '67.0000' }]);
+    expect(roundedBooks.entry.filter((l: { account_code: string }) => l.account_code !== '1331' && l.account_code !== '331').reduce((acc: number, l: { debit: string }) => acc + Number(l.debit), 0)).toBe(61);
+
+    // VAT is never rounded: with a fraction of a dong in it (#1282) the invoice cannot be, so the proposal carries a
+    // blocking amount_scale check and approval is refused before anything is written, even when confirmed; the posting
+    // definer is never reached.
+    const halfVat = await propose(
+      variant('1302', (xml) =>
+        xml
+          .replace('<TThue>180000</TThue>', '<TThue>180000.5</TThue>')
+          .replace('<TgTThue>180000</TgTThue>', '<TgTThue>180000.5</TgTThue>')
           .replace('<TgTTTBSo>1980000</TgTTTBSo>', '<TgTTTBSo>1980000.5</TgTTTBSo>'),
       ),
     );
-    const halfDongDetail = await runtime.query<{ payload: { checks: Array<{ id: string; status: string; code: string }> } }>(
+    const halfVatDetail = await runtime.query<{ payload: { checks: Array<{ id: string; status: string; code: string }> } }>(
       'kernel.inbox.get',
-      { id: halfDong.id },
+      { id: halfVat.id },
       asAdmin,
     );
-    expect(halfDongDetail.payload.checks.filter((c) => c.status === 'fail')).toEqual([
+    expect(halfVatDetail.payload.checks.filter((c) => c.status === 'fail')).toEqual([
       expect.objectContaining({ id: 'amount_scale', code: 'amount_scale.fraction' }),
     ]);
-    await expect(runtime.execute('kernel.proposal.approve', { ...halfDong, acceptFailedChecks: true }, asAdmin)).rejects.toMatchObject({
+    await expect(runtime.execute('kernel.proposal.approve', { ...halfVat, acceptFailedChecks: true }, asAdmin)).rejects.toMatchObject({
       code: 'AMOUNT_BELOW_DONG',
-      details: { amount: '1000000.5' },
+      details: { amount: '180000.5' },
     });
 
     // In USD without a rate (no TGia): its amounts stay the invoice's and it cannot be recorded, even when confirmed.

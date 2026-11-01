@@ -32,7 +32,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
 
   await test.step('the approval of a September invoice is refused and says why', async () => {
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.locator('input[type=file]').setInputFiles(INVOICE);
     await expect(page.getByRole('link', { name: SELLER })).toBeVisible({ timeout: 60_000 });
     await page.getByRole('link', { name: SELLER }).click();
@@ -58,7 +58,7 @@ test('lock a month, see a posting into it refused, then unlock it with a reason'
     await expect(page.getByText('Chưa khóa sổ tháng nào.', { exact: false })).toBeVisible();
 
     await nav.getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await nav.getByRole('link', { name: 'Hộp thư chứng từ' }).click();
+    await nav.getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await page.getByRole('link', { name: SELLER }).click();
     await confirmUnverifiedSignature(page);
     await page.getByRole('button', { name: 'Duyệt và ghi sổ' }).click();

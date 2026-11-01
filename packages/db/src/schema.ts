@@ -707,6 +707,16 @@ export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
 export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+// Contact import staging (#2229): a batch is staged until it is committed, cancelled or expired; a row is classified as
+// new, a duplicate of a party or of an earlier row, a conflict between two parties, or invalid.
+export const IMPORT_BATCH_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
+export const IMPORT_ON_DUPLICATE_CHOICES = ['skip', 'fill_empty'] as const;
+export const IMPORT_ROW_OUTCOMES = ['new', 'duplicate', 'conflict', 'invalid'] as const;
+export type CrmImportBatchTable = Refine<
+  G.CrmImportBatchTable,
+  { status: Generated<(typeof IMPORT_BATCH_STATUSES)[number]>; on_duplicate: Generated<(typeof IMPORT_ON_DUPLICATE_CHOICES)[number]> }
+>;
+export type CrmImportRowTable = Refine<G.CrmImportRowTable, { kind: Generated<(typeof PARTY_KINDS)[number]>; outcome: (typeof IMPORT_ROW_OUTCOMES)[number] }>;
 // Bookings of the public booking page (#1318): requested, then confirmed or refused by the worker.
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
 export const BOOKING_REFUSALS = ['taken', 'unavailable'] as const;
@@ -757,6 +767,8 @@ type Refined = Tables<{
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.deal': CrmDealTable;
   'crove_crm.event_type': CrmEventTypeTable;
+  'crove_crm.import_batch': CrmImportBatchTable;
+  'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
