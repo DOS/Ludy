@@ -420,7 +420,9 @@ suite('ads on PostgreSQL (#2217)', () => {
     expect(summary.total.impressions).toBe(Number(sums[0]?.impressions));
     expect(summary.total.clicks).toBe(Number(sums[0]?.clicks));
     expect(summary.total.results).toBe(sums[0]?.purchases);
-    expect(Number(summary.total.costPerResult)).toBeCloseTo(Number(sums[0]?.spend) / Number(sums[0]?.purchases), 0);
+    // Dong have no decimals, so the cost per result is rounded to a whole dong: half a dong either way is exact (vitest's
+    // toBeCloseTo(.., 0) refuses a difference of exactly 0.5, which the figures of some days give).
+    expect(Math.abs(Number(summary.total.costPerResult) - Number(sums[0]?.spend) / Number(sums[0]?.purchases))).toBeLessThanOrEqual(0.5);
     // Months add up to the total, campaigns to the total too (the account row is their sum), and days to the total.
     const spendOf = (items: Array<{ spend: string }>) => items.reduce((n, i) => n + Number(i.spend), 0);
     expect(spendOf(summary.months)).toBe(Number(summary.total.spend));
