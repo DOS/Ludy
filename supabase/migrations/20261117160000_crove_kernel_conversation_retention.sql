@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_setting (
   CONSTRAINT conversation_setting_org_uq UNIQUE (org_id),
   CONSTRAINT conversation_setting_member_fk FOREIGN KEY (org_id, set_by) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (set_by)
 );
+CREATE INDEX IF NOT EXISTS conversation_setting_set_by_idx ON crove_kernel.conversation_setting (org_id, set_by) WHERE set_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_kernel.conversation_setting');
 REVOKE UPDATE ON crove_kernel.conversation_setting FROM crove_tenant;
 GRANT UPDATE (retention_months, set_by, updated_at) ON crove_kernel.conversation_setting TO crove_tenant;

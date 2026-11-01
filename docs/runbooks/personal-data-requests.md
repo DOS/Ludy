@@ -61,7 +61,7 @@ A correction is an ordinary edit: change the party on its page (Nhà cung cấp 
 
 Answer these by hand, or tell the person they are kept, until a later issue covers them:
 
-- **Free text in Social:** posts and comments (Social is paused, decision D5). Search them in the app, and edit what can be edited.
+- **Free text in Social:** posts (Social is paused, decision D5). Search them in the app, and edit what can be edited. **Customers' comments and messages** are erased by their own command, not by the search: [conversations-data-rights.md](conversations-data-rights.md) section 2.
 - **Notes and to-dos:** covered (section 2, step 4, and section 3) for the whole address or the digits; a name or a postal address in a note is not searched, so ask the authors.
 - **Notifications written before #1977:** an approval-waiting, unreadable-file or rerouted-task notice written before then keeps a copy of its proposal's or task's title, or its file's name, in the notice row. The notice now shows the subject's current title, so a redacted task reads redacted, but the old copy stays in the row, and the erasure neither changes nor lists it (each member's notices are readable only by that member). Whether to drop those copies is an owner decision (#1958); until then, tell the person such copies may remain in old notices, which members can see only in their own notification list when the subject is gone.
 - **Stored files:** invoice PDFs and XML, uploaded images, and the extraction results read from them. They are accounting documents and are kept with the books; the original file of a posted invoice is held in the bucket for the legal period (`docs/runbooks/evidence-holds.md`), and the erasure result counts the ones that name the person's party.

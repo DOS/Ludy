@@ -336,6 +336,25 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(renderMetaDeletionStatus(null)).toContain('Không tìm thấy');
     });
 
+    it('lets the owner keep a connection by taking it over: a reconnect forgets who granted it before', async () => {
+      const o = await org();
+      const hash = platformUserHash(SECRET, '7501');
+      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2 AND id = $3', [hash, o.orgId, o.connectionId]);
+      await thread(o, 'keep-1', 'Giữ lại', 'u-keep');
+      const sealed = vault.seal(JSON.stringify({ accessToken: `sbx_${randomBytes(24).toString('base64url')}` }), { orgId: o.orgId, provider: 'sandbox', externalAccountId: o.accountId });
+      const again = await rt.execute<{ connectionId: string; reconnected: boolean }>(
+        'kernel.channel.connect',
+        { provider: 'sandbox', externalAccountId: o.accountId, displayName: 'Kênh thử', scopes: [], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+        { actor: asUser(o.owner), orgId: o.orgId },
+      );
+      expect(again).toMatchObject({ connectionId: o.connectionId, reconnected: true });
+      expect((await rows<{ granted_by_hash: string | null }>('SELECT granted_by_hash FROM crove_kernel.channel_connection WHERE id = $1', [o.connectionId]))[0]?.granted_by_hash).toBeNull();
+      const accepted = await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7501')));
+      expect(accepted.status).toBe(200);
+      await runConversationDeletions({ runtime: worker, workerDb });
+      expect(await threads(o)).toEqual(['keep-1']);
+    });
+
     it('answers a person who granted nothing, with a completed request of none', async () => {
       const code = ((await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7999')))) as { code: string }).code;
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);

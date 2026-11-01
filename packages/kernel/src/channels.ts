@@ -71,6 +71,9 @@ export const channelConnect = defineCommand({
       status: 'active' as const,
       status_reason: null,
       connected_by: userId,
+      // A reconnect is a takeover: the Meta user who granted the connection before no longer holds it, so Meta's data deletion callback
+      // (CV6, #2305) does not reach this connection's conversations through them. The connector that knows the new grantor sets it again.
+      granted_by_hash: null,
       updated_at: ctx.now,
     };
     // Two connects of one account at once serialize here, so the second finds the first's row and reconnects
