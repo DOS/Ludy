@@ -48,8 +48,8 @@ const searchContacts: FieldCondition = (op, value, ctx) => {
   return sql<boolean>`(${text} OR crove_kernel.phone_key(p.phone) LIKE ${`${key.replace(/[\\%_]/g, (c) => `\\${c}`)}%`})`;
 };
 
-// The condition of each field of the `crm.party` scope over the party table (alias p). A contact "has an open deal" only
-// once deals exist (step K1): until then no contact has one, so "yes" matches none and "no" matches every contact.
+// The condition of each field of the `crm.party` scope over the party table (alias p). A contact "has an open deal" when a
+// deal of it sits in an open stage (not Won or Lost); deals are the crm module's own tables (step K1).
 export function contactFields(): Record<string, FieldCondition> {
   return {
     search: searchContacts,
@@ -57,7 +57,9 @@ export function contactFields(): Record<string, FieldCondition> {
     has_email: flagIs(hasText(sql`p.email`)),
     has_phone: flagIs(hasText(sql`p.phone`)),
     has_tax_code: flagIs(hasText(sql`p.tax_code`)),
-    has_open_deal: flagIs(sql<boolean>`false`),
+    has_open_deal: flagIs(sql<boolean>`EXISTS (
+      SELECT 1 FROM crove_crm.deal d JOIN crove_crm.pipeline_stage s ON s.org_id = d.org_id AND s.id = d.stage_id
+      WHERE d.org_id = p.org_id AND d.party_id = p.id AND s.kind = 'open')`),
     created: withinLastDays(sql`p.created_at`),
   };
 }

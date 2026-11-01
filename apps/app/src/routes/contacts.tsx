@@ -5,7 +5,7 @@
 // members add a contact and edit one (a tax code can be added, never changed); viewers read. A row opens a panel with the
 // contact's details, its notes (with the notes module) and its timeline.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useParams } from '@tanstack/react-router';
+import { Link, useParams } from '@tanstack/react-router';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type Contact, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
@@ -18,8 +18,9 @@ import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx'
 import { EditParty, refreshParties } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
-import { useFormat } from '../i18n/provider.tsx';
+import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { formatMoney } from '../lib/format.ts';
 import {
   CONTACT_SORT_OPTIONS,
   EMPTY_CONTACT_FILTER,
@@ -85,7 +86,45 @@ function ContactTimeline({ partyId }: { partyId: string }) {
   );
 }
 
-// The panel under a row: details, edit, notes and timeline.
+// The contact's deals (K1's crm.party.deals): the title, the stage it sits in, the amount and the expected close date, and a
+// way to the deals screen, where a deal is added and moved.
+function ContactDeals({ partyId }: { partyId: string }) {
+  const t = useTranslations('contacts');
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const { locale } = useLocaleSetting();
+  const deals = useQuery(orpc.crm.deals.byParty.queryOptions({ input: { partyId } }));
+  const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
+  return (
+    <div data-testid="contact-deals">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-medium text-muted-foreground">{t('deals.title')}</p>
+        <Link to="/o/$slug/deals" params={{ slug }} className="text-sm text-link underline">
+          {t('deals.open')}
+        </Link>
+      </div>
+      {deals.isLoading ? (
+        <p className="text-sm text-subtle-foreground">{t('loading')}</p>
+      ) : deals.error ? (
+        <ErrorText>{errorMessage(deals.error)}</ErrorText>
+      ) : (deals.data?.length ?? 0) === 0 ? (
+        <p className="text-sm text-subtle-foreground">{t('deals.empty')}</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {deals.data?.map((d) => (
+            <li key={d.id} className="flex flex-wrap items-baseline gap-x-3">
+              <span className="font-medium text-foreground">{d.title}</span>
+              <span className="text-xs text-muted-foreground">{stages.data?.find((s) => s.id === d.stageId)?.name ?? t(`deals.kind.${d.stageKind}`)}</span>
+              <span className="tabular-nums text-muted-foreground">{formatMoney(d.amount, locale, d.currency)}</span>
+              {d.expectedClose && <span className="text-xs text-subtle-foreground">{t('deals.close', { date: d.expectedClose })}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// The panel under a row: details, edit, deals, notes and timeline.
 function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit: boolean; columns: number }) {
   const t = useTranslations('contacts');
   const tn = useTranslations('notes');
@@ -111,6 +150,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
             {t('edit')}
           </Button>
         )}
+        <ContactDeals partyId={contact.id} />
         {notesInstalled() && <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: contact.id }} headingId={`notes-${contact.id}`} label={tn('panel.toggleOf', { name: contact.name })} />}
         <ContactTimeline partyId={contact.id} />
       </TableCell>

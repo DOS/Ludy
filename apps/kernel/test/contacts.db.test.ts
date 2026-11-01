@@ -248,9 +248,27 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       expect(await names(o, o.lan, all({ field: 'has_email', op: 'is', value: true, }))).toHaveLength(2);
       expect(await names(o, o.lan, all({ field: 'has_phone', op: 'is', value: true }))).toHaveLength(2);
       expect(await names(o, o.lan, all({ field: 'has_tax_code', op: 'is', value: false }))).toHaveLength(3);
-      // No deals yet (K1): nobody has an open one.
+      // Deals (K1): a contact has an open deal while one of its deals is in an open stage, not once it is won or lost.
       expect(await names(o, o.lan, all({ field: 'has_open_deal', op: 'is', value: true }))).toEqual([]);
       expect(await names(o, o.lan, all({ field: 'has_open_deal', op: 'is', value: false }))).toHaveLength(5);
+      const stages = await exec<Array<{ id: string; kind: string }>>(o, o.lan, 'crm.pipeline.setup', {});
+      const trans = (await list(o, o.lan, all({ field: 'search', op: 'contains', value: 'Trần Văn B' }))).items[0];
+      const cuc = (await list(o, o.lan, all({ field: 'search', op: 'contains', value: 'Lê Thị Cúc' }))).items[0];
+      const open = stages.find((s) => s.kind === 'open');
+      const won = stages.find((s) => s.kind === 'won');
+      // A deal starts in an open stage; Cúc's is won at once.
+      const deal = (partyId: string | undefined, title: string) =>
+        exec<{ id: string; version: number }>(o, o.lan, 'crm.deal.create', { partyId, title, amount: '1000000', expectedClose: null, ...(open ? { stageId: open.id } : {}) });
+      const opened = await deal(trans?.id, 'Báo giá cho Trần Văn B');
+      const closed = await deal(cuc?.id, 'Đã chốt với Lê Thị Cúc');
+      await exec(o, o.lan, 'crm.deal.move', { dealId: closed.id, version: closed.version, stageId: won?.id });
+      expect(await names(o, o.lan, all({ field: 'has_open_deal', op: 'is', value: true }))).toEqual(['Trần Văn B']);
+      expect(await names(o, o.lan, all({ field: 'has_open_deal', op: 'is', value: false }))).toHaveLength(4);
+      // Won and lost deals are not open: the contact leaves the list once its only open deal is won.
+      await exec(o, o.lan, 'crm.deal.move', { dealId: opened.id, version: opened.version, stageId: won?.id });
+      expect(await names(o, o.lan, all({ field: 'has_open_deal', op: 'is', value: true }))).toEqual([]);
+      // Another org's deals never count here.
+      expect(await names(other, other.owner, all({ field: 'has_open_deal', op: 'is', value: true }))).toEqual([]);
       expect(await names(o, o.lan, all({ field: 'created', op: 'within_last_days', value: 1 }))).toHaveLength(5);
       // Conditions are ANDed.
       expect(await names(o, o.lan, all({ field: 'kind', op: 'is', value: 'organization' }, { field: 'has_email', op: 'is', value: true }))).toEqual(['Công ty Nguyễn Hoàng']);

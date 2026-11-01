@@ -612,6 +612,20 @@ export function createRpcHandler(
       },
     },
     crm: {
+      pipeline: {
+        stages: os.crm.pipeline.stages.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.stage.list', {}, { actor, orgId }))),
+        setup: os.crm.pipeline.setup.handler(crmCommand('crm.pipeline.setup')),
+      },
+      parties: { search: os.crm.parties.search.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.search', input, { actor, orgId }))) },
+      deals: {
+        list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
+        get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
+        byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
+        update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
+        move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
+        delete: os.crm.deals.delete.handler(crmCommand('crm.deal.delete')),
+      },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),
         create: os.crm.eventTypes.create.handler(crmCommand('crm.event_type.create')),

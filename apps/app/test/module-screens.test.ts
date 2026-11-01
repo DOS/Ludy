@@ -127,10 +127,10 @@ describe('module screens against the router (#1652)', () => {
     expect(screenProblems(screens, MODULES)).toEqual([
       'route /o/$slug/invoices has no manifest entry: add it to the routes of its module in packages/kernel-contract/src/screens.ts',
     ]);
-    const twice = [...MODULES, ['crm2', { routes: [{ path: 'bookings' }, { path: 'deals' }], nav: [] }] as const];
+    const twice = [...MODULES, ['crm2', { routes: [{ path: 'bookings' }, { path: 'no-such-screen' }], nav: [] }] as const];
     expect(screenProblems(routerScreens(Object.values(router.routesById).map((r) => r.fullPath)), twice)).toEqual([
       'route /o/$slug/bookings is declared by crm and crm2',
-      'crm2 declares /o/$slug/deals, which the router does not have',
+      'crm2 declares /o/$slug/no-such-screen, which the router does not have',
     ]);
   });
 
@@ -172,14 +172,14 @@ describe('module screens against the router (#1652)', () => {
         ],
       ],
       ['social', [['social', ['/o/$slug/social', '/o/$slug/social/notifications']]]],
-      ['crm', [['crm', ['/o/$slug/bookings', '/o/$slug/contacts']]]],
+      ['crm', [['crm', ['/o/$slug/bookings', '/o/$slug/deals', '/o/$slug/contacts']]]],
     ]);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([
       ['/o/$slug/agents', 'agents'],
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'bookings', 'contacts', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'bookings', 'deals', 'contacts', 'agents', 'settings',
     ]);
   });
 });

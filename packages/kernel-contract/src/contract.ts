@@ -195,6 +195,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
+import { zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
   zNote,
@@ -455,6 +456,22 @@ export const contract = {
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
     contacts: {
       list: oc.input(zContactList).output(zContactPage),
+    },
+    // The org's one pipeline and its deals (#2225, docs/plan/crm.md): everyone reads; owners, admins and members write.
+    pipeline: {
+      stages: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
+      // Creates the default stages when the org has none; answers the stages either way.
+      setup: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
+    },
+    parties: { search: oc.input(zPartySearchQuery).output(z.array(zPartyChoice)) },
+    deals: {
+      list: oc.input(zDealListQuery).output(zDealPage),
+      get: oc.input(zDealRef).output(zDeal),
+      byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      create: oc.input(zDealCreate).output(zDeal),
+      update: oc.input(zDealUpdate).output(zDeal),
+      move: oc.input(zDealMove).output(zDeal),
+      delete: oc.input(zDealRef).output(zDealDeleted),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.

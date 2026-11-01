@@ -103,11 +103,13 @@ const SOCIAL_SCREENS = {
 
 const CRM_SCREENS = {
   // Bookings of the public booking page (#1320).
-  routes: [{ path: 'bookings' }, { path: 'contacts' }],
+  routes: [{ path: 'bookings' }, { path: 'deals' }, { path: 'contacts' }],
   // The public booking page (#1318), no account.
   outside: [{ path: '/-/b/$org/$type', public: true }],
   nav: [
     { app: 'crm', group: 'crm', path: 'bookings', label: 'bookings' },
+    // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
+    { app: 'crm', group: 'crm', path: 'deals', label: 'deals' },
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
     { app: 'crm', group: 'crm', path: 'contacts', label: 'contacts' },
   ],

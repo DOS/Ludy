@@ -15,7 +15,9 @@ export type NotGranted = undefined;
 export interface CroveCrmSchema {
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.booking_feed': CrmBookingFeedTable;
+  'crove_crm.deal': CrmDealTable;
   'crove_crm.event_type': CrmEventTypeTable;
+  'crove_crm.pipeline_stage': CrmPipelineStageTable;
 }
 
 export interface CroveFinanceSchema {
@@ -204,6 +206,27 @@ export interface CrmBookingTable {
   hold_event_ids: Generated<string[]>;
 }
 
+/** crove_crm.deal */
+export interface CrmDealTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: string;
+  title: string;
+  amount: Generated<string>;
+  currency: ColumnType<string, string | undefined, NotGranted>;
+  stage_id: string;
+  sort_key: string;
+  expected_close: string | null;
+  owner_user_id: string | null;
+  lost_reason: string | null;
+  closed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  version: Generated<number>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_crm.event_type */
 export interface CrmEventTypeTable {
   org_id: string;
@@ -227,6 +250,17 @@ export interface CrmEventTypeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   assignment: Generated<string>;
   co_host_user_ids: Generated<string[]>;
+}
+
+/** crove_crm.pipeline_stage */
+export interface CrmPipelineStageTable {
+  org_id: string;
+  id: Generated<string>;
+  name: string;
+  kind: string;
+  position: number;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_finance.account */
