@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { Archive, ArrowRight, Check, FileSpreadsheet, FileUp, Lock, Mail, TriangleAlert } from 'lucide-react';
 import type { AccountingCopy } from '../../content/accounting-vi';
 import type { Dictionary } from '../../content/vi';

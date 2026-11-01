@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { AccountingPage } from '../../../../components/apps/accounting-page';
 import { accountingEn } from '../../../../content/accounting-en';
 import { APP_PAGES } from '../../../../content/site';

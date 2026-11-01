@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { Check, Minus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { AppPageCopy } from '../../content/app-page';

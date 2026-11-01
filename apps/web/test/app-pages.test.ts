@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The app pages (/ke-toan, /en/accounting, and the pages that follow): each is listed once in content/site.ts and then
 // found everywhere it must be, in both languages: the sitemap with its hreflang twin, a card of the home page, the
 // footer, its own title and description, and the copy of both languages in step. The rendered pages are checked in

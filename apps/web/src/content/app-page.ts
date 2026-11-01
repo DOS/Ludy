@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The copy every app page shares the shape of (/ke-toan, /en/accounting, and the pages of the other apps). The layout is
 // components/apps/app-page.tsx; an app adds its own fragments (the pieces of the product it draws) and their copy in
 // its own file, e.g. accounting-vi.ts. Both languages are typed from the Vietnamese file, as the home page's are, so a

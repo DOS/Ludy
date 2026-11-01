@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // English copy of the Ludy Accounting page (/en/accounting), in the shape of accounting-vi.ts. The example company, its
 // vendors, people, amounts and document numbers are the home page's and stay as they are in Vietnamese.
 import type { AccountingCopy } from './accounting-vi';

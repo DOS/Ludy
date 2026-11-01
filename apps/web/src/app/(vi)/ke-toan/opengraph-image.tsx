@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { OG_SIZE, renderOgImage } from '../../../components/og-image';
 import { accountingVi } from '../../../content/accounting-vi';
 import { vi } from '../../../content/vi';

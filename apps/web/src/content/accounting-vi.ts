@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Vietnamese copy of the Ludy Kế toán page (/ke-toan). accounting-en.ts mirrors this shape. Every claim here is
 // merged and usable on main today; the PR lists the PR or route behind each one. Company names, amounts and document
 // numbers are example data and stay the same in both languages (the sample company is the home page's).

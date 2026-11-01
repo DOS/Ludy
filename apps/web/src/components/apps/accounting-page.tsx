@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { accountingEn } from '../../content/accounting-en';
 import { accountingVi } from '../../content/accounting-vi';
 import { APP_PAGES } from '../../content/site';
