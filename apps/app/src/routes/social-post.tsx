@@ -4023,7 +4023,10 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     const before = reviewRows.filter((r) => awaitsApprovalBy(r, userId));
     // The list as it is now: the post just approved has left it, or waits for another person.
     setMoveError(null);
-    const fresh = await queryClient.fetchQuery({ ...orpc.social.posts.list.queryOptions({ input: reviewInput }), staleTime: 0 }).catch((error: unknown) => {
+    // Read straight from the server, not through the query cache: the approval has just invalidated every query, and a
+    // cached fetch joined to that refetch is cancelled when another invalidation restarts it (CancelledError), which
+    // left the reviewer on the approved post with an error and no move.
+    const fresh = await client.social.posts.list(reviewInput).catch((error: unknown) => {
       if (live.current) setMoveError(errorMessage(error));
       return null;
     });
