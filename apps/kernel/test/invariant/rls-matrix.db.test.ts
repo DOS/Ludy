@@ -54,6 +54,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_account',
+  'crove_ads.ad_spend_day',
+  'crove_ads.ad_sync_run',
   'crove_kernel.saved_view',
   'crove_notes.link',
   'crove_notes.note',
@@ -308,6 +311,49 @@ const journalEntry = (org: string, id: string): Row => ({
 // refused), so a denial cannot come from a malformed row. Kept in table-name order (plain string sort; the catalog
 // test checks it), so a new factory goes at its own place instead of at the end, where parallel PRs would conflict.
 const ROW_FACTORIES: Record<string, RowFactory> = {
+  // Ads (ADR-0040, #2217): an ad account of a connected ad platform, in an entity (the org's default, by its trigger b_legal_entity).
+  // One per connection, so every row has a connection of its own. Tenant roles update some columns only (a column grant), so
+  // the update probes assign the name to itself.
+  'crove_ads.ad_account': {
+    update: { set: 'name = name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' },
+      };
+    },
+  },
+  // A day of one object of an ad account, as its platform reported it: the entity is the account's (b_legal_entity, and the
+  // composite foreign key). Tenant roles update the figures only (a column grant), so the update probes assign the name to itself.
+  'crove_ads.ad_spend_day': {
+    update: { set: 'object_name = object_name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, level: 'account', external_object_id: connection.external_account_id, day: '2026-10-01', currency: 'VND', spend: '1000', impressions: 10, clicks: 1 },
+      };
+    },
+  },
+  // One sync of an ad account: written once, never changed or deleted by a tenant role (the worker's prune deletes it).
+  'crove_ads.ad_sync_run': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, status: 'ok' },
+      };
+    },
+  },
   // #1318: a visitor's booking of an event type, holding an event on the host's calendar.
   'crove_crm.booking': {
     make: (o) => {
