@@ -215,6 +215,31 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     await expect(asAgent(o.orgId, agent, (c) => c.query("INSERT INTO crove_kernel.conversation_identity (org_id, provider, external_user_id) VALUES ($1, 'sandbox', 'u-agent')", [o.orgId]))).rejects.toMatchObject({ code: '42501' });
   });
 
+  it('lets only an owner, an admin or the system delete a thread, a message, a note or an identity: a viewer, a member and a channel-limited member delete none', async () => {
+    const o = await org();
+    const chA = await connection(o);
+    const chB = await connection(o);
+    await ingest(o, chA, [event('comment_thread', 'd-a', 'Kênh A')]);
+    await ingest(o, chB, [event('comment_thread', 'd-b', 'Kênh B')]);
+    const [thread] = await rows<{ id: string }>("SELECT id FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'd-a'", [o.orgId]);
+    await rt.execute('kernel.conversation.note', { conversationId: (thread as { id: string }).id, body: 'Ghi chú' }, { actor: asUser(o.lan), orgId: o.orgId });
+    // The member is limited to channel A, so their own reads include the thread they try to delete.
+    await rt.execute('social.channel_access.set', { userId: o.lan, channelConnectionIds: [chA] }, { actor: asUser(o.owner), orgId: o.orgId });
+    const tables = ['conversation_note', 'conversation_message', 'conversation', 'conversation_identity'];
+    for (const who of [o.viewer, o.lan, o.desk]) {
+      for (const t of tables) {
+        await expect(asMember(o.orgId, who, (c) => c.query(`DELETE FROM crove_kernel.${t} WHERE org_id = $1`, [o.orgId]))).resolves.toMatchObject({ rowCount: 0 });
+      }
+    }
+    // The owner and the admin delete (rolled back here), and so does the system context.
+    for (const who of [o.owner, o.admin]) {
+      const res = await asMember(o.orgId, who, async (c) => (await c.query('DELETE FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).rowCount);
+      expect(res).toBe(2);
+    }
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(2);
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation_note WHERE org_id = $1', [o.orgId])).toHaveLength(1);
+  });
+
   it("keeps Social's per-channel limit (#1081) working through the kernel's table", async () => {
     const o = await org();
     const chA = await connection(o);
