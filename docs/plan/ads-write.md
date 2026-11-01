@@ -1,6 +1,6 @@
 # Ludy Ads: running ads from Ludy (plan amendment)
 
-> Amendment of the [Ads plan](ads.md) and [ADR-0040](../adr/0040-ads-read-only-sources.md), 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Owner decision (JOY, 2026-11-01): "Đọc quảng cáo là sao, user chạy quảng cáo trên Ludy luôn cơ mà", and, offered a first write slice or full campaigns, "Chiến dịch đầy đủ". Proposed decision record: [ADR-0042](../adr/0042-ads-write-running-ads.md). Vietnamese summary for JOY: [ads-write.vi.md](ads-write.vi.md). **Docs only: nothing here is built.** JOY answered section 11 on 2026-11-01: Q1 A, and every other question with its recommendation ("Nhận hết", recorded on #2283), so W0, W1 and W2 are built in that order (section 10); W3 to W6 wait. The Platform PO reviewed the design and asked for the five additions now in section 3.2, 3.3, 3.6 and 5.1.
+> Amendment of the [Ads plan](ads.md) and [ADR-0040](../adr/0040-ads-read-only-sources.md), 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Owner decision (JOY, 2026-11-01): "Đọc quảng cáo là sao, user chạy quảng cáo trên Ludy luôn cơ mà", and, offered a first write slice or full campaigns, "Chiến dịch đầy đủ". Proposed decision record: [ADR-0043](../adr/0043-ads-write-running-ads.md). Vietnamese summary for JOY: [ads-write.vi.md](ads-write.vi.md). **Docs only: nothing here is built.** JOY answered section 11 on 2026-11-01: Q1 A, and every other question with its recommendation ("Nhận hết", recorded on #2283), so W0, W1 and W2 are built in that order (section 10); W3 to W6 wait. The Platform PO reviewed the design and asked for the five additions now in section 3.2, 3.3, 3.6 and 5.1.
 
 Facts are tagged as in the [Ads plan](ads.md): **[C]** stated on an official page that was read, **[S]** only a secondary source, **[U]** could not be confirmed and is checked in the platform's console before a build issue relies on it. Research was done on 2026-11-01; Meta's pages were read through search summaries, so every number is re-checked by the build issue that uses it.
 
@@ -13,7 +13,7 @@ What stays as decided and is **not reopened**:
 - **Ads never posts to the books.** Spend still reaches Kế toán through intake (card and bank lines, and the platform invoices of slice D) and the books strip; Ludy only adds the *planned* spend beside the actual one (section 8).
 - The read side and its adapters stay read only: the reader files keep their tests that no write endpoint is called (#2218). Writing is a separate adapter interface in a separate file with its own pinned endpoint list (section 9).
 
-What changes: ADR-0040 point 2 ("read-only by construction", "any later write needs a new ADR: R3 commands, four-eyes, and an approval that names the amount") is answered by this amendment and ADR-0042, in the way that sentence asked for.
+What changes: ADR-0040 point 2 ("read-only by construction", "any later write needs a new ADR: R3 commands, four-eyes, and an approval that names the amount") is answered by this amendment and ADR-0043, in the way that sentence asked for.
 
 ## 2. Scope and order
 
@@ -92,7 +92,7 @@ Every platform call that creates or changes something goes through the kernel's 
 
 - Every command writes an audit row with the ids, the amounts and the states, never the creative text (the campaign and ad names are business text; they follow the data classes of the manifest).
 - There is no undo of money already spent: the controls are the approval before, the caps, the pause (always allowed), and the platform's own limit.
-- **What an agent may do:** write **drafts** (R1), which reach a human as a proposal like any agent work; **never launch, activate, resume, raise or extend, set a cap, or enable writing.** This amends the write allowlist of ADR-0029 for the draft commands only (ADR-0042 point 7, the Marketing PO's recommendation, which the owner may reverse).
+- **What an agent may do:** write **drafts** (R1), which reach a human as a proposal like any agent work; **never launch, activate, resume, raise or extend, set a cap, or enable writing.** This amends the write allowlist of ADR-0029 for the draft commands only (ADR-0043 point 7, the Marketing PO's recommendation, which the owner may reverse).
 
 ### 3.6 The kill switch
 
@@ -114,7 +114,7 @@ Every platform call that creates or changes something goes through the kernel's 
 
 A read-only connection and a read-write one are different things, so write access is a **separate, explicit step**, in three layers:
 
-1. **Deployment:** the platform app. The same Meta app may serve (as for reading), but a **separate app for writing is the recommendation** (Q7 of ADR-0042): `ads_management` on the app that also posts to Pages widens what a leaked Pages token can do, and a failed App Review for writing must not block reading.
+1. **Deployment:** the platform app. The same Meta app may serve (as for reading), but a **separate app for writing is the recommendation** (Q7 of ADR-0043): `ads_management` on the app that also posts to Pages widens what a leaked Pages token can do, and a failed App Review for writing must not block reading.
 2. **Org switch** `ads.write` (off by default; `ads.write.enable`, owner, step-up, audited). Off: the connector keeps the guard of #2275 and **refuses any token that holds `ads_management` or `business_management`** (read-only orgs keep refusing write scopes). On: the connector for that org asks Meta for `ads_read` and `ads_management` (and the Page permissions a post-based ad needs [U]) and **accepts** them, recording the full set on the connection.
 3. **Ad account:** `write_enabled` per ad account (owner), default off, so one account can stay read-only inside an org that writes. Connecting for write is a **new connection step** ("Cho phép Ludy chạy quảng cáo trên tài khoản này"), never an upgrade of a connection in place: the person goes through Meta's dialog again and the screen shows the account as able to write.
 

@@ -1,6 +1,6 @@
 # Ludy Ads: chạy quảng cáo ngay trong Ludy (tóm tắt cho JOY)
 
-> Bản tóm tắt tiếng Việt của [ads-write.md](ads-write.md) và [ADR-0042](../adr/0042-ads-write-running-ads.md), ngày 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Bản tiếng Anh là bản chuẩn. **Đây mới là kế hoạch, chưa làm gì: chưa mở issue xây dựng nào cho tới khi JOY duyệt lát đầu tiên (câu 1).** Quyết định của JOY ngày 2026-11-01: người dùng chạy quảng cáo ngay trên Ludy, với chiến dịch đầy đủ.
+> Bản tóm tắt tiếng Việt của [ads-write.md](ads-write.md) và [ADR-0043](../adr/0043-ads-write-running-ads.md), ngày 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Bản tiếng Anh là bản chuẩn. **Đây mới là kế hoạch, chưa xây gì.** Quyết định của JOY ngày 2026-11-01: người dùng chạy quảng cáo ngay trên Ludy, với chiến dịch đầy đủ. JOY đã trả lời 8 câu hỏi cùng ngày: câu 1 chọn A (xây W0, W1, W2 theo thứ tự), các câu 2 đến 8 "nhận hết" tức theo đúng khuyến nghị (ghi trong #2283). PO Nền tảng đã duyệt thiết kế và yêu cầu thêm 5 điểm (ghi bên dưới). Issue xây W0 đến W2 mở sau khi bản sửa kế hoạch này được gộp; W3 đến W6 chờ.
 
 ## Thay đổi gì
 
@@ -15,6 +15,14 @@ Bản v1 đã duyệt chỉ đọc số liệu quảng cáo. Giờ Ludy sẽ cho
 - **Hạn mức chi tiêu**: JOY đặt hạn mức theo ngày và theo tháng cho từng tài khoản quảng cáo. **Chưa đặt hạn mức thì không chạy được.** Mỗi lần duyệt và mỗi lần thực hiện, Ludy cộng cả chi tiêu đã cam kết của các chiến dịch đang chạy hoặc đã lên lịch; vượt hạn mức thì từ chối. Hạn mức chi tiêu của chính Meta được đọc và hiển thị bên cạnh, Ludy chỉ là lớp rào thứ hai.
 - **Gọi nền tảng đúng một lần**: mỗi bước tạo trên Meta đi qua sổ `external_call` có khóa cố định. Các đối tượng được tạo ở trạng thái **tạm dừng**, bật cuối cùng, nên một lần chạy dở dang chưa tiêu gì. Nếu mất kết quả một bước, Ludy hỏi lại Meta (theo nhãn `ludy:` trong tên đối tượng) trước khi thử lại, không tạo trùng.
 - **Trợ lý AI chỉ soạn nháp**, không bao giờ chạy, bật lại, tăng ngân sách hay đặt hạn mức.
+
+## Năm điểm bổ sung theo yêu cầu của PO Nền tảng
+
+1. **Công ty một người:** tổ chức chỉ có một người đủ quyền thì chủ sở hữu tự duyệt kế hoạch của mình (đánh dấu `self_approved` trong nhật ký). Mọi thứ khác giữ nguyên: vẫn phải xác thực hai lớp vừa xong, phiếu vẫn ghi số tiền tối đa, hạn mức vẫn chặn. Chủ chưa có yếu tố xác thực thứ hai thì chưa bật được quyền ghi. Khi có người thứ hai đủ quyền, chủ không còn tự duyệt kế hoạch mình soạn.
+2. **Hạn mức kiểm tra dưới khóa:** lúc thực hiện, Ludy khóa theo tổ chức, tính lại chi tiêu đã cam kết và ghi cam kết của kế hoạch trong cùng một giao dịch, trước khi gọi Meta. Hai chiến dịch được duyệt cùng lúc sẽ xếp hàng, cái sau thấy cái trước và bị từ chối nếu cộng lại vượt hạn mức. Kiểm tra lúc duyệt chỉ để cảnh báo sớm.
+3. **Hạn mức có đơn vị tiền:** hạn mức tính theo tiền của tài khoản quảng cáo; hạn mức của tổ chức có đơn vị riêng (mặc định VND). Tài khoản khác đơn vị tiền với hạn mức tổ chức thì chưa cho chạy (mã `ADS_CAP_CURRENCY`); quy đổi tiền là quyết định sau, để người duyệt không bị lệch tỷ giá mà họ chưa thấy.
+4. **Token ghi quảng cáo:** niêm phong riêng, tách khỏi token đọc; mọi lệnh gọi ghi kèm `appsecret_proof` và ứng dụng bật "Require App Secret"; ngắt kết nối hoặc tắt công tắc thì thu hồi token ở Meta rồi xóa bản niêm phong (thu hồi lỗi thì thử lại và hiện "chưa thu hồi"); tắt công tắc thì mọi bước ghi đang xếp hàng bị hủy, bước đang chạy dở hoàn tất, đối tượng đã tạo vẫn ở trạng thái tạm dừng.
+5. **Nút dừng khẩn cấp:** lệnh `ads.pause_all` (mức R2, không cần duyệt vì chỉ dừng chi tiêu) tạm dừng mọi chiến dịch Ludy đã chạy trong tổ chức, đặt cờ chặn chạy mới cho tới khi chủ sở hữu gỡ (R3, xác thực hai lớp). Tắt công tắc tổ chức cũng chạy bước dừng này trước.
 
 ## Quyền hạn: bật theo từng lớp
 
@@ -56,6 +64,8 @@ Chi tiêu vẫn vào sổ qua chứng từ như cũ; Ads không ghi sổ. Ludy c
 
 ## Câu hỏi cho JOY (mỗi câu: lựa chọn, khuyến nghị, nếu không trả lời)
 
+**Đã trả lời ngày 2026-11-01: câu 1 chọn A; các câu 2 đến 8 "Nhận hết", tức chọn A theo khuyến nghị** (câu 7: một ứng dụng Meta riêng chỉ để chạy quảng cáo; JOY tạo ứng dụng này trước khi kiểm tra thật ở W2). Nội dung câu hỏi giữ nguyên như đã hỏi:
+
 1. **Lát ghi nào làm trước, có được mở W0 đến W2 không?** A. W0, W1, W2 theo thứ tự: dựng, soạn và duyệt chưa tiêu gì, rồi chạy một chiến dịch (**khuyến nghị**). B. Boost bài đăng trước (cũng cần công tắc, hạn mức và duyệt như W2). C. Giữ chỉ đọc. *Không trả lời: chưa mở issue xây dựng nào.*
 2. **Ai duyệt một lần chạy?** A. Chủ sở hữu và quản trị viên, không bao giờ là người soạn; tổ chức chỉ có một người thì chủ sở hữu tự duyệt và được đánh dấu (**khuyến nghị**, đúng quy tắc P10). B. Thêm một người duyệt marketing do chủ chỉ định. *Không trả lời: A.*
 3. **Hạn mức chi tiêu mặc định?** A. Không đặt hạn mức thì không chạy được (**khuyến nghị**). B. Có hạn mức mặc định, chủ đổi được; ít vướng nhưng hạn mức cao thì dễ ra hóa đơn bất ngờ. *Không trả lời: A.*
@@ -65,4 +75,4 @@ Chi tiêu vẫn vào sổ qua chứng từ như cũ; Ads không ghi sổ. Ludy c
 7. **Dùng ứng dụng Meta nào để ghi?** (việc của JOY) A. Một ứng dụng riêng chỉ để chạy quảng cáo (**khuyến nghị**): token ghi quảng cáo không dùng chung với đăng bài, và nếu Meta từ chối review bên này thì bên kia không bị chặn. B. Dùng chính ứng dụng cổ điển JOY đang có, chung với đăng bài và đọc (không phải tạo app mới; token khi đó cũng giữ các quyền đăng Page, màn hình sẽ nói rõ). *Không trả lời: B để JOY thử trên tài khoản của mình, A trước khi lên Ludy Cloud.*
 8. **Automated Boost?** A. Có, sau này, dưới dạng quy tắc trong hạn mức chủ đã duyệt, mỗi lần chi vẫn được ghi (**khuyến nghị**). B. Không bao giờ: Boost luôn thủ công. *Không trả lời: chờ.*
 
-Ngoài ra ADR-0042 đề xuất **trợ lý AI chỉ soạn nháp, không bao giờ chạy** (đây là khuyến nghị của PO Marketing; JOY có thể đảo lại).
+Ngoài ra ADR-0043 đề xuất **trợ lý AI chỉ soạn nháp, không bao giờ chạy** (đây là khuyến nghị của PO Marketing; JOY có thể đảo lại).

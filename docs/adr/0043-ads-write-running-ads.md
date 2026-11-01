@@ -1,4 +1,4 @@
-# 0042. Ads: running ads from Ludy, behind an approval before any spend
+# 0043. Ads: running ads from Ludy, behind an approval before any spend
 
 - Status: Accepted (2026-11-01) once this PR merges. Amends [ADR-0040](0040-ads-read-only-sources.md) point 2 (read-only by construction), which asked for exactly this record: "any later write needs a new ADR: R3 commands, four-eyes, and an approval that names the amount". The owner answered the [questions](../plan/ads-write.md#11-questions-for-joy) on 2026-11-01 (Q1 A, every other question with its recommendation); the Platform PO reviewed the design and asked for the additions in points 1, 2, 3 and 7a. Build issues W0, W1, W2 open after the merge, in that order.
 - Date: 2026-11-01
