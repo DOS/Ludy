@@ -10,7 +10,7 @@ Một thành viên làm được:
 - ghi **cơ hội bán hàng** (deal) gắn với liên hệ hoặc công ty đã có trong Ludy, kèm số tiền (đồng) và ngày dự kiến chốt;
 - xem mọi cơ hội trên **một bảng quy trình bán hàng** (pipeline): kéo thẻ sang cột khác hoặc đổi thứ tự trong cột (trên điện thoại và bằng bàn phím dùng menu giai đoạn trên thẻ), đóng là Thắng hoặc Thua, ghi lý do thua; chủ sở hữu và quản trị viên đổi tên, thêm, sắp xếp, xóa các giai đoạn đang mở;
 - tìm liên hệ **không cần gõ dấu** ("nguyen" ra "Nguyễn"), và **lưu chế độ xem** (bộ lọc và cách sắp xếp), riêng tư hoặc chia sẻ cả tổ chức;
-- **nhập liên hệ và công ty từ tệp Excel hoặc CSV**: đọc ngay trên máy, ghép cột, xem trước từng dòng (mới, trùng, xung đột, lỗi) rồi mới nhập; không ghi đè thông tin đã có; tải về các dòng chưa nhập kèm lý do;
+- **nhập liên hệ và công ty từ tệp Excel hoặc CSV**: đọc ngay trên máy, ghép cột, xem trước từng dòng (mới, trùng, xung đột, lỗi) rồi mới nhập; không ghi đè thông tin đã có; tải về các dòng chưa nhập kèm lý do; tệp Excel có macro hoặc ô công thức bị từ chối kèm hướng dẫn;
 - xem **dòng thời gian** của liên hệ: thêm, nhập từ tệp, tạo cơ hội, chuyển giai đoạn, thắng, thua (không kèm tên cơ hội hay số tiền).
 
 ## An toàn và dữ liệu
@@ -27,12 +27,12 @@ Một thành viên làm được:
 | Kế hoạch | Tài liệu kế hoạch và quyết định 21 | Đã gộp (#2224) |
 | K1 | Cơ hội và quy trình, màn hình "Cơ hội" dạng danh sách | Đã gộp (#2240) |
 | K2 | Bảng kéo thả, menu giai đoạn, Thắng và Thua, cài đặt giai đoạn | Đã gộp (#2244) |
-| K3 | Chế độ xem đã lưu và bộ lọc | Đã gộp phần nhân (#2239); chế độ xem của cơ hội đang chờ gộp (#2252), worker khác |
+| K3 | Chế độ xem đã lưu và bộ lọc | Đã gộp (#2239, #2252), worker khác |
 | K4 | Màn hình "Liên hệ", tìm không dấu, chuẩn hóa số điện thoại | Đã gộp (#2241), worker khác |
-| K5 | Nhập liên hệ từ CSV | Đã làm xong, đang chờ gộp (#2254) |
-| K5b | Quét hằng ngày xóa dòng nhập quá 7 ngày | Đã làm xong, chờ K5 |
-| K6 | Nhập liên hệ từ Excel (đọc ngay trên trình duyệt, không thêm gói mới) | Đã làm xong, chờ K5 |
-| K7 | Kiểm tra cả luồng bằng một bài e2e, kiểm tra module `crm` chạy riêng và khi tắt, hướng dẫn sử dụng, bản tóm tắt này | Đang làm |
+| K5 | Nhập liên hệ từ CSV | Đã gộp (#2254) |
+| K5b | Quét hằng ngày xóa dòng nhập quá 7 ngày | Đã gộp (#2259) |
+| K6 | Nhập liên hệ từ Excel (đọc ngay trên trình duyệt, không thêm gói mới) | Đã gộp (#2277) |
+| K7 | Kiểm tra cả luồng bằng một bài e2e, kiểm tra module `crm` chạy riêng và khi tắt, hướng dẫn sử dụng, bản tóm tắt này | Đang chờ gộp (#2279) |
 
 ## Ngoài lát này (chờ JOY)
 
