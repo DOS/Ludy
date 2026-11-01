@@ -18,7 +18,9 @@
 --
 -- Both are written at insert and never change: the UPDATE grant of the table lists only the columns that finish a pending
 -- run, which these are not, and extraction_guard (replaced below, otherwise as it was) refuses a change of them for any
--- role, the database owner included. Only a run of method einvoice_xml that is done may carry them.
+-- role, the database owner included. Only a run of method einvoice_xml that is done may carry them, and only the system's
+-- context (the worker, through kernel.extraction.record) may insert one that names a proposal: crove_tenant can insert into
+-- the table, and a member or an agent must not be able to fake "the original matches" evidence on a posted invoice.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.extraction ADD COLUMN IF NOT EXISTS original_of_proposal_id uuid;
@@ -51,3 +53,24 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- A run that names a proposal it is the original of is inserted by the system's context alone (the worker, through
+-- kernel.extraction.record). A tenant context of a member or an agent is refused; with no context at all the caller is the
+-- database owner or the migration pipeline, as for the other guards (a tenant role without a context cannot insert here:
+-- row-level security refuses it first).
+CREATE OR REPLACE FUNCTION crove_kernel.extraction_original_insert_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.original_of_proposal_id IS NOT NULL
+     AND crove_kernel.ctx_actor_type() IS NOT NULL
+     AND crove_kernel.ctx_actor_type() <> 'system' THEN
+    RAISE EXCEPTION 'EXTRACTION_ORIGINAL_SYSTEM_ONLY' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+
+DROP TRIGGER IF EXISTS extraction_original_insert_guard ON crove_kernel.extraction;
+CREATE TRIGGER extraction_original_insert_guard BEFORE INSERT ON crove_kernel.extraction
+  FOR EACH ROW EXECUTE FUNCTION crove_kernel.extraction_original_insert_guard();
+
+REVOKE ALL ON FUNCTION crove_kernel.extraction_original_insert_guard() FROM PUBLIC;

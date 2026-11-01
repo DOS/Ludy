@@ -17,6 +17,7 @@ import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runti
 import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
 import type { ExtractClient } from '@crove/extract-contract';
 import type { ParsedInvoice } from '@crove/l10n-vn';
+import { enterUser } from './context-token.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
@@ -362,6 +363,34 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     expect((await detailOf(users.owner, pdf.proposalId)).originals).toEqual([]);
     // Whatever the reader made of it, it is not attached and nothing is posted twice.
     expect(read.proposalId === null || read.proposalId !== pdf.proposalId).toBe(true);
+  });
+
+  it('lets only the system context insert a run that names a proposal: a member context cannot fake the evidence', async () => {
+    const pdf = await postPdf('6010');
+    const { fileId } = await ingest(users.owner, pdfOf('6010b'), 'hd-6010b.pdf', 'application/pdf');
+    const insert = `INSERT INTO crove_kernel.extraction (org_id, file_id, method, status, original_of_proposal_id, original_differs, completed_at) VALUES ($1, $2, 'einvoice_xml', 'done', $3, false, now())`;
+    // A user context of the tenant role (owner and an admin) is refused by the guard, whatever its role in the org.
+    for (const userId of [users.owner, users.admin]) {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, userId, orgId);
+        await expect(c.query(insert, [orgId, fileId, pdf.proposalId])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EXTRACTION_ORIGINAL_SYSTEM_ONLY') });
+      } finally {
+        await c.query('ROLLBACK');
+        c.release();
+      }
+    }
+    // The system context (the worker) may.
+    const system = await workerPool.connect();
+    try {
+      await system.query('BEGIN');
+      await system.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+      await expect(system.query(insert, [orgId, fileId, pdf.proposalId])).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      await system.query('ROLLBACK');
+      system.release();
+    }
   });
 
   it('never changes the attachment once the run is finished', async () => {
