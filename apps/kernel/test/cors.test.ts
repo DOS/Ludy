@@ -48,8 +48,16 @@ describe('APP_URL', () => {
     expect(() => loadConfig({ ...env, APP_URL: APP })).toThrow(new RegExp(`list ${APP} in CORS_ALLOWED_ORIGINS`));
     expect(() => loadConfig({ ...env, APP_URL: APP, CORS_ALLOWED_ORIGINS: 'https://other.example.com' })).toThrow(/CORS_ALLOWED_ORIGINS/);
     expect(() => loadConfig({ ...env, APP_URL: APP, CORS_ALLOWED_ORIGINS: APP })).not.toThrow();
-    // The same origin as PUBLIC_URL (a path on it) needs no CORS.
-    expect(() => loadConfig({ ...env, APP_URL: 'https://api.example.com/app' })).not.toThrow();
+    // The same origin as PUBLIC_URL needs no CORS.
+    expect(() => loadConfig({ ...env, APP_URL: 'https://api.example.com' })).not.toThrow();
+  });
+
+  it('must be an origin only: a path, query, fragment, user information or trailing slash is refused', () => {
+    const env = { ...base, PUBLIC_URL: 'https://api.example.com', AUTH_UPSTREAM_URL: 'http://auth:9999', CORS_ALLOWED_ORIGINS: APP };
+    expect(loadConfig({ ...env, APP_URL: APP }).APP_URL).toBe(APP);
+    for (const bad of [`${APP}/app`, `${APP}/`, `${APP}?next=/x`, `${APP}#top`, 'https://user:secret@app.example.com', 'ftp://app.example.com', 'app.example.com']) {
+      expect(() => loadConfig({ ...env, APP_URL: bad }), bad).toThrow(/APP_URL/);
+    }
   });
 
   it('must be https on a public deployment', () => {
@@ -139,6 +147,20 @@ describe('corsMiddleware', () => {
     expect(answer.status).toBe(200);
     expect(answer.headers.get('access-control-allow-origin')).toBeNull();
     expect(answer.headers.get('vary')).toContain('Origin');
+  });
+
+  it('sends no CORS headers on the webhook and relay routes, whatever the origin', async () => {
+    const { Hono } = await import('hono');
+    const app = new Hono();
+    app.use('*', corsMiddleware([APP]));
+    for (const path of ['/webhooks/mail/resend', '/api/inbound/email', '/api/bank-feed/sandbox/webhook']) app.all(path, (c) => c.text('ok'));
+    for (const path of ['/webhooks/mail/resend', '/api/inbound/email', '/api/bank-feed/sandbox/webhook']) {
+      const answer = await app.request(path, { method: 'POST', headers: { origin: APP } });
+      expect(answer.headers.get('access-control-allow-origin'), path).toBeNull();
+      expect(answer.headers.get('vary'), path).toBeNull();
+      const asked = await app.request(path, { method: 'OPTIONS', headers: { origin: APP, 'access-control-request-method': 'POST' } });
+      expect(asked.headers.get('access-control-allow-origin'), path).toBeNull();
+    }
   });
 
   it('lets a fetch with cache: no-store through the preflight', async () => {

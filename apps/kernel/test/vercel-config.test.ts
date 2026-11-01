@@ -4,28 +4,28 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { contentSecurityPolicy } from '../src/http.ts';
+import { STATIC_CSP_DIRECTIVES, cspMeta, cspOriginsFromEnv, metaCsp } from '../../app/vite-csp.ts';
 // @ts-expect-error a plain ES module with no type declarations
 import { RELEASE_BRANCH, decide } from '../../../tools/vercel/ignore-build.mjs';
 
 const root = (path: string) => new URL(`../../../${path}`, import.meta.url);
 const vercel = JSON.parse(readFileSync(root('apps/app/vercel.json'), 'utf8')) as {
   ignoreCommand: string;
-  build: { env: Record<string, string> };
+  build?: unknown;
   rewrites: Array<{ source: string; destination: string }>;
   headers: Array<{ source: string; headers: Array<{ key: string; value: string }> }>;
 };
 const header = (name: string) => vercel.headers[0]?.headers.find((h) => h.key.toLowerCase() === name.toLowerCase())?.value;
 
 describe('apps/app/vercel.json', () => {
-  const api = vercel.build.env['VITE_API_URL'] ?? '';
-
-  it('builds the app against the API origin it allows in its CSP, as the kernel would for the same deployment', () => {
-    expect(api).toMatch(/^https:\/\/[a-z0-9.-]+$/);
-    // The auth proxy lives on the API, booking pages use Turnstile, and transfers go through the API (no bucket origin).
-    expect(header('content-security-policy')).toBe(contentSecurityPolicy(`${api}/auth/v1`, null, true));
+  it('names no origin of any deployment: the API address comes from the build environment', () => {
+    const text = readFileSync(root('apps/app/vercel.json'), 'utf8');
+    expect(text).not.toMatch(/https?:\/\/(?!openapi\.vercel\.sh)/);
+    expect(vercel.build).toBeUndefined();
   });
 
-  it('sends the browser security headers the kernel sends with the app', () => {
+  it('sends the origin-free part of the policy as a header, and the browser headers the kernel sends with the app', () => {
+    expect(header('content-security-policy')).toBe(STATIC_CSP_DIRECTIVES.join('; '));
     expect(header('referrer-policy')).toBe('no-referrer');
     expect(header('x-content-type-options')).toBe('nosniff');
     expect(header('x-frame-options')).toBe('DENY');
@@ -43,6 +43,51 @@ describe('apps/app/vercel.json', () => {
 
   it('runs the ignore step that keeps Production off plain merges', () => {
     expect(vercel.ignoreCommand).toBe('node ../../tools/vercel/ignore-build.mjs');
+  });
+});
+
+describe('the build-time policy (apps/app/vite-csp.ts)', () => {
+  // The header and the meta tag are both applied by the browser: together they must say what the kernel's one policy says.
+  const directives = (policy: string) => policy.split('; ').sort();
+  const together = (origins: Parameters<typeof metaCsp>[0]) => directives([...STATIC_CSP_DIRECTIVES, metaCsp(origins)].join('; '));
+  const API = 'https://api.example.com';
+
+  it('equals the policy of the kernel for the same origins, with and without Turnstile and a bucket', () => {
+    for (const turnstile of [false, true]) {
+      for (const storage of [undefined, 'https://files.example.com']) {
+        expect(together({ apiOrigin: API, storageOrigin: storage, turnstile }), `${turnstile} ${storage}`).toEqual(
+          directives(contentSecurityPolicy(`${API}/auth/v1`, storage ?? null, turnstile)),
+        );
+      }
+    }
+  });
+
+  it('allows the origin of Supabase Auth when it is not the one of the API', () => {
+    const policy = metaCsp({ apiOrigin: API, authOrigin: 'https://auth.example.com' });
+    expect(policy).toContain("connect-src 'self' https://auth.example.com https://api.example.com");
+    expect(together({ apiOrigin: API, authOrigin: 'https://auth.example.com' })).toEqual(directives(contentSecurityPolicy('https://auth.example.com/auth/v1', null, false).replace('https://auth.example.com', 'https://auth.example.com https://api.example.com')));
+  });
+
+  it('reads the origins from the build environment, and injects nothing without VITE_API_URL', () => {
+    expect(cspOriginsFromEnv({})).toBeNull();
+    expect(cspOriginsFromEnv({ VITE_API_URL: ' ' })).toBeNull();
+    expect(cspOriginsFromEnv({ VITE_API_URL: `${API}/`, VITE_STORAGE_ORIGIN: 'https://files.example.com/bucket', VITE_TURNSTILE: 'true' })).toEqual({
+      apiOrigin: API,
+      authOrigin: undefined,
+      storageOrigin: 'https://files.example.com',
+      turnstile: true,
+    });
+    const plugin = cspMeta({});
+    expect((plugin.transformIndexHtml as () => unknown)()).toBeUndefined();
+    const tags = (cspMeta({ VITE_API_URL: API }).transformIndexHtml as () => Array<{ tag: string; attrs: Record<string, string>; injectTo: string }>)();
+    expect(tags).toEqual([{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: metaCsp({ apiOrigin: API }) }, injectTo: 'head-prepend' }]);
+  });
+
+  it('refuses a build address that is not a URL, or plain http beyond localhost', () => {
+    expect(() => cspOriginsFromEnv({ VITE_API_URL: 'api.example.com' })).toThrow(/VITE_API_URL is not a URL/);
+    expect(() => cspOriginsFromEnv({ VITE_API_URL: 'http://api.example.com' })).toThrow(/must be https/);
+    expect(() => cspOriginsFromEnv({ VITE_API_URL: API, VITE_STORAGE_ORIGIN: 'http://files.example.com' })).toThrow(/VITE_STORAGE_ORIGIN must be https/);
+    expect(cspOriginsFromEnv({ VITE_API_URL: 'http://localhost:8080' })?.apiOrigin).toBe('http://localhost:8080');
   });
 });
 

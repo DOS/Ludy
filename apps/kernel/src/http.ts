@@ -437,7 +437,7 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
   });
-  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-origin' }));
+  app.use('*', secureHeaders({ crossOriginResourcePolicy: 'same-site' }));
   // A web app on another origin (APP_URL, #2261) calls this API cross-origin: the allowlisted origins get CORS headers and
   // their preflights are answered here, before the rate limit and the session check (a preflight carries no token).
   app.use('*', corsMiddleware(config.CORS_ALLOWED_ORIGINS));

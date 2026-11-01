@@ -54,10 +54,15 @@ export function parseAllowedOrigins(value: string | undefined): readonly string[
 // The headers a handler (the auth proxy forwards Supabase Auth's own) may have put on the answer: never ours, so they go.
 const UPSTREAM_CORS = /^access-control-/i;
 
+// Routes a browser page never calls: the providers' and the mail relay's webhooks authenticate by signature or secret and
+// get no CORS headers, so a page of an allowed origin cannot read what they answer.
+const NO_CORS = /^\/(?:webhooks\/|api\/inbound\/|api\/bank-feed\/)/;
+
 export function corsMiddleware(allowed: readonly string[]): MiddlewareHandler {
   if (allowed.length === 0) return async (_c, next) => next();
   const set = new Set(allowed);
   return async (c, next) => {
+    if (NO_CORS.test(c.req.path)) return next();
     const origin = c.req.header('origin');
     // Same-origin requests and non-browser clients send no Origin header: no CORS headers, but the answer still varies by
     // Origin, so a shared cache does not serve it to a later cross-origin request.

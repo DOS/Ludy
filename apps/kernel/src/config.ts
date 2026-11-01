@@ -60,7 +60,13 @@ const schema = z.object({
   // mail, calendar feed events, chat alerts) and the OAuth return addresses (`/channels/oauth/<provider>/callback`,
   // `/calendar/oauth/<provider>/callback`, pages of the app) are built from it. Unset: PUBLIC_URL, as before. A different
   // origin must also be listed in CORS_ALLOWED_ORIGINS.
-  APP_URL: optional.pipe(z.url({ protocol: /^https?$/ }).optional()),
+  // An origin only (scheme, host, optional port): a path, query or user information is refused, as in CORS_ALLOWED_ORIGINS.
+  APP_URL: optional.pipe(
+    z
+      .url({ protocol: /^https?$/ })
+      .refine((v) => URL.canParse(v) && new URL(v).origin === v, 'APP_URL is an origin only (scheme, host, optional port; no path, query, user information or trailing slash)')
+      .optional(),
+  ),
   // The exact origins whose pages may call this API from a browser (#2261), comma separated: the web app's origin in a
   // split deployment. Never `*`; https only (http for localhost). Unset: no CORS headers at all, which is right when the
   // app is served from this API's own origin.
