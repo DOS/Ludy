@@ -193,7 +193,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage } from './crm-deals.ts';
+import { zBoard, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
   zNote,
@@ -455,9 +455,15 @@ export const contract = {
       stages: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
       // Creates the default stages when the org has none; answers the stages either way.
       setup: oc.input(z.strictObject({})).output(z.array(zPipelineStage)),
+      // Owners and admins edit the open stages; each answers the stages afterwards.
+      addStage: oc.input(zStageAdd).output(z.array(zPipelineStage)),
+      renameStage: oc.input(zStageRename).output(z.array(zPipelineStage)),
+      reorderStages: oc.input(zStageReorder).output(z.array(zPipelineStage)),
+      removeStage: oc.input(zStageRemove).output(z.array(zPipelineStage)),
     },
     parties: { search: oc.input(zPartySearchQuery).output(z.array(zPartyChoice)) },
     deals: {
+      board: oc.input(z.strictObject({})).output(zBoard),
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
