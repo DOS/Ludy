@@ -408,10 +408,10 @@ export const en: Dictionary = {
     },
     notes: {
       name: 'Ludy Notes',
-      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the other members. Write in Markdown, add tags, pin, and search without typing the tone marks. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
+      body: 'Notes about clients, vendors, documents, journal entries and bookings, private to you or shared with the other members. Write in Markdown, add tags, pin, and search without typing the tone marks, also in Ctrl K. My work is your own to-do list with due dates, reminders and steps; when someone else must do it, hand it to a position.',
       points: [
         'A private note is readable by you alone; a shared note is read by every member of the organization except viewers',
-        'Attach it to a vendor, a document, a journal entry or a booking and it shows right on that screen',
+        'A note written from the screen of a vendor, a customer, a document, a journal entry or a booking shows right there',
         'Download your notes and to-dos as Markdown or JSON',
       ],
       people: [{ name: 'Chị Lan', initials: 'L', agent: false }],

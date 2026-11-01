@@ -408,10 +408,10 @@ export const vi = {
     },
     notes: {
       name: 'Ludy Notes',
-      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với các thành viên. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
+      body: 'Ghi chú về khách hàng, nhà cung cấp, chứng từ, bút toán và lịch hẹn, riêng của bạn hoặc dùng chung với các thành viên. Viết bằng Markdown, gắn thẻ, ghim, tìm không cần gõ dấu, cả trong Ctrl K. Việc của tôi là danh sách việc riêng có hạn, giờ nhắc và các bước; cần người khác làm thì giao cho một vị trí.',
       points: [
         'Ghi chú riêng chỉ bạn đọc được, ghi chú dùng chung thì mọi thành viên của tổ chức, trừ người chỉ xem, cùng đọc',
-        'Gắn vào nhà cung cấp, chứng từ, bút toán hoặc lịch hẹn, hiện ngay trên màn hình đó',
+        'Ghi chú viết từ màn hình của nhà cung cấp, khách hàng, chứng từ, bút toán hoặc lịch hẹn thì hiện ngay ở đó',
         'Tải ghi chú và việc của bạn về dưới dạng Markdown hoặc JSON',
       ],
       people: [{ name: 'Chị Lan', initials: 'L', agent: false }],
