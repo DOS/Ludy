@@ -1,5 +1,7 @@
 # Ludy Ads: tóm tắt kế hoạch cho JOY
 
+> **Cập nhật 2026-11-01 (#2283):** JOY muốn người dùng **chạy quảng cáo ngay trong Ludy** với chiến dịch đầy đủ. Phần ghi (tạo và sửa chiến dịch, ngân sách, tạm dừng, Boost) được viết thành một bản sửa kế hoạch riêng, cần duyệt trước khi tiêu tiền: xem [ads-write.vi.md](ads-write.vi.md). Các mục "ngoài v1" khác bên dưới giữ nguyên.
+
 > Bản tóm tắt tiếng Việt của [ads.md](ads.md) và [ADR-0040](../adr/0040-ads-read-only-sources.md), ngày 2026-11-01. **Cả sáu câu hỏi đã được JOY trả lời ngày 2026-11-01** (xem mục "Câu trả lời của JOY" ở cuối); lát A1 (kênh quảng cáo giả, màn hình, dải so sánh với sổ) đang được build trong #2217.
 
 ## Ads làm gì, cho ai
