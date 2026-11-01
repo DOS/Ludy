@@ -407,10 +407,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
   },
-  // A contact import in progress (#2229): a staged batch over a file of the org, made by a member. Tenant roles read and
+  // A contact import in progress (#2229): a staged batch made by a member (the file is read in the browser and never stored). Tenant roles read and
   // write it whole; the import commands are the only writers.
   'crove_crm.import_batch': {
-    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), file_id: o.file, filename: 'rls-matrix.csv', created_by: o.owner } }),
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), filename: 'rls-matrix.csv', created_by: o.owner } }),
   },
   // One staged row of that import: the fields as read, how it was classified and why. A row number is unique per batch, so
   // every factory row gets a batch of its own.
@@ -418,7 +418,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => {
       const batch = randomUUID();
       return {
-        setup: [{ table: 'crove_crm.import_batch', values: { org_id: o.id, id: batch, file_id: o.file, filename: 'rls-matrix.csv', created_by: o.owner } }],
+        setup: [{ table: 'crove_crm.import_batch', values: { org_id: o.id, id: batch, filename: 'rls-matrix.csv', created_by: o.owner } }],
         row: { org_id: o.id, id: randomUUID(), batch_id: batch, row_no: importRowNo++, name: 'RLS matrix import row', outcome: 'new' },
       };
     },
