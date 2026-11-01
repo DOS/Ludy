@@ -165,9 +165,19 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       (eb) =>
         eb
           .selectFrom('crove_kernel.proposal as q')
-          .select(['q.id', 'q.status', 'q.duplicate_of', 'q.decided_at'])
+          .select([
+            'q.id',
+            'q.status',
+            'q.duplicate_of',
+            'q.decided_at',
+            // The file the proposal's current revision was read from (#2269): not this one when the original XML of an invoice
+            // first read from this PDF took the proposal's place.
+            sql<string | null>`(SELECT xr.file_id FROM crove_kernel.extraction xr WHERE xr.org_id = q.org_id AND xr.id = q.extraction_id)`.as('read_from_file'),
+          ])
           .whereRef('q.org_id', '=', 'f.org_id')
-          .whereRef('q.source_file_id', '=', 'f.id')
+          // The proposals read from the file, and the one revised from its reading (the original of a PDF's invoice, #2269):
+          // both files show the one proposal.
+          .where(sql<boolean>`(q.source_file_id = f.id OR q.extraction_id IN (SELECT xe.id FROM crove_kernel.extraction xe WHERE xe.org_id = f.org_id AND xe.file_id = f.id))`)
           .orderBy('q.created_at', 'desc')
           .orderBy('q.id', 'desc')
           .limit(1)
@@ -195,6 +205,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'p.status as proposal_status',
       'p.duplicate_of',
       'p.decided_at',
+      'p.read_from_file',
       // Kept for the org's next daily budget (#675): a deferral of the file that is not due yet.
       sql<boolean>`EXISTS (
         SELECT 1 FROM crove_kernel.usage_deferral d
@@ -290,6 +301,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           statement?.state !== 'imported' &&
           Boolean(r.extraction_status) &&
           !r.in_flight &&
+          // Reading this file again is refused once the original of its invoice took its proposal's place (#2269): the
+          // original is read again instead.
+          !(r.proposal_status === 'pending' && r.read_from_file !== null && r.read_from_file !== r.id) &&
           (r.proposal_status !== 'executed' || isVoided) &&
           (r.version ?? 0) < MAX_EXTRACTION_VERSIONS,
         createdAt: r.created_at.toISOString(),

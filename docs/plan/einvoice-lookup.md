@@ -87,7 +87,9 @@ The key of an invoice is the same as today's duplicate lookup (`finance.extracti
 | The same invoice arriving from the portal sync (#1100) | The portal list marks the row "XML received"; the existing reconciliation already matches on seller tax code, symbol and number |
 | No proposal yet | A normal new proposal |
 
-The upgrade is a new command (an extension of the revision path), not a change of the duplicate check, which stays strict.
+The upgrade is not a change of the duplicate check, which stays strict: it is a branch of the revision path.
+
+**As built for the pending case ([#2269](https://github.com/DOS/Ludy/issues/2269)).** `finance.extraction.lookup` says whether the duplicate is a pending proposal read from a PDF or a photo (`duplicateProposalUpgradable`); an original (XML) is then not flagged. The kernel duplicate guard asks again under its lock (`upgrades` in the guard), and `kernel.extraction.record` locks that proposal and gives it revision +1 from the XML reading: the payload is the original's (its `sourceFileId`, so the posted document names the XML as its source file), `extraction_id` is the XML's run, `source_file_id` stays the PDF, the XML's uploader joins the authors (P10), and the timeline says "Đã nhận hóa đơn gốc XML". It does not happen, and the original is flagged as a duplicate as before, when the proposal is no longer pending, is of another legal entity (a proposal stays in its entity), or was not read from a PDF or a photo. Both files show the one proposal (the file status follows `extraction_id` too); reading the PDF again is refused (`READ_FROM_ORIGINAL`) and a re-read of the PDF that was already running leaves the revision alone, so the weaker reading never comes back; reading the XML again revises it. The posted case needs a stored link from the document to the XML, so a migration: its own issue.
 
 ## 8. What a person must check before slice 2, and open points
 

@@ -78,6 +78,9 @@ export interface InvoiceLookup {
   learnedRules?: LearnedRule[];
   duplicateDocumentId: string | null;
   duplicateProposalId: string | null;
+  // The duplicate proposal is pending and was read from a PDF or a photo (#2269): an original (XML) of the same invoice
+  // takes its place instead of being flagged as its duplicate.
+  duplicateProposalUpgradable?: boolean;
   // The document in force of the invoice a replacement or an adjustment corrects (#916), or null.
   relatedDocumentId: string | null;
 }
@@ -140,13 +143,25 @@ export const purchaseLookup = defineQuery({
     };
     const document = await inForce(input.series, input.number);
     const original = input.related ? await inForce(input.related.series, input.related.number) : undefined;
-    const duplicate = await ctx.trx
+    const duplicates = await ctx.trx
       .selectFrom('crove_kernel.proposal')
-      .select('id')
+      .select(['id', 'status', sql<string | null>`payload ->> 'extractionMethod'`.as('method')])
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
       .where('status', 'in', ['pending', 'executed'])
       .where((eb) => eb.or([eb('source_file_id', 'is', null), eb('source_file_id', '!=', input.fileId)]))
+      // Nor is a proposal revised from this file's reading (the original of a PDF's invoice, #2269).
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('crove_kernel.extraction as xr')
+              .select('xr.id')
+              .whereRef('xr.org_id', '=', 'crove_kernel.proposal.org_id')
+              .whereRef('xr.id', '=', 'crove_kernel.proposal.extraction_id')
+              .where('xr.file_id', '=', input.fileId),
+          ),
+        ),
+      )
       // Nor is an executed proposal whose document was voided.
       .where(({ not, exists, selectFrom }) =>
         not(
@@ -166,8 +181,9 @@ export const purchaseLookup = defineQuery({
         q.where(input.sellerTaxCode ? sql`payload #>> '{seller,taxCode}'` : sql`payload #>> '{seller,name}'`, '=', input.sellerTaxCode ?? input.sellerName),
       )
       .orderBy('created_at')
-      .limit(1)
-      .executeTakeFirst();
+      .limit(2)
+      .execute();
+    const [duplicate, anotherDuplicate] = duplicates;
     // The vendor whose learned rules apply: by tax code as above, or, for an invoice without one, by name as
     // finance.purchase.record finds or creates the party it learns for (upsertParty).
     const ruleParty =
@@ -187,6 +203,10 @@ export const purchaseLookup = defineQuery({
       learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, await resolveLegalEntity(ctx, input.legalEntityId)),
       duplicateDocumentId: document?.id ?? null,
       duplicateProposalId: duplicate?.id ?? null,
+      // Only when the pending PDF or photo reading is the one match: another proposal of the same invoice (a second one, in
+      // another legal entity, an executed one) keeps the original flagged as a duplicate.
+      duplicateProposalUpgradable:
+        anotherDuplicate === undefined && duplicate?.status === 'pending' && (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') && !document,
       relatedDocumentId: original?.id ?? null,
     };
   },
@@ -485,7 +505,11 @@ export async function extractAndPropose(
   const converted = bookedInVnd(invoice);
   // A VND invoice with amounts below one dong is proposed rounded to the dong (#2235); checkInvoice has warned about it.
   const booked = converted?.invoice ?? roundInvoiceToDong(invoice).invoice;
-  if (lookup.duplicateDocumentId || lookup.duplicateProposalId) checks.unshift(DUPLICATE_CHECK);
+  // An original (XML) of an invoice whose PDF or photo reading is still pending takes that proposal's place (#2269): it is
+  // not a duplicate of it. The kernel decides again under its lock (the guard below) and flags it after all if the
+  // proposal can no longer be revised.
+  const upgrades = method === 'einvoice_xml' && lookup.duplicateProposalUpgradable === true && !lookup.duplicateDocumentId;
+  if ((lookup.duplicateDocumentId || lookup.duplicateProposalId) && !upgrades) checks.unshift(DUPLICATE_CHECK);
   const related = relatedRef(invoice, lookup.relatedDocumentId);
   if (related) checks.push(relatedCheck(related));
   // A sale (issue #313) books every line to revenue; a purchase proposes an expense or asset account per line.
@@ -567,10 +591,11 @@ export async function extractAndPropose(
         command: 'finance.purchase.record',
         title: `${memo}`.slice(0, 300),
         payload,
-        duplicateOf: lookup.duplicateProposalId,
+        duplicateOf: upgrades ? null : lookup.duplicateProposalId,
         // Documents are read at the same time: the record asks the lookup again under a lock on this invoice, so two
         // copies in one batch cannot both pass (#2137). The key is the identity the lookup matches on.
         duplicateGuard: {
+          ...(method === 'einvoice_xml' ? { upgrades: true } : {}),
           // Hashed: a seller name can be 500 characters, and the key is only a name for the lock.
           key: sha256Hex(new TextEncoder().encode(JSON.stringify([lookup.direction === 'sale' ? 'sale' : 'purchase', lookup.direction === 'sale' ? '' : (sellerTaxCode ?? invoice.seller.name), invoice.series, invoice.number]))),
           lookup: lookupInput,

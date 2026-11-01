@@ -75,6 +75,8 @@ export const KERNEL_ERROR_CODES = [
   'FOUR_EYES_REQUIRED',
   'CONTENT_CHANGED',
   'EXTRACTION_PENDING',
+  // The proposal now holds the reading of the seller's original XML, so its PDF is not read again (#2269).
+  'READ_FROM_ORIGINAL',
   'REEXTRACT_LIMIT',
   'ARCHIVE_NOT_READ',
   // Recording purchases and journal reversals (finance module).
