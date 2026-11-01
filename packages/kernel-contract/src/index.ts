@@ -83,3 +83,5 @@ export * from './notes.ts';
 export * from './manifest.ts';
 export * from './screens.ts';
 export * from './saved-view.ts';
+export * from './phone.ts';
+export * from './contacts.ts';

@@ -6074,6 +6074,9 @@ export const vi = {
         revoke: 'Thu hồi địa chỉ đăng ký lịch hẹn',
         revoke_for_member: 'Thu hồi địa chỉ đăng ký lịch hẹn của thành viên đã mất quyền',
       },
+      contact: {
+        list: 'Xem danh sách liên hệ',
+      },
       event_type: {
         create: 'Tạo loại lịch hẹn',
         list: 'Xem danh sách loại lịch hẹn',
@@ -6465,6 +6468,7 @@ export const vi = {
         set_vat_filing_period: 'Đặt kỳ khai thuế GTGT',
       },
       party: {
+        create: 'Thêm liên hệ',
         duplicate_hints: 'Xem các đối tác có thể trùng',
         link_entity: 'Gắn đối tác với pháp nhân',
         link_for_tax_code: 'Tìm hoặc gắn đối tác theo mã số thuế',

@@ -6074,6 +6074,9 @@ export const en = {
         revoke: 'Revoke the booking feed address',
         revoke_for_member: 'Revoke the booking feed of a member who lost access',
       },
+      contact: {
+        list: 'View the contact list',
+      },
       event_type: {
         create: 'Create a booking type',
         list: 'List booking types',
@@ -6465,6 +6468,7 @@ export const en = {
         set_vat_filing_period: 'Set the VAT filing period',
       },
       party: {
+        create: 'Add a contact',
         duplicate_hints: 'List possible duplicate parties',
         link_entity: 'Link a party to a legal entity',
         link_for_tax_code: 'Find or link a party by tax code',

@@ -185,6 +185,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -449,6 +450,11 @@ export const contract = {
       move: oc.input(zBookingMove).output(z.object({ bookingId: z.string(), startsAt: z.string() })),
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
+    },
+    // The contacts of the CRM (K4, #2228): the org's parties, searched without Vietnamese marks, filtered and sorted by a
+    // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
+    contacts: {
+      list: oc.input(zContactList).output(zContactPage),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.
@@ -1276,6 +1282,9 @@ export const contract = {
     // follow), each with its receivable on 131 and its last invoice date. q searches the name and the tax code.
     // The customers of one legal entity (#1534): legalEntityId as in zLegalEntityChoice.
     customers: oc.input(z.object({ q: z.string().max(100).optional(), after: zCustomerCursor.optional(), legalEntityId: zId.optional() })).output(zCustomerPage),
+    // Owners, admins and members (R1, CRM K4 #2228): a person or a company by hand, validated as an edit is; a tax code
+    // another party uses refuses (409) and names it.
+    create: oc.input(zPartyCreate).output(z.object({ partyId: zId, version: z.number().int() })),
     // Owners, admins and members (R1, #887): the party's name and contact details, from the version the editor read.
     // A tax code can be added, never changed or removed.
     update: oc
