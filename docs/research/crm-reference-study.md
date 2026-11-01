@@ -1,12 +1,12 @@
 # CRM reference study: modern, AI-native and Vietnamese CRMs
 
-Status: research only, 2026-10-31. Issue [#2122](https://github.com/DOS/Ludy/issues/2122). It adds no code and no roadmap commitment: every "take" below is a recommendation for the owner (AGENTS.md: a new customer-visible feature goes to the owner first). Vietnamese summary for the owner: [crm-reference-study.vi.md](crm-reference-study.vi.md).
+Status: research only, 2026-10-31; section 4 deepened on 2026-11-02 for Clarify, Lightfield and Day AI (issue [#2343](https://github.com/DOS/Ludy/issues/2343), section 4.7). Issue [#2122](https://github.com/DOS/Ludy/issues/2122). It adds no code and no roadmap commitment: every "take" below is a recommendation for the owner (AGENTS.md: a new customer-visible feature goes to the owner first). Vietnamese summary for the owner: [crm-reference-study.vi.md](crm-reference-study.vi.md).
 
 Why now: the kernel plan's CRM scope (Phase 3, [crove-os-kernel.md](../plan/crove-os-kernel.md), "Phase 3: CRM + Calendar") names Twenty, Cal.com and Calendly as references. It waits for wedge-customer demand (Decisions 2 and 20). The owner added Clarify on 2026-10-31 as the main reference for Ludy's AI CRM, because they want agents that work in the background. This study prepares that work.
 
 Lens: the owner's focus is core features for one-person companies and SMEs first. Enterprise features (custom objects at scale, SSO, territories, forecasting) are weighed as "later" or "skip" unless a one-person company needs them.
 
-How to read the sources: every fact carries a source id (listed in section 10) and was checked on 2026-10-31 unless noted. "UNVERIFIED" means no vendor page confirmed it. "Search summary" means the fact came from a search-engine summary and not from a page that was opened. Nothing is copied from the vendors: the text is paraphrased and no screenshot is used.
+How to read the sources: every fact carries a source id (listed in section 10) and was checked on 2026-10-31 unless noted; the facts added in section 4.7 were checked on 2026-11-02. "UNVERIFIED" means no vendor page confirmed it. "Search summary" means the fact came from a search-engine summary and not from a page that was opened. Nothing is copied from the vendors: the text is paraphrased and no screenshot is used.
 
 ## 1. Findings in brief
 
@@ -19,6 +19,7 @@ How to read the sources: every fact carries a source id (listed in section 10) a
 7. **Only Twenty can be self-hosted among the global CRMs studied**, and it mixes AGPLv3 with files under a commercial licence (S-TW9). Ludy is AGPL for the whole repository. Getfly and Bitrix24 offer on-premise or self-hosted editions (S-GF1, S-BX1).
 8. **In Vietnam the CRM is bought with Zalo, a phone system and an invoice link.** Every Vietnamese CRM studied sells Zalo and call-center links as paid add-ons or higher plans, and MISA's CRM is attached to its accounting and e-invoice products (section 5). Ludy already has a Zalo OA channel for publishing (Social) and an accounting core, so the gap is the inbox and the call log, not the accounts.
 9. **Gaps against the plan's CRM scope** are listed in section 8: deals and pipelines, saved views, custom fields, `record_link`, CSV import for parties, a shared timeline beyond bookings, and the agent pieces.
+10. **The deep dive on Clarify, Lightfield and Day AI (section 4.7, 2026-11-02) shows three things.** First, community evidence is thin and mostly written by competitors or investors, so ratings (Clarify 4.9 on G2 and Product Hunt, by its own blog and an opened page) say little. Second, for background agents, Clarify and Lightfield both start near $1,000 a month (about 25.8 million VND) for a 3-person team, while Day AI starts under $100 (about 1.9 to 2.3 million VND) with a flat fee per agent; the most repeated complaint about Clarify is unpredictable credit bills. Third, none documents Vietnamese or Zalo. This reinforces recommendations already made (visible budget meter, Zalo first) and adds one: a person's correction must outrank later AI guesses (section 7).
 
 ## 2. What Ludy has today (checked in the repository on 2026-10-31)
 
@@ -73,8 +74,8 @@ The four are SaaS only on every page seen, and none documents Vietnamese or Zalo
 - **Background work.** Agents fire on a trigger (a new deal, an inbound email, a finished meeting) and then update records, draft follow-ups, flag risks, research accounts, enrich leads and draft outreach. The home page also lists email and calendar sync, call recording with summaries and next steps, new-opportunity detection with automatic deal-stage updates, meeting briefings and an enrichment waterfall for data gaps. A custom field can write its own instructions and autofill itself. A "Rep" agent drafts campaigns and enrolls leads (S-CL1, S-CL3).
 - **Needs a person.** Not described on the vendor's pages (UNVERIFIED). Search summaries say approval can be set per action or tool on each agent, and that agents can run fully autonomously; Clarify's own docs do not confirm it.
 - **See, correct, undo.** Every action is logged, and the changelog added activity-feed filters on 2026-10-09. Each agent has its own read and write permissions and an active switch. Undo, field locking and confidence scores are not mentioned (UNVERIFIED) (S-CL3, S-CL4).
-- **Price.** Free: 1,000 credits a month, 20,000 records, 1 campaign, 3 objects, no workflows or workspace agents. Starter $50 a month. Growth from $1,000 a month, annual only. Unlimited seats on every plan. Credits are per activity (30 for a meeting summary, 1 per campaign email); at zero credits AI pauses and recording continues (S-CL2).
-- **Other.** Custom objects launched in April 2026, agents entered early access in May 2026, an MCP beta was announced in January 2026. Chrome, macOS and Windows apps; no mobile app mentioned. SOC 2 Type 2, US hosting only, EU planned (S-CL3, S-CL5).
+- **Price.** Free: 1,000 credits a month, 20,000 records, 1 campaign, 3 objects, no workflows or workspace agents. Starter $50 a month ($40 if paid yearly, per a price tracker). Growth from $1,000 a month, annual only. Unlimited seats on every plan. Credits are per activity (30 for a meeting summary, 1 per campaign email); at zero credits AI pauses and recording continues (S-CL2). Full plan limits and a worked bill are in section 4.7.1.
+- **Other.** Custom objects launched in April 2026. The dates first written here for agents (early access, May 2026) and MCP (beta, January 2026) did not check out on 2026-11-02 and are now UNVERIFIED (section 4.7.1). Chrome, macOS and Windows apps; no mobile app mentioned. SOC 2 Type 2, US hosting only, EU planned (S-CL3, S-CL5).
 
 ### 4.2 Lightfield
 
@@ -92,7 +93,7 @@ Vendor documentation was thin and several pages returned empty, so parts rest on
 - **Background work.** It ingests Gmail, calendar, meetings and Slack into a context graph and maps conversations to people, organizations and opportunities without manual entry. Agents run on a schedule or an event: a deal-risk flag after a recorded meeting, a weekday Slack briefing, inbox triage with draft replies, a Friday stale-deal nudge. "Skills" run on a schedule or trigger and can act through connectors (S-DY1, S-DY2, S-DY3).
 - **Needs a person.** A workspace can require approval before data is pushed to an external CRM. Campaign emails wait in a review queue. Slack tool calls can post Approve and Deny cards, and shared channels always ask. Delegated agents can pause in a "Needs Input" state. Whether "nothing went out without your approval" is a setting or a blanket rule is UNVERIFIED (S-DY1, S-DY3).
 - **See, correct, undo.** An audit trail "records what ran" with no format given. Agents can read a property's change history and cite the exact message a statement came from. Undo, revert, confidence and field locks are UNVERIFIED (S-DY1, S-DY3).
-- **Price.** Priced per agent (a user's assistant), no per-seat fee and no credits. Free $0 with ingestion and search but no agent drafts and no automated skills. Paid from $24 to $800 a month per agent (S-DY4).
+- **Price.** Priced per agent (a user's assistant), no per-seat fee and no credits. Free $0 with ingestion and search but no agent drafts and no automated skills. Paid from $24 to $800 a month per agent; the page says yearly billing, and a vendor guide gives higher monthly list prices (S-DY4). Tiers, skill slots and a worked bill are in section 4.7.3.
 
 ### 4.4 Attio's AI
 
@@ -113,15 +114,163 @@ Vendor documentation was thin and several pages returned empty, so parts rest on
 | Log of agent work | Action log, activity-feed filters | Run log per step, field history | Audit trail, property history | Run viewer, workflow and agent log |
 | Undo | UNVERIFIED | None general | UNVERIFIED | UNVERIFIED |
 | Pricing model | Credits, free tier, unlimited seats | Per user, then per workspace, no free | Per agent, no credits | Credits plus seats, free tier |
-| Mobile | No | No (browser) | UNVERIFIED | Yes |
+| Mobile | No | No (browser) | No native app (vendor's own list, S-DY14) | Yes |
 | Self-host | No | UNVERIFIED | UNVERIFIED | No |
+| Funding (section 4.7) | Series A $15M, 2025-06-25, USVP-led (second lead disputed); $22.5M in total; Seam AI bought 2026-07 | Series A $47M, 2026-09-09, a16z-led; about $128M with Tome (my sum) | Seed $4M 2024-06 and Series A $20M 2026-02, both Sequoia-led; about $24M | Not in this deep dive |
+| People (estimate) | 25 to 35, UNVERIFIED | about 40 (a16z job board) | 10 to 42, UNVERIFIED | Not in this deep dive |
+| Community rating | G2 4.9 (21, the vendor's blog; page not opened); Product Hunt 4.9 (10, opened) | G2 UNVERIFIED (4.9 from 10, or 5.0 from 2); Product Hunt 895 upvotes, no stars | No usable rating; reviews found are by competitors | Not in this deep dive |
+| Main complaint (attributed) | Unpredictable credit bills (MakerStack, competitors) | Price and credit opacity (competitors, a reviewer) | Weak pipeline and forecasting (competitors) | Not in this deep dive |
+| 3-person bill, no background jobs | $50 a month, about 1.29 million VND | $267, about 6.89 million VND | $108 to $135, about 2.79 to 3.48 million VND | Not in this deep dive |
+| 3-person bill, with background jobs | $1,000 (Growth), about 25.8 million VND | $999 (Pro), about 25.77 million VND | $72 to $90 (3 Turbo), about 1.86 to 2.32 million VND | Not in this deep dive |
+| Vietnamese or Zalo | None found; English screens | None found; English screens | None found | UNVERIFIED |
+| Release cadence | 11 changelog entries in 90 days | 11 in 90 days | 10 between 2026-08-04 and 2026-10-06 (aggregator; later weeks UNVERIFIED) | Not in this deep dive |
+
+Rate for VND figures: 25,800 per USD (S-FX1), 2026-11-02. The first block of rows was checked on 2026-10-31, the last block on 2026-11-02; details and sources are in section 4.7.
 
 ### 4.6 Patterns worth copying, and the traps
 
 - **Copy:** selective capture with an off switch; an autonomy setting per field or per agent (Off, Suggest, Auto); a review queue that links each item to the run that made it; a run log with the permissions the run had; confidence and sources shown on research output; one place to see every agent action (activity-feed filters).
 - **Trap 1, silent capture of junk.** Every vendor had to add skip rules for auto-responders, subscription mail and personal domains. Ludy's `party` has a unique tax code and duplicate hints, but no such rules.
-- **Trap 2, credits that stop the product.** Clarify and Attio bill AI by credits; at zero, AI pauses. For a one-person company a bill that grows with agent work is a risk, so budgets need a clear stop and a visible meter (Ludy already has per-run budgets and a P01 budget rule).
+- **Copy, added 2026-11-02:** a person's correction outranks a later AI guess (Day AI's vendor guide and We The Flywheel describe it; section 4.7.3).
+- **Trap 2, credits that stop the product.** Clarify and Attio bill AI by credits; at zero, AI pauses. For a one-person company a bill that grows with agent work is a risk, so budgets need a clear stop and a visible meter (Ludy already has per-run budgets and a P01 budget rule). The deep dive adds evidence: unpredictable credit bills are the top complaint about Clarify (MakerStack and competitors), Clarify removed its rate card from the pricing page in September 2026, and Lightfield changed its prices five times in about three months (Ahoy, a competitor) (S-CL12, S-CL17, S-LF22). Day AI avoids credits with a flat fee per agent, and its CEO hints that usage pricing may follow.
 - **Trap 3, "approve" that cannot be undone.** Lightfield says approving an automation email sends at once and cannot be undone. Ludy treats sending as R2, and the plan's founder exception only allows a delayed, cancellable send to a verified contact from an untainted source (P06).
+
+### 4.7 Deep dive on Clarify, Lightfield and Day AI (added 2026-11-02, issue #2343)
+
+The owner asked for a closer look at the three AI CRMs that work in the background. This part adds money, community reviews, expert views, real pricing and potential. It is research only: no code and no roadmap commitment.
+
+How to read it:
+- Every fact here was checked on **2026-11-02** and carries a source id from section 10 ("deep dive" lists). "Search summary" means the fact came from a search-engine snippet and the page was not opened or returned HTTP 403. "UNVERIFIED" means no page confirmed it.
+- Community and expert statements are attributed to their source and are not stated as fact. Quotes are short phrases; the rest is paraphrased. No screenshot is used.
+- **Bias warning.** Review sites for all three are thin. Most "reviews" and "comparisons" found were written by a competitor (Clarify, Lightfield, Ahoy, Coffee, folk, Fluid, Dreamhub) or by an investor (Madrona, Ascend, a16z, BVP, Sequoia). Each is flagged. No Forbes article and no TechCrunch article after 2024 was found for any of the three.
+- **Exchange rate.** 1 USD = 25,796 VND, from open.er-api.com (a mid-market rate, last updated 2026-11-01 00:02 UTC, read on 2026-11-02) (S-FX1). VND figures below use 25,800 and are rounded. A bank's selling rate and a foreign-card fee would add a few percent; sales tax or VAT on a foreign software bill is not included and not checked (UNVERIFIED).
+
+#### 4.7.1 Clarify
+
+**1. Company and money**
+- Seattle company founded January 2024. Founders named in the funding press release: Patrick Thompson (CEO) and Austin Hay (COO). Ascend and GeekWire also name Ondrej Hrebicek as CTO and co-founder; Ascend says Thompson and Hrebicek founded Iteratively, which Amplitude bought in 2021 (S-CL6, S-CL7, S-CL8 search summary).
+- Series A of $15M announced 2025-06-25, $22.5M raised in total (press release; GeekWire says $22M). Leads disagree between sources: the press release names USVP and Gradient, Ascend's own post says USVP and Madrona co-led. Only USVP is certain (S-CL6, S-CL7).
+- First acquisition: Seam AI, about 2026-07-21 (a search summary gives the date; CDP Institute dated its note 2026-07-25). Terms undisclosed. Clarify said it also took extra, undisclosed funding with the deal. It feeds a planned "Signals" product that the pricing page still marks "Coming" (S-CL9, S-CL2).
+- Headcount is not stated by the vendor and sources disagree: about 20 (Ascend), 24 (GeekWire, search summary), 29 (Built In), 31 (PitchBook, search summary). My estimate is 25 to 35 people plus 5 from Seam. LinkedIn was not reachable (UNVERIFIED) (S-CL7, S-CL20).
+- Customers the vendor names itself: Paramark, Sift and Volca (2025 press release). Ascend claims over 100 customers. The home page names none (S-CL6, S-CL7, S-CL1).
+
+**2. Community reviews**
+- G2: 4.9 out of 5 from 21 reviews, but the figure comes from Clarify's own blog of 2025-12-17; the G2 page returned 403 and a newer count is UNVERIFIED (S-CL10). Product Hunt: 4.9 from 10 reviews, page opened (S-CL11). Capterra: a listing exists in search results but its rating is UNVERIFIED, and Clarify's own October 2026 blog says Capterra is "not yet available", so the two disagree (S-CL22).
+- Reddit, Hacker News, X and LinkedIn: no real thread was found. Vendor blogs that say "Reddit users" give no link, so treat them as UNVERIFIED (S-CL15).
+- Recurring praise (Product Hunt and the vendor's own review digest): the CRM fills itself in, easy setup, a free tier and unlimited seats, fast shipping (S-CL10, S-CL11).
+- Recurring complaints: credit bills are hard to predict (the most frequent theme, in MakerStack and in competitor posts), shallow integrations and API, thin reporting and customization, little control over which calls are recorded (S-CL11, S-CL12, S-CL15, S-CL14).
+
+**3. Expert and analyst views**
+- Investors credit it: Madrona frames CRM as a very large market ripe for change and quotes the CEO that Clarify charges when the agent works; the founders admit limited build capacity (S-CL13). Ascend calls it a "SaaS 3.0" bet and notes that incumbents are held back by seat pricing (S-CL7). The Signal, a sponsored newsletter, doubts almost nothing (S-CL21).
+- MakerStack scores it 7.9 out of 10, praises the low admin work and asks for clearer credit pricing; the site discloses affiliate income (S-CL12).
+- Ahoy, a competitor, doubts the light, opinionated data model and says credit metering needs estimating at high use (S-CL14). CDP Institute files the Seam deal under vertical AI pulling workflows out of CRM (S-CL9).
+
+**4. Pricing in depth** (USD; docs and pricing page opened 2026-11-02; S-CL2, S-CL16, S-CL17)
+- **Free:** $0, 1,000 credits a month, 20,000 records, 3 objects, 1 campaign, standard enrichment. Free credits read 2,500 in Clarify's own October blog, so the count is contradictory.
+- **Starter:** $50 a month, or $40 a month billed yearly (a price tracker; the docs say yearly saves 20 percent). 5,000 credits (the table shows a 5k to 40k selector, probably a ladder of $50 steps up to $400 per a competitor; the steps are UNVERIFIED because Clarify removed the rate card from the page around 2026-09-07), 250,000 records, 5 objects, 5 campaigns, advanced enrichment capped at 1,000 per period.
+- **Growth:** from $1,000 a month, yearly only (at least $12,000 a year), 100,000+ credits, 20 campaigns, enrichment cap 5,000. **Workflows, workspace agents, delegated sending and non-English bot recording start here.** Enterprise is custom; SSO and SCIM are Enterprise only.
+- **Seats:** unlimited and free on every plan. Credits do not roll over on Starter.
+- **What a credit buys:** meeting summary 30, meeting prep 30, a task from a meeting 10 each, deal summary 20, field update suggestion 10, deal detection 20 (charged even when the suggestion is rejected), AI field autofill 3 to 30, campaign email 1, net-new lead from Lead Finder 1, workflow block 1. Agents are metered by AI use. Recording, enrichment and chat with the Rep agent cost nothing (S-CL16).
+- **Hidden costs:** meeting prep, summary and tasks fire on every meeting unless switched off; on-demand credits (off by default, optional cap) are billed at a rate that is not published; heavy on-demand use can trigger an extra mid-month invoice; the enrichment cap is not lifted by buying credits; the jump from $50 to $1,000 is the price of any background workflow or agent (S-CL16).
+- **Worked bill, 3-person SME** (my assumptions: 300 contacts, 30 recorded meetings a month, 200 outreach emails, 15 live deals, default automations on): about 4,100 credits a month (900 for summaries, 900 for prep, 600 for tasks, 400 for deal summaries, 100 for deal detection, 400 for field updates, 500 for autofill, 200 emails, 100 Lead Finder). That fits Starter 5,000: **$50 a month, about 1,290,000 VND** ($40 or about 1,032,000 VND if paid yearly). A lean setup is still about $50 because it passes the 1,000 free credits. A heavy setup (double use) is about $100 (inferred, UNVERIFIED), about 2,580,000 VND. **If the team wants workflows or agents that run in the background, the bill is Growth: $1,000 a month, about 25,800,000 VND, or about 309,600,000 VND a year.**
+
+**5. Potential and risks**
+- Momentum: the changelog has 11 entries between 2026-08-04 and 2026-11-02 (about one a week), after a gap with no entry between September 2025 and January 2026. October 23 shipped the Rep agent on Claude 5.5, workspace agents and Stripe sync (S-CL3). Built In lists 4 open roles, among them Head of Product, which may signal a product-leadership change (my inference) (S-CL20).
+- Claims in section 4.1 that this check could not confirm: "agents in early access in May 2026" (the April entry only says "coming soon") and "MCP beta in January 2026" (the April entry says custom MCP connections were in closed beta). Both are now UNVERIFIED. The April 2026 custom objects, SOC 2 Type 2 and US-only hosting claims were confirmed (S-CL3, S-CL5).
+- Moat (my reading): charging only when the agent works, unlimited seats, API, MCP, a prospect database and Seam's signals. Weak spots: a light data model and narrow integrations, which the vendor's own blog admits (S-CL14, S-CL22).
+- Risks: incumbents and direct rivals (Attio, Lightfield) using the same "autonomous CRM" words; unpredictable credit bills, made worse by removing the rate card; model cost passes through to credits (the agents run on a third-party model); a team of about 30; hosting on AWS in the US only (EU "planned"). The subprocessor and training policy sit on a trust page that was not opened (UNVERIFIED) (S-CL5, S-CL3).
+- Vietnam: no Zalo anywhere; the interface is English only. The bot recorder claims "38+ languages" on Growth and above with no list and Vietnamese not named; the local recorder lists six languages and none is Vietnamese; the docs disagree with each other. A Vietnamese team gets reliable Vietnamese transcription, if at all, only on the $1,000 tier (S-CL19).
+- **Outlook, my opinion (2-3 years):** a small team with a real product and good velocity. The likeliest paths are staying a founder-led niche or being bought. Its credit pricing is the main thing that can turn users away, and Growth at $1,000 is a steep step for a small company that wants the agents.
+
+#### 4.7.2 Lightfield
+
+**1. Company and money**
+- Founders: Keith Peiris (CEO) and Henri Liriani (President), both ex-Meta. They founded Tome in December 2020, an AI presentation app that reached about 25 million users (a16z, Contrary; VentureBeat says about 20 million). Tome raised about $81M (Contrary; Upstarts says about $80M) and cut staff from 70 to 7 in 2023. Lightfield is the same company after the pivot, launched publicly the week of 2025-11-20 (S-LF9, S-LF10, S-LF11, S-LF12).
+- **The $47M is a Series A**, announced 2026-09-09 and led by a16z, with Maverick, Coatue, Greylock, Lightspeed, Audacious and Alumni Ventures. The valuation was not disclosed. Adding Tome's rounds gives about $128M in total (my arithmetic, not a sourced figure) (S-LF9, S-LF10, S-LF14).
+- Headcount: about 40 in September 2026, about 20 a year earlier (a16z job board, Upstarts) (S-LF15, S-LF10).
+- Traction claimed by the vendor and not checked by anyone else: 5,000+ companies signed up, 400 percent net dollar retention, no revenue figure. A search snippet of an X post says revenue grew 80 percent a month to 1,000 paying customers in July; the post returned HTTP 402, so that is UNVERIFIED. The press notes that "signed up" is not "using" (S-LF14, S-LF10, S-LF13).
+- Customers the vendor names itself: Macroscope, Weaver, Verdigris, Power, SF Compute, Thrad, Agree and Intent HQ, plus a logo list of about 50 more. Mostly early-stage startups, many in Y Combinator (S-LF25, S-LF11).
+
+**2. Community reviews**
+- G2: the page returned 403. Search snippets disagree (4.9 from 10 reviews, or 5.0 from 2): UNVERIFIED. Capterra: Clarify says it is not listed (search summary). Product Hunt: 895 upvotes and #2 of the day on 2026-03-18, no star rating shown, one visible review (S-LF16).
+- Reddit: no verifiable thread (a competitor claims complaints without links). Hacker News: Algolia searches found no Lightfield CRM thread, which does not prove there is none. X and LinkedIn: only official posts were seen (S-LF19).
+- Praise: automatic capture from mail and calendar, setup in about 7 minutes to a filled pipeline (Nubia Magazine), a polished interface, meeting pre-briefs, API and MCP (S-LF16, S-LF17, S-LF18).
+- Complaints: price and credit opacity, no free plan, no native mobile app as of April 2026, recording meetings by design, and some auto-created records pointing to companies that do not exist (Nubia Magazine) (S-LF17, S-LF19).
+
+**3. Expert and analyst views**
+- a16z (2026-09-09, an investor) credits a "business world model" and a context moat that compounds, and names no risks (S-LF9).
+- VentureBeat (2025-11) credits the pivot and doubts hallucinations (the CEO concedes they cannot be removed, so a person approves outbound mail), the privacy of recorded calls, a customer base skewed to early-stage startups, and the pull of Salesforce and HubSpot (S-LF11).
+- Upstarts notes that neither customer it named used the prediction features, lists crowded rivals (Attio, Clay, Apollo, Salesforce) and says the model leans on costly hands-on implementation (S-LF10). Contrary Research calls the moat claims "not proven" and noted missing forecasting and territory tools in 2025 (S-LF12). ultrathink.ai doubts the 400 percent figure and notes figures differ across outlets (S-LF13). SaaStr's piece is promotional (S-LF20).
+
+**4. Pricing in depth** (USD; pricing page, support article and estimator opened 2026-11-02; S-LF7, S-LF21)
+- **Starter:** $89 per user per month, billed monthly, at most 3 users, 50,000 records, 14-day trial. No workflows, automations, sequences or dashboards. The support article says Starter has no credits while the estimator offers Starter pay-as-you-go credits at $0.040: contradictory.
+- **Pro:** $999 per workspace per month, yearly billing, 5 capture seats plus unlimited viewers, 250,000 records, 450,000 credits a year, automations, sequences, dashboards. **Growth:** $1,999 a month, yearly, 10 capture seats, 750,000 records, 900,000 credits, advanced enrichment. **Enterprise:** custom (RBAC, SSO).
+- An extra capture seat is $200 a month, billed yearly. Credits are pooled for the workspace, yearly, and expire at year end. They pay for automations, workflows and sequences per run and for advanced enrichment per record; per-action amounts are not published. Overage is billed at a "pre-agreed" rate that is not published, and the default is that nothing stops (a hard cap is optional). The estimator shows $0.040, $0.030 and $0.028 per credit for Starter, Pro and Growth; Ahoy says it is older than the live page.
+- **Hidden costs:** Starter at 3 users is $267, Pro is $999 flat, a 3.7 times jump the moment the team needs automation, dashboards or a fourth user; yearly commitment from Pro; credits expire; unpublished overage rate; Pro and up reportedly need a demo (a competitor says so). **Prices moved often:** Ahoy counts 5 changes since late July 2026; older prices were $36 and $99 per user (February), $59 and $149 (March) and $899 plus per-seat fees (July). Blog posts that quote these are stale (S-LF22).
+- **Worked bill, 3-person SME** (my assumptions: all three customer-facing, mail, calendar and meetings synced, daily chat use):
+  - Starter, 3 x $89 = **$267 a month, about 6,889,000 VND** ($3,204 a year), with no automation.
+  - Pro, within the credit allowance: **$999 a month, about 25,774,000 VND** ($11,988 a year, about $333 per user per month).
+  - Pro with heavy credit use: about $15,000 to $21,000 a year, so about $1,250 to $1,750 a month, **about 32,250,000 to 45,150,000 VND**. This extrapolates the vendor's estimator at the old $0.030 rate and is UNVERIFIED.
+  - Growth: $1,999 a month, about 51,574,000 VND, if the three do real outbound.
+
+**5. Potential and risks**
+- Momentum: 11 releases between 2026-08-07 and 2026-10-23, about one a week (S-LF5). Hiring: about 25 open roles on the a16z board, mostly San Francisco, including a founding sales manager and applied scientists (S-LF15). Funding: a top-tier Series A in September 2026.
+- Security: the pricing page claims SOC 2 Type II, HIPAA and GDPR, with ISO 27001 "soon"; in November 2025 it was only Type I (VentureBeat). The vendor says it does not train on customer data. Hosting region, subprocessors and model providers: UNVERIFIED (the trust page did not render) (S-LF7, S-LF23, S-LF11).
+- Moat (vendor and investor claim): accumulated customer context and a context graph; counter: any rival with mail and meeting capture can copy auto-capture, so the value rests on agent quality.
+- Risks: crowded rivals and incumbents; credit economics and repeated repricing; a business model that leans on forward-deployed engineers, which may not scale to a low-priced SME; hallucinated records; recording by design; customers skewed to early-stage startups (S-LF10, S-LF11, S-LF13).
+- Vietnam: nothing found. English-only interface per a reviewer and a listing site (search summary). No Zalo or messaging channel is documented; inbound webhooks and an API exist, so a Zalo link would be custom work. A weak fit for a Vietnamese SME today (S-LF24, S-LF17).
+- **Outlook, my opinion (2-3 years):** the best funded of the three and heading up-market, so its price will likely stay high and change often. It is unlikely to localize for Vietnam. If its claims hold, it becomes the reference product that HubSpot and Salesforce copy; if they do not, the repricing history is the first sign.
+
+#### 4.7.3 Day AI
+
+**1. Company and money**
+- Founders: Christopher O'Donnell (CEO) and Michael Pici, both ex-HubSpot. O'Donnell was HubSpot's chief product officer and left in 2021 for Thrive Global. TechCrunch and Bessemer say he co-founded ProfitWell (sold to Paddle); both pages were read through a summarizer, and one weak source lists other companies, so treat that as "per TechCrunch and Bessemer". The "Dex" link in the brief was not found anywhere: UNVERIFIED and probably wrong (S-DY7, S-DY8, S-DY9).
+- Seed: $4M led by Sequoia, 2024-06-20. **Series A: $20M led by Sequoia, 2026-02-02**, with Sound Ventures, Permanent Capital, Conviction and Greenoaks; Sequoia's Pat Grady joined the board. Total about $24M (S-DY6, S-DY5). Dealroom estimates valuations of $16M at seed and $80M at the Series A (an estimate, not company-stated) (S-DY10). One tracker says $28M raised and a $104M valuation with no source; I treat it as wrong (S-DY11).
+- Headcount: the vendor says only "small" and wants to stay small. Estimates run from 10 to 42 (Airframe 10, Dealroom 42, a search summary about 30): UNVERIFIED. Based in Boston per Dealroom, Bessemer and the careers page (S-DY17, S-DY10, S-DY11).
+- Customers: the vendor names none. Upstarts reports about 120 customers in February 2026 after 15 to 18 months of private testing, and quotes Sandstone, Finch and Stable Kernel as early users. Nothing newer was found (S-DY8).
+
+**2. Community reviews**
+- G2: a page exists but returned 403; Airframe says it shows 0 reviews, so there is no usable rating. Capterra: no listing found. Product Hunt: no launch found. Hacker News: no thread. Reddit: the search tool blocks the domain, so UNVERIFIED. Slashdot lists no ratings (search summary) (S-DY11, S-DY12).
+- **Every review that could be read was written by a competitor or a consultancy** (Lightfield, Dreamhub, folk, We The Flywheel) (S-DY13, S-DY12). Praise they give: no manual entry, meeting and mail capture, relationship memory, answers that cite the source message, about 10 minutes to set up, and human edits that outrank later AI guesses. Complaints they give: weak structured pipeline and forecasting, mostly retrieves and summarizes, Google-only mail, and four tiers with skill slots that are hard to compare.
+- Coffee.ai quotes unnamed Reddit comments ("great for notes but pipeline blind") with no link: UNVERIFIED (S-DY13).
+
+**3. Expert and analyst views**
+- TechCrunch (2024-06-20) credits the founders' pedigree and raises no doubt, relying on the founders' claims (S-DY7).
+- Upstarts (2026-02) credits fast onboarding and doubts that incumbents will let go (one customer kept HubSpot as a "safety blanket"), that flat pricing will survive heavy usage (the CEO hints at usage pricing later) and overlap with other Sequoia-backed tools (S-DY8).
+- Bessemer Atlas (2025-06, an investor) credits starting small and keeping a person's hand on the wheel, and admits the evidence is CEO anecdote with no metrics (S-DY9). We The Flywheel (2026-06) calls it unproven beyond early adopters and silent on security (S-DY12).
+
+**4. Pricing in depth** (USD; pricing page and vendor guide opened 2026-11-02; S-DY4, S-DY14, S-DY15)
+- **Unit:** one flat monthly fee per "agent", a virtual worker given to a colleague. No per-seat fee and no usage fee. Colleagues without an agent are free once the workspace has a Professional agent or higher (they can capture, search and read). Creating a workspace needs a Professional agent.
+- **Tiers** (headline prices): **Free $0** (Gmail and calendar ingestion, meeting recording, notes, search; 0 skill slots), **Turbo $24** (tasks, email drafts, web search, MCP; 2 skill slots), **Professional $60** (pipeline and opportunity management, analytics, custom views, campaign sequences; 5 skill slots), **Executive $200** (campaigns from lists, 10 skill slots, skills as often as every 4 hours), **Super $800** (a forward-deployed account executive and prospecting; 10 slots). Skills are the scheduled or triggered background jobs.
+- **Price basis is contradictory:** the page says the prices reflect yearly billing paid upfront, while the vendor guide and Ahoy give monthly list prices of $30, $75 and $250 for the first three tiers. Confirm in a live account. Volume discounts start at 21 agents and reach 50 percent at 301 or more.
+- **Hidden costs:** none listed on the page (no overage, setup fee or minimum). The meeting recorder is in every tier. Web search and enrichment use third-party providers with no separate line. The CEO told Upstarts that usage pricing may come later, so a flat fee today is not a promise. You keep paying for Google Workspace and for any CRM you keep. Coffee.ai's claim that Day AI moved to seats plus credits is not supported by Day AI's own pages.
+- **Worked bill, 3-person SME** (my assumptions: everyone on Google Workspace; the owner needs pipeline; no campaigns), yearly rate first and monthly list second:
+  - Minimum: 1 Professional + 2 Free teammates, **$60 or $75 a month, about 1,548,000 or 1,935,000 VND**. The Free teammates only capture and search.
+  - Typical: 1 Professional + 2 Turbo, **$108 or $135 a month, about 2,786,000 or 3,483,000 VND**.
+  - 3 Turbo only (scheduled skills, no pipeline): $72 or $90, about 1,858,000 or 2,322,000 VND.
+  - 3 Professional: $180 or $225, about 4,644,000 or 5,805,000 VND.
+  - Owner on Executive + 2 Turbo: $248 or $310, about 6,398,000 or 7,998,000 VND.
+
+**5. Potential and risks**
+- Momentum: a release-note aggregator shows 10 releases from 2026-08-04 to 2026-10-06, about one a week; it was last updated 2026-10-06, so October 7 to November 2 is UNVERIFIED (the vendor's own changelog page returned empty). Themes: agents handing work to agents, custom MCP connectors, dashboards, Microsoft 365 support on 2026-10-06 (S-DY3). Hiring: one open role (account executive), and the page says it wants to stay small (S-DY17).
+- Product gaps the vendor admits: mail enters the graph only from Google Workspace, no standalone reports or forecast view, no native mobile app, prospecting is in limited beta, first sync takes 1 to 6 hours (S-DY14).
+- Security: the trust page says a SOC 2 Type II report is available under an NDA, with encryption at rest and in transit; the data policy says customer data is not used to train models. The subprocessor list has 36 entities, all in the US, including Anthropic, OpenAI, AWS and Supabase. Hosting region is not named (S-DY16).
+- Moat (vendor claim): a context graph where each statement links to its source and human corrections outrank AI inference. Risks: usage cost sits inside flat fees; Salesforce, HubSpot and Attio add agents; dependence on Gmail and Slack; a very small team (S-DY14, S-DY8).
+- Vietnam: nothing found. The vendor guide lists no languages and there is no Zalo. Mail is Google-only, which leaves out Vietnamese SMEs on other mail hosts. Transcription uses a third-party service whose Vietnamese coverage was not checked: UNVERIFIED, probably absent (S-DY14, S-DY16).
+- **Outlook, my opinion (2-3 years):** the cheapest way to get background skills (a Turbo agent costs less than $30 a month) and the product with the most distinct idea, the context graph with sources. The company is tiny, so the likely futures are a sale, or a move to usage pricing when model costs bite. Do not expect Vietnamese support.
+
+#### 4.7.4 Side by side for a 3-person Vietnamese SME
+
+Rate: 25,800 VND per USD (S-FX1). Prices in USD are as shown by the vendors on 2026-11-02 unless marked.
+
+| Need | Clarify | Lightfield | Day AI |
+|---|---|---|---|
+| Records, capture, summaries, no background jobs | Starter $50 a month, about 1,290,000 VND | Starter $267 a month, about 6,889,000 VND | 1 Professional + 2 Turbo $108 to $135 a month, about 2,786,000 to 3,483,000 VND |
+| Scheduled or triggered background work for the team | **Growth $1,000 a month**, yearly only, about 25,800,000 VND | **Pro $999 a month**, yearly only, about 25,774,000 VND | 3 Turbo with 2 skills each $72 to $90 a month, about 1,858,000 to 2,322,000 VND |
+| Heavy AI use | Starter about $100, or Growth plus unpublished on-demand credits | Pro plus unpublished overage, about $1,250 to $1,750 a month | No usage fee listed; may change |
+| Price stability | Rate card removed in September 2026; Starter listed at $20, $40 and $50 by different sources | Changed 5 times since late July 2026 (Ahoy) | Turbo moved from $25 to $24 on 2026-09-03 (Ahoy) |
+
+The pattern: for the owner's interest, agents that work in the background, Clarify and Lightfield both put the first usable price near $1,000 a month (about 25.8 million VND), and Day AI puts it under $100. All three bill in US dollars, have English-only screens as far as found, and document no Zalo link.
 
 ## 5. Vietnamese SME specifics
 
@@ -193,7 +342,7 @@ All are recommendations for the owner, in the order I would take them. None exis
 5. **A 24-hour undo for agent R1 writes.** The plan promises it (`reversibleBy`, [§8.3](../plan/crove-os-kernel.md)); I found the field only in the plan text, no undo command or screen. None of the four AI CRMs documents a general undo, so this would lead the field.
 6. **An agent view on the timeline.** `activity.agent_id` already marks agent-written rows. Missing: a filter "what did agents do" per party and per day (Clarify added this on 2026-10-09), the run that made each row, and the proposal it came from.
 7. **Provenance and confidence per field.** `source_trust` exists on the party row only. AI CRMs show where a value came from (Day AI jumps to the source message; Attio shows confidence and sources). A per-field source would serve Vietnamese users who check Zalo chats against the CRM.
-8. **Per-agent budget and a visible meter.** The P01 budget re-check is listed as left in ADR-0029's follow-ups (#435); AI CRMs bill by credits, so users expect a meter and a hard stop.
+8. **Per-agent budget and a visible meter.** The P01 budget re-check is listed as left in ADR-0029's follow-ups (#435); AI CRMs bill by credits, so users expect a meter and a hard stop. After the 2026-11-02 deep dive I would ship the meter and the stop together with the first agent that calls a language model, not after it: unpredictable credit bills are the top complaint about Clarify, and Lightfield and Clarify both hide their overage rate (section 4.7).
 9. **MCP access for the user's own assistants.** All four AI CRMs expose MCP (S-AT14, S-CL3, S-LF8, S-DY3). Ludy's `/mcp` waits for ADR-0032 and a decision on grants. Everything an outside assistant writes would still be a proposal.
 
 ### 6.4 One decision that needs the owner
@@ -227,14 +376,15 @@ Verdicts weigh the owner's focus (one-person companies and SMEs first). "Builds 
 | AI: prospecting and cold outreach | **Skip** | none | Outside Ludy's Email plan and the anti-spam decree (Decree 91/2020 as cited there) |
 | AI: drafts of follow-ups | **Take** (draft only) | Email plan "AI: drafts and rewrites ... always landing as drafts" | Every AI CRM drafts; sending stays R2 |
 | AI: per-field autonomy (Off, Suggest, Auto) | **Later** | Manifest column classes, P03 | Lightfield's design is the clearest; in Ludy "Auto" would never exist for tainted data, so offer Off and Suggest |
+| AI: a person's edit outranks later AI inference | **Take** (added 2026-11-02) | `party.verified_at/by`, `source_trust`; proposal revisions | Day AI's vendor guide and We The Flywheel describe it as what makes users trust the record; it costs little in Ludy because a proposal's edit is already a new revision. A field a person verified is not overwritten by a later proposal without a visible flag |
 | Mobile app | **Later** | Web SPA, push for approvals in the plan | HubSpot, Pipedrive, Attio and MISA ship apps, Clarify and Lightfield do not. Phone-first teams need a phone-friendly web page and `tel:` links before a native app |
-| Integrations: Zalo OA inbox | **Later**, but first among channels | `channel` layer with the Zalo OA connection (OAuth, refresh) | Every Vietnamese CRM sells it; Ludy has the connection for publishing. Needs the Service inbox and the customer's OA package |
+| Integrations: Zalo OA inbox | **Later**, but first among channels | `channel` layer with the Zalo OA connection (OAuth, refresh) | Every Vietnamese CRM sells it; Ludy has the connection for publishing. Needs the Service inbox and the customer's OA package. The 2026-11-02 deep dive found no Zalo, no Vietnamese interface and no Vietnamese transcription claim in Clarify, Lightfield or Day AI, so the AI CRMs leave this lead open (section 4.7) |
 | Integrations: Zalo personal | **Skip**, until checked | none | One vendor says it connects personal Zalo and another says Official accounts only; I did not verify Zalo's terms for personal accounts. Do not build before the owner or a lawyer checks |
 | Integrations: Facebook Messenger | **Later** | `channel` layer with Facebook Page | Same Service-inbox dependency; Pipedrive and HubSpot reach it through partners or a paid inbox |
 | Integrations: phone system (PBX) | **Later** | `party.phone`, `activity` | Vietnamese CRMs link third-party cloud PBXs; recordings stay with the vendor. A first slice is a `tel:` link and a call note, with a PBX webhook only on demand |
 | Integrations: Google and Microsoft mail and calendar | **Take** (calendar done, mail later) | Calendar C6 (Google busy read and write-back) | Twenty and Attio use them as the timeline's source; the calendar half is merged, the mail half belongs to the capture rules |
 | Integrations: MISA and e-invoice | **Later** | Ludy accounting; the e-invoice receive path | The sales-to-invoice request flow is what SMEs know from MISA; the Accounting line decides whether to link or just offer its own flow |
-| Pricing and free-plan limits | **Skip here** | Cloud pricing is sold per app and lives in the private layer (Decision 10) | Report only: Ludy self-hosted has no seat or record cap, which beats every free plan above. Pricing is not decided in the public repository |
+| Pricing and free-plan limits | **Skip here** | Cloud pricing is sold per app and lives in the private layer (Decision 10) | Report only: Ludy self-hosted has no seat or record cap, which beats every free plan above. Pricing is not decided in the public repository. Input for Decision 10 only: AI CRMs bill in US dollars, background agents cost about $1,000 a month at Clarify and Lightfield but under $100 at Day AI for 3 people (section 4.7.4), and credit-metered AI is the most complained-about model (Clarify), so if the Cloud layer ever meters AI it should publish its rate and a hard stop |
 | Self-hosting and licence | **Take** (state it) | AGPL whole repository, `docker compose up` | Twenty is the only global CRM that self-hosts, and it mixes licences; Getfly and Bitrix24 sell on-premise. A clean AGPL and a Compose start is a differentiator for Vietnamese SMEs who keep data in-house |
 | Vietnamese-language search | **Take** | Plan "Search v0" (trigram on unaccented text) | No vendor confirmed it; it is cheap, visible, and every Vietnamese user needs it |
 
@@ -371,9 +521,66 @@ All checked on 2026-10-31. A page marked "(search summary)" was not opened.
 - S-DY3 https://releasebot.io/updates/day-ai (an aggregator; vendor docs and changelog pages returned empty)
 - S-DY4 https://day.ai/pricing
 
+**Deep-dive sources (section 4.7; all checked on 2026-11-02; "search summary" means a snippet or a page that returned HTTP 403)**
+
+Exchange rate and Clarify
+- S-FX1 https://open.er-api.com/v6/latest/USD (USD to VND 25,795.63, updated 2026-11-01 00:02 UTC)
+- S-CL6 https://www.webwire.com/ViewPressRel.asp?aId=340242 (funding press release, 2025-06-25)
+- S-CL7 https://www.ascend.vc/blog/investing-in-clarify
+- S-CL8 https://www.geekwire.com/2025/seattle-startup-clarify-lands-15m-to-take-on-salesforce-with-ai-native-autonomous-crm/ (search summary)
+- S-CL9 https://www.cdpinstitute.org/news/clarify-acquires-seam-ai-to-strengthen-challenge-against-established-crm-vendors-885swx/ and https://seattleflow.org/article/seattle-s-clarify-acquires-s-f-startup-seam-ai-joining-forces-to
+- S-CL10 https://www.clarify.ai/blog/what-users-are-saying-about-clarify-a-collection-of-reviews-from-2025 (the vendor's own digest; the G2 page returned 403)
+- S-CL11 https://www.producthunt.com/products/clarify-6/reviews
+- S-CL12 https://makerstack.co/reviews/clarify-review/ (affiliate income disclosed)
+- S-CL13 https://www.madrona.com/autonomous-crm-how-clarify-is-reinventing-a-100b-category/ (investor)
+- S-CL14 https://ahoy.ai/comparisons/best-ai-native-crms/ (competitor)
+- S-CL15 https://www.coffee.ai/articles/clarify-crm-pricing-small-teams and https://www.breakcold.com/blog/clarify-ai-crm-review (competitors; the second is a search summary)
+- S-CL16 https://docs.clarify.ai/en/articles/12503518, https://docs.clarify.ai/en/articles/12405071-ai-in-clarify and https://docs.clarify.ai/en/articles/12407495-enrichment (billing, credit costs, enrichment)
+- S-CL17 https://pricingsaas.com/companies/clarify/diffs/2026W37 (price tracker)
+- S-CL19 https://docs.clarify.ai/en/articles/12739298-multi-language-meeting-support
+- S-CL20 https://builtin.com/company/clarify-ai/jobs
+- S-CL21 https://www.thesignal.club/p/clarify (sponsored newsletter)
+- S-CL22 https://www.clarify.ai/blog/best-ai-crms (the vendor's own comparison)
+- Changelog entries read through S-CL3: https://www.clarify.ai/changelog/new-in-clarify-april-2026 and https://www.clarify.ai/changelog/weekly-ship-notes-10-23
+
+Lightfield
+- S-LF9 https://a16z.com/announcement/investing-in-lightfield/ (investor)
+- S-LF10 https://www.upstartsmedia.com/p/ai-sales-startup-lightfield-raises-47m
+- S-LF11 https://venturebeat.com/technology/tomes-founders-ditch-viral-presentation-app-with-20m-users-to-build-ai
+- S-LF12 https://research.contrary.com/company/lightfield
+- S-LF13 https://ultrathink.ai/news/lightfield-wrote-own-crm-process-takeaways
+- S-LF14 https://finance.yahoo.com/technology/articles/lightfield-raises-47-million-series-160000294.html (paid press release)
+- S-LF15 https://jobs.a16z.com/company/lightfield
+- S-LF16 https://www.producthunt.com/products/lightfield
+- S-LF17 https://nubiapage.com/lightfield-review-2026/
+- S-LF18 https://makerstack.co/reviews/lightfield-review/
+- S-LF19 Competitor reviews: https://fluidcrm.io/blog/lightfield-crm/, https://www.clarify.ai/blog/clarify-vs-lightfield, https://www.folk.app/articles/lightfield-crm-review, https://blog.coffee.ai/lightfield-crm-alternatives-reddit/ (search summary); Hacker News checked through hn.algolia.com
+- S-LF20 https://www.saastr.com/saastr-ai-app-of-the-week-lightfield-the-ai-native-crm-that-killed-tomes-25-million-users-to-build-something-better/
+- S-LF21 https://support.lightfield.app/articles/9815515424-how-lightfield-s-pricing-works and https://lightfield.com/estimate
+- S-LF22 https://ahoy.ai/ai-native-crm/pricing-index/lightfield/ (competitor)
+- S-LF23 https://docs.lightfield.app/security/
+- S-LF24 https://support.lightfield.app/articles/7823628864-lightfield-api-and-integration-options
+- S-LF25 https://lightfield.com/customers
+
+Day AI
+- S-DY5 https://www.day.ai/resources/series-a-and-the-beginning-of-the-shift-in-crm
+- S-DY6 https://www.day.ai/resources/day-ai-raises-4m-from-sequoia-capital-to-reimagine-crm-for-the-ai-age
+- S-DY7 https://techcrunch.com/2024/06/20/ex-hubspot-exec-builds-ai-powered-crm-learns-for-you-with-4m-seed-led-sequoia
+- S-DY8 https://www.upstartsmedia.com/p/day-ai-sequoia-ai-crm
+- S-DY9 https://www.bvp.com/atlas/lessons-from-day-ais-journey-to-becoming-the-waymo-of-crm (investor)
+- S-DY10 https://dealroom.co/companies/day-ai/ (estimates)
+- S-DY11 https://www.airframe.ai/product/day-ai/analysis (unsourced figures; used only where noted)
+- S-DY12 https://wetheflywheel.com/en/comparisons/attio-vs-day-ai/ (consultancy)
+- S-DY13 Competitor reviews: https://lightfield.com/blog/day-ai-review, https://www.dreamhub.ai/blogs/best-ai-native-crms-2026-honest-comparison-attio-clarify-day-ai-reevo-dreamhub, https://www.folk.app/articles/day-ai-review, https://www.coffee.ai/articles/day-ai-crm-reviews-comparisons/ (search summary)
+- S-DY14 https://day.ai/guides/best-ai-crm (the vendor's own guide, updated 2026-10-21)
+- S-DY15 https://ahoy.ai/ai-native-crm/pricing-index/day-ai/ (competitor price tracker) and https://revops.tools/day-ai/
+- S-DY16 https://day.ai/trust, https://day.ai/data and https://day.ai/trust/subprocessors
+- S-DY17 https://day.ai/careers
+
 **Not verified in this study**
 - Per-action approval and any undo in Clarify; undo in Lightfield, Day AI and Attio.
 - Saved views, import and AI features of Getfly; e-invoice links of Getfly, Bitrix24 and Base CRM; Base CRM prices in VND; Bitrix24 per-user prices in VND.
 - Zalo's terms for personal accounts; current Zalo OA package prices; the 2026-07-01 e-invoice milestone and the two 2026 decrees.
 - Invoice timelines, self-hosting and mobile status where a cell says UNVERIFIED.
 - Pipedrive's official prices and record caps.
+- Deep dive (2026-11-02): real G2 and Capterra ratings (their pages returned HTTP 403), Reddit, Hacker News, X and LinkedIn sentiment, headcounts, Clarify's rate for on-demand credits and Lightfield's overage rate, Day AI's monthly versus yearly price basis, Day AI's releases after 2026-10-06, hosting regions of Lightfield and Day AI, Vietnamese transcription quality, and VAT or tax on a foreign software bill.
