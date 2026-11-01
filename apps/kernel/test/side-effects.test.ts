@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { kernelCommands } from '@crove/kernel';
 import type { Db } from '@crove/db';
 import { Runtime, deriveRisk, type CommandDef } from '@crove/kernel-runtime';
+import { adsCommands } from '@crove/mod-ads';
 import { crmCommands } from '@crove/mod-crm';
 import { financeCommands } from '@crove/mod-finance';
 import { socialCommands } from '@crove/mod-social';
@@ -20,7 +21,7 @@ const POLICY_R3 = ['kernel.member.change_role', 'kernel.member.invite.create', '
 const FINANCE_POLICY = { 'finance.period.lock': 'R2', 'finance.period.unlock': 'R3' } as const;
 
 const all = (): Array<CommandDef<unknown, unknown>> =>
-  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands] as Array<CommandDef<unknown, unknown>>;
+  [...kernelCommands, orgPurgeCommand({ store: {} as never }), numberReseedCommand(), ...financeCommands, ...socialCommands, ...crmCommands, ...adsCommands] as Array<CommandDef<unknown, unknown>>;
 
 describe('declared risk and side effects (#1563)', () => {
   it('derives R3 from financial, legal and irreversible effects, R2 from external, R1 from internal, R0 from none', () => {
@@ -144,5 +145,31 @@ describe('declared risk and side effects (#1563)', () => {
   it('keeps the membership and role commands at R3', () => {
     const byName = new Map(all().map((c) => [c.name, c.risk]));
     for (const name of POLICY_R3) expect(byName.get(name), name).toBe('R3');
+  });
+});
+
+// Running ads (ADR-0043, #2294): what only stops or reduces spend is a direct R2 command; what starts or raises it, or opens the
+// way to it, is a proposal (W0a-2) and no direct command at all, so none of those names may exist as a command yet. Pinned by
+// name so an annotation cannot raise the first or a later change quietly add a direct opening.
+describe('the risk of the commands of running ads (#2294)', () => {
+  const byName = () => new Map(all().map((c) => [c.name, c]));
+
+  it('has no direct command that opens the way to spend', () => {
+    for (const name of ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock']) {
+      expect(byName().has(name), name).toBe(false);
+    }
+  });
+
+  it('keeps what only stops spend R2 external, and the switch off the owner’s', () => {
+    expect(byName().get('ads.pause_all')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+    for (const name of ['ads.write.disable', 'ads.account.disable_write']) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner'] });
+    }
+  });
+
+  it('lets no agent run any of them', () => {
+    for (const name of ['ads.write.disable', 'ads.account.disable_write', 'ads.pause_all']) {
+      expect(byName().get(name)?.agent, name).toBeUndefined();
+    }
   });
 });

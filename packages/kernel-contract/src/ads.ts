@@ -105,7 +105,32 @@ export const zAdsSyncFailure = z.strictObject({
 });
 export type AdsSyncFailure = z.infer<typeof zAdsSyncFailure>;
 
-export const zAdsSummaryInput = z.strictObject({ adAccountId: zId, from: zLocalDate, to: zLocalDate });
+// Running ads (ADR-0043, #2294): the spend caps, in the currency's own units as a decimal string above zero, never a number. A
+// cap is set or raised by a proposal and lowered directly (the commands come after this view of them).
+export const ADS_CAP_SCOPES = ['org', 'account'] as const;
+export const ADS_CAP_PERIODS = ['daily', 'monthly'] as const;
+
+export const zAdsCapView = z.object({
+  scope: z.enum(ADS_CAP_SCOPES),
+  adAccountId: zId.nullable(),
+  period: z.enum(ADS_CAP_PERIODS),
+  amount: z.string(),
+  currency: zCurrency,
+  setBy: zId,
+  setAt: z.string(),
+});
+export type AdsCapView = z.infer<typeof zAdsCapView>;
+
+// The switches of running ads and the current caps (owners and admins read them).
+export const zAdsWriteState = z.object({
+  writeEnabled: z.boolean(),
+  launchesBlocked: z.boolean(),
+  updatedAt: z.string().nullable(),
+  caps: z.array(zAdsCapView),
+});
+export type AdsWriteState = z.infer<typeof zAdsWriteState>;
+
+export const zAdsSummaryInput =z.strictObject({ adAccountId: zId, from: zLocalDate, to: zLocalDate });
 export type AdsSummaryInput = z.infer<typeof zAdsSummaryInput>;
 
 export const zAdAccountView = z.object({
@@ -117,6 +142,9 @@ export const zAdAccountView = z.object({
   // owner or admin disconnected it, or the platform asked for its data to be deleted.
   pausedSince: z.string().nullable(),
   pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'other']).nullable(),
+  // An owner enabled this account for running ads (ADR-0043). It does not yet mean ads can run: the org switch and a token that
+  // can change campaigns (W0b) are needed too.
+  writeEnabled: z.boolean(),
   // The permissions the connection's token holds beyond reading ad reports (empty for the sandbox and for a token that holds
   // only ads_read): the screen says when it can do more than read.
   extraScopes: z.array(z.string()),
