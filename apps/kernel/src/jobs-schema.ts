@@ -65,7 +65,7 @@ export const QUEUES = {
   notesRemind: 'notes-reminders',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
   bankFeedSync: 'finance-bank-feed-sync',
-  // Created by the ads core migration (20261115110000): an ad account's sync (ADR-0040, #2217).
+  // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',

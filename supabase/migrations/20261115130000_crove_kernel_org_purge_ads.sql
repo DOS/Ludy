@@ -2,7 +2,7 @@
 -- Crove kernel (issue #2217): the org purge deletes a closing org's ad accounts and their figures. Idempotent; applied files stay
 -- untouched.
 --
--- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115110000) hold what ad platforms reported for the org's ad
+-- crove_ads.ad_account, ad_spend_day and ad_sync_run (20261115120000) hold what ad platforms reported for the org's ad
 -- accounts: daily aggregates and the sync log. They name no person and nothing the books keep, so they go with the org's
 -- other working rows, before the channel connections they reference. Otherwise this is the body of 20261115100000 (the
 -- newest, which added crove_kernel.saved_view), with its signature, owner, grants and every list and step it had.
