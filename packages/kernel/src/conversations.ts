@@ -222,18 +222,48 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     }
     return 'duplicates';
   }
-  // A removal of a message never seen: when its thread exists, a blank tombstone takes the message's id, so the add that arrives
-  // later (the platform does not order its notices) finds it and never stores the body. With no thread there is nothing to attach it to.
+  // A removal of a message never seen: a blank tombstone takes the message's id, so the add that arrives later (the platform does not
+  // order its notices) finds it and never stores the body.
   if (event.removed) {
-    const thread = (await ctx.trx
-      .selectFrom('crove_kernel.conversation')
-      .select(CONVERSATION_COLUMNS)
-      .where('org_id', '=', ctx.orgId)
-      .where('channel_connection_id', '=', connectionId)
-      .where('kind', '=', event.kind)
-      .where('external_thread_id', '=', event.threadId)
-      .forUpdate()
-      .executeTakeFirst()) as ConversationRow | undefined;
+    const findThread = async () =>
+      (await ctx.trx
+        .selectFrom('crove_kernel.conversation')
+        .select(CONVERSATION_COLUMNS)
+        .where('org_id', '=', ctx.orgId)
+        .where('channel_connection_id', '=', connectionId)
+        .where('kind', '=', event.kind)
+        .where('external_thread_id', '=', event.threadId)
+        .forUpdate()
+        .executeTakeFirst()) as ConversationRow | undefined;
+    let thread = await findThread();
+    if (!thread) {
+      // No thread yet: it is made, already resolved (a thread of one removed message needs no answer), so the add that arrives later
+      // finds the tombstone and the body is never stored. A later real message reopens it as usual.
+      const who = await ctx.trx
+        .insertInto('crove_kernel.conversation_identity')
+        .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
+        .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+      await ctx.trx
+        .insertInto('crove_kernel.conversation')
+        .values({
+          org_id: ctx.orgId,
+          channel_connection_id: connectionId,
+          kind: event.kind,
+          external_thread_id: event.threadId,
+          external_post_id: event.postId ?? null,
+          identity_id: who.id,
+          status: 'resolved',
+          resolved_at: ctx.now,
+          opened_at: ctx.now,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind', 'external_thread_id']).doNothing())
+        .execute();
+      thread = await findThread();
+    }
     if (!thread) return 'ignored';
     const next = thread.last_seq + 1;
     await ctx.trx
@@ -888,7 +918,10 @@ export const conversationReplySettle = defineCommand({
     }
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
-    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    // The same rule as a new reply: a newer message means the customer's words changed what is worth saying, so an earlier reply is not
+    // sent after it; a person writes a new one.
+    if (thread && thread.last_seq > message.seq) throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới nên chưa gửi lại. Hãy đọc tin mới rồi viết câu trả lời mới');
     if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')

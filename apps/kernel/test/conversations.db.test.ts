@@ -318,8 +318,12 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const after = await detail(o, o.lan, id);
     expect(after.messages.map((m) => m.body)).not.toContain('Bình luận đã bị gỡ');
     expect(after.messages.at(-1)).toMatchObject({ body: '', removed: true });
-    // A removal for a thread never seen has nothing to attach to.
-    expect((await ingest(o, ch, [comment('r-none', 'x', { messageId: 'm-none', removed: true })])).ignored).toBe(1);
+    // A removal for a thread never seen makes the thread, already resolved, with the tombstone; the add that follows stores no text.
+    expect((await ingest(o, ch, [comment('r-none', 'Chữ đã bị gỡ', { messageId: 'm-none', removed: true })])).stored).toBe(1);
+    const none = await threadOf(o, ch, 'r-none');
+    expect((await detail(o, o.lan, none)).conversation.status).toBe('resolved');
+    expect((await ingest(o, ch, [comment('r-none', 'Chữ đã bị gỡ', { messageId: 'm-none' })])).duplicates).toBe(1);
+    expect((await detail(o, o.lan, none)).messages.map((m) => m.body)).toEqual(['']);
   });
 
   it("binds the platform's echo to the reply it follows and settles the reply's call", async () => {
@@ -337,6 +341,19 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(states).toEqual(['sent', 'sent']);
     // The call row is finished, not left started.
     expect((await rows<{ state: string }>('SELECT state FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, call.callKey]))[0]?.state).toBe('succeeded');
+  });
+
+  it('refuses to send an earlier reply again after a newer message, and a note with a NUL character as input', async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await ingest(o, ch, [comment('f-1', 'Alo', { kind: 'direct', postId: undefined })]);
+    const id = await threadOf(o, ch, 'f-1');
+    const { messageId } = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: id, body: 'Dạ', lastSeenSeq: 1 });
+    const call = await sys<{ callKey: string }>(o, 'kernel.conversation.reply_begin', { messageId });
+    await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: call.callKey, result: { kind: 'rejected', error: 'transient', code: 'ZALO_5XX' } });
+    await ingest(o, ch, [comment('f-1', 'Sao không trả lời?', { kind: 'direct', postId: undefined, at: new Date(Date.now() + 1000).toISOString() })]);
+    await expect(exec(o, o.owner, 'kernel.conversation.reply_settle', { messageId, action: 'retry' })).rejects.toMatchObject({ code: 'CONVERSATION_MOVED' });
+    await expect(exec(o, o.owner, 'kernel.conversation.note', { conversationId: id, body: 'a b' })).rejects.toMatchObject({ status: 422 });
   });
 
   it('refuses a reply with a NUL character as input, not as a server error', async () => {

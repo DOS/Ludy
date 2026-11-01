@@ -293,7 +293,7 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         const fresh = await client.conversations.get({ conversationId: id }).catch(() => null);
         if (fresh) {
           queryClient.setQueryData(orpc.conversations.get.queryOptions({ input: { conversationId: id } }).queryKey, fresh);
-          onMoved(fresh.conversation.lastSeq);
+          // `seen` stays where it was: the banner's "Đã xem" is the sender's acknowledgement, and the draft is kept until then.
           setMovedNote(true);
         }
       }

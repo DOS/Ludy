@@ -313,20 +313,24 @@ END $$;
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_inbound_claim(p_limit integer, p_lease_seconds integer)
 RETURNS TABLE (seq bigint, provider text, body bytea, attempts integer, dropped boolean, reason text)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  WITH expired AS (
-    DELETE FROM crove_kernel.conversation_inbound_pending p WHERE p.received_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
-    RETURNING p.seq, p.provider, p.attempts
-  ), due AS (
-    SELECT p.seq FROM crove_kernel.conversation_inbound_pending p
-    WHERE (p.claimed_until IS NULL OR p.claimed_until < pg_catalog.now()) AND p.received_at >= pg_catalog.now() - pg_catalog.make_interval(days => 7)
+  -- One set of candidates, the oldest p_limit: those past seven days are dropped (whatever lease they hold), the others claimed or,
+  -- after five claims, dropped as poison. So expired and live notices together never exceed p_limit, and a backlog of expired ones is
+  -- cleared over several passes without delaying the live ones for long (the oldest go first).
+  WITH due AS (
+    SELECT p.seq, (p.received_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)) AS stale
+    FROM crove_kernel.conversation_inbound_pending p
+    WHERE p.claimed_until IS NULL OR p.claimed_until < pg_catalog.now() OR p.received_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
     ORDER BY p.seq LIMIT p_limit FOR UPDATE SKIP LOCKED
+  ), expired AS (
+    DELETE FROM crove_kernel.conversation_inbound_pending p USING due WHERE p.seq = due.seq AND due.stale
+    RETURNING p.seq, p.provider, p.attempts
   ), poison AS (
-    DELETE FROM crove_kernel.conversation_inbound_pending p USING due WHERE p.seq = due.seq AND p.attempts >= 5
+    DELETE FROM crove_kernel.conversation_inbound_pending p USING due WHERE p.seq = due.seq AND NOT due.stale AND p.attempts >= 5
     RETURNING p.seq, p.provider, p.attempts
   ), taken AS (
     UPDATE crove_kernel.conversation_inbound_pending p
     SET claimed_until = pg_catalog.now() + pg_catalog.make_interval(secs => p_lease_seconds), attempts = p.attempts + 1
-    FROM due WHERE p.seq = due.seq AND p.attempts < 5
+    FROM due WHERE p.seq = due.seq AND NOT due.stale AND p.attempts < 5
     RETURNING p.seq, p.provider, p.body, p.attempts
   )
   SELECT t.seq, t.provider, t.body, t.attempts, false, NULL::text FROM taken t

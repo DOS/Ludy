@@ -246,7 +246,14 @@ async function runHide(deps: SendDeps, job: ConversationJob): Promise<string> {
   const work = await deps.runtime.execute<HideWork>('kernel.conversation.hide_begin', { messageId: job.messageId }, options);
   if (work.action !== 'call' || !work.callKey || !work.provider || !work.connectionVersion || !work.externalMessageId || work.hidden === undefined) return 'none';
   const record = (result: unknown) => deps.runtime.execute('kernel.conversation.hide_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
-  const opened = await open(deps, job);
+  // A credential that cannot be opened is a failed call a person may try again, not a hide left pending with no code.
+  let opened: Opened;
+  try {
+    opened = await open(deps, job);
+  } catch {
+    await record({ kind: 'rejected', error: 'transient', code: 'CREDENTIAL_ERROR' });
+    return 'credential_error';
+  }
   if (opened.kind === 'refused') {
     await record({ kind: 'rejected', error: 'permission', code: opened.code });
     if (opened.expired) await expire(deps, job, 'owner_left', work.connectionVersion);
