@@ -66,7 +66,7 @@ describe('what the parser refuses to date, name or carry', () => {
 
   it('takes an id as a string or a number a double holds exactly, never a rounded one, and none that is too long', () => {
     expect(events({ sender: { id: 123456789 } })[0]?.threadId).toBe('123456789');
-    expect(events({ sender: { id: 12345678901234567890 } })).toEqual([]);
+    expect(events({ sender: { id: Number('12345678901234567890') } })).toEqual([]);
     expect(events({ sender: { id: '' } })).toEqual([]);
     expect(events({ sender: { id: 'u'.repeat(201) } })).toEqual([]);
     expect(events({ message: { msg_id: 'm'.repeat(301), text: 'x' } })).toEqual([]);
