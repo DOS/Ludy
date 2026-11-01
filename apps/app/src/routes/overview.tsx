@@ -237,14 +237,10 @@ export function OverviewPage() {
         {waiting.length > 0 ? (
           <Card className="mt-3 block overflow-hidden p-0">
             <ul className="divide-y">
-              {waiting.map(({ key, count }) => (
-                <li key={key}>
-                  <Link
-                    to={WAITING_LINKS[key].to}
-                    params={{ slug }}
-                    search={'search' in WAITING_LINKS[key] ? WAITING_LINKS[key].search : undefined}
-                    className="flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50"
-                  >
+              {waiting.map(({ key, count }) => {
+                const rowClass = 'flex items-center gap-3 px-4 py-3 text-sm hover:bg-muted/50 focus-visible:bg-muted/50';
+                const row = (
+                  <>
                     <NavIcon name={TARGET[key].icon} className="text-muted-foreground" />
                     <span className="w-8 shrink-0 text-right font-mono text-base font-semibold tabular-nums text-foreground">{count}</span>
                     <span className="min-w-0 flex-1">
@@ -253,9 +249,22 @@ export function OverviewPage() {
                     </span>
                     {/* The whole row is the link; on a phone the words would only squeeze what it counts. */}
                     <span className="hidden shrink-0 text-xs text-link sm:inline">{t(`waiting.${key}.open`)}</span>
-                  </Link>
-                </li>
-              ))}
+                  </>
+                );
+                return (
+                  <li key={key}>
+                    {key === 'socialReviews' ? (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} search={WAITING_LINKS[key].search} className={rowClass}>
+                        {row}
+                      </Link>
+                    ) : (
+                      <Link to={WAITING_LINKS[key].to} params={{ slug }} className={rowClass}>
+                        {row}
+                      </Link>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </Card>
         ) : allCounted(counts, asked) && !failed ? (
