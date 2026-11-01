@@ -1,6 +1,6 @@
 # Ludy Ads: tóm tắt kế hoạch cho JOY
 
-> Bản tóm tắt tiếng Việt của [ads.md](ads.md) và [ADR-0040](../adr/0040-ads-read-only-sources.md), ngày 2026-11-01. Chưa có dòng code nào được viết. Sẽ không build gì cho đến khi JOY duyệt lát cắt đầu tiên (câu hỏi 1 bên dưới).
+> Bản tóm tắt tiếng Việt của [ads.md](ads.md) và [ADR-0040](../adr/0040-ads-read-only-sources.md), ngày 2026-11-01. **Cả sáu câu hỏi đã được JOY trả lời ngày 2026-11-01** (xem mục "Câu trả lời của JOY" ở cuối); lát A1 (kênh quảng cáo giả, màn hình, dải so sánh với sổ) đang được build trong #2217.
 
 ## Ads làm gì, cho ai
 
@@ -39,7 +39,7 @@ Tham chiếu (JOY, 2026-11-01, ảnh chụp bảng điều khiển Hootsuite): A
 | 1 | Meta (Facebook, Instagram) | API đọc được. Cần một ứng dụng Meta riêng cho quảng cáo (mọi use case của Marketing API đều kèm quyền ghi `ads_management`, không gỡ được) |
 | 2 | Google Ads | Developer token đã bị bỏ từ 2026-09-09, mức truy cập nay gắn với Cloud project. Người tự host mang project của mình |
 | 3 | TikTok Ads | Trang tài liệu cần trình duyệt nên chưa xác nhận được token, giới hạn, duyệt ứng dụng: một người phải đọc bằng tay |
-| 4 | Zalo Ads (Adtima) | Không thấy API công khai. Đề xuất hỏi hỗ trợ Adtima, trong lúc đó nhập CSV |
+| 4 | Zalo Ads (Adtima) | Không thấy API công khai. **Chủ đã bỏ (câu 6, 2026-11-01):** không nhập CSV, không liên hệ Adtima |
 | sau này | Microsoft, LinkedIn | Chỉ khi có nhu cầu |
 | chưa dự kiến | X, Pinterest, Cốc Cốc | |
 
@@ -63,7 +63,16 @@ v1 **không lưu dữ liệu cá nhân**: chỉ mã và tên tài khoản, chi�
 - Token Meta hết hạn sau khoảng 60 ngày, không làm mới được: chủ phải đăng nhập lại, Ludy báo trước.
 - Nền tảng đổi phiên bản và quy tắc: mỗi adapter ghim một phiên bản và có test với phản hồi ghi sẵn.
 
-## Câu hỏi cho JOY
+## Câu trả lời của JOY (2026-11-01)
+
+1. Lát cắt đầu tiên: **"Meta cùng Google"**, chỉ đọc, cạnh sổ (A1 đến A3 cho Meta, B cho Google).
+2. Meta: JOY đã có sẵn ứng dụng Meta và business portfolio, nên Business Verification có thể đã xong. Ứng dụng đó là loại cũ (App type: None) và đang ở mức **Limited** của Marketing API, nên lát A2 phải chạy được ở mức này; App Review xin sau khi A2 chạy trên tài khoản của JOY.
+3. Google: **khách tự mang** project và OAuth client của mình.
+4. Lịch sử: **13 tháng**, giữ lại sau khi ngắt kết nối, có thao tác "xóa lịch sử" rõ ràng (lát A3). Điều khoản Meta về lưu trữ vẫn cần luật sư đọc trước khi chạy Ludy Cloud.
+5. Thuế: **v1 không hiển thị con số thuế nào**; kế toán (#61) xác nhận quy tắc trước.
+6. Zalo Ads: **bỏ qua**, lát E bị bỏ, không liên hệ Adtima.
+
+## Các câu hỏi đã đặt ra cho JOY
 
 Mỗi câu có phương án, đề xuất và hệ quả nếu không trả lời. Chi tiết đầy đủ trong [mục 12 của ads.md](ads.md#12-questions-for-joy).
 

@@ -19,7 +19,7 @@ const optional = z
 
 // Modules this build ships (plan Decision 12, ADR-0031). kernel is always on; the others are on unless CROVE_MODULES
 // leaves them out.
-export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'crm', 'notes'] as const;
+export const AVAILABLE_MODULES = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes'] as const;
 export type ModuleId = (typeof AVAILABLE_MODULES)[number];
 
 // CROVE_MODULES: a comma-separated list such as `finance`. Unset or empty enables every available module; kernel is
@@ -278,6 +278,10 @@ const schema = z.object({
   // The secret the sandbox bank feed's signed notices are checked with (POST /api/bank-feed/bank_sandbox/webhook); unset:
   // the sandbox takes no notices. At least 32 characters.
   BANK_FEED_SANDBOX_WEBHOOK_SECRET: optional,
+  // The offline sandbox ad platform (ADR-0040, #2217): connect a test ad account and read made-up daily figures without any
+  // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
+  // reach no books: the ads screen only shows them beside the ledger's total.
+  ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
   // Bluesky (S9): accounts connect with an app password, no app of the deployment's own is needed. On unless false.
   CHANNEL_BLUESKY: z.enum(['true', 'false']).default('true'),
   // Telegram channels (#747): a bot the shop makes with @BotFather posts to its channel; no app of the deployment's own is
@@ -640,6 +644,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // ADR-0039 point 3: the sandbox feed writes made-up bank lines, so it stays on development deployments.
     if (config.BANK_FEED_SANDBOX === 'true') {
       throw new Error('BANK_FEED_SANDBOX=true writes made-up bank lines into the books; it is for local development only');
+    }
+    // ADR-0040: the sandbox ad platform reports made-up spend, which the Ads screen sets beside the real ledger. docker
+    // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
+    if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
+      throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
     }
     if (config.AUTH_SESSION_CHECK === 'off') {
       throw new Error('AUTH_SESSION_CHECK=off keeps signed-out sessions working; use db (bundled Supabase Auth) or jwt');

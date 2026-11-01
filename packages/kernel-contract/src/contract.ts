@@ -231,6 +231,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1575,6 +1576,20 @@ export const contract = {
     list: oc.output(z.array(zBankAccountNumberView)),
     set: oc.input(zBankAccountNumberSet.extend({ idempotencyKey: zId })).output(z.object({ id: zId })),
     clear: oc.input(z.object({ id: zId, idempotencyKey: zId })).output(z.object({ id: zId })),
+  },
+  // Ads (ADR-0040, #2217): the org's ad accounts and the daily spend and results their platforms report, read only. Every
+  // member lists the accounts of the entities they read; owners and admins connect and configure. The sandbox ad platform
+  // is the offline one (ADS_SANDBOX); the real platforms connect through the channel layer's OAuth later (A2).
+  ads: {
+    accounts: oc.output(z.array(zAdAccountView)),
+    connectSandbox: oc
+      .input(z.object({ displayName: z.string().trim().min(1).max(200), currency: z.enum(ADS_SANDBOX_CURRENCIES).optional(), legalEntityId: zId.optional(), idempotencyKey: zId }))
+      .output(z.object({ connectionId: zId, adAccountId: zId })),
+    configure: oc.input(zAdsAccountConfigure.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
+    // Asks for a refresh of one account, at most one a minute.
+    requestSync: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
+    summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
+    syncRuns: oc.input(z.object({ adAccountId: zId })).output(z.array(zAdsSyncRunView)),
   },
   // The org chart (ADR-0029): positions shared by members and AI agents. Every member reads it; changing it is the
   // owner's (R3: role keys, holders and reporting lines decide what agents may do). A retry with the same

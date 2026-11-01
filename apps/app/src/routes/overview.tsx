@@ -54,7 +54,9 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
   const t = useTranslations('overview.apps');
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
-  const apps = installedApps(getConfig().modules).filter((a) => a.id !== 'home');
+  const modules = getConfig().modules;
+  // The Social app also holds Ads, so it can be installed without the social module: its card counts posts, which need it.
+  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social')));
   const has = (id: AppId) => apps.some((a) => a.id === id);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.

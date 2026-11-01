@@ -54,9 +54,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_ads.ad_account',
-  'crove_ads.ad_spend_day',
-  'crove_ads.ad_sync_run',
   'crove_crm.import_batch',
   'crove_crm.import_row',
   'crove_notes.link',
@@ -330,9 +327,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // A day of one object of an ad account, as its platform reported it: the entity is the account's (b_legal_entity, and the
-  // composite foreign key). Tenant roles update the figures only (a column grant), so the update probes assign the name to itself.
+  // composite foreign key). Tenant roles update the figures and the object's name only, never the keys (a column grant), so the
+  // update probes assign the spend to itself: a column the role is granted, so a refusal can only come from the row policy.
   'crove_ads.ad_spend_day': {
-    update: { set: 'object_name = object_name' },
+    update: { set: 'spend = spend' },
     make: (o) => {
       const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
       const account = randomUUID();

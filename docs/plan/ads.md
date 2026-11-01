@@ -77,7 +77,7 @@ Checked 2026-11-01. "Cloud" means Ludy Cloud with DOS-owned platform apps; "self
 | 1 | **Meta** (Facebook and Instagram ads) | Marketing API, Insights edge `/{ad-account-id}/insights`; `level` account, campaign, adset, ad; `time_range`, `time_increment` [C]. Graph API v26.0 (2026-07-29) is current; the code default is v24.0, so the build issue pins and tests one version [C] | `ads_read`: reports for accounts you own or were granted [C] | Slice A |
 | 2 | **Google Ads** (Search, Display, YouTube, Performance Max) | Google Ads API, GAQL, REST and gRPC; v26.1 current [C] | Scope `https://www.googleapis.com/auth/adwords` (restricted) [C]; access level per Cloud project: Test, Explorer (2,880 operations a day), Basic (15,000, brand verification), Standard (unlimited, manual audit and RMF) [C] | Slice B, self-host bring-your-own first |
 | 3 | **TikTok Ads** | Marketing API reporting, `GET /open_api/v1.3/report/integrated/get/` [C]; the docs portal is JavaScript-only, so metrics, token life, review and limits are all [U] | Reporting scope (first-level permission) [U] | Slice C, after a human reads the portal |
-| 4 | **Zalo Ads** (Adtima) | No public reporting API found. `ads.zalo.me` shows no API or export page [C that it was read]; the developer pages are JavaScript-only [U]. Zalo OA API and ZNS are different products and give no ad spend [C] | none | CSV import or manual entry (slice E); the owner asks Adtima support whether an API exists (Q6) |
+| 4 | **Zalo Ads** (Adtima) | No public reporting API found. `ads.zalo.me` shows no API or export page [C that it was read]; the developer pages are JavaScript-only [U]. Zalo OA API and ZNS are different products and give no ad spend [C] | none | **Dropped by the owner (Q6, 2026-11-01):** no CSV import, no manual entry, nobody asks Adtima |
 | later | Microsoft Advertising (SOAP, async reports, developer token) [C]; LinkedIn Marketing API (`r_ads_reporting`, approval not confirmed [U]) | | | After the first three, B2B only |
 | not planned | X Ads (application form, 7-day sync stats, 250 requests per 15 minutes [C]), Pinterest (low use in Vietnam, tiers [U]), Cốc Cốc (no public API found [U]) | | | Revisit on request |
 
@@ -102,7 +102,7 @@ All of this is an `owner-action`: no agent creates a developer app, signs in or 
 
 **TikTok** (slice C): a TikTok for Business developer app, approved for the Reporting scope [U], separate from the content-posting app of Social on `developers.tiktok.com` (whether it must be a separate app is [U]). Token lifetime is unclear: sources conflict (no expiry or 24 hours) [U], so the build issue verifies it against a real token.
 
-**Zalo** (slice E): ask Adtima (its support contact is on its website [C]) whether a reporting API exists for advertisers.
+**Zalo** (slice E): dropped by the owner (Q6, 2026-11-01); Zalo Ads is not supported and nobody contacts Adtima.
 
 ## 5. How data comes in
 
@@ -249,7 +249,7 @@ Each adapter's fetch is bound to its hosts and follows no redirect (`allowlisted
 | **B** | Google Ads, self-host bring-your-own project | adapter, the Cloud-project and consent-screen runbook, access-level notes |
 | **C** | TikTok Ads | after a human reads the portal (section 4) |
 | **D** | Which month has no invoice or receipt; platform charges beside card lines | `ad_invoice`, Google `ListInvoices` (needs monthly invoicing on the account) [C]; Meta has no invoice edge [C], so Meta documents come through normal intake |
-| **E** | Zalo Ads by CSV or manual entry | only if Adtima confirms there is no API (Q6) |
+| **E** | Zalo Ads by CSV or manual entry | **dropped by the owner (Q6, 2026-11-01)**; not built |
 
 **Exit criteria for v1 (A1 to A3):**
 1. On a fresh laptop with `docker compose up`: connect the sandbox ad platform, see spend and cost per result, and the books strip with its difference; Playwright covers it.
@@ -261,7 +261,7 @@ Each adapter's fetch is bound to its hosts and follows no redirect (`allowlisted
 
 ## 12. Questions for JOY
 
-Nothing is built until the first slice is approved. Each question: what is decided, why it matters, the options, my recommendation, and what happens without an answer. One at a time, the first one first.
+**All six questions were answered by the owner on 2026-11-01 (comments on [#2214](https://github.com/DOS/Ludy/issues/2214)); the answer sits under each question, and the build issues are #2217 (A1), #2218 (A2), #2219 (A3) and #2220 (B).** Each question below keeps what was decided, why it matters, the options, the recommendation and what would have happened without an answer, as it was put to the owner.
 
 **Q1. What is the first slice?** (Who acts: JOY.) It decides which platform's review and setup you do first and what the first build issues are.
 - **A. Meta ad account, read only, next to the books (recommended).** Works on your own account without any review, covers Facebook and Instagram ads, readable docs.
@@ -271,17 +271,25 @@ Nothing is built until the first slice is approved. Each question: what is decid
 
 Without an answer: no build issue is opened (acceptance of #2214).
 
+**Answer (JOY, 2026-11-01): "Meta cùng Google", option C.** Meta and Google together in the first slice, read only, next to the books: slices A1 to A3 (Meta, through the sandbox first) and B (Google, bring your own project).
+
 **Q2. Start Meta Business Verification and App Review for Ludy Cloud now?** (Who acts: JOY, an `owner-action`.) It decides when other businesses can connect on Ludy Cloud rather than only you and self-hosters.
 - **A. Not yet: do it after slice A2 works on your own account (recommended).** The review is easier with a working screen and a screencast, and Meta's rules may change before then.
 - B. Start now. Reviews are slow and can be rejected; nothing to show yet.
 
 Without an answer: Cloud customers cannot connect Meta ads; self-hosters and you can.
 
+**Answer (JOY, 2026-11-01): "Tao có sẵn ứng dụng và business cơ mà?"** An existing Meta app and a Meta business portfolio already exist, so Business Verification may already be done (the owner checks the portfolio in Meta's Security Centre). App Review of Advanced Access to `ads_read` for other businesses still needs a working screen and a screencast, so it is requested once slice A2 runs on the owner's own ad account.
+
+**Finding from the owner's screenshot of that app (2026-11-01):** it is a classic app (App type: None, products rather than use cases) on the business portfolio, with Facebook Login, Webhooks, Marketing API, Instagram Graph API and Messenger already added, and its Marketing API access tier is **Limited** ("App unapproved for Marketing API Access Tier"). So, for this app: the statement in section 3 that Standard access is automatic for Business-type apps does not apply; slice A2 must work on the Limited tier (the owner's own ad accounts, low rate limits, section 5.3) and checks what that tier allows [U] and how the app moves up a tier; and a classic app can hold Facebook Login, the Marketing API, Instagram and Messenger together, so for this app the separate ads app of section 4 and #2212 may not be needed (the use-case restriction applies to apps made with the new flow).
+
 **Q3. Google Ads on Ludy Cloud: bring-your-own or DOS-held?** (Who acts: JOY.) It decides how heavy Google is.
 - **A. Self-host bring-your-own project only in v1 (recommended).** Matches Google's policy for open-source tools; no CASA assessment for DOS.
 - B. A DOS-held Cloud project for all Cloud customers. Needs CASA, Standard access and Required Minimum Functionality, and Google's policy says each advertiser needs their own project, so it is the riskier model.
 
 Without an answer: slice B is built bring-your-own only.
+
+**Answer (JOY, 2026-11-01): "Khách tự mang".** Each customer brings their own Google Cloud project and OAuth client; DOS holds no shared project in v1.
 
 **Q4. How much history, and what happens to it on disconnect?** (Who acts: JOY.) It decides storage, privacy wording and what Meta's rules allow.
 - **A. 13 months of history, kept after disconnect with a clear "delete" choice (recommended).** The numbers are the org's own accounting record; the owner can erase them.
@@ -290,14 +298,20 @@ Without an answer: slice B is built bring-your-own only.
 
 Without an answer: A, and a legal read of Meta's terms before Ludy Cloud launches.
 
+**Answer (JOY, 2026-11-01): "Đồng ý" (option A).** Daily figures are kept 13 months and kept after a disconnect, with an explicit "delete history" action (slice A3). A reading of Meta's terms on retention is still due before Ludy Cloud runs it (a lawyer or the owner).
+
 **Q5. Tax (VAT and foreign contractor tax) on ad invoices: when?** (Who acts: the accountant, #61, through JOY.) It decides whether Ludy ever shows tax hints on ad spend.
 - **A. v1 shows none; the accountant confirms the rules first (recommended).** 2025 and 2026 changes are confirmed only by secondary sources, and the platforms differ.
 - B. Show hints from the findings in section 6. Risk of a wrong tax hint in front of an owner.
 
 Without an answer: A.
 
+**Answer (JOY, 2026-11-01): "Đồng ý" (option A).** v1 shows no VAT or foreign contractor tax figure; the pilot partner's accountant (#61) confirms the rules first.
+
 **Q6. Zalo Ads: ask Adtima whether a reporting API exists?** (Who acts: JOY.) It decides whether Zalo Ads is an adapter or a CSV import.
 - **A. Ask Adtima through its support contact on its website (recommended).** One message settles it.
 - B. Plan CSV import now, without asking.
 
 Without an answer: slice E waits; Zalo Ads is not covered.
+
+**Answer (JOY, 2026-11-01): "Bỏ qua Zalo ads".** Zalo Ads is not supported: slice E is dropped and nobody contacts Adtima.

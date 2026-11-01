@@ -475,6 +475,9 @@ importers:
       '@aws-sdk/client-s3':
         specifier: 'catalog:'
         version: 3.1151.0
+      '@crove/ad-platform':
+        specifier: workspace:*
+        version: link:../../packages/ad-platform
       '@crove/agent':
         specifier: workspace:*
         version: link:../../packages/agent
@@ -505,6 +508,9 @@ importers:
       '@crove/mail':
         specifier: workspace:*
         version: link:../../packages/mail
+      '@crove/mod-ads':
+        specifier: workspace:*
+        version: link:../../modules/ads
       '@crove/mod-crm':
         specifier: workspace:*
         version: link:../../modules/crm
@@ -613,6 +619,27 @@ importers:
         specifier: 'catalog:'
         version: 4.4.0(patch_hash=10bc5d35989275045763026014c9c980e3805971fd23069daf066764cbdbbb9b)
 
+  modules/ads:
+    dependencies:
+      '@crove/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@crove/kernel-contract':
+        specifier: workspace:*
+        version: link:../../packages/kernel-contract
+      '@crove/kernel-runtime':
+        specifier: workspace:*
+        version: link:../../packages/kernel-runtime
+      decimal.js:
+        specifier: 'catalog:'
+        version: 10.6.0
+      kysely:
+        specifier: 'catalog:'
+        version: 0.29.6
+      zod:
+        specifier: 'catalog:'
+        version: 4.6.7
+
   modules/crm:
     dependencies:
       '@crove/db':
@@ -719,6 +746,8 @@ importers:
       fast-check:
         specifier: 'catalog:'
         version: 4.10.2
+
+  packages/ad-platform: {}
 
   packages/agent:
     dependencies:

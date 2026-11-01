@@ -3,6 +3,8 @@ import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
+import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
+import type { AdAccountView } from '@crove/kernel-contract';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -211,6 +213,8 @@ export interface RpcChannels {
   sandbox: boolean;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
+  // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
+  adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // Bluesky accounts may connect with an app password (CHANNEL_BLUESKY).
   bluesky?: boolean;
   // Telegram channels may connect with a bot token (CHANNEL_TELEGRAM).
@@ -344,6 +348,13 @@ export function createRpcHandler(
     (name: string) =>
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inNotes(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
+  // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
+  const ads = runtime.installed('ads');
+  const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!ads) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Quảng cáo chưa được bật' });
+    return inOrg(context, fn);
+  };
 
   // The connector of an OAuth provider this deployment configured, for an owner or admin of the org in the header.
   // The commands check the role again; checking first keeps a member from learning how the deployment is set up.
@@ -2011,6 +2022,64 @@ export function createRpcHandler(
           return runtime.execute('finance.bank_account_number.clear', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+    },
+    // Ads (ADR-0040, #2217). The sandbox's secret is made and sealed here, and the account linked at once; the API never
+    // opens a credential, and the first sync (the worker's) reads the platform. The commands check the role again.
+    ads: {
+      accounts: os.ads.accounts.handler(({ context }) =>
+        inAds(context, async (orgId, actor) => {
+          const rows = await runtime.query<Array<Omit<AdAccountView, 'resultKinds'>>>('ads.account.list', {}, { actor, orgId });
+          // The result keys an owner may pick come from the platform's adapter, which the module does not have.
+          return rows.map((row) => ({ ...row, resultKinds: [...(channels?.adsPlatforms?.[row.provider]?.capabilities.resultKinds ?? [])] }));
+        }),
+      ),
+      connectSandbox: os.ads.connectSandbox.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được tài khoản quảng cáo');
+          if (!channels || !Object.hasOwn(channels.adsPlatforms ?? {}, 'sandbox_ads')) throw new DomainError('ADS_SANDBOX_DISABLED', 404, 'Nền tảng quảng cáo thử nghiệm chưa được bật');
+          // The account derives from the request's key, so a retry of this call is the same account (the same connection, the same link).
+          const login = sandboxAdPlatform().connect({ displayName: input.displayName, key: input.idempotencyKey, ...(input.currency ? { currency: input.currency } : {}) });
+          const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: login.provider,
+            externalAccountId: login.externalAccountId,
+            displayName: login.displayName,
+            scopes: [],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+          try {
+            const { adAccountId } = await runtime.execute<{ adAccountId: string }>(
+              'ads.account.link',
+              { connectionId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) },
+              { actor, orgId, idempotencyKey: input.idempotencyKey },
+            );
+            return { connectionId, adAccountId };
+          } catch (error) {
+            // The link was refused (an entity to choose, one the caller may not use): no connection is left behind that no screen
+            // lists, with its sealed credential. A connection this call only reconnected (a retry of a call whose answer was
+            // lost) is the account's own, with its history: it stays.
+            if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+            throw error;
+          }
+        }),
+      ),
+      configure: os.ads.configure.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.account.configure', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      requestSync: os.ads.requestSync.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.sync.request', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      summary: os.ads.summary.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.spend.summary', input, { actor, orgId }))),
+      syncRuns: os.ads.syncRuns.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.sync.runs', input, { actor, orgId }))),
     },
     // AI agents (ADR-0029). The kernel module owns them; a template of a module that is off answers MODULE_DISABLED.
     chart: {

@@ -174,7 +174,7 @@ Write `/opt/crove/.env` (owner the deploy user, mode 600) from `.env.example`. G
 | `AI_*` | per #312; empty until then (e-invoice XML works without it). With `AI_API_KEY` set, set `AI_PRICE_INPUT_PER_MTOK` or `AI_PRICE_OUTPUT_PER_MTOK` too, or the AI cost cap counts nothing |
 | `BACKUP_*` | [backup-and-restore.md](backup-and-restore.md); `BACKUP_ENCRYPTION_KEY` (`openssl rand -base64 32`, its own key) is required |
 
-The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, a database URL with a password shipped in `.env.example` or the compose files, `AUTH_AUTOCONFIRM=true`, `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
+The kernel refuses to start on a public `PUBLIC_URL` with unsafe settings: a sample `AUTH_JWT_SECRET`, a database URL with a password shipped in `.env.example` or the compose files, `AUTH_AUTOCONFIRM=true`, `ADS_SANDBOX=true` with the ads module on (compose falls back to true, so set `ADS_SANDBOX=false` when `CROVE_MODULES` includes `ads`), `AUTH_SESSION_CHECK=off`, `AUTH_STEP_UP=off`, presigned transfers to a plain-http bucket endpoint, an email budget a few client addresses could use up, or no `EXPORT_ENCRYPTION_KEY`. Those are the production config guards of the acceptance criteria; `pnpm pilot:check` (section 10) checks the rest.
 
 ## 8. The TLS reverse proxy
 

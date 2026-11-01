@@ -372,8 +372,8 @@ describe('prober configuration', () => {
 
   // #1894: the modules the deployment runs, which health() counts in the job age whatever the workers record.
   it('reads the modules the deployment runs from CROVE_MODULES, as the API does, and hands them to readHealth', async () => {
-    expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
-    expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'crm', 'notes']);
+    expect(loadProberConfig({}).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes']);
+    expect(loadProberConfig({ CROVE_MODULES: '' }).modules).toEqual(['kernel', 'finance', 'social', 'ads', 'crm', 'notes']);
     expect(loadProberConfig({ CROVE_MODULES: ' Finance , notes' }).modules).toEqual(['kernel', 'finance', 'notes']);
     expect(() => loadProberConfig({ CROVE_MODULES: 'finanse' })).toThrow(/CROVE_MODULES/);
     const readHealth = vi.fn(async () => healthy);

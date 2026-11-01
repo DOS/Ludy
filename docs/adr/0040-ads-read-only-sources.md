@@ -1,6 +1,6 @@
 # 0040. Ads: read-only ad platform sources in a module of their own, on the channel layer
 
-- Status: Proposed (2026-11-01). Nothing here is built. The first slice and the open points are **owner** decisions ([ads plan](../plan/ads.md), section 12).
+- Status: Accepted (owner, 2026-11-01, answers to Q1 to Q6 of the [ads plan](../plan/ads.md#12-questions-for-joy), comments on [#2214](https://github.com/DOS/Ludy/issues/2214)). Proposed 2026-11-01. The first slice is built in #2217.
 - Date: 2026-11-01
 - Deciders: owner (JOY), on the Marketing PO's recommendation
 - Builds on:
@@ -73,7 +73,7 @@ Facts that shape the choices (details, sources and confidence tags in the [plan]
 
 ### 6. Personal data: none in v1
 
-Stored: account and campaign ids and names and daily aggregates. No audiences, lead forms, pixel or conversion events, and no breakdowns by age, gender or region. Meta counts aggregates as Platform Data, so the Meta app provides the **data deletion callback** (through a definer, the org-purge pattern), `ads.account.delete_history` exists, and disconnect keeps the figures by default with a clear delete choice (the plan's Q4).
+Stored: account and campaign ids and names and daily aggregates. No audiences, lead forms, pixel or conversion events, and no breakdowns by age, gender or region. Meta counts aggregates as Platform Data, so the Meta app provides the **data deletion callback** (through a definer, the org-purge pattern), `ads.account.delete_history` is added in slice A3, and disconnect keeps the figures by default (slice A1 builds only that), with the clear delete choice coming with `delete_history` in A3 (the plan's Q4).
 
 ### 7. Switched on at two levels
 

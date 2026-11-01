@@ -1,0 +1,34 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// The ads module's manifest (plan §5.2, #1588, #1599; ads plan docs/plan/ads.md section 7): the tables it owns and the
+// class of every column. A migration that adds or drops a table or column of crove_ads changes this list in the same PR;
+// apps/kernel/test/manifest.db.test.ts checks it against the catalog. A column is internal unless the second argument of
+// columns() classifies it. The module stores no personal data (plan section 9): the figures are aggregates, and the names
+// of accounts and campaigns are text the owner typed on the platform, so internal.
+import { MODULE_SCREENS, columns, defineModule } from '@crove/kernel-contract';
+
+export const adsManifest = defineModule({
+  id: 'ads',
+  dependsOn: ['kernel'],
+  tables: {
+    crove_ads: {
+      ad_account: columns([
+        'org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'external_account_id', 'name', 'currency', 'time_zone', 'expense_account_code', 'result_kind',
+        'backfill_from', 'settled_through', 'synced_through', 'last_requested_at', 'last_run_at', 'last_error_kind', 'next_run_at', 'created_by', 'created_at', 'updated_at',
+      ]),
+      ad_spend_day: columns([
+        'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'level', 'external_object_id', 'object_name', 'day', 'currency', 'spend', 'impressions', 'clicks', 'reach', 'results',
+        'fetched_at', 'settled_at',
+      ]),
+      ad_sync_run: columns([
+        'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'status', 'window_from', 'window_to', 'rows_written', 'error_kind', 'error_code', 'retry_at', 'started_at', 'finished_at',
+      ]),
+    },
+  },
+  // It owns no permission: access comes from the base role (owners and admins connect and configure, members refresh,
+  // everyone who reads an entity reads its accounts).
+  permissions: [],
+  // Its entity (#1656): the ad account, which every command that changes it names as its audit target.
+  entities: [{ type: 'ads.ad_account', table: 'ad_account', legalEntityScoped: true, audit: 'command' }],
+  // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
+  ...MODULE_SCREENS.ads,
+});
