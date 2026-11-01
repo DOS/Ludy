@@ -2541,7 +2541,7 @@ export const en = {
     blockedAi:
       'The amounts {assistant} read do not add up, possibly because one digit was misread. Reject it and upload the XML file of this e-invoice to post it exactly.',
     blockedBelowDong:
-      'The invoice has amounts below one dong, and VND books hold no fractions, so it cannot be posted yet. An accountant must decide how to round them; meanwhile you can reject it and ask the seller for an adjusted invoice.',
+      'The invoice has amounts below one dong that cannot be rounded to the dong (the VAT has a fraction, or the difference is above one dong per line), so it cannot be posted. You can reject it and ask the seller for an adjusted invoice.',
     failedChecks:
       '{count, plural, one {# check failed. Compare with the original document before approving.} other {# checks failed. Compare with the original document before approving.}}',
     acceptFailed: 'I compared it with the original document and still want to post it',
@@ -5791,7 +5791,13 @@ export const en = {
     lines_sum: { ok: 'The lines add up to the amount before VAT', mismatch: 'The lines add up to {lines}, not to the amount before VAT ({subtotal})' },
     total: { ok: 'Amount before VAT plus VAT matches the total', mismatch: 'Amount before VAT plus VAT does not match the total' },
     // A VND invoice with an amount below one dong (#1282); the rounding policy is the accountant's decision (#1308).
-    amount_scale: { fraction: 'The invoice has an amount below one dong ({amount}); an accountant must decide how to round it before it is posted' },
+    // A VND invoice with an amount below one dong (#1282): rounded to the dong with the difference on its largest line
+    // (#1308, #2235), or, when it cannot be rounded that way, held.
+    amount_scale: {
+      fraction: 'The invoice has an amount below one dong ({amount}) that cannot be rounded to the dong (the VAT has a fraction, or the difference is above one dong per line); ask the seller for an adjusted invoice',
+      rounded: 'The invoice has an amount below one dong ({amount}); each line was rounded to the dong and the difference of {difference} dong was put on line {line}',
+      rounded_even: 'The invoice has an amount below one dong ({amount}); each line was rounded to the dong and the lines still add up to the subtotal',
+    },
     vat_breakdown: { ok: 'The VAT table matches the VAT total', mismatch: 'The VAT table does not match the VAT total' },
     seller_tax_code: {
       unreadable: "Could not read the seller's tax code",
@@ -6047,7 +6053,7 @@ export const en = {
       SOURCE_LEGAL_ENTITY: 'This document was posted in another legal entity and cannot be posted again in a different one.',
       LEGAL_ENTITY_MISMATCH: 'This proposal would be recorded in a different legal entity from its own',
       LEGAL_ENTITY_MOVE_REFUSED: 'This proposal belongs to another legal entity and cannot be moved. Reject it and upload the document again in the entity whose books it goes to',
-      AMOUNT_BELOW_DONG: 'The invoice has amounts below one dong, and VND books hold no fractions, so it cannot be posted yet. An accountant must decide how to round them; meanwhile you can reject the proposal and ask the seller for an adjusted invoice.',
+      AMOUNT_BELOW_DONG: 'The invoice has amounts below one dong that cannot be rounded to the dong, so it cannot be posted. You can reject the proposal and ask the seller for an adjusted invoice.',
       PERIOD_LOCKED: "The books are locked through this entry's month, so it cannot be posted. An owner or the chief accountant can unlock that month to make a correction.",
       POSTING_DATE_NOT_ALLOWED: 'This posting date cannot be used: only a purchase invoice whose own month is locked is posted later, on a date from its invoice date on.',
       POSTING_DATE_IN_FUTURE: 'The posting date has not come yet. Choose today or an earlier day.',

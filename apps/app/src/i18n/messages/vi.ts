@@ -2538,7 +2538,7 @@ export const vi = {
     blockedAi:
       'Số tiền {assistant} đọc được không khớp nhau, có thể do đọc sai một chữ số. Hãy từ chối và tải lên tệp XML của hóa đơn điện tử này để ghi sổ chính xác.',
     blockedBelowDong:
-      'Hóa đơn có số tiền lẻ dưới một đồng, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Kế toán cần quyết định cách làm tròn; trong lúc chờ, có thể từ chối và xin người bán hóa đơn điều chỉnh.',
+      'Hóa đơn có số tiền lẻ dưới một đồng mà không làm tròn về đồng được (thuế GTGT có số lẻ, hoặc chênh lệch quá một đồng mỗi dòng), nên chưa ghi sổ được. Có thể từ chối và xin người bán hóa đơn điều chỉnh.',
     failedChecks: 'Có {count, number} kiểm tra không đạt. Hãy đối chiếu với chứng từ gốc trước khi duyệt.',
     acceptFailed: 'Tôi đã đối chiếu chứng từ gốc và vẫn muốn ghi sổ',
     signatureUnverifiedTitle: 'Chưa xác minh được chữ ký số của hóa đơn này',
@@ -5790,8 +5790,13 @@ export const vi = {
     },
     lines_sum: { ok: 'Tổng các dòng khớp tiền trước thuế', mismatch: 'Tổng các dòng ({lines}) lệch tiền trước thuế ({subtotal})' },
     total: { ok: 'Tiền trước thuế + VAT khớp tổng thanh toán', mismatch: 'Tiền trước thuế + VAT lệch tổng thanh toán' },
-    // A VND invoice with an amount below one dong (#1282); the rounding policy is the accountant's decision (#1308).
-    amount_scale: { fraction: 'Hóa đơn có số tiền lẻ dưới một đồng ({amount}); kế toán cần quyết định cách làm tròn trước khi ghi sổ' },
+    // A VND invoice with an amount below one dong (#1282): rounded to the dong with the difference on its largest line
+    // (#1308, #2235), or, when it cannot be rounded that way, held.
+    amount_scale: {
+      fraction: 'Hóa đơn có số tiền lẻ dưới một đồng ({amount}) mà không làm tròn về đồng được (thuế GTGT có số lẻ hoặc chênh lệch quá một đồng mỗi dòng); hãy xin người bán điều chỉnh hóa đơn',
+      rounded: 'Hóa đơn có số tiền lẻ dưới một đồng ({amount}); đã làm tròn từng dòng về đồng và dồn chênh lệch {difference} đồng vào dòng {line}',
+      rounded_even: 'Hóa đơn có số tiền lẻ dưới một đồng ({amount}); đã làm tròn từng dòng về đồng, tổng các dòng vẫn khớp tiền trước thuế',
+    },
     vat_breakdown: { ok: 'Bảng thuế suất khớp tổng VAT', mismatch: 'Bảng thuế suất lệch tổng VAT' },
     seller_tax_code: {
       unreadable: 'Không đọc được MST người bán',
@@ -6047,7 +6052,7 @@ export const vi = {
       SOURCE_LEGAL_ENTITY: 'Chứng từ này đã ghi sổ ở một pháp nhân khác; không ghi lại sang pháp nhân khác được',
       LEGAL_ENTITY_MISMATCH: 'Đề xuất ghi vào một pháp nhân khác pháp nhân của nó',
       LEGAL_ENTITY_MOVE_REFUSED: 'Đề xuất này thuộc một pháp nhân khác nên không chuyển được. Hãy từ chối đề xuất rồi tải chứng từ lên lại ở pháp nhân cần ghi sổ',
-      AMOUNT_BELOW_DONG: 'Hóa đơn có số tiền lẻ dưới một đồng, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Kế toán cần quyết định cách làm tròn; trong lúc chờ, có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh',
+      AMOUNT_BELOW_DONG: 'Hóa đơn có số tiền lẻ dưới một đồng mà không làm tròn về đồng được, nên chưa ghi sổ được. Có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh',
       PERIOD_LOCKED: 'Sổ đã khóa đến tháng của bút toán này nên không ghi được; chủ sở hữu hoặc kế toán trưởng có thể mở khóa tháng đó nếu cần sửa',
       POSTING_DATE_NOT_ALLOWED: 'Không dùng được ngày ghi sổ này: chỉ hóa đơn mua vào thuộc tháng đã khóa sổ mới được ghi sổ muộn, vào một ngày từ ngày hóa đơn trở đi',
       POSTING_DATE_IN_FUTURE: 'Ngày ghi sổ chưa tới; hãy chọn hôm nay hoặc một ngày trước đó',

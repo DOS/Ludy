@@ -256,7 +256,7 @@ export const KERNEL_ERROR_CODES = [
   'SOURCE_LEGAL_ENTITY',
   'LEGAL_ENTITY_MISMATCH',
   'LEGAL_ENTITY_MOVE_REFUSED',
-  // A VND invoice with an amount below one dong; the rounding policy is the accountant's decision (#1308).
+  // A VND invoice with an amount below one dong that was not rounded to the dong (#1308, #2235).
   'AMOUNT_BELOW_DONG',
   // Period lock (#329).
   'PERIOD_LOCKED',

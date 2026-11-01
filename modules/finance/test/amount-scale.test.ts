@@ -51,11 +51,11 @@ describe('invoice amounts below one dong', () => {
     expect(belowOneDongBooked(payload({ line: '1000000', subtotal: '1000000', vatTotal: '100000.05', total: '1100000.05' }))).toBe('100000.05');
   });
 
-  it('refuses with AMOUNT_BELOW_DONG, says the accountant decides, and rounds nothing', () => {
+  it('refuses with AMOUNT_BELOW_DONG, says it was not rounded, and rounds nothing', () => {
     const error = amountBelowDongError('1000000.5');
     expect(error).toMatchObject({ code: 'AMOUNT_BELOW_DONG', status: 422, details: { amount: '1000000.5' } });
     expect(error.message).toContain('dưới một đồng (1000000.5)');
-    expect(error.message).toContain('Kế toán cần quyết định cách làm tròn');
+    expect(error.message).toContain('Hệ thống không làm tròn về đồng được');
     expect(amountBelowDongError(null).details).toBeUndefined();
   });
 });

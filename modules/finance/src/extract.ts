@@ -26,6 +26,7 @@ import {
   money,
   Decimal,
   parseTaxCode,
+  roundInvoiceToDong,
   type InvoiceCheck,
   type LearnedRule,
   type ParsedInvoice,
@@ -481,7 +482,8 @@ export async function extractAndPropose(
   const checks = checkInvoice(invoice, deps.today?.());
   // A foreign-currency e-invoice with its own rate is proposed in VND (#918); the checks above read it as issued.
   const converted = bookedInVnd(invoice);
-  const booked = converted?.invoice ?? invoice;
+  // A VND invoice with amounts below one dong is proposed rounded to the dong (#2235); checkInvoice has warned about it.
+  const booked = converted?.invoice ?? roundInvoiceToDong(invoice).invoice;
   if (lookup.duplicateDocumentId || lookup.duplicateProposalId) checks.unshift(DUPLICATE_CHECK);
   const related = relatedRef(invoice, lookup.relatedDocumentId);
   if (related) checks.push(relatedCheck(related));
