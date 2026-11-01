@@ -132,10 +132,10 @@ export function ContactImportPage() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       // A workbook is a zip (PK); anything else is read as UTF-8 text.
-      parsed = /\.xlsx$/i.test(file.name) || (bytes[0] === 0x50 && bytes[1] === 0x4b) ? sheetToTable(await readFirstSheet(bytes)) : parseContactCsv(new TextDecoder('utf-8').decode(bytes));
+      parsed = /\.xlsx$/i.test(file.name) || (bytes[0] === 0x50 && bytes[1] === 0x4b) ? sheetToTable(await readFirstSheet(bytes, { refuseMacros: true, refuseFormulas: true })) : parseContactCsv(new TextDecoder('utf-8').decode(bytes));
     } catch (error) {
       if (mine !== selection.current) return;
-      return setReadError(error instanceof XlsxError ? t(error.reason === 'too_large' ? 'errors.tooBig' : error.reason === 'unsupported' ? 'errors.unsupported' : 'errors.notXlsx') : t('errors.unreadable'));
+      return setReadError(error instanceof XlsxError ? t(error.reason === 'too_large' ? 'errors.tooBig' : error.reason === 'unsupported' ? 'errors.unsupported' : error.reason === 'macro' ? 'errors.macro' : error.reason === 'formula' ? 'errors.formula' : 'errors.notXlsx') : t('errors.unreadable'));
     }
     if (mine !== selection.current) return;
     if (parsed.unterminated) return setReadError(t('errors.unterminated'));

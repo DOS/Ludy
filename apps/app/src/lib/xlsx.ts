@@ -10,7 +10,7 @@ export const MAX_XLSX_BYTES = 5 * 1024 * 1024;
 const MAX_PART_BYTES = 20 * 1024 * 1024;
 
 export class XlsxError extends Error {
-  readonly reason: 'not_xlsx' | 'too_large' | 'unsupported';
+  readonly reason: 'not_xlsx' | 'too_large' | 'unsupported' | 'macro' | 'formula';
   constructor(reason: XlsxError['reason'], message: string) {
     super(message);
     this.name = 'XlsxError';
@@ -397,9 +397,17 @@ function firstSheetPath(workbook: string | null, rels: string | null): string {
 }
 
 // The cells of the first sheet of an .xlsx file.
-export async function readFirstSheet(file: Uint8Array): Promise<SheetRows> {
+// What a caller may refuse on top of what cannot be read: a workbook that carries macros (a VBA project part), and a sheet
+// with a formula cell (its value is whatever the last save computed, and nothing here evaluates it).
+export interface ReadOptions {
+  refuseMacros?: boolean;
+  refuseFormulas?: boolean;
+}
+
+export async function readFirstSheet(file: Uint8Array, options: ReadOptions = {}): Promise<SheetRows> {
   if (file.byteLength > MAX_XLSX_BYTES) throw new XlsxError('too_large', 'file too large');
   const entries = zipEntries(file);
+  if (options.refuseMacros && [...entries.keys()].some((name) => /(^|\/)vbaProject\.bin$/i.test(name))) throw new XlsxError('macro', 'the workbook carries macros');
   const text = async (name: string) => {
     const entry = entries.get(name);
     return entry ? readEntry(file, entry) : null;
@@ -407,6 +415,7 @@ export async function readFirstSheet(file: Uint8Array): Promise<SheetRows> {
   const sheetPath = firstSheetPath(await text('xl/workbook.xml'), await text('xl/_rels/workbook.xml.rels'));
   const sheet = await text(sheetPath);
   if (sheet === null) throw new XlsxError('not_xlsx', 'no worksheet');
+  if (options.refuseFormulas && /<(?:[A-Za-z_][\w.-]*:)?f[\s>/]/.test(sheet)) throw new XlsxError('formula', 'the sheet holds a formula cell');
   const strings = await text('xl/sharedStrings.xml');
   return sheetRows(sheet, strings ? sharedStrings(strings) : []);
 }

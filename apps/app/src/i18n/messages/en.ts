@@ -725,6 +725,8 @@ export const en = {
       unterminated: 'The file has a quotation mark that is opened and never closed, so the rest of it was read as one cell. Fix the file and choose it again.',
       notXlsx: 'This is not an Excel (.xlsx) file that can be read. Save it again as .xlsx or CSV.',
       unsupported: 'This Excel file has a format that cannot be read yet (for example a very large sheet). Save it as a plain .xlsx or as CSV.',
+      macro: 'This Excel file carries macros (code that runs inside the file), so Ludy does not read it. Save it as .xlsx without macros, or as CSV.',
+      formula: 'This sheet has formula cells. Ludy imports values only and does not calculate formulas. Paste the values (Paste Special, Values) or save as CSV, then choose it again.',
       unreadable: 'This file could not be read.',
       tooMany: 'The file has more than {max} rows; split it into several files.',
     },

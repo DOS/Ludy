@@ -723,6 +723,8 @@ export const vi = {
       unterminated: 'Tệp có một dấu ngoặc kép mở mà không đóng, nên phần còn lại bị đọc thành một ô. Hãy sửa tệp rồi chọn lại.',
       notXlsx: 'Đây không phải tệp Excel (.xlsx) đọc được. Hãy lưu lại thành .xlsx hoặc CSV.',
       unsupported: 'Tệp Excel này có định dạng chưa đọc được (ví dụ bảng tính rất lớn). Hãy lưu thành .xlsx thường hoặc CSV.',
+      macro: 'Tệp Excel này có macro (đoạn mã chạy trong tệp), nên Ludy không đọc. Hãy lưu thành .xlsx không macro hoặc CSV.',
+      formula: 'Bảng tính này có ô công thức. Ludy chỉ nhập giá trị, không tính công thức. Hãy dán giá trị (Paste Special, Values) hoặc lưu thành CSV rồi chọn lại.',
       unreadable: 'Không đọc được tệp này.',
       tooMany: 'Tệp có nhiều hơn {max} dòng; hãy chia thành nhiều tệp.',
     },
