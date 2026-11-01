@@ -47,7 +47,7 @@ turn on `sprint_review` with `line_scopes`.
 | Accounting (Ludy Kế toán: ledger, VAT, invoices, bank feeds, MISA, `modules/finance`) | `line:accounting` | `c6def6cf` | `Accounting Product Owner` |
 | Frontend (UI/UX: the app in `apps/app`, `packages/ui`, the landing page ludy.vn in `apps/web`, the logo) | `line:frontend` | `b395d36d` | `Frontend Product Owner` |
 | Notes & CRM (notes, to-dos, bookings and calendar) | `line:notes-crm` | `b8743ac2` | `Notes & CRM Product Owner` |
-| Social Management (`modules/social`) | `line:social-management` | `735657ce` | `Social Management Product Owner` |
+| Marketing (Social Management in `modules/social`, and Ads, #2214; owner request 2026-11-01) | `line:social-management` | `735657ce` | `Social Management Product Owner` (the Marketing PO) |
 | Platform (the shared backend core: kernel, database, tenancy, authentication and sessions, the command runtime, the WORM archive; architecture and ADRs; security reviews; CI, deploy and operations) | `line:platform` | `3d3f0729` | `0: Điều phối` (the coordinator session) |
 
 - Social was paused under decision D5. On 2026-11-01 JOY reopened it for the
