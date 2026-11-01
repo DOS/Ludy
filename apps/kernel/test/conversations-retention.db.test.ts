@@ -250,7 +250,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await thread(o, 'e-2', 'Một bình luận khác của tôi', 'u-erase');
       await thread(o, 'e-3', 'Bình luận của người khác', 'u-other');
       await rt.execute('kernel.conversation.note', { conversationId: mine, body: 'Khách này hay hỏi giá' }, { actor: asUser(o.lan), orgId: o.orgId });
-      const erase = (who: string, actor = asMfa) => rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: mine, confirm: true }, { actor: actor(who), orgId: o.orgId, idempotencyKey: randomUUID() });
+      const erase = (who: string, actor: typeof asMfa | typeof asUser = asMfa) => rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: mine, confirm: true }, { actor: actor(who), orgId: o.orgId, idempotencyKey: randomUUID() });
       // A member or viewer may not; an admin without a fresh second factor is asked for one first.
       await expect(erase(o.lan)).rejects.toMatchObject({ status: 403 });
       await expect(erase(o.viewer)).rejects.toMatchObject({ status: 403 });
@@ -359,7 +359,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const code = ((await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7999')))) as { code: string }).code;
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
       expect(await metaDeletionStatus(rt, code, false)).toMatchObject({ connections: 0 });
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, false))).toContain('không còn tài khoản hay trang nào');
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, false))).toContain('không còn trang nào');
     });
 
     it('fans a request out to the Ads side and the conversation side under one code when one app serves both', async () => {
@@ -377,6 +377,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code]);
       expect(await metaDeletionStatus(rt, code, true)).toMatchObject({ connections: 1, accounts: 0 });
       expect((await metaDeletionStatus(rt, code, true))?.completedAt).not.toBeNull();
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, true))).toContain('đã được xóa');
       // A different app on each side: a request signed by one secret reaches only that side.
       const second = await acceptMetaDeletion(rt, { ads: 'the-ads-app-secret', conversations: SECRET }, form(signed('8002')));
       const code2 = (second as { code: string }).code;

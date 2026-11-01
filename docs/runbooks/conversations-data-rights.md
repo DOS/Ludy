@@ -20,6 +20,8 @@ A customer (or the org's own decision) asks for their messages to go:
 3. The audit row has the number of threads and messages and the kind of thread, nothing of the customer. If the customer writes again, a new thread opens: erasing is not blocking.
 4. **Not reached:** a copy in a backup (7-day point-in-time recovery) or in an earlier org export, which the org keeps under its own care (the export contains the conversations; its file is sealed and deleted after 35 to 90 days). After a restore from backup, run the recorded erasures again, as for other personal data ([personal-data-requests.md](personal-data-requests.md) section 5).
 
+**What stays:** a CRM contact (party) a person linked to the customer is only unlinked, not erased: it is the org's own record, and anything copied into it (a name, a phone number) is erased from the party by the personal-data tools ([personal-data-requests.md](personal-data-requests.md)). The call log of a reply (`external_call`) keeps opaque ids only, no text.
+
 The generic erasure by phone or email (`kernel.personal_data.erase`) does not touch conversations: the name a platform gave is registered as kept with its record and goes through this command, the retention purge, Meta's callback or the org's offboarding.
 
 ## 3. Meta's data deletion callback: one URL for every Meta connection
@@ -47,6 +49,9 @@ What it cannot do, and what the owner can do about it:
 - The org purge (offboarding, after the grace period) deletes the conversation tables and the settings with the rest of the org's rows.
 
 ## 5. What this does not do yet
+
+- **A redelivered notice can reopen an erased thread.** Platforms may resend a notice for a while after delivery (Zalo stops after an hour [S]); one that arrives after the erasure opens a new thread, as a new message from the customer would. Notices older than 24 hours are not parked (Zalo).
+- **The Meta callback finds nothing in production until a connector sets the hash:** no connection carries `granted_by_hash` yet (CV2 and CV7 set it), so until then a request completes with none; tests set the hash directly.
 
 - **Images and files of a customer's message** are not stored in this slice (a placeholder names their kind), so none are deleted here; the slice that stores them (CV4 and CV5b, #2329) deletes the files with their message, through the same commands.
 - **Drafts** (`conversation_draft`, CV8) do not exist yet.

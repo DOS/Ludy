@@ -961,6 +961,8 @@ export const vi = {
       m24: '24 tháng',
       default: '(mặc định)',
       keep: 'Giữ đến khi tôi xóa',
+      shorten: 'Mọi hội thoại có tin cuối cũ hơn {months} tháng sẽ bị xóa vĩnh viễn trong đêm nay, cùng tin nhắn và ghi chú. Không khôi phục được.',
+      shortenYes: 'Đặt và xóa hội thoại cũ',
     },
     sandboxFrom: 'Khách thử nghiệm',
     sandboxMake: 'Tạo bình luận thử',

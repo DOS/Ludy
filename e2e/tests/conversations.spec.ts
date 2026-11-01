@@ -78,6 +78,8 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   const retention = page.getByTestId('conversation-retention-select');
   await expect(retention).toHaveValue('24');
   await retention.selectOption('12');
+  // A shorter retention asks first: it deletes the older threads tonight.
+  await page.getByTestId('conversation-retention-yes').click();
   await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
   await page.reload();
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');

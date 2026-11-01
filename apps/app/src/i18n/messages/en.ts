@@ -963,6 +963,8 @@ export const en = {
       m24: '24 months',
       default: '(default)',
       keep: 'Keep until I delete them',
+      shorten: 'Every conversation whose last message is older than {months} months will be deleted for good tonight, with its messages and notes. This cannot be undone.',
+      shortenYes: 'Set it and delete the old ones',
     },
     sandboxFrom: 'Test customer',
     sandboxMake: 'Make a test comment',

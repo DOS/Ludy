@@ -88,16 +88,34 @@ export async function metaDeletionStatus(runtime: Runtime, code: string, adsInst
 
 // The status page's words, in Vietnamese and English (the person is a Meta user, in any language the app speaks).
 export function renderMetaDeletionStatus(status: MetaDeletionStatus | null): string {
-  const erased = (status?.accounts ?? 0) > 0 || (status?.connections ?? 0) > 0;
+  const ads = status !== null && status.accounts !== null;
+  const conversations = status !== null && status.connections !== null;
+  // Each side that holds the request says what it did; a page for one side keeps that side's own words.
+  const adsDone = (status?.accounts ?? 0) > 0;
+  const convDone = (status?.connections ?? 0) > 0;
   const text = !status
     ? { vi: 'Không tìm thấy yêu cầu xóa dữ liệu này.', en: 'No such data deletion request was found.' }
-    : status.completedAt
-      ? erased
-        ? {
-            vi: 'Dữ liệu bạn đã cấp quyền cho Ludy đã được xóa: số liệu quảng cáo, nhật ký cập nhật, các tài khoản quảng cáo, tin nhắn và bình luận của khách trên các trang đã kết nối, và mã truy cập của chúng đã bị hủy.',
-            en: 'The data you granted to Ludy has been deleted: ad figures, update logs, ad accounts, customers\u2019 messages and comments on the connected pages, and their access tokens destroyed.',
-          }
-        : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản hay trang nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no account or page you granted is left in Ludy.' }
-      : { vi: 'Yêu cầu đã được nhận và đang được xử lý, thường trong vòng một giờ.', en: 'The request was received and is being handled, usually within the hour.' };
+    : !status.completedAt
+      ? { vi: 'Yêu cầu đã được nhận và đang được xử lý, thường trong vòng một giờ.', en: 'The request was received and is being handled, usually within the hour.' }
+      : ads && !conversations
+        ? adsDone
+          ? {
+              vi: 'Số liệu quảng cáo, nhật ký cập nhật và các tài khoản quảng cáo bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của chúng đã bị hủy.',
+              en: 'The ad figures, update logs and ad accounts you granted to Ludy have been deleted, and their access tokens destroyed.',
+            }
+          : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản quảng cáo nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no ad account you granted is left in Ludy.' }
+        : conversations && !ads
+          ? convDone
+            ? {
+                vi: 'Tin nhắn và bình luận của khách trên các trang bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của các trang đó đã bị hủy.',
+                en: 'The customers\u2019 messages and comments on the pages you granted to Ludy have been deleted, and the pages\u2019 access tokens destroyed.',
+              }
+            : { vi: 'Yêu cầu đã được xử lý: không còn trang nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no page you granted is left in Ludy.' }
+          : adsDone || convDone
+            ? {
+                vi: 'Dữ liệu bạn đã cấp quyền cho Ludy đã được xóa: số liệu quảng cáo và tài khoản quảng cáo, tin nhắn và bình luận của khách trên các trang đã kết nối, và mã truy cập của chúng đã bị hủy.',
+                en: 'The data you granted to Ludy has been deleted: ad figures and ad accounts, customers\u2019 messages and comments on the connected pages, and their access tokens destroyed.',
+              }
+            : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản hay trang nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no account or page you granted is left in Ludy.' };
   return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Ludy</title></head><body><p>${text.vi}</p><p lang="en">${text.en}</p></body></html>`;
 }
