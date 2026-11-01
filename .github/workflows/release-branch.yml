@@ -1,12 +1,21 @@
 name: release-branch
 
-# The web app ships with the backend release (#2261, docs/runbooks/split-app-api.md): a tag v* on a commit of main moves
-# the `release` branch to that commit, and Vercel's Production Branch is `release`, so app.<domain> is built from a
-# release and never from a plain merge to main. The branch is only a pointer; nothing is committed to it.
+# The web app ships with the backend release (#2261, docs/runbooks/split-app-api.md). Vercel's Production Branch is
+# `release`, so app.<domain> is built from whatever commit this workflow points `release` at, and never from a plain
+# merge to main. It runs by hand (or from the operator's deploy pipeline, `gh workflow run release-branch.yml -f tag=v1.2.3`)
+# AFTER the backend runs that tag, so the app never goes live before its API; to roll back, run it again with the earlier
+# tag. The branch is only a pointer; nothing is committed to it.
+#
+# The file that runs is the one on main (a dispatch from another ref is refused below, and the `release` environment
+# should allow main only: docs/runbooks/split-app-api.md), so a tagged commit cannot edit the checks that gate it.
 
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag (v*, on a commit of main) the web app is to be built from
+        type: string
+        required: true
 
 permissions:
   contents: read
@@ -18,27 +27,70 @@ concurrency:
 jobs:
   move:
     name: Move the release branch
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 40
+    environment: release
     permissions:
       contents: write
+      checks: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
-      - name: Point release at the tagged commit
+      - name: The tag is a release on main
+        id: tag
         env:
-          TAG: ${{ github.ref_name }}
-          SHA: ${{ github.sha }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          # Only a commit of main is a release (the pilot deploy checks the same).
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor "$SHA" origin/main; then
-            echo "::error::$TAG is not on a commit of main; the release branch stays where it is"
+          if ! [[ "$TAG" =~ ^v[A-Za-z0-9._-]{1,63}$ ]]; then
+            echo "::error::'$TAG' is not a release tag (v followed by letters, digits, dot, dash, underscore)"
             exit 1
           fi
+          git fetch --no-tags origin main "refs/tags/$TAG:refs/tags/$TAG"
+          sha="$(git rev-parse "refs/tags/$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$TAG ($sha) is not on a commit of main; the release branch stays where it is"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # The release commit passed CI, as the pilot deploy requires (same variable, same default).
+      - name: CI is green on the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.tag.outputs.sha }}
+          REQUIRED: ${{ vars.DEPLOY_REQUIRED_CHECKS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$REQUIRED" ]; then REQUIRED=$'Lint, typecheck, test\nPlaywright on docker compose'; fi
+          deadline=$((SECONDS + 1800))
+          while :; do
+            runs="$(gh api "repos/$REPO/commits/$SHA/check-runs?filter=latest&per_page=100" --paginate \
+              --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv')"
+            pending=() failed=()
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              row="$(awk -F'\t' -v n="$name" '$1 == n { print; exit }' <<<"$runs")"
+              status="$(cut -f2 <<<"$row")" conclusion="$(cut -f3 <<<"$row")"
+              if [ "$status" != completed ]; then pending+=("$name"); elif [ "$conclusion" != success ]; then failed+=("$name: $conclusion"); fi
+            done <<<"$REQUIRED"
+            if ((${#failed[@]} > 0)); then printf '::error::required check not green: %s\n' "${failed[@]}"; exit 1; fi
+            if ((${#pending[@]} == 0)); then echo 'every required check passed'; break; fi
+            if ((SECONDS > deadline)); then printf '::error::required check missing or still running: %s\n' "${pending[@]}"; exit 1; fi
+            echo "waiting for: ${pending[*]}"
+            sleep 30
+          done
+
+      - name: Point release at the tagged commit
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ steps.tag.outputs.sha }}
+        run: |
+          set -euo pipefail
           before="$(git ls-remote origin refs/heads/release | cut -f1)"
           git push --force origin "$SHA:refs/heads/release"
           echo "release: ${before:-none} -> $SHA ($TAG)" >> "$GITHUB_STEP_SUMMARY"

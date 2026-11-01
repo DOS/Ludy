@@ -36,12 +36,13 @@ describe('fetchServerBuild', () => {
     expect(await fetchServerBuild(async () => Promise.reject(new TypeError('fetch failed')))).toBeNull();
   });
 
-  it('asks without cookies and never from the cache', async () => {
+  it('asks without cookies, and with no header that a CORS preflight would need to name', async () => {
     let seen: RequestInit | undefined;
     await fetchServerBuild(async (_input, init) => {
       seen = init;
       return Response.json({ build: SHA_A });
     });
-    expect(seen).toMatchObject({ cache: 'no-store', credentials: 'omit' });
+    expect(seen).toMatchObject({ credentials: 'omit' });
+    expect(seen?.headers).toBeUndefined();
   });
 });
