@@ -22,6 +22,7 @@ export const crmManifest = defineModule({
   entities: [
     { type: 'crm.booking', table: 'booking', legalEntityScoped: false, audit: 'command' },
     { type: 'crm.deal', table: 'deal', legalEntityScoped: false, audit: 'command' },
+    { type: 'crm.stage', table: 'pipeline_stage', legalEntityScoped: false, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.crm,
