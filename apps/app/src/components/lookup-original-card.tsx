@@ -2,8 +2,8 @@
 // "Cần hóa đơn gốc (XML)" (#2268, plan docs/plan/einvoice-lookup.md section 5): an invoice read from a PDF has no XML to
 // verify, and the PDF carried the seller's lookup link and code. The card shows them and takes the XML the person
 // downloads from the provider's page. Ludy calls nobody: the person opens the provider's page, solves its CAPTCHA, and
-// drops the file here, where it goes the ordinary way (an upload, the sandbox, the signature check, a proposal).
-import { useRef, useState } from 'react';
+// uploads the file here, where it goes the ordinary way (an upload, the sandbox, the signature check, a proposal).
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { LookupHint } from '@crove/kernel-contract';
 import { LOOKUP_PROVIDER_TABLE, safeLookupUrl } from '@crove/l10n-vn';
@@ -13,6 +13,7 @@ import { errorMessage } from '../lib/api.ts';
 import { useIntake } from './intake.tsx';
 
 const PROVIDER_NAMES: ReadonlyMap<string, string> = new Map(LOOKUP_PROVIDER_TABLE.map((spec) => [spec.id, spec.name]));
+const COPIED_MS = 2000;
 
 // A link the person may open: re-checked here against the provider table, whatever the server stored, so a hint that
 // does not pass is shown as text and never as a link. Exported for the test.
@@ -24,37 +25,45 @@ export function openableLink(hint: LookupHint, sellerTaxCode: string | null): { 
 
 function Hint({ hint, sellerTaxCode }: { hint: LookupHint; sellerTaxCode: string | null }) {
   const t = useTranslations('inboxDetail.lookup');
-  const [copied, setCopied] = useState(false);
+  const [copy, setCopy] = useState<'idle' | 'copied' | 'failed'>('idle');
   const link = openableLink(hint, sellerTaxCode);
   const code = hint.code;
-  const copy = async () => {
+  const provider = hint.provider ? (PROVIDER_NAMES.get(hint.provider) ?? hint.provider) : t('unknownProvider');
+  useEffect(() => {
+    if (copy !== 'copied') return;
+    const timer = setTimeout(() => setCopy('idle'), COPIED_MS);
+    return () => clearTimeout(timer);
+  }, [copy]);
+  const copyCode = async () => {
     if (code === null) return;
     try {
       await navigator.clipboard.writeText(code);
-      setCopied(true);
+      setCopy('copied');
     } catch {
-      // No clipboard (a plain-HTTP page, or refused): the code stays on screen to copy by hand.
-      setCopied(false);
+      // No clipboard (a plain-HTTP page, or refused): the code stays on screen to copy by hand, and the card says so.
+      setCopy('failed');
     }
   };
   return (
     <li className="space-y-1" data-testid="lookup-hint">
-      <p className="text-sm font-medium text-foreground">{hint.provider ? (PROVIDER_NAMES.get(hint.provider) ?? hint.provider) : t('unknownProvider')}</p>
+      <p className="text-sm font-medium text-foreground">{provider}</p>
       {code !== null && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-subtle-foreground">{t('code')}</span>
           <span className="font-mono text-sm break-all text-foreground" data-testid="lookup-code">
             {code}
           </span>
-          <Button variant="outline" size="sm" onClick={() => void copy()}>
-            {copied ? t('copied') : t('copy')}
+          <Button variant="outline" size="sm" aria-label={`${t('copy')} (${provider})`} onClick={() => void copyCode()}>
+            {copy === 'copied' ? t('copied') : t('copy')}
           </Button>
+          {copy === 'failed' && <span className="text-xs text-muted-foreground">{t('copyByHand')}</span>}
         </div>
       )}
       {link !== null ? (
         <p className="text-xs text-muted-foreground">
           <a href={link.url} target="_blank" rel="noopener noreferrer" className="font-medium text-primary underline" data-testid="lookup-link">
             {t('open')}
+            <span className="sr-only"> ({t('newTab')})</span>
           </a>{' '}
           <span className="break-all">({link.host})</span>
         </p>
@@ -69,14 +78,24 @@ function Hint({ hint, sellerTaxCode }: { hint: LookupHint; sellerTaxCode: string
   );
 }
 
-export function LookupOriginalCard({ hints, sellerTaxCode }: { hints: readonly LookupHint[]; sellerTaxCode: string | null }) {
+// legalEntityId: the entity the proposal belongs to, so the original is booked there whatever the shell works in.
+export function LookupOriginalCard({ hints, sellerTaxCode, legalEntityId }: { hints: readonly LookupHint[]; sellerTaxCode: string | null; legalEntityId?: string | undefined }) {
   const t = useTranslations('inboxDetail.lookup');
-  const intake = useIntake();
+  const intake = useIntake(legalEntityId);
   const input = useRef<HTMLInputElement>(null);
+  const [picked, setPicked] = useState(false);
+  const [notXml, setNotXml] = useState(false);
   const item = intake.items[0];
-  const failed = item?.state === 'upload_failed';
-  const sent = item !== undefined && !failed;
   if (hints.length === 0) return null;
+  // What happened to the file, in words: only a file that was filed and is being read, or became a proposal, is "sent".
+  let notice: { text: string; tone: 'muted' | 'error' } | null = null;
+  if (notXml) notice = { text: t('notXml'), tone: 'error' };
+  else if (item?.state === 'upload_failed') notice = { text: errorMessage(item.uploadError), tone: 'error' };
+  else if (item?.state === 'failed') notice = { text: item.error ?? t('unreadable'), tone: 'error' };
+  else if (item?.state === 'duplicate') notice = { text: t('duplicate'), tone: 'muted' };
+  else if (item?.state === 'waiting') notice = { text: t('waiting'), tone: 'muted' };
+  else if (item?.state === 'processing' || item?.state === 'proposed') notice = { text: t('sent'), tone: 'muted' };
+  else if (picked && item === undefined) notice = { text: t('preparing'), tone: 'muted' };
   return (
     <Card className="mb-4 block space-y-3 p-4" data-testid="lookup-original-card">
       <div>
@@ -100,12 +119,23 @@ export function LookupOriginalCard({ hints, sellerTaxCode }: { hints: readonly L
           data-testid="lookup-xml-input"
           onChange={(e) => {
             const chosen = [...(e.target.files ?? [])].slice(0, 1);
-            if (chosen.length) intake.start(chosen);
             e.target.value = '';
+            // The picker's "all files" lets anything through; this card takes the XML only, so a PDF is not read again.
+            if (chosen.length === 0) return;
+            if (!/\.xml$/i.test(chosen[0]?.name ?? '')) {
+              setNotXml(true);
+              return;
+            }
+            setNotXml(false);
+            setPicked(true);
+            intake.start(chosen);
           }}
         />
-        {sent && !intake.uploading && <span className="text-xs text-muted-foreground">{t('sent')}</span>}
-        {failed && <span className="text-xs break-words text-destructive">{errorMessage(item.uploadError)}</span>}
+        {notice !== null && (
+          <span className={notice.tone === 'error' ? 'text-xs break-words text-destructive' : 'text-xs text-muted-foreground'} role="status">
+            {notice.text}
+          </span>
+        )}
       </div>
     </Card>
   );

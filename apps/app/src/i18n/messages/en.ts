@@ -2638,6 +2638,13 @@ export const en = {
       linkAsText: 'Address printed on the invoice (cannot be opened from here):',
       upload: 'Upload XML',
       sent: 'Sent. The XML file will be read and appear as a new proposal in the list.',
+      preparing: 'Getting ready to upload…',
+      duplicate: 'This file is already in the system, so it is not read again.',
+      unreadable: 'This file could not be read.',
+      waiting: "The file was received and waits for the next day's document reading budget.",
+      notXml: 'Only .xml files are taken here. Upload a PDF or a photo invoice in the Inbox.',
+      copyByHand: 'The code could not be copied automatically; copy it by hand.',
+      newTab: 'opens in a new tab',
     },
     signatureUnverifiedTitle: 'The digital signature of this invoice could not be verified',
     signatureUnverifiedHint:

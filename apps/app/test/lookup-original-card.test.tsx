@@ -93,15 +93,46 @@ describe('the original invoice card', () => {
     expect(card([{ provider: null, url: null, code: '7Q8W9E1R2T' }])).toContain('Invoice provider not recognized');
   });
 
-  it('says the file was sent, or why the upload failed', () => {
+  it('says the file was sent only when it is being read, and otherwise what happened to it', () => {
     const hints: LookupHint[] = [{ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: '4F7K2M9QXA3' }];
-    intake.current = { items: [{ state: 'processing' }], uploading: false };
-    expect(card(hints)).toContain('Sent. The XML file will be read');
-    intake.current = { items: [{ state: 'upload_failed', uploadError: 'Error: file too large' }], uploading: false };
-    const failed = card(hints);
-    expect(failed).toContain('file too large');
+    const withItem = (item: { state: string; uploadError?: unknown; error?: string | null }) => {
+      intake.current = { items: [item], uploading: false };
+      return card(hints);
+    };
+    for (const state of ['processing', 'proposed']) expect(withItem({ state }), state).toContain('Sent. The XML file will be read');
+    // The same file twice: nothing new is read, so the card must not promise a proposal.
+    const duplicate = withItem({ state: 'duplicate' });
+    expect(duplicate).toContain('already in the system');
+    expect(duplicate).not.toContain('Sent.');
+    // A file the server could not read: its own words.
+    const failed = withItem({ state: 'failed', error: 'Not an e-invoice' });
+    expect(failed).toContain('Not an e-invoice');
     expect(failed).not.toContain('Sent.');
+    expect(withItem({ state: 'failed', error: null })).toContain('This file could not be read.');
+    expect(withItem({ state: 'waiting' })).toContain('waits for the next day');
+    const uploadFailed = withItem({ state: 'upload_failed', uploadError: 'Error: file too large' });
+    expect(uploadFailed).toContain('file too large');
+    expect(uploadFailed).not.toContain('Sent.');
+    // Nothing yet, or still uploading: no claim at all.
+    for (const state of ['queued', 'uploading']) {
+      const html = withItem({ state });
+      expect(html, state).not.toContain('Sent.');
+      expect(html, state).not.toContain('role="status"');
+    }
     intake.current = { items: [], uploading: false };
+  });
+
+  it('gives each copy button a name that says which provider it is for', () => {
+    const html = card([
+      { provider: 'misa', url: null, code: '4F7K2M9QXA3' },
+      { provider: 'easyinvoice', url: null, code: 'EZ98YX76WV' },
+    ]);
+    expect(html).toContain('aria-label="Copy code (MISA meInvoice)"');
+    expect(html).toContain('aria-label="Copy code (EasyInvoice)"');
+  });
+
+  it('says that the link opens in a new tab, for a screen reader', () => {
+    expect(card([{ provider: 'misa', url: 'https://meinvoice.vn/tra-cuu', code: null }])).toContain('opens in a new tab');
   });
 
   it('shows nothing when the proposal has no hint', () => {

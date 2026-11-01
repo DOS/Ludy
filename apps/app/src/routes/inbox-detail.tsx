@@ -850,9 +850,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         </div>
       )}
       {/* An invoice read from a PDF whose text carried the seller's lookup link and code (#2268): the original XML is a few
-          clicks away on the provider's page, and dropped here it replaces this reading's weak source. */}
+          clicks away on the provider's page. Uploaded here it is read like any upload, in this proposal's legal entity. */}
       {!plain && pending && payload && payload.extractionMethod !== 'einvoice_xml' && (payload.lookupHints?.length ?? 0) > 0 && (
-        <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} />
+        <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} legalEntityId={detail.data?.legalEntityId ?? undefined} />
       )}
       {!plain && unverified && (
         <Card className="mb-4 block space-y-2 border border-destructive/60 p-4 ring-0" data-testid="signature-unverified">

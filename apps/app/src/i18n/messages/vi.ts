@@ -2634,6 +2634,13 @@ export const vi = {
       linkAsText: 'Địa chỉ ghi trên hóa đơn (không mở từ đây được):',
       upload: 'Tải XML lên',
       sent: 'Đã gửi. File XML sẽ được đọc và hiện thành một đề xuất mới trong danh sách.',
+      preparing: 'Đang chuẩn bị tải lên…',
+      duplicate: 'Hệ thống đã có file này rồi nên không đọc lại.',
+      unreadable: 'Không đọc được file này.',
+      waiting: 'File đã nhận và chờ ngân sách đọc chứng từ của ngày hôm sau.',
+      notXml: 'Chỉ nhận file .xml ở đây. Hóa đơn PDF hoặc ảnh tải lên ở trang Chứng từ chờ duyệt.',
+      copyByHand: 'Không sao chép được tự động, hãy chép mã bằng tay.',
+      newTab: 'mở trong thẻ mới',
     },
     signatureUnverifiedTitle: 'Chưa xác minh được chữ ký số của hóa đơn này',
     signatureUnverifiedHint:
