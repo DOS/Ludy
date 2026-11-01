@@ -45,7 +45,7 @@ describe('APP_URL', () => {
 
   it('must be listed in CORS_ALLOWED_ORIGINS when it is another origin than PUBLIC_URL', () => {
     const env = { ...base, PUBLIC_URL: 'https://api.example.com', AUTH_UPSTREAM_URL: 'http://auth:9999' };
-    expect(() => loadConfig({ ...env, APP_URL: APP })).toThrow(new RegExp(`list ${APP} in CORS_ALLOWED_ORIGINS`));
+    expect(() => loadConfig({ ...env, APP_URL: APP })).toThrow(`list ${APP} in CORS_ALLOWED_ORIGINS`);
     expect(() => loadConfig({ ...env, APP_URL: APP, CORS_ALLOWED_ORIGINS: 'https://other.example.com' })).toThrow(/CORS_ALLOWED_ORIGINS/);
     expect(() => loadConfig({ ...env, APP_URL: APP, CORS_ALLOWED_ORIGINS: APP })).not.toThrow();
     // The same origin as PUBLIC_URL needs no CORS.
