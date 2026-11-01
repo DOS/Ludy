@@ -14,18 +14,33 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DataTable, ErrorText, Field, PageHeader } from '../components/ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { IMPORT_FIELDS, IMPORT_MAX_BYTES, guessMapping, mappedRows, parseContactCsv, rejectsCsv, type ImportField, type ParsedCsv } from '../lib/contact-csv.ts';
+import { IMPORT_FIELDS, IMPORT_MAX_BYTES, guessMapping, mappedRows, parseContactCsv, rejectsCsv, sheetToTable, type ImportField, type ParsedCsv } from '../lib/contact-csv.ts';
+import { XlsxError, readFirstSheet, writeWorkbook } from '../lib/xlsx.ts';
 
 type Step = 'choose' | 'map' | 'preview' | 'done';
 const OUTCOMES: readonly (ImportOutcome | 'all')[] = ['all', 'new', 'duplicate', 'conflict', 'invalid'];
 
-function download(name: string, text: string): void {
-  const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+function download(name: string, content: BlobPart, type = 'text/csv;charset=utf-8'): void {
+  const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// A sample workbook: the columns the import knows and one made-up row, phone and tax code as text so they keep their zero.
+function templateBook(label: (field: ImportField) => string, example: string): Uint8Array {
+  const sample: Record<ImportField, string> = { name: example, kind: '', taxCode: '', email: 'mau@example.com', phone: '0900 000 000', address: '1 Đường Mẫu, Quận 1' };
+  return writeWorkbook([
+    {
+      name: 'Liên hệ',
+      widths: [28, 22, 18, 28, 18, 36],
+      headerRows: 1,
+      textColumns: [IMPORT_FIELDS.indexOf('taxCode'), IMPORT_FIELDS.indexOf('phone')],
+      rows: [IMPORT_FIELDS.map(label), IMPORT_FIELDS.map((f) => sample[f])],
+    },
+  ]);
 }
 
 export function ContactImportPage() {
@@ -113,10 +128,25 @@ export function ContactImportPage() {
     const mine = (selection.current += 1);
     if (!file) return;
     if (file.size > IMPORT_MAX_BYTES) return setReadError(t('errors.tooBig'));
-    const text = await file.text();
+    let parsed: ParsedCsv;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      // A workbook is an .xlsx name or a zip (PK). A name that says CSV wins over the bytes: a CSV whose first cell starts with
+      // "PK" is text; only a real workbook renamed to .csv falls through to the workbook reader (and a failure of that reads text).
+      const zip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+      const csvName = /\.(csv|tsv|txt)$/i.test(file.name);
+      const readSheet = async () => sheetToTable(await readFirstSheet(bytes, { refuseMacros: true, refuseFormulas: true }));
+      const readText = () => parseContactCsv(new TextDecoder('utf-8').decode(bytes));
+      if (/\.xlsx$/i.test(file.name) || (zip && !csvName)) parsed = await readSheet();
+      else if (zip) parsed = await readSheet().catch((error: unknown) => (error instanceof XlsxError && error.reason === 'not_xlsx' ? readText() : Promise.reject(error)));
+      else parsed = readText();
+    } catch (error) {
+      if (mine !== selection.current) return;
+      return setReadError(error instanceof XlsxError ? t(error.reason === 'too_large' ? 'errors.tooBig' : error.reason === 'unsupported' ? 'errors.unsupported' : error.reason === 'macro' ? 'errors.macro' : error.reason === 'formula' ? 'errors.formula' : 'errors.notXlsx') : t('errors.unreadable'));
+    }
     if (mine !== selection.current) return;
-    const parsed = parseContactCsv(text);
     if (parsed.unterminated) return setReadError(t('errors.unterminated'));
+    if (parsed.tooWide) return setReadError(t('errors.tooWide'));
     if (parsed.header.length === 0 || parsed.rows.length === 0) return setReadError(t('errors.empty'));
     if (parsed.rows.length > IMPORT_MAX_ROWS) return setReadError(t('errors.tooMany', { max: String(IMPORT_MAX_ROWS) }));
     setFilename(file.name);
@@ -151,7 +181,12 @@ export function ContactImportPage() {
       {step === 'choose' && (
         <div className="space-y-3 rounded-lg border border-border p-4">
           <p className="text-sm text-muted-foreground">{t('choose.hint', { max: String(IMPORT_MAX_ROWS) })}</p>
-          <Field label={t('choose.file')}>{(c) => <input {...c} ref={input} type="file" accept=".csv,text/csv" className="text-sm" onChange={(e) => void choose(e.target.files?.[0])} />}</Field>
+          <Field label={t('choose.file')}>
+            {(c) => <input {...c} ref={input} type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="text-sm" onChange={(e) => void choose(e.target.files?.[0])} />}
+          </Field>
+          <Button type="button" variant="outline" size="sm" onClick={() => download('mau-lien-he.xlsx', templateBook((f) => t(`field.${f}`), t('choose.example')).slice(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}>
+            {t('choose.template')}
+          </Button>
           {readError && <ErrorText>{readError}</ErrorText>}
         </div>
       )}
@@ -185,7 +220,7 @@ export function ContactImportPage() {
           {!nameMapped && <ErrorText>{t('map.nameRequired')}</ErrorText>}
           {stage.error && <ErrorText>{errorMessage(stage.error)}</ErrorText>}
           <div className="flex gap-2">
-            <Button disabled={!nameMapped} loading={stage.isPending} onClick={() => stage.mutate({ filename, rows: mappedRows(csv.rows, mapping) })}>
+            <Button disabled={!nameMapped} loading={stage.isPending} onClick={() => stage.mutate({ filename, rows: mappedRows(csv.rows, mapping, csv.numeric) })}>
               {t('map.next')}
             </Button>
             <Button variant="ghost" disabled={stage.isPending} onClick={reset}>
