@@ -54,8 +54,17 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_org_setting',
+  'crove_ads.ad_spend_cap',
+  'crove_kernel.channel_access',
+  'crove_kernel.conversation',
+  'crove_kernel.conversation_identity',
+  'crove_kernel.conversation_message',
+  'crove_kernel.conversation_note',
+  'crove_kernel.conversation_read',
   'crove_notes.link',
   'crove_notes.note',
+  'crove_social.channel_access',
 ]);
 // Tables whose rows belong to one member (ADR-0037, notes plan §3.6 and step N1): unlike saved_view and notification,
 // the system context reads only what the value's predicate selects (over alias t, operators schema-qualified so a
@@ -795,9 +804,93 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // A channel a limited member may work on (#1081, moved from Social to the kernel by #2303): a member with rows is limited to
+  // those channels, a member with none is not limited. The member is the org's owner, the one member the fixture has
+  // (tenant roles cannot add members). One row per member and connection, so each row gets its own fresh connection.
+  'crove_kernel.channel_access': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), user_id: o.owner, channel_connection_id: connection.id, created_by: o.owner },
+      };
+    },
+  },
   'crove_kernel.channel_connection': { make: (o) => ({ row: channelConnectionRow(o) }) },
   // Definer-only machinery: the sealed token of a connection, one row per connection. The envelope is opaque bytes
   // here; only the vault in the worker opens a real one.
+  // The conversation core (#2303, plan docs/plan/conversations.md section 5): a thread of comments or messages on a channel.
+  // The factory's rows are comment threads, which the org's owner (the member context every probe enters as) reads and writes
+  // whatever the channel limits; a private message is read only with conversation.direct.read, and the thread's own channel
+  // and kind are copied onto its messages (composite foreign key), so every row below gets a fresh connection and thread.
+  'crove_kernel.conversation': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}`, external_post_id: `post-${tag()}` },
+      };
+    },
+  },
+  // Who wrote: the platform's id for the person, once per provider; a party is linked by a person, never by the intake.
+  'crove_kernel.conversation_identity': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', external_user_id: `rls-${tag()}`, display_name: 'RLS matrix commenter' } }),
+  },
+  // A message of a thread: its channel and kind are the thread's, and its place (seq) and platform id are unique per
+  // thread and connection, so each row has a thread of its own.
+  'crove_kernel.conversation_message': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          conversation_id: thread,
+          channel_connection_id: connection.id,
+          kind: 'comment_thread',
+          seq: 1,
+          direction: 'in',
+          external_message_id: `rls-${tag()}`,
+          sent_at: '2026-11-01T03:00:00Z',
+          author_kind: 'contact',
+          body: 'RLS matrix comment',
+        },
+      };
+    },
+  },
+  // An internal note on a thread, never sent.
+  'crove_kernel.conversation_note': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, author_user_id: o.owner, body: 'RLS matrix note' },
+      };
+    },
+  },
+  // A member's read mark on a thread: one per member and thread, the member being the org's owner.
+  'crove_kernel.conversation_read': {
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, user_id: o.owner },
+      };
+    },
+  },
   'crove_kernel.credential': {
     make: (o) => {
       const connection = channelConnectionRow(o);

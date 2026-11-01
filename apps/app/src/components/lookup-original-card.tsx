@@ -79,7 +79,20 @@ function Hint({ hint, sellerTaxCode }: { hint: LookupHint; sellerTaxCode: string
 }
 
 // legalEntityId: the entity the proposal belongs to, so the original is booked there whatever the shell works in.
-export function LookupOriginalCard({ hints, sellerTaxCode, legalEntityId }: { hints: readonly LookupHint[]; sellerTaxCode: string | null; legalEntityId?: string | undefined }) {
+// onDismiss: the card of an Inbox item (a mail with no invoice attached, #2286) can be dismissed; one on a proposal cannot.
+export function LookupOriginalCard({
+  hints,
+  sellerTaxCode,
+  legalEntityId,
+  onDismiss,
+  dismissing = false,
+}: {
+  hints: readonly LookupHint[];
+  sellerTaxCode: string | null;
+  legalEntityId?: string | undefined;
+  onDismiss?: (() => void) | undefined;
+  dismissing?: boolean;
+}) {
   const t = useTranslations('inboxDetail.lookup');
   const intake = useIntake(legalEntityId);
   const input = useRef<HTMLInputElement>(null);
@@ -131,6 +144,11 @@ export function LookupOriginalCard({ hints, sellerTaxCode, legalEntityId }: { hi
             intake.start(chosen);
           }}
         />
+        {onDismiss && (
+          <Button variant="ghost" size="sm" disabled={dismissing} onClick={onDismiss}>
+            {t('dismiss')}
+          </Button>
+        )}
         {notice !== null && (
           <span className={notice.tone === 'error' ? 'text-xs break-words text-destructive' : 'text-xs text-muted-foreground'} role="status">
             {notice.text}
