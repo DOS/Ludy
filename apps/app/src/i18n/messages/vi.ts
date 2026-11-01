@@ -6362,6 +6362,7 @@ export const vi = {
       SAVED_VIEW_NOT_FOUND: 'Không tìm thấy chế độ xem này',
       SAVED_VIEW_NAME_TAKEN: 'Đã có chế độ xem cùng tên',
       SAVED_VIEW_LIMIT: 'Mỗi người lưu tối đa 20 chế độ xem',
+      TOO_MANY_REQUESTS: 'Thao tác quá nhanh, hãy thử lại sau một phút',
       CONVERSATION_NOT_FOUND: 'Không tìm thấy hội thoại này',
       MESSAGE_NOT_FOUND: 'Không tìm thấy tin nhắn này',
       CONVERSATION_MOVED: 'Hội thoại vừa có tin mới, hãy đọc lại trước khi trả lời',

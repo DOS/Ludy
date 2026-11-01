@@ -6363,6 +6363,7 @@ export const en = {
       SAVED_VIEW_NOT_FOUND: 'This view was not found',
       SAVED_VIEW_NAME_TAKEN: 'A view with this name already exists',
       SAVED_VIEW_LIMIT: 'Each person keeps at most 20 views',
+      TOO_MANY_REQUESTS: 'Too many requests, try again in a minute',
       CONVERSATION_NOT_FOUND: 'This conversation was not found',
       MESSAGE_NOT_FOUND: 'This message was not found',
       CONVERSATION_MOVED: 'The conversation has a new message, read it before you reply',

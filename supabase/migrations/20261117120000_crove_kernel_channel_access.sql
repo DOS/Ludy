@@ -50,6 +50,8 @@ BEGIN
     INSERT INTO crove_kernel.channel_access (org_id, id, user_id, channel_connection_id, created_by, created_at)
     SELECT s.org_id, s.id, s.user_id, s.channel_connection_id, s.created_by, s.created_at FROM crove_social.channel_access s
     ON CONFLICT DO NOTHING;
+    -- crove:contract adr=0041
+    -- migration-lint: cross-module the per-channel limit moves from Social to the kernel (ADR-0041, #2303): its rows were copied just above and Social now reads the kernel's table
     DROP TABLE crove_social.channel_access;
   END IF;
 END $$;
