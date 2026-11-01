@@ -306,8 +306,8 @@ describe('the words of the screen', () => {
   });
 
   it('tells, before a disconnect, that the stored figures stay and that the account can be connected again', () => {
-    expect(vi.ads.settings.disconnectBody).toContain('Số liệu đã lưu vẫn được giữ; bạn có thể kết nối lại sau.');
-    expect(en.ads.settings.disconnectBody).toContain('The stored figures are kept, and you can connect the account again later.');
+    expect(vi.ads.settings.disconnectBody).toContain('Số liệu đã lưu vẫn được giữ để xem lại.');
+    expect(en.ads.settings.disconnectBody).toContain('The stored figures are kept, to read.');
     expect(vi.ads.connectionHint.expired).toContain('Chủ sở hữu hoặc quản trị viên cần kết nối lại');
     expect(en.ads.connectionHint.expired).toContain('An owner or admin must connect the account again');
   });

@@ -76,14 +76,16 @@ describe('the sandbox ad platform', () => {
   });
 
   it('reports a settled day the same every time, and a day inside the revision window as it drifts', async () => {
-    const secretHolder = sandboxAdPlatform(at('2026-11-20T08:00:00Z')).connect({ displayName: 'a' });
-    const read = (iso: string, from: string, to: string) =>
-      sandboxAdPlatform(at(iso)).readDaily(secretHolder.secret, secretHolder.externalAccountId, { from, to });
+    const connected = sandboxAdPlatform(at('2026-11-20T08:00:00Z')).connect({ displayName: 'a' });
+    // A token of its own: the platform skips some campaign days by the token's seed, so a drawn token would leave a window
+    // without a row now and then. With this one the rows are the same on every run.
+    const secret = JSON.stringify({ ...JSON.parse(connected.secret), accessToken: `sbx_${'A'.repeat(43)}` });
+    const read = (iso: string, from: string, to: string) => sandboxAdPlatform(at(iso)).readDaily(secret, connected.externalAccountId, { from, to });
     // 2026-11-10 is long final on both reads: the minute of the hour changes nothing.
     expect(await read('2026-11-20T08:01:00Z', '2026-11-10', '2026-11-10')).toEqual(await read('2026-11-20T08:04:00Z', '2026-11-10', '2026-11-10'));
-    // 2026-11-19 is inside the three days before today (in Ho Chi Minh City it is the 20th): it moves with the minute.
-    const first = await read('2026-11-20T08:01:00Z', '2026-11-19', '2026-11-19');
-    const second = await read('2026-11-20T08:04:00Z', '2026-11-19', '2026-11-19');
+    // 2026-11-17 to 2026-11-19 are inside the three days before today (in Ho Chi Minh City it is the 20th): they move with the minute.
+    const first = await read('2026-11-20T08:01:00Z', '2026-11-17', '2026-11-19');
+    const second = await read('2026-11-20T08:04:00Z', '2026-11-17', '2026-11-19');
     expect(first.length).toBeGreaterThan(0);
     expect(first).not.toEqual(second);
   });

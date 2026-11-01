@@ -17,7 +17,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
+import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
 import { loadConfig } from '../src/config.ts';
@@ -234,7 +234,8 @@ suite('ads on PostgreSQL (#2217)', () => {
     // 13 months of history, as the owner agreed (#2214 Q4).
     const today = todayIn('UTC', new Date());
     expect((account?.backfillFrom as string) <= today).toBe(true);
-    expect(Date.parse(today) - Date.parse(account?.backfillFrom as string)).toBeGreaterThan(395 * DAY_MS);
+    // Exactly 13 calendar months back, clamped to a shorter month: a count of days varies with the month and the clock.
+    expect(account?.backfillFrom).toBe(addMonths(today, -13));
     // Sealed: a credential row, and no token anywhere an answer or a trail could carry it.
     const sealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2`, [orgId, made.connectionId]);
     expect(sealed[0]?.n).toBe('1');

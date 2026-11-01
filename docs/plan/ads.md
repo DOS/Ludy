@@ -77,7 +77,7 @@ Checked 2026-11-01. "Cloud" means Ludy Cloud with DOS-owned platform apps; "self
 | 1 | **Meta** (Facebook and Instagram ads) | Marketing API, Insights edge `/{ad-account-id}/insights`; `level` account, campaign, adset, ad; `time_range`, `time_increment` [C]. Graph API v26.0 (2026-07-29) is current; the code default is v24.0, so the build issue pins and tests one version [C] | `ads_read`: reports for accounts you own or were granted [C] | Slice A |
 | 2 | **Google Ads** (Search, Display, YouTube, Performance Max) | Google Ads API, GAQL, REST and gRPC; v26.1 current [C] | Scope `https://www.googleapis.com/auth/adwords` (restricted) [C]; access level per Cloud project: Test, Explorer (2,880 operations a day), Basic (15,000, brand verification), Standard (unlimited, manual audit and RMF) [C] | Slice B, self-host bring-your-own first |
 | 3 | **TikTok Ads** | Marketing API reporting, `GET /open_api/v1.3/report/integrated/get/` [C]; the docs portal is JavaScript-only, so metrics, token life, review and limits are all [U] | Reporting scope (first-level permission) [U] | Slice C, after a human reads the portal |
-| 4 | **Zalo Ads** (Adtima) | No public reporting API found. `ads.zalo.me` shows no API or export page [C that it was read]; the developer pages are JavaScript-only [U]. Zalo OA API and ZNS are different products and give no ad spend [C] | none | CSV import or manual entry (slice E); the owner asks Adtima support whether an API exists (Q6) |
+| 4 | **Zalo Ads** (Adtima) | No public reporting API found. `ads.zalo.me` shows no API or export page [C that it was read]; the developer pages are JavaScript-only [U]. Zalo OA API and ZNS are different products and give no ad spend [C] | none | **Dropped by the owner (Q6, 2026-11-01):** no CSV import, no manual entry, nobody asks Adtima |
 | later | Microsoft Advertising (SOAP, async reports, developer token) [C]; LinkedIn Marketing API (`r_ads_reporting`, approval not confirmed [U]) | | | After the first three, B2B only |
 | not planned | X Ads (application form, 7-day sync stats, 250 requests per 15 minutes [C]), Pinterest (low use in Vietnam, tiers [U]), Cốc Cốc (no public API found [U]) | | | Revisit on request |
 
@@ -102,7 +102,7 @@ All of this is an `owner-action`: no agent creates a developer app, signs in or 
 
 **TikTok** (slice C): a TikTok for Business developer app, approved for the Reporting scope [U], separate from the content-posting app of Social on `developers.tiktok.com` (whether it must be a separate app is [U]). Token lifetime is unclear: sources conflict (no expiry or 24 hours) [U], so the build issue verifies it against a real token.
 
-**Zalo** (slice E): ask Adtima (its support contact is on its website [C]) whether a reporting API exists for advertisers.
+**Zalo** (slice E): dropped by the owner (Q6, 2026-11-01); Zalo Ads is not supported and nobody contacts Adtima.
 
 ## 5. How data comes in
 
@@ -249,7 +249,7 @@ Each adapter's fetch is bound to its hosts and follows no redirect (`allowlisted
 | **B** | Google Ads, self-host bring-your-own project | adapter, the Cloud-project and consent-screen runbook, access-level notes |
 | **C** | TikTok Ads | after a human reads the portal (section 4) |
 | **D** | Which month has no invoice or receipt; platform charges beside card lines | `ad_invoice`, Google `ListInvoices` (needs monthly invoicing on the account) [C]; Meta has no invoice edge [C], so Meta documents come through normal intake |
-| **E** | Zalo Ads by CSV or manual entry | only if Adtima confirms there is no API (Q6) |
+| **E** | Zalo Ads by CSV or manual entry | **dropped by the owner (Q6, 2026-11-01)**; not built |
 
 **Exit criteria for v1 (A1 to A3):**
 1. On a fresh laptop with `docker compose up`: connect the sandbox ad platform, see spend and cost per result, and the books strip with its difference; Playwright covers it.

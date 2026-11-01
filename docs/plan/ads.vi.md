@@ -39,7 +39,7 @@ Tham chiếu (JOY, 2026-11-01, ảnh chụp bảng điều khiển Hootsuite): A
 | 1 | Meta (Facebook, Instagram) | API đọc được. Cần một ứng dụng Meta riêng cho quảng cáo (mọi use case của Marketing API đều kèm quyền ghi `ads_management`, không gỡ được) |
 | 2 | Google Ads | Developer token đã bị bỏ từ 2026-09-09, mức truy cập nay gắn với Cloud project. Người tự host mang project của mình |
 | 3 | TikTok Ads | Trang tài liệu cần trình duyệt nên chưa xác nhận được token, giới hạn, duyệt ứng dụng: một người phải đọc bằng tay |
-| 4 | Zalo Ads (Adtima) | Không thấy API công khai. Đề xuất hỏi hỗ trợ Adtima, trong lúc đó nhập CSV |
+| 4 | Zalo Ads (Adtima) | Không thấy API công khai. **Chủ đã bỏ (câu 6, 2026-11-01):** không nhập CSV, không liên hệ Adtima |
 | sau này | Microsoft, LinkedIn | Chỉ khi có nhu cầu |
 | chưa dự kiến | X, Pinterest, Cốc Cốc | |
 

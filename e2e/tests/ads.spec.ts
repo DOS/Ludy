@@ -188,7 +188,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
     const trigger = page.getByRole('button', { name: 'Ngắt kết nối', exact: true });
     const dialog = page.getByRole('dialog', { name: 'Ngắt kết nối tài khoản quảng cáo này?' });
     await trigger.click();
-    await expect(dialog.getByText('Số liệu đã lưu vẫn được giữ; bạn có thể kết nối lại sau.', { exact: false })).toBeVisible();
+    await expect(dialog.getByText('Số liệu đã lưu vẫn được giữ để xem lại.', { exact: false })).toBeVisible();
     // Cancel leaves everything as it was.
     await dialog.getByRole('button', { name: 'Hủy' }).click();
     await expect(dialog).toHaveCount(0);

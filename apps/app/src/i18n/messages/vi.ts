@@ -1160,7 +1160,7 @@ export const vi = {
       disconnectHint: 'Ngừng lấy số liệu từ nền tảng cho tài khoản này. Số liệu đã lưu vẫn được giữ.',
       disconnect: 'Ngắt kết nối',
       disconnectTitle: 'Ngắt kết nối tài khoản quảng cáo này?',
-      disconnectBody: 'Hệ thống sẽ ngừng lấy số liệu mới cho tài khoản {name}. Số liệu đã lưu vẫn được giữ; bạn có thể kết nối lại sau.',
+      disconnectBody: 'Hệ thống sẽ ngừng lấy số liệu mới cho tài khoản {name}. Số liệu đã lưu vẫn được giữ để xem lại.',
       disconnected: 'Đã ngắt kết nối tài khoản quảng cáo.',
     },
     books: {

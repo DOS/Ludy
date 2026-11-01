@@ -73,7 +73,7 @@ Facts that shape the choices (details, sources and confidence tags in the [plan]
 
 ### 6. Personal data: none in v1
 
-Stored: account and campaign ids and names and daily aggregates. No audiences, lead forms, pixel or conversion events, and no breakdowns by age, gender or region. Meta counts aggregates as Platform Data, so the Meta app provides the **data deletion callback** (through a definer, the org-purge pattern), `ads.account.delete_history` exists, and disconnect keeps the figures by default with a clear delete choice (the plan's Q4).
+Stored: account and campaign ids and names and daily aggregates. No audiences, lead forms, pixel or conversion events, and no breakdowns by age, gender or region. Meta counts aggregates as Platform Data, so the Meta app provides the **data deletion callback** (through a definer, the org-purge pattern), `ads.account.delete_history` is added in slice A3, and disconnect keeps the figures by default (slice A1 builds only that), with the clear delete choice coming with `delete_history` in A3 (the plan's Q4).
 
 ### 7. Switched on at two levels
 

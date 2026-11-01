@@ -1162,7 +1162,7 @@ export const en = {
       disconnectHint: 'Stop getting figures from the platform for this account. The stored figures are kept.',
       disconnect: 'Disconnect',
       disconnectTitle: 'Disconnect this ad account?',
-      disconnectBody: 'The system will stop getting new figures for {name}. The stored figures are kept, and you can connect the account again later.',
+      disconnectBody: 'The system will stop getting new figures for {name}. The stored figures are kept, to read.',
       disconnected: 'Disconnected the ad account.',
     },
     books: {

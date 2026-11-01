@@ -115,6 +115,8 @@ export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ 
     let slices = 0;
     for (let from = planned.from; from <= planned.to; from = addDays(from, SLICE_DAYS)) {
       const to = addDays(from, SLICE_DAYS - 1) < planned.to ? addDays(from, SLICE_DAYS - 1) : planned.to;
+      // A read that fails is recorded against the range it was reading, not the last one that was stored.
+      window = { from, to };
       for (const part of await readParts(platform, secret, sealed.externalAccountId, { from, to })) {
         window = part.window;
         await deps.runtime.execute('ads.sync.record', { adAccountId: target.adAccountId, details, window, settleBefore: settle, rows: part.rows }, options);
