@@ -709,15 +709,23 @@ export const en = {
   },
   contactImport: {
     title: 'Import contacts from a file',
-    subtitle: 'The CSV is read on your computer, you look at every row, and only then it is imported. The file is not stored.',
+    subtitle: 'The Excel or CSV file is read on your computer, you look at every row, and only then it is imported. The file is not stored.',
     back: 'Back to contacts',
     cancel: 'Cancel',
     steps: { label: 'Import steps', choose: 'Choose file', map: 'Map columns', preview: 'Preview', done: 'Done' },
-    choose: { hint: 'A CSV with a header line, at most {max} rows. In Excel: Save as CSV.', file: 'CSV file' },
+    choose: {
+      hint: 'An Excel (.xlsx) or CSV file, the first row is the header, at most {max} rows. Excel is read on your computer, first sheet only.',
+      file: 'Excel or CSV file',
+      template: 'Download a sample Excel file',
+      example: 'Sample Company',
+    },
     errors: {
       tooBig: 'The file is too big (5 MB at most).',
       empty: 'The file has no header or no data row.',
       unterminated: 'The file has a quotation mark that is opened and never closed, so the rest of it was read as one cell. Fix the file and choose it again.',
+      notXlsx: 'This is not an Excel (.xlsx) file that can be read. Save it again as .xlsx or CSV.',
+      unsupported: 'This Excel file has a format that cannot be read yet (for example a very large sheet). Save it as a plain .xlsx or as CSV.',
+      unreadable: 'This file could not be read.',
       tooMany: 'The file has more than {max} rows; split it into several files.',
     },
     map: {

@@ -3,6 +3,7 @@
 // their quotes, the columns a header names (with or without Vietnamese marks), and the file of rows that were not
 // imported. Nothing here talks to the server; the rows go to crm.import.stage once the person has mapped the columns.
 import type { ImportRowInput } from '@crove/kernel-contract';
+import type { SheetRows } from './xlsx.ts';
 
 export const IMPORT_FIELDS = ['name', 'kind', 'taxCode', 'email', 'phone', 'address'] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
@@ -14,6 +15,9 @@ export interface ParsedCsv {
   rows: string[][];
   // The file ended inside a quoted cell: the rest of it became that one cell, so it is not read as contacts.
   unterminated?: true;
+  // Which cells a spreadsheet stored as numbers (an .xlsx only): a phone or tax code typed without a text format lost its
+  // leading zero there, and mappedRows puts it back.
+  numeric?: boolean[][];
 }
 
 // Comma, semicolon or tab: the one that splits the header and the lines under it into the same number of cells (outside
@@ -74,6 +78,23 @@ export function parseContactCsv(raw: string): ParsedCsv {
   return { header: header.map((h) => h.trim()), rows, ...(quoted ? { unterminated: true as const } : {}) };
 }
 
+// The first sheet of an .xlsx as the same table a CSV gives: its first row is the header, the rows under it follow in order
+// (a row with no cell is skipped, as a blank line of a CSV is). A number cell keeps the exact text it was stored with.
+export function sheetToTable(sheet: SheetRows): ParsedCsv {
+  const numbers = [...sheet.keys()].sort((a, b) => a - b);
+  const width = Math.max(0, ...numbers.map((n) => Math.max(-1, ...(sheet.get(n)?.keys() ?? [])) + 1));
+  const line = (n: number) => {
+    const cells = sheet.get(n) ?? new Map();
+    return {
+      text: Array.from({ length: width }, (_, c) => (cells.get(c)?.value ?? '').trim()),
+      numeric: Array.from({ length: width }, (_, c) => cells.get(c)?.kind === 'number'),
+    };
+  };
+  const lines = numbers.map(line).filter((l) => l.text.some((c) => c !== ''));
+  const [first, ...rest] = lines;
+  return { header: first?.text ?? [], rows: rest.map((l) => l.text), numeric: rest.map((l) => l.numeric) };
+}
+
 // A header without marks, case or punctuation: "Số điện thoại" and "so dien thoai" are one.
 export function foldHeader(text: string): string {
   return text
@@ -107,11 +128,13 @@ export function guessMapping(header: readonly string[]): (ImportField | null)[] 
 
 // The rows as crm.import.stage takes them: the mapped cells, the rest empty, one per row of the file in the same order, so
 // the row number the server reports is the position in the file (the first row under the header is 1).
-export function mappedRows(rows: readonly string[][], mapping: readonly (ImportField | null)[]): ImportRowInput[] {
-  return rows.map((cells) => {
+export function mappedRows(rows: readonly string[][], mapping: readonly (ImportField | null)[], numeric?: readonly (readonly boolean[])[]): ImportRowInput[] {
+  return rows.map((cells, r) => {
     const pick = (field: ImportField): string => {
       const at = mapping.indexOf(field);
-      return at < 0 ? '' : (cells[at] ?? '').trim();
+      const text = at < 0 ? '' : (cells[at] ?? '').trim();
+      // A number cell of 9 digits is a Vietnamese mobile number or a tax code that lost its leading zero.
+      return at >= 0 && numeric?.[r]?.[at] === true && (field === 'phone' || field === 'taxCode') && /^\d{9}$/.test(text) ? `0${text}` : text;
     };
     return { kind: pick('kind') || null, name: pick('name'), taxCode: pick('taxCode') || null, email: pick('email') || null, phone: pick('phone') || null, address: pick('address') || null };
   });

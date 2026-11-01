@@ -707,15 +707,23 @@ export const vi = {
   },
   contactImport: {
     title: 'Nhập liên hệ từ tệp',
-    subtitle: 'Đọc tệp CSV ngay trên máy bạn, xem trước từng dòng rồi mới nhập. Tệp không được lưu lại.',
+    subtitle: 'Đọc tệp Excel hoặc CSV ngay trên máy bạn, xem trước từng dòng rồi mới nhập. Tệp không được lưu lại.',
     back: 'Về danh sách liên hệ',
     cancel: 'Hủy',
     steps: { label: 'Các bước nhập', choose: 'Chọn tệp', map: 'Ghép cột', preview: 'Xem trước', done: 'Xong' },
-    choose: { hint: 'Tệp CSV có dòng tiêu đề ở đầu, tối đa {max} dòng. Excel: chọn Lưu thành CSV.', file: 'Tệp CSV' },
+    choose: {
+      hint: 'Tệp Excel (.xlsx) hoặc CSV, dòng đầu là tiêu đề, tối đa {max} dòng. Excel được đọc ngay trên máy bạn, chỉ bảng đầu tiên.',
+      file: 'Tệp Excel hoặc CSV',
+      template: 'Tải tệp Excel mẫu',
+      example: 'Công ty Mẫu',
+    },
     errors: {
       tooBig: 'Tệp quá lớn (tối đa 5 MB).',
       empty: 'Tệp không có tiêu đề hoặc không có dòng dữ liệu nào.',
       unterminated: 'Tệp có một dấu ngoặc kép mở mà không đóng, nên phần còn lại bị đọc thành một ô. Hãy sửa tệp rồi chọn lại.',
+      notXlsx: 'Đây không phải tệp Excel (.xlsx) đọc được. Hãy lưu lại thành .xlsx hoặc CSV.',
+      unsupported: 'Tệp Excel này có định dạng chưa đọc được (ví dụ bảng tính rất lớn). Hãy lưu thành .xlsx thường hoặc CSV.',
+      unreadable: 'Không đọc được tệp này.',
       tooMany: 'Tệp có nhiều hơn {max} dòng; hãy chia thành nhiều tệp.',
     },
     map: {
