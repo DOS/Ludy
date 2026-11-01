@@ -26,6 +26,7 @@ export * from './pinterest.ts';
 export * from './discord.ts';
 export * from './wordpress.ts';
 export * from './comment.ts';
+export * from './conversation.ts';
 export * from './cover.ts';
 export * from './link-card.ts';
 export * from './post-type.ts';
