@@ -4,13 +4,17 @@ import { MobileMenu } from './mobile-menu';
 import { ThemeToggle } from './theme-toggle';
 import { LudyMark } from './ui';
 
-export function SiteHeader({ dict }: { dict: Dictionary }) {
+// `otherLangHref` is where the language switch goes: the other language's home page unless a page names its own
+// counterpart. `fromHome` is false on the home page, whose section links are anchors on the page itself; any other page
+// points them at the home page's sections.
+export function SiteHeader({ dict, otherLangHref = dict.nav.otherLangHref, fromHome = false }: { dict: Dictionary; otherLangHref?: string; fromHome?: boolean }) {
   const { nav } = dict;
   const home = dict.lang === 'vi' ? '/' : '/en';
+  const base = fromHome ? home : '';
   const sections = [
-    { label: nav.product, href: '#san-pham' },
-    { label: nav.openSource, href: '#ma-nguon-mo' },
-    { label: nav.pricing, href: '#bang-gia' },
+    { label: nav.product, href: `${base}#san-pham` },
+    { label: nav.openSource, href: `${base}#ma-nguon-mo` },
+    { label: nav.pricing, href: `${base}#bang-gia` },
     { label: nav.docs, href: DOCS_URL },
   ];
   return (
@@ -32,7 +36,7 @@ export function SiteHeader({ dict }: { dict: Dictionary }) {
         </nav>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <a
-            href={nav.otherLangHref}
+            href={otherLangHref}
             hrefLang={dict.lang === 'vi' ? 'en' : 'vi'}
             title={nav.otherLangLabel}
             className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-fg"
@@ -45,11 +49,11 @@ export function SiteHeader({ dict }: { dict: Dictionary }) {
           <a href={SIGN_IN_URL} className="hidden h-9 items-center rounded-md px-3 text-sm text-muted transition-colors hover:text-fg sm:inline-flex">
             {nav.signIn}
           </a>
-          <a href="#tu-host" className="hidden h-9 items-center rounded-md bg-fg px-3 text-sm font-medium whitespace-nowrap text-bg transition-colors hover:bg-fg/85 sm:inline-flex">
+          <a href={`${base}#tu-host`} className="hidden h-9 items-center rounded-md bg-fg px-3 text-sm font-medium whitespace-nowrap text-bg transition-colors hover:bg-fg/85 sm:inline-flex">
             {nav.cta}
           </a>
           <MobileMenu
-            links={[...sections, { label: nav.signIn, href: SIGN_IN_URL }, { label: nav.cta, href: '#tu-host' }]}
+            links={[...sections, { label: nav.signIn, href: SIGN_IN_URL }, { label: nav.cta, href: `${base}#tu-host` }]}
             openLabel={nav.openMenu}
             closeLabel={nav.closeMenu}
           />

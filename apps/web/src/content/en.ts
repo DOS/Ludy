@@ -328,6 +328,7 @@ export const en: Dictionary = {
     title: 'One module per department, one org chart',
     lead: 'The people and agents of each department work on the same data, with the same approvals and the same change log. Turn on the modules you need.',
     deptLabel: 'Department of',
+    pageLink: 'See the product page',
     finance: {
       name: 'Ludy Accounting',
       body: 'AI Inbox for purchase and sales invoices, the general journal and ledgers, B01 and B02 statements, receipts and payments, bank statements imported from Excel or CSV, fixed assets, the VAT return as XML for HTKK, exports to MISA SME, books per legal entity and a monthly period lock.',

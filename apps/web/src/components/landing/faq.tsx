@@ -2,9 +2,8 @@ import { ChevronDown } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { Section } from './ui';
 
-// Native details/summary: keyboard accessible and readable without JavaScript.
-export function Faq({ dict }: { dict: Dictionary }) {
-  const { faq } = dict;
+// Native details/summary: keyboard accessible and readable without JavaScript. An app page passes its own questions.
+export function Faq({ dict, faq = dict.faq }: { dict: Dictionary; faq?: { title: string; items: ReadonlyArray<{ q: string; a: string }> } }) {
   return (
     <Section id="hoi-dap" labelledBy="faq-title" tinted>
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-16">

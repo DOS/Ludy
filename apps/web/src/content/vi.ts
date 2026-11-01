@@ -328,6 +328,7 @@ export const vi = {
     title: 'Mỗi phòng một phân hệ, chung một sơ đồ',
     lead: 'Người và agent của từng phòng làm việc trên cùng dữ liệu, cùng quy trình duyệt và cùng nhật ký thay đổi. Bật phân hệ nào thì dùng phân hệ đó.',
     deptLabel: 'Phòng của',
+    pageLink: 'Xem trang giới thiệu',
     finance: {
       name: 'Ludy Kế toán',
       body: 'AI Inbox cho hoá đơn mua và bán, sổ nhật ký chung, sổ cái, báo cáo B01 và B02, phiếu thu chi, sao kê ngân hàng nhập từ Excel hoặc CSV, tài sản, tờ khai GTGT xuất XML cho HTKK, xuất sang MISA SME, sổ riêng cho từng pháp nhân và khoá sổ theo tháng.',
