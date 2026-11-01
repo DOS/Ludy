@@ -25,7 +25,7 @@ import {
   sum,
   type DecimalValue,
 } from '@crove/l10n-vn';
-import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes } from '@crove/kernel-contract';
+import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes, type VoucherType } from '@crove/kernel-contract';
 import { canonical, roundToCurrency } from './domain/money.ts';
 import { decimalCell, textCell } from './export.ts';
 import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
@@ -92,7 +92,7 @@ export interface SalesVoucher {
  * Each type has its own MISA template.
  */
 export interface CashVoucher {
-  type: 'cash_receipt' | 'cash_payment' | 'bank_credit' | 'bank_debit';
+  type: VoucherType;
   /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
   /** Voucher date, which is its journal entry's date. */
@@ -631,8 +631,9 @@ export const MISA_SME_BANK_CREDIT: MisaTemplate<CashRow> = {
 /**
  * MISA SME 2026 "Chứng từ Chi tiền gửi" (Tiền gửi > Chi tiền, the giấy báo Nợ): money out of the bank account, Dr each
  * line, Cr 112x. Headers from one source (S9, `Phieu_chi_tien_gui_VND.xls`). The paying account, the payee's bank, the
- * payment method and the VAT and invoice columns stay blank (catalog entries and codes Crove cannot know; a purchase
- * invoice reaches the books as a purchase voucher, and the báo Nợ only settles it, Dr 331). "Người lĩnh tiền" carries
+ * payment method and the VAT and invoice columns stay blank (catalog entries and codes the firm sets in MISA; filling the
+ * bank account columns from the account numbers of Settings is open question 12 in the doc; a purchase invoice reaches
+ * the books as a purchase voucher, and the báo Nợ only settles it, Dr 331). "Người lĩnh tiền" carries
  * the payee named on the voucher. Length limits are the ones of the same fields in the cash templates (S6), unconfirmed
  * for this file.
  */

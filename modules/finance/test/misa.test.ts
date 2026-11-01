@@ -876,6 +876,8 @@ describe('MISA SME bank vouchers (#657)', () => {
       expect(new Set(template.columns.map((c) => c.header)).size).toBe(template.columns.length);
       const sheet = await readBack(template, []);
       expect(sheet.name).toBe(template === MISA_SME_BANK_CREDIT ? 'Chứng từ thu tiền' : 'Chứng từ Chi tiền gửi');
+      // The header row as written in the file, the trailing space of "Diễn giải lý do thu " included.
+      expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(template === MISA_SME_BANK_CREDIT ? BANK_CREDIT_HEADERS : BANK_DEBIT_HEADERS);
       expect(sheet.rowCount).toBe(1);
     }
   });

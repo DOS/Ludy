@@ -23,6 +23,7 @@ import {
   VOUCHER_COMMAND,
   VOUCHER_KIND,
   VOUCHER_PAGE_SIZE,
+  isInflow,
   voucherCode,
   zCashVoucherProposal,
   zCashVoucherRequest,
@@ -307,7 +308,7 @@ export const cashVouchers = defineQuery({
   input: z.object({
     from: zLocalDate.optional(),
     to: zLocalDate.optional(),
-    type: z.enum(['cash_receipt', 'cash_payment', 'bank_credit', 'bank_debit']),
+    type: zVoucherType,
     limit: z.number().int().positive().max(JOURNAL_EXPORT_LIMIT).optional(),
     legalEntityId: zId.optional(),
   }),
@@ -365,7 +366,7 @@ export const cashVouchers = defineQuery({
       if (l.account_code === cashAccountOf.get(l.entry_id)) continue;
       const list = byEntry.get(l.entry_id) ?? [];
       // A receipt's (or báo Có's) lines are credits, a payment's (or báo Nợ's) debits; the other side is 0.
-      list.push({ lineNo: l.line_no, account: l.account_code, amount: input.type === 'cash_receipt' || input.type === 'bank_credit' ? l.credit : l.debit, memo: l.memo });
+      list.push({ lineNo: l.line_no, account: l.account_code, amount: isInflow(input.type) ? l.credit : l.debit, memo: l.memo });
       byEntry.set(l.entry_id, list);
     }
     return vouchers.map((v) => ({

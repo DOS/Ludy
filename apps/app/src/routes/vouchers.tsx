@@ -422,7 +422,6 @@ export function VoucherFormCard({ slug, onClose, fromLine }: { slug: string; onC
   );
 }
 
-// The cash and bank vouchers of the org (#327): every posted phiếu thu, phiếu chi, báo Có and báo Nợ, newest first.
 // The MISA SME exports of the screen (#657), one button and one file per voucher type: the route's name after
 // /api/export/misa/, the button's label and the download's file name (messages of `vouchers`).
 const MISA_EXPORTS = {
@@ -433,6 +432,7 @@ const MISA_EXPORTS = {
 } as const;
 type MisaExportKind = keyof typeof MISA_EXPORTS;
 
+// The cash and bank vouchers of the org (#327): every posted phiếu thu, phiếu chi, báo Có and báo Nợ, newest first.
 export function VouchersPage() {
   const t = useTranslations('vouchers');
   const f = useFormat();
