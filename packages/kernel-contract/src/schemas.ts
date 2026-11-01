@@ -612,6 +612,16 @@ export const zJournalReversal = z.object({
 });
 export type JournalReversal = z.infer<typeof zJournalReversal>;
 
+// An original XML kept as the evidence of a posted invoice (#2320); see zInboxDetail.originals.
+export const zInboxOriginal = z.object({
+  fileId: zId,
+  filename: z.string(),
+  receivedAt: z.string(),
+  differs: z.boolean(),
+  signature: zProposalSignature.nullable(),
+});
+export type InboxOriginal = z.infer<typeof zInboxOriginal>;
+
 export const zInboxDetail = zInboxItem.extend({
   revision: z.number().int(),
   // Parsed by kind: a purchase (kind finance.purchase), a reversal (kind finance.journal_reversal) or a cash or bank
@@ -663,6 +673,10 @@ export const zInboxDetail = zInboxItem.extend({
     .nullable(),
   // The caller may ask for the source file to be read again (files.reextract).
   canReextract: z.boolean(),
+  // The sellers' original XML files that arrived after this invoice was posted from a PDF or a photo (#2320), kept as its
+  // evidence. differs: the original's amounts are not the posted document's, a warning for a person to look at (the books
+  // are never changed by it). signature: the result of checking the original's seal, null when it carries none.
+  originals: z.array(zInboxOriginal),
 });
 
 // What the Inbox shows of a bank statement read from a file (#2142): the bank account its account number is mapped to, the
