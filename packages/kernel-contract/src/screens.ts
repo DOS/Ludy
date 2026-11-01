@@ -103,10 +103,14 @@ const SOCIAL_SCREENS = {
 
 const CRM_SCREENS = {
   // Bookings of the public booking page (#1320).
-  routes: [{ path: 'bookings' }],
+  routes: [{ path: 'bookings' }, { path: 'deals' }],
   // The public booking page (#1318), no account.
   outside: [{ path: '/-/b/$org/$type', public: true }],
-  nav: [{ app: 'crm', group: 'crm', path: 'bookings', label: 'bookings' }],
+  nav: [
+    { app: 'crm', group: 'crm', path: 'bookings', label: 'bookings' },
+    // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
+    { app: 'crm', group: 'crm', path: 'deals', label: 'deals' },
+  ],
 } as const satisfies ModuleScreens;
 
 // Members' notes (#1671, notes plan §3.10): the notes screen (?note= opens one), in the Home app beside the team's tasks.

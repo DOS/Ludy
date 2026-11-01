@@ -66,7 +66,7 @@ All tables are tenant tables: `org_id`, `PRIMARY KEY (org_id, id)`, RLS through 
 |---|---|
 | `name` | 1 to 40 characters, one line |
 | `kind` | `open`, `won`, `lost` |
-| `position` | integer order, 1 upward; `UNIQUE (org_id, position) DEFERRABLE INITIALLY DEFERRED` so a reorder rewrites all rows in one statement |
+| `position` | integer order, 1 upward, kept gapless by the commands under the pipeline lock; `UNIQUE (org_id, position) DEFERRABLE INITIALLY DEFERRED` so a reorder swaps positions in one transaction and a duplicate fails. The CHECK is `position >= 1` only (changed in K1): the 12-stage cap is the commands', so a cap that changes is not a migration |
 | `created_at`, `updated_at` | |
 
 Rules: at most 12 stages; exactly one `won` and one `lost` stage per org (`UNIQUE (org_id, kind) WHERE kind IN ('won','lost')`), always the last two positions; open stages can be renamed, reordered, added and removed (removal only when no deal is in the stage). A fresh org has no rows; `crm.pipeline.setup` creates the defaults on first use: "Mới", "Đã liên hệ", "Báo giá", "Thương lượng" (open), "Thắng" (won), "Thua" (lost). There is no `pipeline` table (CRM-2): a second pipeline later adds one with a backfill.
@@ -133,9 +133,9 @@ Every state change is a command through `Runtime.execute()`; each declares risk 
 | `crm.import.commit` | owner, admin, member | Re-checks each staged row against the party table now, creates the new parties, optionally fills the empty fields of duplicates, deletes the rows, writes one audit row with the counts and a `party.imported` activity per created party; idempotent on a committed batch |
 | `crm.import.cancel` | the batch's creator, owner, admin | Deletes the staged rows |
 
-Queries (R0, read only; RLS decides what a member sees): `crm.stage.list`, `crm.deal.board` (open stages with their cards, count and amount sum per stage, plus the closed deals of the last 30 days), `crm.deal.list` (cursor paging, view or ad-hoc filter), `crm.deal.get`, `crm.party.deals`, `crm.contact.list`, `kernel.saved_view.list`, `crm.import.preview` (the staged rows with outcomes, a page at a time), `crm.import.rejects` (the rows not imported, as CSV).
+Queries (R0, read only; RLS decides what a member sees): `crm.party.search` (a few parties by name or tax code, for the deal form's picker, until K4's contact list), `crm.stage.list`, `crm.deal.board` (open stages with their cards, count and amount sum per stage, plus the closed deals of the last 30 days), `crm.deal.list` (cursor paging, view or ad-hoc filter), `crm.deal.get`, `crm.party.deals`, `crm.contact.list`, `kernel.saved_view.list`, `crm.import.preview` (the staged rows with outcomes, a page at a time), `crm.import.rejects` (the rows not imported, as CSV).
 
-**Derived facts.** Activity summaries are fixed text plus the stage name, never a deal title, amount or contact value (activity's rule). The commands emit invalidation hints (`crm.deal`, `crm.party`) carrying only the id, so the board refreshes through the stream (#69). The new entity `crm.deal` joins the module manifest's `entities` (not legal entity scoped, audited by command).
+**Derived facts.** Activity summaries are fixed text plus the stage name, never a deal title, amount or contact value (activity's rule). From K2 the commands emit invalidation hints (`crm.deal`, `crm.party`) carrying only the id, so the board refreshes through the stream (#69); K1's list refreshes after the member's own changes. The new entity `crm.deal` joins the module manifest's `entities` (not legal entity scoped, audited by command).
 
 **Import checks.** A row is classified, in this order of precedence:
 1. `invalid`: empty name, or an email, phone or tax code that fails the same normalizers as `kernel.party.update`, or a field over its length. Skipped, with a fixed reason code.

@@ -57,8 +57,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_account',
   'crove_ads.ad_spend_day',
   'crove_ads.ad_sync_run',
-  'crove_crm.deal',
-  'crove_crm.pipeline_stage',
   'crove_kernel.saved_view',
   'crove_notes.link',
   'crove_notes.note',
@@ -389,7 +387,6 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #1382: a member's booking feed address (the SHA-256 of its token); the member makes and revokes it.
   'crove_crm.booking_feed': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, token_sha256: hex64() } }) },
-  // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   // A deal of the CRM pipeline (#2225): on a party of the org and in an open stage made for the row. Tenant roles write
   // it whole but who created it and its ids, so the update probe assigns a column they may change.
   'crove_crm.deal': {
@@ -402,6 +399,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
     update: { set: 'title = title' },
   },
+  // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   'crove_crm.event_type': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), slug: `rls-${tag()}`, title: 'RLS matrix event type', duration_min: 30, host_user_id: o.owner, created_by: o.owner } }),
   },
