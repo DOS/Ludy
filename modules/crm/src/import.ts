@@ -505,11 +505,12 @@ export const importExpire = defineCommand({
   handler: async (ctx): Promise<{ batches: number; rows: number }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
     const cutoff = new Date(ctx.now.getTime() - IMPORT_STAGED_DAYS * 86_400_000);
-    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).execute();
+    // Locked, so a commit running at this moment finishes first and its batch no longer reads as staged here.
+    const stale = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_at', '<', cutoff).forUpdate().execute();
     if (stale.length === 0) return { batches: 0, rows: 0 };
     const ids = stale.map((s) => s.id);
     const deleted = await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', ids).executeTakeFirst();
-    await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+    await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'expired', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('id', 'in', ids).execute();
     const rows = Number(deleted.numDeletedRows);
     ctx.audit({ batches: ids.length, rows });
     return { batches: ids.length, rows };

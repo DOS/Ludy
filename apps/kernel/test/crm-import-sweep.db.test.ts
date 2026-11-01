@@ -110,10 +110,48 @@ suite('crm import staging sweep on PostgreSQL (#2251)', () => {
     const o = await org();
     const asApp = login('crove_app', 'test-app-pw');
     await expect(asApp.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501' });
-    // A tenant login cannot even execute it.
-    await expect(admin((c) => c.query("SET ROLE crove_tenant; SELECT * FROM crove_crm.import_expired(now(), 10)"))).rejects.toBeDefined();
-    // Nor can the command be run by a person.
-    await expect(app.execute('crm.import.expire', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toBeDefined();
+    // No tenant or app role holds EXECUTE on it, and the worker login does.
+    const grants = await admin((c) =>
+      c.query<{ role: string; ok: boolean }>("SELECT r AS role, has_function_privilege(r, 'crove_crm.import_expired(timestamptz, integer)', 'EXECUTE') AS ok FROM unnest(ARRAY['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant']) AS r"),
+    );
+    expect(new Map(grants.rows.map((g) => [g.role, g.ok]))).toEqual(new Map([['crove_tenant', false], ['crove_app', false], ['crove_worker', true], ['crove_definer_tenant', false]]));
+    // Nor can the command be run by a person: refused by its access rule, not by some other failure.
+    await expect(app.execute('crm.import.expire', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('refuses the worker login from inside an org context', async () => {
+    const o = await org();
+    const client = await login('crove_worker', 'test-worker-pw').connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+      await expect(client.query("SELECT * FROM crove_crm.import_expired(now() - interval '7 days', 10)")).rejects.toMatchObject({ code: '42501', message: 'CRM_WORKER_ONLY' });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('leaves a batch alone that was committed while the sweep waited on it: never a committed batch overwritten as expired', async () => {
+    const o = await org();
+    const old = await o.stage('Vừa nhập');
+    await o.age(old.batch.id, 8);
+    // A commit holds the batch row (it decides the batch before it deletes the rows); the sweep reads the batch as stale and waits.
+    const blocker = new pg.Client({ connectionString: adminUrl });
+    await blocker.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query("SELECT 1 FROM crove_crm.import_batch WHERE org_id = $1 AND id = $2 FOR UPDATE", [o.orgId, old.batch.id]);
+      const sweep = worker.execute<{ batches: number; rows: number }>('crm.import.expire', {}, { actor: SYSTEM, orgId: o.orgId });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await blocker.query("UPDATE crove_crm.import_batch SET status = 'committed', created_rows = 1, decided_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, old.batch.id]);
+      await blocker.query('COMMIT');
+      expect(await sweep).toEqual({ batches: 0, rows: 0 });
+    } finally {
+      await blocker.end();
+    }
+    expect(await o.status(old.batch.id)).toBe('committed');
+    expect(await o.rows(old.batch.id)).toBe(1);
   });
 
   it('clears the rows and marks the batches of one org expired, leaving a younger or a decided batch and another org alone', async () => {
