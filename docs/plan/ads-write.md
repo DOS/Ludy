@@ -1,6 +1,6 @@
 # Ludy Ads: running ads from Ludy (plan amendment)
 
-> Amendment of the [Ads plan](ads.md) and [ADR-0040](../adr/0040-ads-read-only-sources.md), 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Owner decision (JOY, 2026-11-01): "Đọc quảng cáo là sao, user chạy quảng cáo trên Ludy luôn cơ mà", and, offered a first write slice or full campaigns, "Chiến dịch đầy đủ". Proposed decision record: [ADR-0042](../adr/0042-ads-write-running-ads.md). Vietnamese summary for JOY: [ads-write.vi.md](ads-write.vi.md). **Docs only: nothing here is built, and no build issue is opened until JOY approves the first write slice (section 11, Q1).**
+> Amendment of the [Ads plan](ads.md) and [ADR-0040](../adr/0040-ads-read-only-sources.md), 2026-11-01, issue [#2283](https://github.com/DOS/Ludy/issues/2283). Owner decision (JOY, 2026-11-01): "Đọc quảng cáo là sao, user chạy quảng cáo trên Ludy luôn cơ mà", and, offered a first write slice or full campaigns, "Chiến dịch đầy đủ". Proposed decision record: [ADR-0042](../adr/0042-ads-write-running-ads.md). Vietnamese summary for JOY: [ads-write.vi.md](ads-write.vi.md). **Docs only: nothing here is built.** JOY answered section 11 on 2026-11-01: Q1 A, and every other question with its recommendation ("Nhận hết", recorded on #2283), so W0, W1 and W2 are built in that order (section 10); W3 to W6 wait. The Platform PO reviewed the design and asked for the five additions now in section 3.2, 3.3, 3.6 and 5.1.
 
 Facts are tagged as in the [Ads plan](ads.md): **[C]** stated on an official page that was read, **[S]** only a secondary source, **[U]** could not be confirmed and is checked in the platform's console before a build issue relies on it. Research was done on 2026-11-01; Meta's pages were read through search summaries, so every number is re-checked by the build issue that uses it.
 
@@ -60,6 +60,7 @@ An action that can **start or raise spend** declares `sideEffect: 'financial'`, 
 | `ads.campaign.activate` / resume | **R3 financial** | approver | Spend restarts |
 | `ads.budget.raise`, `ads.schedule.extend` | **R3 financial** | approver | Anything that raises the money a plan can spend |
 | `ads.budget.lower`, `ads.schedule.shorten`, pause, archive | R2 external | owner, admin, marketing | Reduces or stops spend; no approval, always audited |
+| `ads.pause_all` (kill switch, 3.6) | R2 external | owner, admin, marketing | Pauses everything Ludy launched in the org and blocks new launches until an owner clears the flag |
 | `ads.cap.set` (spend caps, 3.3) | **R3**, owner only, `aal2` | owner | A cap raised is spend raised |
 | `ads.write.enable` (org switch, 5.1), `ads.account.enable_write` | R3 | owner | Opens the write path at all |
 
@@ -69,11 +70,15 @@ A command that moves money declared below R3 fails registration (the derived-ris
 
 The proposal's card (the approval screens of the kernel) shows, for every ad set: the objective, the **daily or lifetime budget in the account's currency**, the schedule, therefore the **largest amount the plan can spend** (lifetime budget, or daily budget times the days, summed over the ad sets), the audience summary (location, age, gender, interests), the placements, and a preview of each ad. The approval binds the **input hash** of this plan (the command's input is hashed under the deployment's key, #1732): any change to a budget, a date or a creative after submission is a new proposal. Approving does not give Ludy a standing right to spend: only to run this plan once (P13).
 
-Four-eyes (P10) applies when two or more eligible humans exist; an org whose only human is the owner may self-approve, flagged in the audit, as for any R3. An agent never approves (ADR-0029).
+Four-eyes (P10) applies when two or more eligible humans exist. **The one-person-company path:** an org whose only eligible human is the owner may approve its own plan, and the audit row says `self_approved`; nothing else is relaxed: a fresh second factor (P11) is still required, the card still names the largest amount, and the caps still bind. An owner with no verified second factor cannot switch writing on (5.1) until they enrol one. Once a second eligible human joins, the owner can no longer approve a plan they wrote. An agent never approves (ADR-0029).
 
 ### 3.3 Spend caps
 
 Per ad account and per org: a **daily cap** and a **monthly cap**, in the account's currency, set by the owner (`ads.cap.set`, step-up). **The default is no cap and therefore no launch**: until the owner sets caps, every launch is refused with `ADS_SPEND_CAP_NOT_SET` (recommendation, Q3). At approval time and again at execution the command computes the **committed spend**: for every live or scheduled campaign of the account, its daily budget times the days left in the period, or its lifetime budget left, plus this plan's. A plan that would exceed a cap is refused (`ADS_SPEND_CAP`) with the numbers. Meta's own account spending limit is read and shown beside Ludy's caps [U: the field and its permission]; Ludy's caps are a second fence, never a replacement of the platform's.
+
+**The execution check runs under a lock.** The check at approval only warns early; the one at execution is authoritative. The launch step takes a per-org transaction advisory lock, recomputes the committed spend from `crove_ads` rows and, in the same transaction, writes the plan's commitment before any platform call. Two launches approved together serialise: the second sees the first's commitment and is refused if both would pass a cap. A commitment is released only when its objects are archived or their schedule has ended. A test launches in parallel and asserts that committed spend never passes a cap.
+
+**Caps have a currency.** A cap is a decimal string in the currency's minor units with an ISO currency code, never a JS number. An account cap is in the account's currency; the org cap carries its own (VND unless the owner sets another). A launch on an account whose currency differs from the org cap's is refused with `ADS_CAP_CURRENCY` in these slices: converting would add a rate the approver did not see, so it is a later amendment.
 
 ### 3.4 Exactly-once calls to the platform, and reconcile
 
@@ -88,6 +93,10 @@ Every platform call that creates or changes something goes through the kernel's 
 - Every command writes an audit row with the ids, the amounts and the states, never the creative text (the campaign and ad names are business text; they follow the data classes of the manifest).
 - There is no undo of money already spent: the controls are the approval before, the caps, the pause (always allowed), and the platform's own limit.
 - **What an agent may do:** write **drafts** (R1), which reach a human as a proposal like any agent work; **never launch, activate, resume, raise or extend, set a cap, or enable writing.** This amends the write allowlist of ADR-0029 for the draft commands only (ADR-0042 point 7, the Marketing PO's recommendation, which the owner may reverse).
+
+### 3.6 The kill switch
+
+`ads.pause_all` (R2, owner, admin and marketing members, no proposal and no second factor, because it only stops spend) pauses every campaign and ad set Ludy launched in the org, found from the recorded object ids and checked against the `ludy:` name tag, as `external_call` steps keyed `ads.pause_all:<run id>:<object>` so a double click pauses once. It sets the org flag `launches_blocked`: while set, every launch, activation and resume is refused, and only an owner clears it (R3, step-up). Turning the org switch off (5.1) runs the same pause first. The Ads screen offers it as one clearly marked button; the audit row counts the objects paused and lists any the platform refused with its reason.
 
 ## 4. Meta's objects, states and limits
 
@@ -108,6 +117,12 @@ A read-only connection and a read-write one are different things, so write acces
 1. **Deployment:** the platform app. The same Meta app may serve (as for reading), but a **separate app for writing is the recommendation** (Q7 of ADR-0042): `ads_management` on the app that also posts to Pages widens what a leaked Pages token can do, and a failed App Review for writing must not block reading.
 2. **Org switch** `ads.write` (off by default; `ads.write.enable`, owner, step-up, audited). Off: the connector keeps the guard of #2275 and **refuses any token that holds `ads_management` or `business_management`** (read-only orgs keep refusing write scopes). On: the connector for that org asks Meta for `ads_read` and `ads_management` (and the Page permissions a post-based ad needs [U]) and **accepts** them, recording the full set on the connection.
 3. **Ad account:** `write_enabled` per ad account (owner), default off, so one account can stay read-only inside an org that writes. Connecting for write is a **new connection step** ("Cho phép Ludy chạy quảng cáo trên tài khoản này"), never an upgrade of a connection in place: the person goes through Meta's dialog again and the screen shows the account as able to write.
+
+**The write token is its own credential:**
+- *Sealed separately:* a second sealed credential of the connection (ADR-0025), apart from the read token, opened by the worker alone and only inside a write job, so a leak of the read path cannot spend.
+- *Require App Secret:* every write call carries `appsecret_proof`, and the write app has "Require App Secret" on at Meta, so a copied token is useless without the app secret.
+- *Revoked at Meta on disconnect or switch-off:* the worker removes the app's permissions at Meta (the writer's one call that is not about an ad object, named in its endpoint list) and then deletes the sealed copy. A failed revoke is retried and shown as not yet revoked; the sealed copy stays until it succeeds.
+- *Queued writes stop when the switch goes off:* the write job re-checks the org switch and the account's write flag before every step. Switching off cancels every launch not started and every step not run; a step in flight finishes and is recorded; created objects stay paused.
 
 The guard of #2275 is therefore not removed but **made conditional on the org switch**; its tests stay and gain the switch-on path. The Ads screen shows, per account, whether the token can only read or can also run ads (the `extraScopes` line of #2275 becomes a clear "read only / can run ads" state).
 
@@ -157,15 +172,15 @@ Tables of `crove_ads`, all tenant tables per section 7 (names are proposals for 
 
 Commands are those of section 3.1 plus `ads.object.sync_state` (system, the sync's read of object states). Queries: the drafts, a launch and its steps, the committed spend, the caps.
 
-**The write adapter** is a second interface, `AdWriter`, in `@crove/ad-platform`, in its own file per platform (`meta-write.ts`), implemented only where the org switch is on: `createCampaign`, `createAdSet`, `createCreative`, `createAd`, `setStatus` (activate, pause, archive), `setBudget`, `setSchedule`, `readObjectStatus`. **There is no delete.** A test pins the exact endpoints it calls (POST to the four create edges and to an object's own edge to change status, budget and schedule; GET for status), the host binding and the absence of any other method, as for the reader. The reader files keep their own test unchanged.
+**The write adapter** is a second interface, `AdWriter`, in `@crove/ad-platform`, in its own file per platform (`meta-write.ts`), implemented only where the org switch is on: `createCampaign`, `createAdSet`, `createCreative`, `createAd`, `setStatus` (activate, pause, archive), `setBudget`, `setSchedule`, `readObjectStatus`, and `revokeToken` (removes the app's permissions at Meta, 5.1). **There is no delete of any ad object.** A test pins the exact endpoints it calls (POST to the four create edges and to an object's own edge to change status, budget and schedule; GET for status), the host binding and the absence of any other method, as for the reader. The reader files keep their own test unchanged.
 
-## 10. Build issues (to open only after JOY approves Q1)
+## 10. Build issues (W0, W1, W2 approved by JOY on 2026-11-01, built in this order; the Marketing PO opens them after this amendment merges)
 
-Each is end to end (contract, server, UI, tests) with the live check on JOY's own account for the ones that call Meta. Acceptance items are the ones the sections above state.
+W3 to W6 stay unopened. Each is end to end (contract, server, UI, tests) with the live check on JOY's own account for the ones that call Meta. Acceptance items are the ones the sections above state.
 
-1. **W0 Switch, access and caps.** Org switch and `write_enabled`, the write connection step, the conditional guard and its tests both ways, roles and permissions, `ads.cap.set` with caps and committed spend, the `extraScopes` line becomes "read only / can run ads", the sandbox writer. Acceptance: with the switch off a token holding `ads_management` is refused as today; with it on it connects and the screen says it can run ads; no platform call exists yet.
+1. **W0 Switch, access and caps.** Org switch and `write_enabled`, the write connection step, the conditional guard and its tests both ways, roles and permissions, `ads.cap.set` with caps and committed spend, the `extraScopes` line becomes "read only / can run ads", the sandbox writer, the separately sealed write token with Require App Secret and its revoke on disconnect or switch-off, the `launches_blocked` flag and `ads.pause_all` (3.6), the one-person path of 3.2, cap currencies (3.3). Acceptance: with the switch off a token holding `ads_management` is refused as today; with it on it connects and the screen says it can run ads; no platform call exists yet.
 2. **W1 Draft and validate.** The draft tables and commands, the builder screens (objective, ad sets, ads from a Social post or the media library), local validation, the approval card with the maximum spend, the proposal. Acceptance: a draft submits for approval and an approver sees the amounts; nothing leaves Ludy; an agent can draft but not submit.
-3. **W2 Launch on Meta.** `AdWriter` for Meta, the launch job with `external_call` steps and reconcile, the object-state read, review states on screen, the caps checked at approval and at execution. Acceptance: on the sandbox the whole flow runs offline; on JOY's own account one small approved campaign runs and pauses; a killed job reconciles without a duplicate object; a plan over a cap is refused.
+3. **W2 Launch on Meta.** `AdWriter` for Meta, the launch job with `external_call` steps and reconcile, the object-state read, review states on screen, the caps checked at approval and, under the per-org lock, at execution (3.3), queued steps stopping when the switch goes off (5.1). Acceptance: on the sandbox the whole flow runs offline; on JOY's own account one small approved campaign runs and pauses; a killed job reconciles without a duplicate object; a plan over a cap is refused; two launches approved together cannot pass a cap between them; switching writing off stops queued steps and pauses what was launched.
 4. **W3 Boost a published post.** From the Social post, the same approval and launch.
 5. **W4 Manage.** Pause, resume, budget and schedule changes with the R2/R3 split of 3.1.
 6. **W5 Ads on the Social calendar.**
@@ -174,6 +189,8 @@ Each is end to end (contract, server, UI, tests) with the live check on JOY's ow
 The App Review work of section 5.2 is not a build issue; it is the owner's, timed by Q5.
 
 ## 11. Questions for JOY
+
+**Answered on 2026-11-01: Q1 A, and "Nhận hết" for Q2 to Q8, that is every recommendation (recorded on #2283):** Q1 A (W0, W1, W2 in order), Q2 A, Q3 A (no cap, no launch), Q4 A (Traffic, Engagement, Messages), Q5 A (review after W2 works on JOY's own account), Q6 A (no customer-list audiences), Q7 A (a separate Meta app for ad writing; creating it is an owner step before the W2 live check), Q8 A (Automated Boost later, as rules inside an approved cap). The text below is kept as asked.
 
 Each says what is decided, why it matters, the options, the recommendation, and what happens without an answer. The Vietnamese summary is [ads-write.vi.md](ads-write.vi.md); the ADR carries the decisions that are architecture.
 
