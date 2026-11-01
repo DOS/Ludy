@@ -32,8 +32,9 @@ interface Setting {
   launches_blocked: boolean;
 }
 
-// The org's row of switches, made on first use and locked for the rest of the command, so two owners' changes queue. The row is
-// the org's one by this lock, not by a unique key (the first by id is read, were there ever two).
+// The org's row of switches, made on first use and locked for the rest of the command, so two owners' changes queue. The
+// database keeps it to one row per org (UNIQUE (org_id)); the advisory lock makes the first use of two commands at once wait
+// for each other instead of one of them failing on the key.
 async function lockedSetting(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<Setting> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
   const read = () =>

@@ -2,7 +2,7 @@
 -- Crove Ads W0a (issue #2294, plan docs/plan/ads-write.md sections 3.3, 3.6 and 5.1, ADR-0043): the switches and the spend caps
 -- of running ads. Nothing here calls a platform and nothing spends. Idempotent; applied files stay untouched.
 --
--- crove_ads.ad_org_setting  the org's row of switches (the commands keep it to one, under a lock, and read the first by id): `write_enabled` (an owner turns ad writing on for the org, R3, off
+-- crove_ads.ad_org_setting  the org's one row of switches (UNIQUE (org_id)): `write_enabled` (an owner turns ad writing on for the org, R3, off
 --                           by default) and `launches_blocked` (the kill switch's flag: while set, every launch, activation
 --                           and resume is refused, and only an owner clears it). Org-wide, so it names no legal entity. Tenant
 --                           roles update the two switches and who set them, nothing else, and delete nothing.
@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_org_setting (
   launches_blocked boolean NOT NULL DEFAULT false,
   updated_by uuid,
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
-  PRIMARY KEY (org_id, id)
+  PRIMARY KEY (org_id, id),
+  -- One row per org, enforced here: a second row could never diverge from the first.
+  CONSTRAINT ad_org_setting_org_uq UNIQUE (org_id)
 );
 SELECT crove_kernel.apply_tenant_rls('crove_ads.ad_org_setting');
 REVOKE UPDATE, DELETE ON crove_ads.ad_org_setting FROM crove_tenant;
