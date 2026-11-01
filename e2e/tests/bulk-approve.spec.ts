@@ -90,7 +90,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await page.keyboard.press('Control+k');
-    await palette.fill('hop thu');
+    await palette.fill('chung tu cho');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });

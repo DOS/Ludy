@@ -168,9 +168,9 @@ export const vi = {
     waiting: {
       title: 'Đang chờ bạn',
       empty: 'Không có việc gì đang chờ bạn',
-      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán trong Chứng từ chờ duyệt và hiện ở đây khi cần bạn duyệt.',
+      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán ở Chứng từ chờ duyệt, và hiện ở đây khi cần bạn xem.',
       proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
-      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở Chứng từ chờ duyệt' },
+      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt' },
       failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
       notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
@@ -2163,7 +2163,7 @@ export const vi = {
     more: 'Đang hiển thị {count, number} chứng từ mới nhất, còn chứng từ cũ hơn.',
     loadMore: 'Xem thêm',
     form: {
-      intro: 'Chứng từ được gửi vào Chứng từ chờ duyệt thành đề xuất. Số chứng từ được cấp và bút toán được ghi khi chủ sở hữu hoặc quản trị duyệt.',
+      intro: 'Chứng từ gửi tới màn Chứng từ chờ duyệt sẽ thành đề xuất. Số chứng từ được cấp và bút toán được ghi khi chủ sở hữu hoặc quản trị duyệt.',
       type: 'Loại chứng từ',
       date: 'Ngày chứng từ',
       cashAccountCash: 'Quỹ tiền mặt',
