@@ -172,7 +172,7 @@ suite('AI post ideas through the API (#1181)', () => {
     channels = { a: await connection(org.orgId, 'facebook_page', owner.userId, 'Trang chính'), b: await connection(org.orgId, 'x', owner.userId, 'Kênh X riêng') };
     // The member may write for channel a only (#1081).
     await admin((c) =>
-      c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.a, owner.userId]),
+      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, channels.a, owner.userId]),
     );
     const owner_ = await tokenFor(owner);
     expect((await rpc('social/brandVoices/save', owner_, { description: 'Ấm áp, xưng "quán"', useWords: ['trà gừng'], avoidWords: [], emoji: true })).status).toBe(200);

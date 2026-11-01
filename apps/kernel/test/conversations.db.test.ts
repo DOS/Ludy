@@ -166,6 +166,32 @@ suite('conversations on PostgreSQL (#2303)', () => {
     expect(await rows('SELECT 1 FROM crove_kernel.conversation_message WHERE org_id = $1 AND direction = $2 AND NOT tainted', [o.orgId, 'in'])).toHaveLength(0);
   });
 
+  it('refuses text the database cannot store before it starts, and counts a post page the way its list does', async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await expect(ingest(o, ch, [comment('c-1', 'có ký tự rỗng')])).rejects.toMatchObject({ status: 422 });
+    await ingest(o, ch, [comment('c-1', 'Dưới bài 1', { postId: 'post-1' }), comment('c-2', 'Dưới bài 2', { postId: 'post-2', contact: { id: 'u-2', name: 'Khác' } })]);
+    const posts = [{ connectionId: ch, externalPostId: 'post-2' }];
+    expect((await listAll(o, o.lan, { posts })).conversations.map((c) => c.preview)).toEqual(['Dưới bài 2']);
+    expect(await query<ConversationCounted>(o, o.lan, 'kernel.conversation.counts', { posts })).toEqual({ new: 1, pending: 0, resolved: 0, unread: 1 });
+    expect(await query<ConversationCounted>(o, o.lan, 'kernel.conversation.counts', {})).toMatchObject({ new: 2 });
+  });
+
+  it("keeps a linked contact to its kind: a private message's link is not shown on the customer's public comments", async () => {
+    const o = await org();
+    const ch = await connection(o);
+    const same = { id: 'u-same', name: 'Cùng một người' };
+    await ingest(o, ch, [comment('d-1', 'Riêng', { kind: 'direct', postId: undefined, contact: same }), comment('c-1', 'Công khai', { contact: same })]);
+    const party = randomUUID();
+    await admin((c) => c.query("INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Khách hàng Z')", [o.orgId, party]));
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: await threadOf(o, ch, 'd-1'), partyId: party });
+    expect((await detail(o, o.lan, await threadOf(o, ch, 'c-1'))).conversation.contact.partyId).toBeNull();
+    // A new private thread of the same customer inherits it; a new comment thread does not.
+    await ingest(o, ch, [comment('d-2', 'Riêng nữa', { kind: 'direct', postId: undefined, contact: same }), comment('c-2', 'Công khai nữa', { contact: same })]);
+    expect((await detail(o, o.owner, await threadOf(o, ch, 'd-2'))).conversation.contact.partyId).toBe(party);
+    expect((await detail(o, o.lan, await threadOf(o, ch, 'c-2'))).conversation.contact.partyId).toBeNull();
+  });
+
   it('takes the org from the stored connection, never from an event', async () => {
     const a = await org();
     const b = await org();

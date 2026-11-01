@@ -227,6 +227,9 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     expect(await rows('SELECT channel_connection_id FROM crove_kernel.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.lan])).toEqual([{ channel_connection_id: chA }]);
     expect(await rt.query('social.channel_access.mine', {}, { actor: asUser(o.lan), orgId: o.orgId })).toEqual({ limited: true, connectionIds: [chA] });
     expect(await previews(o, o.lan)).toEqual(['Kênh A']);
+    // The table holds the same rule as the command: a member's own statement can add or remove no row.
+    await expect(asMember(o.orgId, o.lan, (c) => c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $2)', [o.orgId, o.lan, chB]))).rejects.toMatchObject({ code: '42501' });
+    await expect(asMember(o.orgId, o.lan, (c) => c.query('DELETE FROM crove_kernel.channel_access WHERE user_id = $1', [o.lan]))).resolves.toMatchObject({ rowCount: 0 });
     // A limited member cannot widen their own list, and an owner is never limited by a row of theirs.
     await expect(rt.execute('social.channel_access.set', { userId: o.lan, channelConnectionIds: [chA, chB] }, { actor: asUser(o.lan), orgId: o.orgId })).rejects.toMatchObject({ status: 403 });
     await expect(rt.execute('social.channel_access.set', { userId: o.admin, channelConnectionIds: [chB] }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'CHANNEL_ACCESS_NOT_LIMITABLE' });

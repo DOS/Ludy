@@ -98,7 +98,11 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       continue;
     }
     let failed = false;
-    for (const target of (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId)) {
+    const targets = (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId);
+    // No active connection holds this account (expired, revoked, offboarding, or none): the platforms keep no history to pull, so the
+    // notice is gone; the count says so.
+    if (targets.length === 0) log(`notice ${notice.seq} (${notice.provider}) names no active connection: dropped after storing nothing`);
+    for (const target of targets) {
       try {
         const done = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: target.connectionId, events: parsed.events }, { actor: SYSTEM, orgId: target.orgId });
         out.stored += done.stored;
@@ -115,6 +119,21 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
     opsAlert(`[conversations] ALERT ${lost.length} waiting notice(s) dropped (${expired} older than 7 days, ${lost.length - expired} that failed 5 times): ${lost.slice(0, 20).map((n) => n.seq).join(', ')}${lost.length > 20 ? ', ...' : ''}`);
   }
   return out;
+}
+
+// The sends a worker began more than ten minutes ago and never recorded (it died, or the answer was lost): reply_begin settles each as
+// unclear for a person. At most once a minute, and a few at a time.
+const STALE_SWEEP_MS = 60_000;
+let lastStaleSweep = 0;
+export async function sweepStaleReplies(deps: { workerDb: Db; runtime: Runtime; now?: () => number }): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (now - lastStaleSweep < STALE_SWEEP_MS) return 0;
+  lastStaleSweep = now;
+  const { rows } = await sql<{ org_id: string; message_id: string }>`SELECT org_id, message_id FROM crove_kernel.conversation_stale_sends(50::int)`.execute(deps.workerDb);
+  for (const row of rows) {
+    await deps.runtime.execute('kernel.conversation.reply_begin', { messageId: row.message_id }, { actor: SYSTEM, orgId: row.org_id });
+  }
+  return rows.length;
 }
 
 export interface ConversationJob {
@@ -167,7 +186,15 @@ export async function runConversationJob(deps: SendDeps, job: ConversationJob): 
   const work = await deps.runtime.execute<ReplyWork>('kernel.conversation.reply_begin', { messageId: job.messageId }, options);
   if (work.action !== 'call' || !work.callKey || !work.provider || !work.connectionVersion || !work.kind || !work.threadId || !work.contactId || work.text === undefined) return work.reason ?? 'none';
   const record = (result: unknown) => deps.runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
-  const opened = await open(deps, job);
+  // The call is begun, so a failure to open the credential must not leave the message sending: nothing went out yet, so it is a
+  // failed call a person may send again.
+  let opened: Opened;
+  try {
+    opened = await open(deps, job);
+  } catch {
+    await record({ kind: 'rejected', error: 'transient', code: 'CREDENTIAL_ERROR' });
+    return 'credential_error';
+  }
   if (opened.kind === 'refused') {
     await record({ kind: 'rejected', error: 'permission', code: opened.code });
     if (opened.expired) await expire(deps, job, 'owner_left', work.connectionVersion);

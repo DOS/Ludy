@@ -52,7 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { runConversationIntake, runConversationJob, type ConversationJob } from './conversations-worker.ts';
+import { runConversationIntake, runConversationJob, sweepStaleReplies, type ConversationJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -2064,6 +2064,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
       // no connection has a platform that sends them.
       await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime });
+      await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
     } catch (error) {
       console.error('[relay]', error);
     } finally {

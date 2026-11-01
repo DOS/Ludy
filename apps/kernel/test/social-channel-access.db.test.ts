@@ -1,4 +1,4 @@
-// Channels per member (#1081) on PostgreSQL 17: a member or viewer with rows in crove_social.channel_access uses those
+// Channels per member (#1081) on PostgreSQL 17: a member or viewer with rows in crove_kernel.channel_access uses those
 // channels only. A limited member cannot add, edit, submit or cancel a variant on another channel (approving and
 // scheduling stay with owners and admins), and can on theirs; the post list, the calendar, a single read, metrics, the
 // CSV exports and notifications leave the other channels out; owners and admins are never limited, whatever rows exist;
@@ -322,7 +322,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     await expect(limit(o, o.owner, [o.a])).rejects.toMatchObject({ code: 'CHANNEL_ACCESS_NOT_LIMITABLE' });
     // Rows left from before a promotion do nothing: the database keeps them, the helper skips owners and admins.
     await admin((c) =>
-      c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $4, $2), ($1, $3, $4, $2)', [o.orgId, o.owner, o.admin, o.a]),
+      c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $4, $2), ($1, $3, $4, $2)', [o.orgId, o.owner, o.admin, o.a]),
     );
     const onB = await post(o, o.owner, [o.b]);
     for (const user of [o.owner, o.admin]) {
@@ -413,7 +413,7 @@ suite('social channels per member on PostgreSQL (#1081)', () => {
     expect(told.items.map((i) => i.postId)).toEqual([mine]);
     // Removing the member drops their rows (the composite foreign key cascades).
     await admin((c) => c.query('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
-    const left = await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_social.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
+    const left = await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.channel_access WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]));
     expect(left.rows[0]?.n).toBe(0);
   });
 });

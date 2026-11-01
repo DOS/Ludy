@@ -32,6 +32,16 @@ CREATE INDEX IF NOT EXISTS channel_access_connection_idx ON crove_kernel.channel
 SELECT crove_kernel.apply_tenant_rls('crove_kernel.channel_access');
 -- A row is added and removed, never changed.
 REVOKE UPDATE ON crove_kernel.channel_access FROM crove_tenant;
+-- The table is now the database's own channel limit (the conversation policies read it), so who may change it is held here too and
+-- not only by the command: owners and admins and the system context add and remove rows; a member never changes a list.
+DROP POLICY IF EXISTS channel_access_insert ON crove_kernel.channel_access;
+CREATE POLICY channel_access_insert ON crove_kernel.channel_access AS RESTRICTIVE FOR INSERT TO crove_tenant
+  WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = channel_access.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
+DROP POLICY IF EXISTS channel_access_delete ON crove_kernel.channel_access;
+CREATE POLICY channel_access_delete ON crove_kernel.channel_access AS RESTRICTIVE FOR DELETE TO crove_tenant
+  USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = channel_access.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
 
 -- One copy, then the Social table goes (a run after it is dropped finds nothing to copy).
 DO $$

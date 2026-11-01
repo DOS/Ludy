@@ -232,10 +232,21 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         updated_at: ctx.now,
       }),
     )
-    .returning(['id', 'party_id'])
+    .returning(['id'])
     .executeTakeFirstOrThrow();
 
-  // The thread, made on first sight. A contact a person already linked to a party brings its party to a new thread.
+  // The thread, made on first sight. A person's link of this customer's other threads of the same kind (never of the other kind: a
+  // private message's contact is not shown on a public comment) brings its party to the new thread.
+  const linked = await ctx.trx
+    .selectFrom('crove_kernel.conversation')
+    .select('party_id')
+    .where('org_id', '=', ctx.orgId)
+    .where('identity_id', '=', identity.id)
+    .where('kind', '=', event.kind)
+    .where('party_id', 'is not', null)
+    .orderBy('updated_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
   await ctx.trx
     .insertInto('crove_kernel.conversation')
     .values({
@@ -245,7 +256,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       external_thread_id: event.threadId,
       external_post_id: event.postId ?? null,
       identity_id: identity.id,
-      party_id: identity.party_id,
+      party_id: linked?.party_id ?? null,
       status: 'new',
       opened_at: ctx.now,
       created_at: ctx.now,
@@ -262,6 +273,16 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .where('external_thread_id', '=', event.threadId)
     .forUpdate()
     .executeTakeFirstOrThrow()) as ConversationRow;
+
+  // The same message may have been stored by a notice redelivered at the same time, between the first check and this lock.
+  const again = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('channel_connection_id', '=', connectionId)
+    .where('external_message_id', '=', event.messageId)
+    .executeTakeFirst();
+  if (again) return 'duplicates';
 
   const sentAt = new Date(event.at);
   // The org's own message seen from the platform's inbox: a reply of ours still being sent takes the platform's id, else it
@@ -439,6 +460,10 @@ export const conversationCounts = defineQuery({
     const filters = [sql`c.org_id = ${ctx.orgId}::uuid`];
     if (input.kind) filters.push(sql`c.kind = ${input.kind}`);
     if (input.connectionId) filters.push(sql`c.channel_connection_id = ${input.connectionId}::uuid`);
+    if (input.posts) {
+      const pairs = input.posts.map((p) => sql`(c.channel_connection_id = ${p.connectionId}::uuid AND c.external_post_id = ${p.externalPostId})`);
+      filters.push(sql`(${sql.join(pairs, sql` OR `)})`);
+    }
     const { rows } = await sql<{ status: string; n: string; unread: string }>`
       SELECT c.status, count(*)::text AS n, count(*) FILTER (WHERE c.last_seq > COALESCE(r.last_read_seq, 0))::text AS unread
       FROM crove_kernel.conversation c
@@ -745,7 +770,9 @@ export const conversationReplyRecord = defineCommand({
         .execute();
       return { state: 'sent' };
     }
-    if (message.send_state !== 'sending') return { state: message.send_state ?? 'none' };
+    // A worker slower than the stale limit may answer after its message was marked unclear: an accepted answer for the current call
+    // still means it went out, so a person is not asked to send it again.
+    if (message.send_state !== 'sending' && !(message.send_state === 'unknown' && result.kind === 'accepted')) return { state: message.send_state ?? 'none' };
     const call = (set: CallSet) =>
       ctx.trx
         .updateTable('crove_kernel.external_call')
@@ -811,6 +838,8 @@ export const conversationReplySettle = defineCommand({
     }
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
       .set({ send_state: 'queued', send_attempt: message.send_attempt + 1, send_error_code: null })
@@ -838,7 +867,7 @@ export const conversationHide = defineCommand({
   handler: async (ctx, input): Promise<{ messageId: string }> => {
     const me = requireUser(ctx);
     const message = await lockMessage(ctx, input.messageId);
-    if (message.kind !== 'comment_thread' || message.direction !== 'in') throw new DomainError('HIDE_NOT_SUPPORTED', 409, 'Chỉ ẩn được bình luận của khách');
+    if (message.kind !== 'comment_thread' || message.direction !== 'in' || message.platform_removed_at) throw new DomainError('HIDE_NOT_SUPPORTED', 409, 'Chỉ ẩn được bình luận của khách');
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     if (!conversationRules(connection.provider)?.canHide) throw new DomainError('HIDE_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ ẩn bình luận');
@@ -1086,15 +1115,9 @@ export const conversationLinkContact = defineCommand({
       const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.partyId).executeTakeFirst();
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ này');
     }
-    // A person's decision about who this is: it holds for the customer's other threads too.
+    // A person's decision about who this is: it holds for the customer's other threads of the same kind, never across kinds.
     await ctx.trx.updateTable('crove_kernel.conversation').set({ party_id: input.partyId, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
     if (conversation.identity_id) {
-      await ctx.trx
-        .updateTable('crove_kernel.conversation_identity')
-        .set({ party_id: input.partyId, updated_at: ctx.now })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', conversation.identity_id)
-        .execute();
       await ctx.trx
         .updateTable('crove_kernel.conversation')
         .set({ party_id: input.partyId, updated_at: ctx.now })

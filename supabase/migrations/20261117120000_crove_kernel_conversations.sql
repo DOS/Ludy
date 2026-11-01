@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation (
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_thread_uq ON crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id);
 -- What a message's own foreign key names, so a message cannot carry another kind or channel than its thread.
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_message_ref_uq ON crove_kernel.conversation (org_id, id, channel_connection_id, kind);
-CREATE INDEX IF NOT EXISTS conversation_list_idx ON crove_kernel.conversation (org_id, status, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS conversation_list_idx ON crove_kernel.conversation (org_id, status, last_message_at DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS conversation_post_idx ON crove_kernel.conversation (org_id, channel_connection_id, external_post_id) WHERE external_post_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS conversation_identity_idx ON crove_kernel.conversation (org_id, identity_id) WHERE identity_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS conversation_party_idx ON crove_kernel.conversation (org_id, party_id) WHERE party_id IS NOT NULL;
@@ -336,13 +336,28 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   ORDER BY c.org_id, c.id
 $$;
 
+-- Outbound messages a worker began sending and never finished: the call was started more than 10 minutes ago, so the worker is gone
+-- or the answer was lost. The worker's sweep settles each as unclear for a person (kernel.conversation.reply_begin does it).
+CREATE INDEX IF NOT EXISTS conversation_message_sending_idx ON crove_kernel.conversation_message (sent_at) WHERE send_state = 'sending';
+CREATE OR REPLACE FUNCTION crove_kernel.conversation_stale_sends(p_limit integer)
+RETURNS TABLE (org_id uuid, message_id uuid)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  SELECT m.org_id, m.id FROM crove_kernel.conversation_message m
+  JOIN crove_kernel.tenant t ON t.org_id = m.org_id AND t.status = 'active'
+  WHERE m.direction = 'out' AND m.send_state = 'sending'
+    AND EXISTS (SELECT 1 FROM crove_kernel.external_call c
+                WHERE c.org_id = m.org_id AND c.key = 'conversation.reply:' || m.id::text || ':' || m.send_attempt::text
+                  AND c.state = 'started' AND c.started_at < pg_catalog.now() - pg_catalog.make_interval(mins => 10))
+  ORDER BY m.sent_at LIMIT p_limit
+$$;
+
 -- The API login's alone enqueues; the worker login's alone claims, finishes and finds connections.
 REVOKE ALL ON FUNCTION crove_kernel.conversation_inbound_enqueue(text, bytea), crove_kernel.conversation_inbound_claim(integer, integer),
-  crove_kernel.conversation_inbound_done(bigint), crove_kernel.conversation_connections_for(text, text)
+  crove_kernel.conversation_inbound_done(bigint), crove_kernel.conversation_connections_for(text, text), crove_kernel.conversation_stale_sends(integer)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.conversation_inbound_enqueue(text, bytea) TO crove_app;
 GRANT EXECUTE ON FUNCTION crove_kernel.conversation_inbound_claim(integer, integer), crove_kernel.conversation_inbound_done(bigint),
-  crove_kernel.conversation_connections_for(text, text) TO crove_worker;
+  crove_kernel.conversation_connections_for(text, text), crove_kernel.conversation_stale_sends(integer) TO crove_worker;
 
 -- The reply job: one queue, ids only in its data (a reply's text is read from the message row, not carried).
 SELECT crove_jobs.create_queue('kernel-conversation-reply', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);

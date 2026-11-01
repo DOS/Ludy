@@ -58,7 +58,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
   const [selected, setSelected] = useState<string | null>(null);
   const postFilter = posts && posts.length > 0 ? { posts: posts.map((p) => ({ connectionId: p.connectionId, externalPostId: p.externalPostId })) } : {};
   const list = useQuery({ ...orpc.conversations.list.queryOptions({ input: { status, kind, limit: 50, ...postFilter } }), refetchInterval: POLL_MS });
-  const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: { kind } }), refetchInterval: POLL_MS });
+  const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: { kind, ...postFilter } }), refetchInterval: POLL_MS });
   const items = list.data?.conversations ?? [];
   // The thread shown: the one chosen while it is still in the list or was opened from it, else the first.
   const openId = selected ?? items[0]?.id ?? null;
@@ -241,6 +241,11 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
           {m.hidden && <Badge variant="outline">{t('hidden')}</Badge>}
           {m.hideRequest && <Badge variant="outline">{t(m.hideRequest === 'hide' ? 'hiding' : 'unhiding')}</Badge>}
           {m.hideErrorCode && !m.hideRequest && <span className="text-destructive">{t('hideFailed', { code: m.hideErrorCode })}</span>}
+          {canHide && m.hideRequest && m.hideErrorCode && (
+            <Button type="button" size="sm" variant="outline" disabled={hide.isPending} onClick={() => hide.mutate(m.hideRequest === 'hide')}>
+              {t('hideAgain')}
+            </Button>
+          )}
           {canHide && !m.hideRequest && (
             <Button type="button" size="sm" variant="ghost" disabled={hide.isPending} data-testid="conversation-hide" onClick={() => hide.mutate(!m.hidden)}>
               {m.hidden ? t('unhide') : t('hide')}

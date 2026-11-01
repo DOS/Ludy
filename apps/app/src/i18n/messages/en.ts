@@ -913,6 +913,7 @@ export const en = {
     hiding: 'Hiding…',
     unhiding: 'Showing again…',
     hideFailed: 'Could not change it ({code})',
+    hideAgain: 'Try again',
     hide: 'Hide',
     unhide: 'Show again',
     replyBlocked: {

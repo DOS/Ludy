@@ -46,8 +46,10 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
 
-const zText = (max: number) => z.string().max(max);
-const zThreadId = z.string().min(1).max(300);
+// Text the database can store: PostgreSQL refuses a NUL character in text, which would fail a whole notice.
+const noNul = (value: string) => !value.includes('\u0000');
+const zText = (max: number) => z.string().max(max).refine(noNul, 'NUL character');
+const zThreadId = z.string().min(1).max(300).refine(noNul, 'NUL character');
 export const zConversationKind = z.enum(CONVERSATION_KINDS);
 export const zConversationStatus = z.enum(CONVERSATION_STATUSES);
 
@@ -58,10 +60,10 @@ export const zConversationEvent = z.strictObject({
   kind: zConversationKind,
   threadId: zThreadId,
   // A comment thread: the post or media it is under. A reply under a comment names its top-level comment as the thread.
-  postId: z.string().min(1).max(300).optional(),
+  postId: z.string().min(1).max(300).refine(noNul, 'NUL character').optional(),
   messageId: zThreadId,
   direction: z.enum(MESSAGE_DIRECTIONS),
-  contact: z.strictObject({ id: z.string().min(1).max(200), name: z.string().trim().min(1).max(200).optional() }),
+  contact: z.strictObject({ id: z.string().min(1).max(200).refine(noNul, 'NUL character'), name: z.string().trim().min(1).max(200).refine(noNul, 'NUL character').optional() }),
   text: zText(CONVERSATION_BODY_MAX),
   // The platform's time of the message.
   at: z.iso.datetime({ offset: true }),
@@ -154,6 +156,8 @@ export type ConversationListed = z.infer<typeof zConversationListed>;
 export const zConversationCounts = z.strictObject({
   kind: zConversationKind.optional(),
   connectionId: zId.optional(),
+  // The same posts filter as the list, so the tabs of a post page count what the list shows.
+  posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POSTS_MAX).optional(),
 });
 export const zConversationCounted = z.strictObject({
   new: z.number().int(),

@@ -14,7 +14,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { ConversationDetail, ConversationEvent } from '@crove/kernel-contract';
 import { CredentialVault, parseVaultKey, Runtime } from '@crove/kernel-runtime';
-import { runConversationIntake, runConversationJob } from '../src/conversations-worker.ts';
+import { runConversationIntake, runConversationJob, sweepStaleReplies } from '../src/conversations-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -248,6 +248,33 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     expect(await runConversationJob(jobDeps(platform), { orgId: p.orgId, messageId: second.messageId, connectionId: p.connectionId, action: 'reply' })).toBe('refused');
     expect(platform.replies).toHaveLength(0);
     expect((await detail({ ...p, owner: p.lan }, second.id)).messages[1]).toMatchObject({ sendState: 'failed', sendErrorCode: 'CHANNEL_OWNER_LEFT' });
+  });
+
+  it('settles a send nobody finished: a worker that died after begin leaves it unclear within the minute, and a late answer still counts', async () => {
+    const o = await org();
+    const { id, messageId } = await queuedReply(o);
+    const begun = await worker.execute<{ callKey: string }>('kernel.conversation.reply_begin', { messageId }, { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId });
+    // Not stale yet: the sweep leaves it.
+    expect(await sweepStaleReplies({ workerDb, runtime: worker, now: () => Date.now() + 120_000 })).toBe(0);
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query("SET LOCAL session_replication_role = 'replica'");
+      await c.query("UPDATE crove_kernel.external_call SET started_at = now() - interval '11 minutes' WHERE org_id = $1 AND step = 'reply'", [o.orgId]);
+      await c.query('COMMIT');
+    });
+    expect(await sweepStaleReplies({ workerDb, runtime: worker, now: () => Date.now() + 240_000 })).toBeGreaterThanOrEqual(1);
+    expect((await detail(o, id)).messages[1]).toMatchObject({ sendState: 'unknown', sendErrorCode: 'WORKER_LOST' });
+    // The slow worker's answer arrives after all: the platform took it, so a person is not asked to send it again.
+    await worker.execute('kernel.conversation.reply_record', { messageId, callKey: begun.callKey, result: { kind: 'accepted', externalId: 'late-1' } }, { actor: { type: 'system', component: 'conversations' }, orgId: o.orgId });
+    expect((await detail(o, id)).messages[1]).toMatchObject({ sendState: 'sent', sendErrorCode: null });
+  });
+
+  it('fails the reply, not leaves it sending, when the credential cannot be opened after the call was begun', async () => {
+    const o = await org();
+    const { id, messageId } = await queuedReply(o);
+    const broken = { ...jobDeps(new SandboxPublisher().conversations), broker: { open: () => { throw new Error('vault down'); } } as never };
+    expect(await runConversationJob(broken, { orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'reply' })).toBe('credential_error');
+    expect((await detail(o, id)).messages[1]).toMatchObject({ sendState: 'failed', sendErrorCode: 'CREDENTIAL_ERROR' });
   });
 
   it('hides a comment on the platform, and repeats an unclear hide', async () => {

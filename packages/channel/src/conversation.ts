@@ -134,6 +134,8 @@ export class SandboxConversations implements ConversationAdapter {
     if (input.text.length === 0) return { kind: 'rejected', error: 'bad_request', code: 'EMPTY' };
     const id = `sbx_reply_${randomBytes(9).toString('base64url')}`;
     this.replies.push({ callKey: input.callKey, externalAccountId: input.externalAccountId, threadId: input.threadId, text: input.text, id });
+    // A sandbox that runs for weeks keeps only the latest thousand.
+    if (this.replies.length > 1000) this.replies.splice(0, this.replies.length - 1000);
     return { kind: 'accepted', externalId: id };
   }
 

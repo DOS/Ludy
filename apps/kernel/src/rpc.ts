@@ -288,6 +288,8 @@ export function createRpcHandler(
       throw toORPCError(error);
     }
   };
+  // Demo comments of the offline sandbox, by org, for the per-org cap on the intake they share.
+  const sandboxStamps = new Map<string, number[]>();
   const inOrg = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) =>
     guard(async () => fn(await resolveOrg(runtime, context.user, context.orgSlug), actorOf(context.user)));
   // A procedure of a module this deployment leaves out (CROVE_MODULES, plan Decision 12) answers like a route that
@@ -1816,6 +1818,11 @@ export function createRpcHandler(
       // for the worker with no tenant context, as a platform's notice does.
       sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
+          // The intake is shared by every org, so a demo comment is limited per org: thirty a minute.
+          const stamp = Date.now();
+          const recent = (sandboxStamps.get(orgId) ?? []).filter((t) => stamp - t < 60_000);
+          if (recent.length >= 30) throw new ORPCError('TOO_MANY_REQUESTS', { status: 429, message: 'Tạo bình luận thử quá nhanh, hãy thử lại sau một phút' });
+          sandboxStamps.set(orgId, [...recent, stamp]);
           const made = await runtime.execute<{ accountId: string; events: ConversationEvent[] }>('kernel.conversation.sandbox_comment', input, { actor, orgId });
           const body = sandboxNoticeBody({ ...made, connectionId: input.connectionId });
           await runtime.orgless(async (db) => {

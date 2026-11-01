@@ -911,6 +911,7 @@ export const vi = {
     hiding: 'Đang ẩn…',
     unhiding: 'Đang hiện lại…',
     hideFailed: 'Chưa đổi được ({code})',
+    hideAgain: 'Thử lại',
     hide: 'Ẩn',
     unhide: 'Hiện lại',
     replyBlocked: {
