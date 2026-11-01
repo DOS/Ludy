@@ -52,7 +52,7 @@ import { mailCommands, queueContactMail } from './mail.ts';
 import { auditLogCommands } from './audit-log.ts';
 import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
-import { inboxItemCommands } from './inbox-items.ts';
+import { inboxItemCommands, raiseOriginalNeeded } from './inbox-items.ts';
 import { savedViewCommands } from './saved-views.ts';
 import { offboardingCommands } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
@@ -458,7 +458,9 @@ export const receiveInbound = defineCommand({
     // Message-ID itself is not kept in it.
     const hints = (input.lookupHints ?? []).filter((hint) => hint.url !== null || hint.code !== null);
     if (input.files.length === 0 && hints.length > 0) {
-      await ctx.run('kernel.inbox.original_needed', { mailKey: sha256Hex(new TextEncoder().encode(input.messageId)), hints });
+      // Counts only in the audit row: never a code or a link.
+      const raised = await raiseOriginalNeeded(ctx, sha256Hex(new TextEncoder().encode(input.messageId)), hints);
+      ctx.audit({ originalNeeded: raised });
     }
     return { duplicate: false, fileIds };
   },

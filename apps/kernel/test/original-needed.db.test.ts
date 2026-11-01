@@ -233,8 +233,8 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
     expect((await originals(users.owner)).total).toBe(before - 1);
     const dismissed = (await rows()).find((r) => r.id === first.id);
     expect(dismissed?.dismissed_at).not.toBeNull();
-    // Only the worker raises them, in a system context.
-    await expect(rt.execute('kernel.inbox.original_needed', { mailKey: 'a'.repeat(64), hints: [{ provider: null, url: null, code: CODE_B }] }, { actor: asUser(users.owner), orgId })).rejects.toBeTruthy();
+    // Only the worker raises them, in a system context: no user command exists for it, and a user cannot run the receive step.
+    await expect(rt.execute('kernel.inbound.receive', { messageId: 'user-made', from: null, subject: null, text: null, lookupHints: [{ provider: null, url: null, code: CODE_B }], files: [] }, { actor: asUser(users.owner), orgId })).rejects.toBeTruthy();
   });
 
   it('keeps the lookup code and the link out of every audit row of the org', async () => {
@@ -242,8 +242,8 @@ suite('original-needed Inbox items on PostgreSQL (#2286)', () => {
     expect(audit.length).toBeGreaterThan(0);
     const all = audit.join('\n');
     for (const secret of [CODE_A, CODE_B, '9ZZ8YY7XX6', 'meinvoice', 'easyinvoice']) expect(all, secret).not.toContain(secret);
-    // The raise is audited by counts.
-    expect(audit.some((r) => r.includes('kernel.inbox.original_needed'))).toBe(true);
+    // The raise is audited by counts, on the receive command's own row.
+    expect(audit.some((r) => r.includes('kernel.inbound.receive') && r.includes('originalNeeded'))).toBe(true);
   });
 
   it('refuses at the database an item whose detail is not a hint', async () => {

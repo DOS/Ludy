@@ -17,7 +17,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { ORIGINAL_NEEDED_KIND, tableWrite, vietnamToday, zId, zLookupHint, type OriginalNeededItem, type RaisedInboxItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -170,8 +170,8 @@ export const inboxRaised = defineQuery({
 
 // ---------------------------------------------------------------------------------------------------------------------
 // "The original invoice is needed" (#2286, plan docs/plan/einvoice-lookup.md): a mail with no invoice attachment whose text
-// held the seller's lookup link or code. kernel.inbound.receive raises one item per hint, in the worker's system context
-// and the mail's transaction. An item holds the hint (provider, link on a provider's lookup host, lookup code) and nothing
+// held the seller's lookup link or code. kernel.inbound.receive raises one item per hint (raiseOriginalNeeded), in the
+// worker's system context and the mail's transaction. An item holds the hint (provider, link on a provider's lookup host, lookup code) and nothing
 // of the mail. The lookup code opens the invoice for anyone who has it, so it is read only by members of the org (a
 // database policy, inbox_item_read) and is kept out of the audit row, logs and errors: the audit detail below counts, it
 // never names a code or a link, and no error text carries one.
@@ -185,38 +185,33 @@ export const ORIGINAL_ITEMS_MAX = 50;
 // The dedupe seed of a mail: a hash of its Message-ID (the caller's), never the Message-ID itself.
 const zMailKey = z.string().regex(/^[0-9a-f]{64}$/);
 
-// kernel.inbound.receive's nested step: one open item per hint of the mail. A mail the org already received never gets
-// here (the receive command stops at a Message-ID it has), and an open item with the same key is left as it is.
-export const originalNeeded = defineCommand({
-  name: 'kernel.inbox.original_needed',
-  input: z.strictObject({ mailKey: zMailKey, hints: z.array(zOriginalHint).min(1).max(MAX_ORIGINAL_HINTS) }),
-  risk: 'R1',
-  sideEffect: 'internal',
-  access: 'system',
-  writes: [tableWrite(kernelManifest.tables, 'crove_kernel', 'inbox_item', ['org_id', 'kind', 'dedupe_key', 'detail', 'raised_at'])],
-  handler: async (ctx, input) => {
-    let raised = 0;
-    for (const [index, hint] of input.hints.entries()) {
-      const row = await ctx.trx
-        .insertInto('crove_kernel.inbox_item')
-        .values({
-          org_id: ctx.orgId,
-          kind: ORIGINAL_NEEDED_KIND,
-          dedupe_key: `mail:${input.mailKey}:${index}`,
-          // Exactly the hint: the database refuses any other key (inbox_item_original_detail).
-          detail: JSON.stringify({ provider: hint.provider, url: hint.url, code: hint.code }),
-          raised_at: ctx.now,
-        })
-        .onConflict((oc) => oc.columns(['org_id', 'kind', 'dedupe_key']).where('dismissed_at', 'is', null).doNothing())
-        .returning('id')
-        .executeTakeFirst();
-      if (row) raised += 1;
-    }
-    // Counts only: never a code or a link.
-    ctx.audit({ hints: input.hints.length, raised });
-    return { raised };
-  },
-});
+// One open item per hint of a mail, raised by kernel.inbound.receive in its own (system) context and transaction: not a
+// command of its own, so the receive command's nested runs stay the file ingests the job egress invariant lists. A mail the
+// org already received never gets here (the receive command stops at a Message-ID it has), and an open item with the same
+// key is left as it is. Returns how many were raised.
+export async function raiseOriginalNeeded(ctx: CommandContext, mailKey: string, hints: readonly z.infer<typeof zOriginalHint>[]): Promise<number> {
+  if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới tạo được mục này');
+  const key = zMailKey.parse(mailKey);
+  const checked = z.array(zOriginalHint).min(1).max(MAX_ORIGINAL_HINTS).parse(hints);
+  let raised = 0;
+  for (const [index, hint] of checked.entries()) {
+    const row = await ctx.trx
+      .insertInto('crove_kernel.inbox_item')
+      .values({
+        org_id: ctx.orgId,
+        kind: ORIGINAL_NEEDED_KIND,
+        dedupe_key: `mail:${key}:${index}`,
+        // Exactly the hint: the database refuses any other key (inbox_item_original_detail).
+        detail: JSON.stringify({ provider: hint.provider, url: hint.url, code: hint.code }),
+        raised_at: ctx.now,
+      })
+      .onConflict((oc) => oc.columns(['org_id', 'kind', 'dedupe_key']).where('dismissed_at', 'is', null).doNothing())
+      .returning('id')
+      .executeTakeFirst();
+    if (row) raised += 1;
+  }
+  return raised;
+}
 
 // A member of the org dismisses an open original-needed item; one already dismissed stays as it was. Another kind of item
 // is not found: the dead-letter items stay with owners and admins (kernel.inbox.dismiss), and the database agrees.
@@ -274,5 +269,5 @@ export const originalsList = defineQuery({
   },
 });
 
-export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune, originalNeeded, originalDismiss];
+export const inboxItemCommands = [jobDeadLetter, inboxDismiss, inboxPrune, originalDismiss];
 export const inboxItemQueries = [inboxRaised, originalsList];
