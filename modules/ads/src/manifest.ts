@@ -29,7 +29,7 @@ export const adsManifest = defineModule({
       ]),
       // Meta's data deletion requests (plan section 9): a global machinery table, no org_id and nothing about an org; only the
       // definers touch it. user_hash is the keyed hash of the Meta user who asked, never the id.
-      deletion_request: columns(['code', 'requested_at', 'completed_at', 'accounts'], { user_hash: 'pii' }),
+      deletion_request: columns(['code', 'requested_at', 'completed_at', 'accounts', 'next_attempt_at'], { user_hash: 'pii' }),
     },
   },
   // It owns no permission: access comes from the base role (owners and admins connect and configure, members refresh,

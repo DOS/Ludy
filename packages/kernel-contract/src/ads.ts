@@ -62,7 +62,9 @@ export const zAdsAccountLink = z.strictObject({
   expenseAccountCode: zAccountCode.nullable().optional(),
   // A keyed hash of the platform user who granted the connection (@crove/ad-platform platformUserHash), so the platform's data
   // deletion callback can find the accounts that person granted without the id being stored (plan section 9).
-  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  // null: the platform did not name the person this time, so a hash kept from an earlier grant is dropped, not left to name someone
+  // who did not grant this one. Left out: a link that says nothing of it (the sandbox, a link made again) keeps what is there.
+  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 });
 export type AdsAccountLink = z.infer<typeof zAdsAccountLink>;
 

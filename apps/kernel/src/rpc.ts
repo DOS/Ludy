@@ -1550,7 +1550,7 @@ export function createRpcHandler(
                 try {
                   await runtime.execute(
                     'ads.account.link',
-                    { connectionId: done.connectionId, ...(account.grantedByHash ? { grantedByHash: account.grantedByHash } : {}) },
+                    { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
                     { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` },
                   );
                 } catch (linkError) {

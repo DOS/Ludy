@@ -225,6 +225,21 @@ describe('the Meta ad connection', () => {
     expect(JSON.stringify(accounts)).not.toContain('4242');
   });
 
+  it('connects without a hash when Meta does not name the person, and does not fail the login for it', async () => {
+    for (const me of [{ status: 500, body: { error: { code: 1, message: 'x' } } }, { body: {} }, { body: { id: 'not-digits' } }]) {
+      const { fetch } = recorded([
+        { body: { access_token: 'short' } },
+        { body: { access_token: 'long' } },
+        { body: { data: [{ permission: 'ads_read', status: 'granted' }] } },
+        me,
+        { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+      ]);
+      const accounts = await new MetaAdsConnector(app, { fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null });
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.grantedByHash).toBeUndefined();
+    }
+  });
+
   it('refuses a grant without ads_read, and a login that reaches no ad account', async () => {
     const answers = (permissions: unknown, accounts: unknown) => [
       { body: { access_token: 'short' } },

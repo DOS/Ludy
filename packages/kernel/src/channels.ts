@@ -198,7 +198,9 @@ export const channelRevokeByPlatform = defineCommand({
     if (row.status !== 'revoked') {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
-        .set({ status: 'revoked', status_reason: 'platform_deletion', updated_at: ctx.now })
+        // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
+        // platform id and the time it closed.
+        .set({ status: 'revoked', status_reason: 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();

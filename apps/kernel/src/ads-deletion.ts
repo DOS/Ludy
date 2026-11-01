@@ -10,7 +10,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
 import { platformUserHash } from '@crove/ad-platform';
 import type { Db } from '@crove/db';
-import type { Runtime } from '@crove/kernel-runtime';
+import { DomainError, type Runtime } from '@crove/kernel-runtime';
 
 // A signed request is a few hundred bytes; this bounds what the API reads before checking its signature.
 export const MAX_ADS_DELETION_BYTES = 8 * 1024;
@@ -60,18 +60,21 @@ export async function acceptAdsDeletion(runtime: Runtime, appSecret: string, bod
   if (!signed) return { status: 400, code: 'DELETION_MALFORMED' };
   const userId = verifySignedRequest(signed, appSecret, now);
   if (userId === null) return { status: 401, code: 'DELETION_SIGNATURE' };
-  const code = randomBytes(16).toString('hex');
   try {
-    await runtime.orgless(async (db) => {
-      await sql`SELECT crove_ads.deletion_request_enqueue(${code}, ${platformUserHash(appSecret, userId)})`.execute(db);
+    // A person with a request still open (a replay of this one, or a second one) gets that request's code, not a new row.
+    const code = await runtime.orgless(async (db) => {
+      const { rows } = await sql<{ code: string }>`
+        SELECT crove_ads.deletion_request_enqueue(${randomBytes(16).toString('hex')}, ${platformUserHash(appSecret, userId)}) AS code`.execute(db);
+      return rows[0]?.code ?? null;
     });
+    if (!code) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    return { status: 200, code };
   } catch (error) {
-    // The API login is not trusted with volume: past the backlog limit the definer raises configuration_limit_exceeded.
-    const sqlState = (error as { code?: unknown; cause?: { code?: unknown } } | null)?.code ?? (error as { cause?: { code?: unknown } } | null)?.cause?.code;
-    if (sqlState === '53400') return { status: 503, code: 'DELETION_BACKLOG' };
+    // The API login is not trusted with volume: past the table's limit the definer raises configuration_limit_exceeded, which
+    // the runtime reports as OVERLOADED; Meta tries again later.
+    if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'DELETION_BACKLOG' };
     throw error;
   }
-  return { status: 200, code };
 }
 
 export interface AdsDeletionStatus {
@@ -100,17 +103,14 @@ export async function claimAdsDeletions(workerDb: Db): Promise<Array<{ code: str
 }
 
 const SYSTEM = { type: 'system' as const, component: 'ads' };
-// A request whose erasure failed is tried again this long after, in this process: the relay passes every second.
-const RETRY_AFTER_MS = 5 * 60_000;
-const failedUntil = new Map<string, number>();
 
-// One relay pass: for each open request, closes the connection of every ad account its hash names (as a platform's deletion
-// closes it: the credential is forgotten) and erases the account's figures, sync log and row, each in the account's own org,
-// then marks the request completed. A request that names no account (none was ever linked with this person's grant, or its
-// accounts were deleted already) is completed with none. Every step is idempotent, so a pass that dies half way is run again
-// whole. Returns how many requests it completed.
-export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db; now?: () => number }): Promise<number> {
-  const now = deps.now ?? Date.now;
+// One relay pass: for each open request that is due, closes the connection of every ad account its hash names (as a platform's
+// deletion closes it: the credential is forgotten) and erases the account's figures, sync log and row, each in the account's
+// own org, then marks the request completed. A request that names no account (none was ever linked with this person's grant,
+// or its accounts were deleted already) is completed with none. Every step is idempotent, so a pass that dies half way is run
+// again whole. A request that fails is put off for five minutes in the database (crove_ads.deletion_request_defer), so it
+// holds nothing behind it and no restart forgets it. Returns how many requests it completed.
+export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const claimed = await claimAdsDeletions(deps.workerDb);
   const byCode = new Map<string, Array<{ orgId: string; adAccountId: string; connectionId: string }>>();
   for (const row of claimed) {
@@ -120,7 +120,6 @@ export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db; no
   }
   let completed = 0;
   for (const [code, accounts] of byCode) {
-    if ((failedUntil.get(code) ?? 0) > now()) continue;
     try {
       for (const account of accounts) {
         const options = { actor: SYSTEM, orgId: account.orgId };
@@ -128,12 +127,11 @@ export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db; no
         await deps.runtime.execute('ads.account.erase', { adAccountId: account.adAccountId }, options);
       }
       await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length}::int)`.execute(deps.workerDb);
-      failedUntil.delete(code);
       completed++;
     } catch (error) {
-      failedUntil.set(code, now() + RETRY_AFTER_MS);
       // By code only: nothing of the request or the accounts goes to the log.
       console.error(`[ads-deletion] request ${code.slice(0, 8)} not completed`, error instanceof Error ? error.name : 'error');
+      await sql`SELECT crove_ads.deletion_request_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
     }
   }
   return completed;
@@ -145,8 +143,11 @@ export function renderAdsDeletionStatus(status: AdsDeletionStatus | null): strin
     ? { vi: 'Không tìm thấy yêu cầu xóa dữ liệu này.', en: 'No such data deletion request was found.' }
     : status.completedAt
       ? status.accounts && status.accounts > 0
-        ? { vi: 'Dữ liệu quảng cáo của các tài khoản bạn đã cấp quyền cho Ludy đã được xóa.', en: 'The ad data of the accounts you granted to Ludy has been deleted.' }
-        : { vi: 'Yêu cầu đã được xử lý: Ludy không giữ dữ liệu quảng cáo nào của bạn.', en: 'The request has been handled: Ludy holds no ad data of yours.' }
+        ? {
+            vi: 'Số liệu quảng cáo, nhật ký cập nhật và các tài khoản quảng cáo bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của chúng đã bị hủy.',
+            en: 'The ad figures, update logs and ad accounts you granted to Ludy have been deleted, and their access tokens destroyed.',
+          }
+        : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản quảng cáo nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no ad account you granted is left in Ludy.' }
       : { vi: 'Yêu cầu đã được nhận và đang được xử lý, thường trong vòng một giờ.', en: 'The request was received and is being handled, usually within the hour.' };
   return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Ludy</title></head><body><p>${text.vi}</p><p lang="en">${text.en}</p></body></html>`;
 }

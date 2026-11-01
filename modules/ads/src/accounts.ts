@@ -102,7 +102,7 @@ export const adsAccountLink = defineCommand({
           name: connection.display_name,
           expense_account_code: input.expenseAccountCode ?? null,
           backfill_from: historyStart(today),
-          ...(input.grantedByHash !== undefined ? { granted_by_hash: input.grantedByHash } : {}),
+          ...(input.grantedByHash ? { granted_by_hash: input.grantedByHash } : {}),
           created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
         })
         .returning('id')

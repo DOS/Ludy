@@ -60,8 +60,9 @@ BEGIN
     RAISE EXCEPTION 'ADS_ACCOUNT_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
   -- A member limited to other entities reads and deletes none of this account's.
+  -- Fails closed: a context with no entity scope at all (NULL) reads and deletes none, as the row policies do.
   IF v_actor_type IS DISTINCT FROM 'system'
-     AND NOT ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR v_entity::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])) THEN
+     AND NOT COALESCE('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR v_entity::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]), false) THEN
     RAISE EXCEPTION 'ADS_ACCOUNT_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
   IF p_remove_account AND v_actor_type IS DISTINCT FROM 'system' AND v_status IS DISTINCT FROM 'revoked' THEN
@@ -91,32 +92,46 @@ CREATE TABLE IF NOT EXISTS crove_ads.deletion_request (
   user_hash text NOT NULL CHECK (user_hash ~ '^[0-9a-f]{64}$'),
   requested_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   completed_at timestamptz,
-  accounts integer CHECK (accounts IS NULL OR accounts >= 0)
+  accounts integer CHECK (accounts IS NULL OR accounts >= 0),
+  -- A request whose erasure failed waits until this time (a few minutes) before the worker claims it again, so a request that
+  -- keeps failing cannot hold the ones behind it.
+  next_attempt_at timestamptz NOT NULL DEFAULT pg_catalog.now()
 );
-CREATE INDEX IF NOT EXISTS deletion_request_open_idx ON crove_ads.deletion_request (requested_at) WHERE completed_at IS NULL;
+-- At most one open request per person: a replay of a signed request while one is open gets that request's code, not a new row.
+CREATE UNIQUE INDEX IF NOT EXISTS deletion_request_open_hash_uq ON crove_ads.deletion_request (user_hash) WHERE completed_at IS NULL;
+CREATE INDEX IF NOT EXISTS deletion_request_open_idx ON crove_ads.deletion_request (next_attempt_at, requested_at) WHERE completed_at IS NULL;
 REVOKE ALL ON crove_ads.deletion_request FROM PUBLIC, crove_tenant, crove_app, crove_worker;
 ALTER TABLE crove_ads.deletion_request ENABLE ROW LEVEL SECURITY;
 SELECT crove_kernel.agent_write_guard_install('crove_ads.deletion_request');
 
--- Records a verified request (API login only). The API is not trusted with volume: past 10000 open requests it raises 53400,
--- which it answers with 503 and Meta retries. A code already recorded is not written again.
+-- Records a verified request and answers its confirmation code (API login only). A person with a request still open gets that
+-- request's code. The API is not trusted with volume: with 100000 rows (open and kept completed ones together) it raises 53400,
+-- which the API answers with 503 and Meta retries.
 CREATE OR REPLACE FUNCTION crove_ads.deletion_request_enqueue(p_code text, p_user_hash text)
-RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_count integer;
+  v_code text;
 BEGIN
   IF p_code IS NULL OR p_code !~ '^[0-9a-f]{32}$' OR p_user_hash IS NULL OR p_user_hash !~ '^[0-9a-f]{64}$' THEN
     RAISE EXCEPTION 'ADS_DELETION_INVALID' USING ERRCODE = '22P02';
   END IF;
-  IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_ads.deletion_request WHERE completed_at IS NULL LIMIT 10001) s) > 10000 THEN
+  SELECT r.code INTO v_code FROM crove_ads.deletion_request r WHERE r.user_hash = p_user_hash AND r.completed_at IS NULL;
+  IF FOUND THEN
+    RETURN v_code;
+  END IF;
+  IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_ads.deletion_request LIMIT 100001) s) > 100000 THEN
     RAISE EXCEPTION 'ADS_DELETION_BACKLOG' USING ERRCODE = '53400';
   END IF;
-  INSERT INTO crove_ads.deletion_request (code, user_hash) VALUES (p_code, p_user_hash) ON CONFLICT (code) DO NOTHING;
+  INSERT INTO crove_ads.deletion_request (code, user_hash) VALUES (p_code, p_user_hash) ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_count = ROW_COUNT;
   IF v_count > 0 THEN
     PERFORM pg_catalog.pg_notify('crove_outbox', '');
+    RETURN p_code;
   END IF;
-  RETURN v_count > 0;
+  -- Another call opened one for this person at the same moment, or the code was already recorded.
+  SELECT r.code INTO v_code FROM crove_ads.deletion_request r WHERE r.code = p_code OR (r.user_hash = p_user_hash AND r.completed_at IS NULL) ORDER BY (r.code = p_code) DESC LIMIT 1;
+  RETURN v_code;
 END $$;
 
 -- What the status page shows for a code (API login only): when the request came in and when it was completed; no row, no
@@ -127,22 +142,25 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   SELECT r.requested_at, r.completed_at, r.accounts FROM crove_ads.deletion_request r WHERE r.code = p_code AND p_code ~ '^[0-9a-f]{32}$'
 $$;
 
--- The worker's claim: for each open request, one row per ad account of an active org that the request's hash granted, and one
--- row with null ids for a request that names none. Nothing is deleted here: a worker that dies leaves the request open and
--- the next claim finds it again, and the erasure it asks for is idempotent. At most p_limit requests.
+-- The worker's claim: for each open request that is due, one row per ad account of an org that is not closed (its accounts
+-- are deleted with it) that the request's hash granted, and one row with null ids for a request that names none. Nothing is
+-- deleted here: a worker that dies leaves the request open and the next claim finds it again, and the erasure it asks for is
+-- idempotent. At most p_limit requests, the longest waiting first.
 CREATE OR REPLACE FUNCTION crove_ads.deletion_request_claim(p_limit integer)
 RETURNS TABLE (code text, org_id uuid, ad_account_id uuid, connection_id uuid)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  WITH open AS (
-    SELECT q.code, q.user_hash FROM crove_ads.deletion_request q WHERE q.completed_at IS NULL ORDER BY q.requested_at, q.code LIMIT LEAST(GREATEST(p_limit, 1), 1000)
+  WITH due AS (
+    SELECT q.code, q.user_hash FROM crove_ads.deletion_request q
+    WHERE q.completed_at IS NULL AND q.next_attempt_at <= pg_catalog.now()
+    ORDER BY q.next_attempt_at, q.requested_at, q.code LIMIT LEAST(GREATEST(p_limit, 1), 1000)
   )
-  SELECT o.code, a.org_id, a.id, a.channel_connection_id
-  FROM open o
-  JOIN crove_ads.ad_account a ON a.granted_by_hash = o.user_hash
-  JOIN crove_kernel.tenant t ON t.org_id = a.org_id AND t.status = 'active'
+  SELECT d.code, a.org_id, a.id, a.channel_connection_id
+  FROM due d
+  JOIN crove_ads.ad_account a ON a.granted_by_hash = d.user_hash
+  JOIN crove_kernel.tenant t ON t.org_id = a.org_id AND t.status IN ('active', 'offboarding')
   UNION ALL
-  SELECT o.code, NULL::uuid, NULL::uuid, NULL::uuid FROM open o
-  WHERE NOT EXISTS (SELECT 1 FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id AND t.status = 'active' WHERE a.granted_by_hash = o.user_hash)
+  SELECT d.code, NULL::uuid, NULL::uuid, NULL::uuid FROM due d
+  WHERE NOT EXISTS (SELECT 1 FROM crove_ads.ad_account a JOIN crove_kernel.tenant t ON t.org_id = a.org_id AND t.status IN ('active', 'offboarding') WHERE a.granted_by_hash = d.user_hash)
 $$;
 
 -- Marks a request completed (worker login only), with how many accounts it erased, and drops the completed ones older than
@@ -157,7 +175,17 @@ BEGIN
   DELETE FROM crove_ads.deletion_request r WHERE r.completed_at < pg_catalog.now() - interval '90 days';
 END $$;
 
-REVOKE ALL ON FUNCTION crove_ads.deletion_request_enqueue(text, text), crove_ads.deletion_request_status(text), crove_ads.deletion_request_claim(integer), crove_ads.deletion_request_complete(text, integer)
+-- A request whose erasure failed waits five minutes before the worker claims it again (worker login only).
+CREATE OR REPLACE FUNCTION crove_ads.deletion_request_defer(p_code text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  UPDATE crove_ads.deletion_request r SET next_attempt_at = pg_catalog.now() + interval '5 minutes' WHERE r.code = p_code AND r.completed_at IS NULL;
+END $$;
+
+REVOKE ALL ON FUNCTION crove_ads.deletion_request_enqueue(text, text), crove_ads.deletion_request_status(text), crove_ads.deletion_request_claim(integer), crove_ads.deletion_request_complete(text, integer), crove_ads.deletion_request_defer(text)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_ads.deletion_request_enqueue(text, text), crove_ads.deletion_request_status(text) TO crove_app;
-GRANT EXECUTE ON FUNCTION crove_ads.deletion_request_claim(integer), crove_ads.deletion_request_complete(text, integer) TO crove_worker;
+GRANT EXECUTE ON FUNCTION crove_ads.deletion_request_claim(integer), crove_ads.deletion_request_complete(text, integer), crove_ads.deletion_request_defer(text) TO crove_worker;

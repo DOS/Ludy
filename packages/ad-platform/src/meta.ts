@@ -321,7 +321,8 @@ export class MetaAdsConnector implements OAuthConnector {
       // Who granted it, as a keyed hash only (the person's id is kept nowhere): Meta's data deletion callback names the person
       // by this id and the stored hash finds the accounts they granted (plan section 9). A login Meta does not name is left
       // without one, which only means a deletion request cannot find the account.
-      const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } });
+      // A failed call is only that: the connection is made without a hash, and the link says so (it drops an earlier one).
+      const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } }).catch(() => ({}) as { id?: unknown });
       if (typeof me.id === 'string' && META_USER_ID.test(me.id)) grantedByHash = platformUserHash(this.appSecret, me.id);
       rows = await listAdAccounts(this.login.graph, token);
     } catch (error) {

@@ -875,7 +875,36 @@ suite('ads on PostgreSQL (#2217)', () => {
       const done = await adsDeletionStatus(api, body.confirmation_code);
       expect(done).toMatchObject({ accounts: 0 });
       expect(done?.completedAt).toBeInstanceOf(Date);
-      expect(await (await app.request(`/api/ads/meta/data-deletion?code=${body.confirmation_code}`)).text()).toContain('không giữ dữ liệu quảng cáo nào');
+      expect(await (await app.request(`/api/ads/meta/data-deletion?code=${body.confirmation_code}`)).text()).toContain('không còn tài khoản quảng cáo nào');
+    });
+
+    it('answers a replay of a request that is still open with its own code, not a new row, and is told 503 when the table is full', async () => {
+      const post = (body: string) => app.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+      const first = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
+      const replay = (await (await post(form(signed('9191')))).json()) as { confirmation_code: string };
+      expect(replay.confirmation_code).toBe(first.confirmation_code);
+      expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(SECRET_META, '9191')])).toHaveLength(1);
+      // The table's own limit is the database's answer (53400), which the runtime calls OVERLOADED: the callback says 503.
+      const full = { orgless: async () => Promise.reject(new DomainError('OVERLOADED', 503, 'full')) } as unknown as Runtime;
+      expect(await acceptAdsDeletion(full, SECRET_META, form(signed('9292')))).toEqual({ status: 503, code: 'DELETION_BACKLOG' });
+      // Another failure of the database is not turned into an answer.
+      const broken = { orgless: async () => Promise.reject(new Error('boom')) } as unknown as Runtime;
+      await expect(acceptAdsDeletion(broken, SECRET_META, form(signed('9393')))).rejects.toThrow('boom');
+    });
+
+    it('drops the person who granted an account when a link says the platform did not name them, and keeps it when the link says nothing', async () => {
+      const made = await linkedAs(orgId, asOwner(), 'Đổi người cấp quyền', '8080');
+      const hashOf = async () => (await row<{ h: string | null }>(`SELECT granted_by_hash AS h FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.h;
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8080'));
+      // A link that says nothing of it (a retry, the sandbox) leaves it.
+      await api.execute('ads.account.link', { connectionId: made.connectionId }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8080'));
+      // Another person grants it: their hash replaces the first, so the first one's request no longer reaches it.
+      await api.execute('ads.account.link', { connectionId: made.connectionId, grantedByHash: platformUserHash(SECRET_META, '8081') }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBe(platformUserHash(SECRET_META, '8081'));
+      // The platform named nobody this time: nobody is named, not the person before.
+      await api.execute('ads.account.link', { connectionId: made.connectionId, grantedByHash: null }, { actor: asOwner(), orgId });
+      expect(await hashOf()).toBeNull();
     });
 
     it('refuses a body past the cap before reading it, and a client address past its rate, and stores nothing of either', async () => {
@@ -924,7 +953,10 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await row(`SELECT 1 FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
         expect(await row(`SELECT 1 FROM crove_ads.ad_sync_run WHERE org_id = $1 AND ad_account_id = $2`, [org, made.adAccountId])).toEqual([]);
         // The connection is closed and its token forgotten.
-        expect(await row(`SELECT status, status_reason FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [org, made.connectionId])).toEqual([{ status: 'revoked', status_reason: 'platform_deletion' }]);
+        // Closed, with the account's name and the token's permissions gone too: a platform id and the time it closed remain.
+        expect(await row(`SELECT status, status_reason, display_name, scopes FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [org, made.connectionId])).toEqual([
+          { status: 'revoked', status_reason: 'platform_deletion', display_name: 'Deleted', scopes: [] },
+        ]);
         expect(await row(`SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2`, [org, made.connectionId])).toEqual([]);
       }
       expect((await daysOf(stays.adAccountId)).length).toBeGreaterThan(300);
@@ -950,9 +982,13 @@ suite('ads on PostgreSQL (#2217)', () => {
       await expect(workerPool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [randomBytes(16).toString('hex'), hash])).rejects.toMatchObject({ code: '42501' });
       await expect(workerPool.query('SELECT * FROM crove_ads.deletion_request_status($1)', [code])).rejects.toMatchObject({ code: '42501' });
       expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(true);
-      // A bad code or hash is refused; a code recorded twice is recorded once.
+      // A request that failed is put off, by the worker alone, and is not claimed again until its time.
+      await expect(pool.query('SELECT crove_ads.deletion_request_defer($1)', [code])).rejects.toMatchObject({ code: '42501' });
+      await workerPool.query('SELECT crove_ads.deletion_request_defer($1)', [code]);
+      expect((await workerPool.query('SELECT * FROM crove_ads.deletion_request_claim(1000)')).rows.some((r: { code: string }) => r.code === code)).toBe(false);
+      // A bad code or hash is refused; the same person asking again gets the open request's code, and no new row.
       await expect(pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', ['nope', hash])).rejects.toMatchObject({ code: '22P02' });
-      expect((await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2) AS added', [code, hash])).rows[0]?.added).toBe(false);
+      expect((await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2) AS code', [randomBytes(16).toString('hex'), hash])).rows[0]?.code).toBe(code);
       // The history definer needs a context of an org: the API login alone gets none.
       await expect(pool.query('SELECT * FROM crove_ads.account_history_delete($1::uuid, false, NULL)', [randomUUID()])).rejects.toMatchObject({ code: '42501' });
     });
