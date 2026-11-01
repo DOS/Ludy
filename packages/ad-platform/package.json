@@ -1,0 +1,14 @@
+{
+  "name": "@crove/ad-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Ad platforms behind the ads module (ADR-0040): read-only adapters for spend and results, the offline sandbox first",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

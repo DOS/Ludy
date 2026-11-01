@@ -50,10 +50,12 @@ import type { SessionRevoker, SignOutTarget } from './sessions.ts';
 import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
+import type { AdPlatform } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -317,6 +319,10 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
 // The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
 const BANK_FEED_SYNC_CRON = '30 5 * * *';
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
+// The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
+// sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
+const ADS_SYNC_CRON = '10 * * * *';
+const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
 const CALENDAR_WRITEBACK_RETRY_LIMIT = 3;
@@ -361,6 +367,9 @@ export interface WorkerDeps {
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
+    // them, with the credentials it opens.
+    adPlatforms?: Readonly<Record<string, AdPlatform>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -592,6 +601,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const social = deps.runtime.installed('social');
   const crm = deps.runtime.installed('crm');
   const notes = deps.runtime.installed('notes');
+  const ads = deps.runtime.installed('ads');
   // A cron job of a module left out (#1471): a schedule a run with the module saved stays in pg-boss, which would queue
   // ticks nobody works and the prober would report as stuck. So it is taken off, and the ticks it queued (no data) go.
   const dropCron = async (queue: string) => {
@@ -1005,6 +1015,44 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.bankFeedSync, BANK_FEED_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.bankFeedSync);
+  }
+
+  // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
+  // for, and every hour for every active ad account of an active org. The adapters are the deployment's; with none on,
+  // the sweep queues nothing.
+  const adPlatforms = deps.channels?.adPlatforms;
+  const adsBroker = deps.channels?.broker;
+  if (ads && adPlatforms && adsBroker && Object.keys(adPlatforms).length > 0) {
+    await boss.work<AdsSyncJob | { sweep: true }>(QUEUES.adsSync, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        // Every active ad account, a page of connections at a time by key.
+        let after: { orgId: string; connectionId: string } | null = null;
+        for (;;) {
+          const page = await adsDue(deps.workerDb, after);
+          for (const row of page.filter((r) => Object.hasOwn(adPlatforms, r.provider))) {
+            await boss.send(QUEUES.adsSync, { orgId: row.orgId, connectionId: row.connectionId } satisfies AdsSyncJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.adsSync, row.connectionId),
+              retryLimit: ADS_SYNC_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < ADS_DUE_PAGE) break;
+          after = { orgId: last.orgId, connectionId: last.connectionId };
+        }
+        // The runs older than 90 days.
+        const pruned = await pruneAdsRuns(deps.workerDb, new Date());
+        if (pruned > 0) console.log(`[ads] pruned ${pruned} old sync run(s)`);
+        return;
+      }
+      const done = await runAdsSync({ runtime: deps.runtime, broker: adsBroker, platforms: adPlatforms }, job.data);
+      console.log(`[ads] ${job.data.connectionId}: ${done.slices} slice(s), ${done.rows} row(s) stored`);
+    });
+    await boss.schedule(QUEUES.adsSync, ADS_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.adsSync);
   }
 
   // In-app notifications of the kernel and finance (#671): the module's dispatch reads the event from the outbox.
@@ -1757,6 +1805,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.bankFeedSync, { orgId: row.org_id, connectionId } satisfies BankFeedSyncJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.bankFeedSync, connectionId),
                   retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An ad account linked, or a refresh asked for (ADR-0040, #2217): its sync reads the platform.
+              if (ads && deps.channels?.adPlatforms && Object.keys(deps.channels.adPlatforms).length > 0 && (row.type === 'ads.account.linked' || row.type === 'ads.sync.requested')) {
+                const connectionId = String(row.payload.connection_id);
+                await boss.send(QUEUES.adsSync, { orgId: row.org_id, connectionId } satisfies AdsSyncJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsSync, connectionId),
+                  retryLimit: ADS_SYNC_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });

@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import * as kernel from '@crove/kernel';
 import { LEDGER_APPROVE_PERMISSION, kernelManifest } from '@crove/kernel';
 import type { ModuleManifest, PermissionDeclaration } from '@crove/kernel-contract';
+import { adsManifest } from '@crove/mod-ads';
 import { crmManifest } from '@crove/mod-crm';
 import { financeManifest } from '@crove/mod-finance';
 import { notesManifest } from '@crove/mod-notes';
@@ -27,6 +28,7 @@ export const MODULE_MANIFESTS: Manifests = {
   kernel: { manifest: kernelManifest, file: 'packages/kernel/src/manifest.ts' },
   finance: { manifest: financeManifest, file: 'modules/finance/src/manifest.ts' },
   social: { manifest: socialManifest, file: 'modules/social/src/manifest.ts' },
+  ads: { manifest: adsManifest, file: 'modules/ads/src/manifest.ts' },
   crm: { manifest: crmManifest, file: 'modules/crm/src/manifest.ts' },
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
 };

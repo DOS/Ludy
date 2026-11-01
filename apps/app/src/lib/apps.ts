@@ -49,9 +49,9 @@ export const APPS: readonly App[] = (() => {
 export const ADMIN_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens]) => screens.nav.flatMap((nav) => (nav.app === null ? [item(module, nav)] : [])));
 
 // The groups after an app's first, which carry a heading in the menu.
-export type HeadedGroupId = 'tax' | 'parties';
+export type HeadedGroupId = 'tax' | 'parties' | 'ads';
 export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
-  return id === 'tax' || id === 'parties';
+  return id === 'tax' || id === 'parties' || id === 'ads';
 }
 
 // Every screen of the menus, apps first, for the command palette (Ctrl K searches all of them, whatever the app).

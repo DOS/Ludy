@@ -89,6 +89,9 @@ import {
   INPUT_VAT_CHECK_OUTCOMES,
   MEMBER_ROLES,
   NOTE_LINK_TARGET_TYPES,
+  AD_ERROR_KINDS,
+  AD_LEVELS,
+  AD_SYNC_RUN_STATUSES,
   NOTE_VISIBILITIES,
   NUMBER_RESETS,
   PARTY_KINDS,
@@ -120,7 +123,7 @@ import {
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes'];
+const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads'];
 const suite = ADMIN ? describe : describe.skip;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -144,6 +147,10 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
+  'crove_ads.ad_account.last_error_kind': AD_ERROR_KINDS,
+  'crove_ads.ad_spend_day.level': AD_LEVELS,
+  'crove_ads.ad_sync_run.error_kind': AD_ERROR_KINDS,
+  'crove_ads.ad_sync_run.status': AD_SYNC_RUN_STATUSES,
   'crove_crm.booking.manage_action': BOOKING_MANAGE_ACTIONS,
   'crove_crm.booking.manage_outcome': BOOKING_MANAGE_OUTCOMES,
   'crove_crm.booking.refusal': BOOKING_REFUSALS,

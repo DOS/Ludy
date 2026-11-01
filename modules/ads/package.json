@@ -1,0 +1,22 @@
+{
+  "name": "@crove/mod-ads",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "description": "Ads module: the org's ad accounts and the daily spend and results their platforms report, read only (plan docs/plan/ads.md, ADR-0040)",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@crove/db": "workspace:*",
+    "@crove/kernel-contract": "workspace:*",
+    "@crove/kernel-runtime": "workspace:*",
+    "decimal.js": "catalog:",
+    "kysely": "catalog:",
+    "zod": "catalog:"
+  }
+}

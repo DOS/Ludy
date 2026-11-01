@@ -3,8 +3,8 @@
 -- stay untouched.
 --
 -- crove_crm.import_row (personal data as read from a file) goes first and crove_crm.import_batch after it, with the org's
--- other working rows and before the parties a duplicate row names. Otherwise this is the body of 20261115100000 (the
--- newest, which carries the deals and the saved views), with its signature, owner, grants and every list and step it had.
+-- other working rows and before the parties a duplicate row names. Otherwise this is the body of 20261115130000 (the
+-- newest, which carries the deals, the saved views and the ad accounts), with its signature, owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -31,6 +31,7 @@ DECLARE
   v_keys text[];
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
+    'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',

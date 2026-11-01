@@ -744,7 +744,26 @@ export const TODO_STATUSES = ['open', 'done', 'handed_over', 'cancelled'] as con
 export type TodoStatus = (typeof TODO_STATUSES)[number];
 export type NotesTodoTable = Refine<G.NotesTodoTable, { status: Generated<TodoStatus> }>;
 
+// The ads module (#2217, ADR-0040): the level of a row of daily figures (the account, or one of its campaigns), how a sync
+// of an ad account ended, and how it failed (the channel layer's typed errors).
+export const AD_LEVELS = ['account', 'campaign'] as const;
+export const AD_SYNC_RUN_STATUSES = ['ok', 'failed'] as const;
+export const AD_ERROR_KINDS = ['token_expired', 'permission', 'bad_request', 'rate_limited', 'transient', 'unknown'] as const;
+export type AdErrorKind = (typeof AD_ERROR_KINDS)[number];
+export type AdsAdAccountTable = Refine<G.AdsAdAccountTable, { last_error_kind: AdErrorKind | null }>;
+export type AdsAdSpendDayTable = Refine<G.AdsAdSpendDayTable, { level: ColumnType<(typeof AD_LEVELS)[number], (typeof AD_LEVELS)[number], never> }>;
+export type AdsAdSyncRunTable = Refine<
+  G.AdsAdSyncRunTable,
+  {
+    status: ColumnType<(typeof AD_SYNC_RUN_STATUSES)[number], (typeof AD_SYNC_RUN_STATUSES)[number], never>;
+    error_kind: ColumnType<AdErrorKind | null, AdErrorKind | null, never>;
+  }
+>;
+
 type Refined = Tables<{
+  'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_spend_day': AdsAdSpendDayTable;
+  'crove_ads.ad_sync_run': AdsAdSyncRunTable;
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.deal': CrmDealTable;
   'crove_crm.event_type': CrmEventTypeTable;
