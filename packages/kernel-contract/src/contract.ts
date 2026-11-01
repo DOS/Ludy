@@ -185,6 +185,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -451,6 +452,11 @@ export const contract = {
       move: oc.input(zBookingMove).output(z.object({ bookingId: z.string(), startsAt: z.string() })),
       // Times to offer a client (#1440): read-only; the model, when the deployment has one, reads the pasted message.
       suggest: oc.input(zBookingSuggestInput).output(zBookingSuggestion),
+    },
+    // The contacts of the CRM (K4, #2228): the org's parties, searched without Vietnamese marks, filtered and sorted by a
+    // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
+    contacts: {
+      list: oc.input(zContactList).output(zContactPage),
     },
     // The org's one pipeline and its deals (#2225, docs/plan/crm.md): everyone reads; owners, admins and members write.
     pipeline: {
@@ -1300,6 +1306,9 @@ export const contract = {
     // follow), each with its receivable on 131 and its last invoice date. q searches the name and the tax code.
     // The customers of one legal entity (#1534): legalEntityId as in zLegalEntityChoice.
     customers: oc.input(z.object({ q: z.string().max(100).optional(), after: zCustomerCursor.optional(), legalEntityId: zId.optional() })).output(zCustomerPage),
+    // Owners, admins and members (R1, CRM K4 #2228): a person or a company by hand, validated as an edit is; a tax code
+    // another party uses refuses (409) and names it.
+    create: oc.input(zPartyCreate).output(z.object({ partyId: zId, version: z.number().int() })),
     // Owners, admins and members (R1, #887): the party's name and contact details, from the version the editor read.
     // A tax code can be added, never changed or removed.
     update: oc
@@ -1319,6 +1328,8 @@ export const contract = {
     // under it; nothing is deleted. unmarkDuplicate undoes it.
     markDuplicate: oc.input(z.object({ partyId: zId, keepId: zId })).output(z.object({ partyId: zId, keepId: zId })),
     unmarkDuplicate: oc.input(z.object({ partyId: zId })).output(z.object({ partyId: zId })),
+    // Every role (K4, #2228): what happened to a contact, oldest first (fixed text, never a name or contact detail).
+    timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.
     duplicateHints: oc.input(z.object({})).output(z.array(zDuplicateHint)),
   },

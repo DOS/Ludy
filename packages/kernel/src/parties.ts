@@ -5,9 +5,10 @@
 // person, and its tax code that person's national id; auditValue, #1626).
 // The tax code is how an e-invoice finds its party (finance's upsertParty), so it can be added to a party without one
 // but never changed or removed: a party recorded under a wrong tax code is merged with "mark duplicate" (#887).
+import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { auditValue, normalizeTaxCode, zId } from '@crove/kernel-contract';
+import { auditValue, normalizeTaxCode, zId, zPartyCreate } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 import { normalizeAddress } from './org-address.ts';
@@ -39,6 +40,32 @@ function normalizePhone(raw: string | null): string | null | undefined {
 
 const zText = (max: number) => z.string().max(max).nullable();
 
+interface PartyFieldsInput {
+  name: string;
+  taxCode?: string | null | undefined;
+  address?: string | null | undefined;
+  email?: string | null | undefined;
+  phone?: string | null | undefined;
+}
+
+// A party's fields as stored, or the 422 that says which cannot be: the same checks for an edit and for a new party.
+function normalizedFields(input: PartyFieldsInput) {
+  const name = oneLine(input.name, PARTY_NAME_MAX_LENGTH);
+  if (!name) throw new DomainError('INVALID_PARTY_NAME', 422, `Tên không hợp lệ: một dòng, tối đa ${PARTY_NAME_MAX_LENGTH} ký tự`);
+  const address = input.address == null ? null : normalizeAddress(input.address);
+  if (address === undefined) throw new DomainError('INVALID_ADDRESS', 422, 'Địa chỉ không hợp lệ: một dòng, tối đa 500 ký tự');
+  const email = normalizeEmail(input.email ?? null);
+  if (email === undefined) throw new DomainError('INVALID_EMAIL', 422, 'Email không hợp lệ');
+  const phone = normalizePhone(input.phone ?? null);
+  if (phone === undefined) throw new DomainError('INVALID_PHONE', 422, 'Số điện thoại không hợp lệ: chữ số, dấu cách, dấu +, -, . và ngoặc, tối đa 30 ký tự');
+  const rawTaxCode = input.taxCode?.trim() || null;
+  const taxCode = rawTaxCode ? normalizeTaxCode(rawTaxCode) : null;
+  if (rawTaxCode && !taxCode) {
+    throw new DomainError('INVALID_TAX_CODE', 422, 'Mã số thuế không hợp lệ: 10 chữ số, 10 chữ số kèm 3 chữ số đơn vị phụ thuộc, hoặc 12 chữ số');
+  }
+  return { name, address, email, phone, taxCode };
+}
+
 export const updateParty = defineCommand({
   name: 'kernel.party.update',
   input: z.object({
@@ -54,19 +81,7 @@ export const updateParty = defineCommand({
   sideEffect: 'internal',
   access: ['owner', 'admin', 'member'],
   handler: async (ctx, input) => {
-    const name = oneLine(input.name, PARTY_NAME_MAX_LENGTH);
-    if (!name) throw new DomainError('INVALID_PARTY_NAME', 422, `Tên không hợp lệ: một dòng, tối đa ${PARTY_NAME_MAX_LENGTH} ký tự`);
-    const address = input.address === null ? null : normalizeAddress(input.address);
-    if (address === undefined) throw new DomainError('INVALID_ADDRESS', 422, 'Địa chỉ không hợp lệ: một dòng, tối đa 500 ký tự');
-    const email = normalizeEmail(input.email);
-    if (email === undefined) throw new DomainError('INVALID_EMAIL', 422, 'Email không hợp lệ');
-    const phone = normalizePhone(input.phone);
-    if (phone === undefined) throw new DomainError('INVALID_PHONE', 422, 'Số điện thoại không hợp lệ: chữ số, dấu cách, dấu +, -, . và ngoặc, tối đa 30 ký tự');
-    const rawTaxCode = input.taxCode?.trim() || null;
-    const taxCode = rawTaxCode ? normalizeTaxCode(rawTaxCode) : null;
-    if (rawTaxCode && !taxCode) {
-      throw new DomainError('INVALID_TAX_CODE', 422, 'Mã số thuế không hợp lệ: 10 chữ số, 10 chữ số kèm 3 chữ số đơn vị phụ thuộc, hoặc 12 chữ số');
-    }
+    const { name, address, email, phone, taxCode } = normalizedFields(input);
 
     // Locked: two edits of one party wait for each other, and the second sees the first one's version.
     const before = await ctx.trx
@@ -126,6 +141,56 @@ export const updateParty = defineCommand({
   },
 });
 
+
+// A person or a company by hand (CRM plan 5, step K4, #2228): the contacts of the CRM are the org's parties, and until now
+// they came from invoices, extraction and bookings only. The fields are checked as kernel.party.update checks them; a tax
+// code another party already uses refuses with that party named, so the member opens it instead of making a second one.
+// The party starts as the member's own entry (source_trust 'user') and writes party.created on its timeline. Owners,
+// admins and members add contacts; viewers read only, and no agent adds one.
+export const createParty = defineCommand({
+  name: 'kernel.party.create',
+  input: zPartyCreate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx, input): Promise<{ partyId: string; version: number }> => {
+    const { name, address, email, phone, taxCode } = normalizedFields(input);
+    if (taxCode) {
+      const other = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name']).where('org_id', '=', ctx.orgId).where('tax_code', '=', taxCode).executeTakeFirst();
+      if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về ${other.name}`, { partyId: other.id, name: other.name });
+    }
+    // The id is given here and the row inserted without RETURNING: once party carries its legal-entity policy (#1538) a
+    // RETURNING check could not see the link the party_link_new trigger adds in the same statement (#1280).
+    const created = { id: randomUUID(), version: 1 };
+    await ctx.trx
+      .insertInto('crove_kernel.party')
+      .values({ id: created.id, org_id: ctx.orgId, kind: input.kind, name, tax_code: taxCode, address, email, phone, source_trust: 'user', created_at: ctx.now, updated_at: ctx.now })
+      .execute()
+      .catch((error: unknown) => {
+        // Another transaction took the tax code after the check above (the unique index decides).
+        if ((error as { code?: string }).code === '23505' && taxCode) {
+          throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc về một liên hệ khác`);
+        }
+        throw error;
+      });
+    // The names of the fields that were given, never their values (the markers below stand for the classified ones).
+    const given = ['name'];
+    if (taxCode !== null) given.push('taxCode');
+    if (address !== null) given.push('address');
+    if (email !== null) given.push('email');
+    if (phone !== null) given.push('phone');
+    ctx.audit({
+      partyId: created.id,
+      kind: input.kind,
+      fields: given,
+      name: auditValue(PARTY, 'name', name),
+      taxCode: auditValue(PARTY, 'tax_code', taxCode),
+      address: auditValue(PARTY, 'address', address),
+    });
+    await ctx.activity('kernel.party', created.id, 'party.created', 'Thêm liên hệ');
+    return { partyId: created.id, version: created.version };
+  },
+});
 
 // Marking a duplicate (#887; plan §6, "Deduplication is the R1 command 'mark duplicate'"). The duplicate points at the
 // party kept; nothing is deleted or moved. Lists and search show only the kept party, and per-party ledger reports add
@@ -438,5 +503,5 @@ export const linkPartyForTaxCode = defineCommand({
   },
 });
 
-export const partyCommands = [updateParty, markDuplicate, unmarkDuplicate, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
+export const partyCommands = [createParty, updateParty, markDuplicate, unmarkDuplicate, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
 export const partyQueries = [duplicateHintsQuery];
