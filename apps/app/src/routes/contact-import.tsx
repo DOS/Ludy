@@ -13,7 +13,7 @@ import { NativeSelect } from '@crove/ui/components/native-select';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DataTable, ErrorText, Field, PageHeader } from '../components/ui.tsx';
-import { client, errorMessage, orpc } from '../lib/api.ts';
+import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { IMPORT_FIELDS, IMPORT_MAX_BYTES, guessMapping, mappedRows, parseContactCsv, rejectsCsv, type ImportField, type ParsedCsv } from '../lib/contact-csv.ts';
 
 type Step = 'choose' | 'map' | 'preview' | 'done';
@@ -55,6 +55,8 @@ export function ContactImportPage() {
   const commit = useMutation(
     orpc.crm.contactImport.commit.mutationOptions({
       onSuccess: (result) => {
+        // The contacts list may already hold an older answer.
+        void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.list.key() });
         setDone(result);
         setStep('done');
       },
