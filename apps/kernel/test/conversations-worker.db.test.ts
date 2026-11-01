@@ -288,6 +288,18 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     expect((await detail(o, id)).messages[1]).toMatchObject({ sendState: 'failed', sendErrorCode: 'CREDENTIAL_ERROR' });
   });
 
+  it('fails the hide, not leaves it pending with no code, when the credential cannot be opened', async () => {
+    const o = await org();
+    await park(sandboxNoticeBody({ accountId: o.accountId, events: [event('c-1', 'Spam', { messageId: 'm-spam' })] }));
+    await intake();
+    const id = await threadOf(o, 'c-1');
+    const messageId = (await detail(o, id)).messages[0]?.id as string;
+    await rt.execute('kernel.conversation.hide', { messageId, hidden: true }, { actor: asUser(o.lan), orgId: o.orgId });
+    const broken = { ...jobDeps(new SandboxPublisher().conversations), broker: { open: () => { throw new Error('vault down'); } } as never };
+    expect(await runConversationJob(broken, { orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'hide' })).toBe('credential_error');
+    expect((await detail(o, id)).messages[0]).toMatchObject({ hidden: false, hideRequest: null, hideErrorCode: 'CREDENTIAL_ERROR' });
+  });
+
   it('hides a comment on the platform, and repeats an unclear hide', async () => {
     const o = await org();
     const platform = new SandboxPublisher().conversations;
