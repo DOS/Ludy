@@ -27,9 +27,9 @@ Một thành viên làm được:
 | Kế hoạch | Tài liệu kế hoạch và quyết định 21 | Đã gộp (#2224) |
 | K1 | Cơ hội và quy trình, màn hình "Cơ hội" dạng danh sách | Đã gộp (#2240) |
 | K2 | Bảng kéo thả, menu giai đoạn, Thắng và Thua, cài đặt giai đoạn | Đã gộp (#2244) |
-| K3 | Chế độ xem đã lưu và bộ lọc | Đang chờ gộp (#2239, #2252), worker khác |
-| K4 | Màn hình "Liên hệ", tìm không dấu, chuẩn hóa số điện thoại | Đang chờ gộp (#2241), worker khác |
-| K5 | Nhập liên hệ từ CSV | Đã làm xong, chờ K4 |
+| K3 | Chế độ xem đã lưu và bộ lọc | Đã gộp phần nhân (#2239); chế độ xem của cơ hội đang chờ gộp (#2252), worker khác |
+| K4 | Màn hình "Liên hệ", tìm không dấu, chuẩn hóa số điện thoại | Đã gộp (#2241), worker khác |
+| K5 | Nhập liên hệ từ CSV | Đã làm xong, đang chờ gộp (#2254) |
 | K5b | Quét hằng ngày xóa dòng nhập quá 7 ngày | Đã làm xong, chờ K5 |
 | K6 | Nhập liên hệ từ Excel (đọc ngay trên trình duyệt, không thêm gói mới) | Đã làm xong, chờ K5 |
 | K7 | Kiểm tra cả luồng bằng một bài e2e, kiểm tra module `crm` chạy riêng và khi tắt, hướng dẫn sử dụng, bản tóm tắt này | Đang làm |
