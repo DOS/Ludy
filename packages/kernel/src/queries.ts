@@ -405,6 +405,8 @@ export const inboxGet = defineQuery({
             .select(['of.id as file_id', 'of.filename', 'x.created_at', 'x.original_differs', sql<unknown>`x.result -> 'signature'`.as('signature')])
             .where('x.org_id', '=', ctx.orgId)
             .where('x.original_of_proposal_id', '=', row.id)
+            // The ones that differ first, so a flood of matching files cannot push the warning off the screen.
+            .orderBy('x.original_differs', 'desc')
             .orderBy('x.created_at', 'desc')
             .orderBy('x.id', 'desc')
             .limit(20)

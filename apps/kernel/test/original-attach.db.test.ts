@@ -192,12 +192,12 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_finance.purchase_document WHERE org_id = $1 AND invoice_number = $2`, [orgId, number])).rows[0]?.n));
 
   // Reads and approves the PDF of an invoice: the posting an original comes after.
-  async function postPdf(number: string, by = users.owner, legalEntityId?: string, reading = reader(number)) {
+  async function postPdf(number: string, by = users.owner, legalEntityId?: string, reading = reader(number), exchangeRate?: string) {
     const { fileId } = await ingest(by, pdfOf(number), `hd-${number}.pdf`, 'application/pdf', legalEntityId);
     const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor: reading as never, extract, today: () => '2026-10-13' }, orgId, fileId);
     // A fresh org has no rule for the discount line: the person who uploaded it picks its account, a third person approves.
     const read = await detailOf(users.owner, proposalId as string);
-    await rt.execute('kernel.proposal.edit', { id: proposalId, revision: read.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }] }, { actor: asUser(by), orgId });
+    await rt.execute('kernel.proposal.edit', { id: proposalId, revision: read.revision, lineAccounts: [{ lineNo: 3, debitAccount: '6421' }], ...(exchangeRate ? { exchangeRate } : {}) }, { actor: asUser(by), orgId });
     const detail = await detailOf(users.approver, proposalId as string);
     await rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision, acceptFailedChecks: true, acceptUnverifiedSignature: true }, { actor: asMfa(users.approver), orgId });
     return { fileId, proposalId: proposalId as string };
@@ -318,12 +318,58 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     ).rejects.toMatchObject({ code: '23503' });
   });
 
+  it('compares a foreign-currency invoice in its own currency: another rate in dong is not a difference', async () => {
+    const thousandth = (v: string) => String(Number(v) / 1000);
+    // The invoice in USD, 1/1000 of the fixture's amounts; a person entered 24500 on the PDF reading, the original says 25000.
+    const usdReading = (number: string) => ({
+      fromText: async () => {
+        const invoice = { ...structuredClone(PARSED), source: 'ai' as const, number, currency: 'USD' };
+        invoice.subtotal = thousandth(invoice.subtotal);
+        invoice.vatTotal = thousandth(invoice.vatTotal);
+        invoice.total = thousandth(invoice.total);
+        for (const l of invoice.lines) {
+          l.amount = thousandth(l.amount);
+          if (l.unitPrice) l.unitPrice = thousandth(l.unitPrice);
+        }
+        invoice.taxBreakdown = invoice.taxBreakdown.map((t) => ({ ...t, taxableAmount: thousandth(t.taxableAmount), vatAmount: thousandth(t.vatAmount) }));
+        return invoice;
+      },
+      fromImage: async () => null,
+    });
+    const pdf = await postPdf('6008', users.owner, undefined, usdReading('6008'), '24500');
+    const before = await ledger('6008');
+    const usdXml = FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>6008</SHDon>')
+      .replace('<DVTTe>VND</DVTTe>', '<DVTTe>USD</DVTTe>')
+      .replace('<TGia>1</TGia>', '<TGia>25000</TGia>')
+      .replace(/<DGia>(\d+)<\/DGia>/g, (_m, v: string) => `<DGia>${thousandth(v)}</DGia>`)
+      .replace(/<ThTien>(\d+)<\/ThTien>/g, (_m, v: string) => `<ThTien>${thousandth(v)}</ThTien>`)
+      .replace(/<(TThue|TgTCThue|TgTThue|TgTTTBSo)>(\d+)<\/\1>/g, (_m, tag: string, v: string) => `<${tag}>${thousandth(v)}</${tag}>`);
+    const { fileId } = await ingest(users.admin, new TextEncoder().encode(usdXml), 'hd-6008.xml', 'application/xml');
+    const read = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, fileId);
+    expect(read.proposalId).toBeNull();
+    expect((await runOf(fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
+    expect(await ledger('6008')).toEqual(before);
+  });
+
+  it('flags the original instead of attaching it when the original has a failing check', async () => {
+    const pdf = await postPdf('6009');
+    // The totals do not add up: a check fails, so the file is not the invoice's evidence but a flagged proposal.
+    const broken = FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>6009</SHDon>').replace('<TgTTTBSo>1980000</TgTTTBSo>', '<TgTTTBSo>1990000</TgTTTBSo>');
+    const { fileId } = await ingest(users.admin, new TextEncoder().encode(broken), 'hd-6009.xml', 'application/xml');
+    const read = await extractAndPropose({ runtime: worker, store, extractor: null, extract, today: () => '2026-10-13' }, orgId, fileId);
+    expect((await runOf(fileId))[0]).toMatchObject({ original_of_proposal_id: null });
+    expect(await documentCount('6009')).toBe(1);
+    expect((await detailOf(users.owner, pdf.proposalId)).originals).toEqual([]);
+    // Whatever the reader made of it, it is not attached and nothing is posted twice.
+    expect(read.proposalId === null || read.proposalId !== pdf.proposalId).toBe(true);
+  });
+
   it('never changes the attachment once the run is finished', async () => {
     const pdf = await postPdf('6007');
     const xml = await readXml('6007');
     await expect(
       admin((c) => c.query(`UPDATE crove_kernel.extraction SET original_differs = true WHERE org_id = $1 AND file_id = $2`, [orgId, xml.fileId])),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ code: '42501' });
     expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
   });
 });

@@ -856,7 +856,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         <LookupOriginalCard hints={payload.lookupHints ?? []} sellerTaxCode={payload.seller.taxCode} legalEntityId={detail.data?.legalEntityId ?? undefined} />
       )}
       {/* The original XML that came after this invoice was posted (#2320): evidence beside the posting, which it never changes. */}
-      {!plain && (detail.data?.originals.length ?? 0) > 0 && <AttachedOriginalsCard originals={detail.data?.originals ?? []} />}
+      {!plain && (detail.data?.originals?.length ?? 0) > 0 && <AttachedOriginalsCard originals={detail.data?.originals ?? []} />}
       {!plain && unverified && (
         <Card className="mb-4 block space-y-2 border border-destructive/60 p-4 ring-0" data-testid="signature-unverified">
           <p className="text-sm font-medium text-foreground">{t('signatureUnverifiedTitle')}</p>

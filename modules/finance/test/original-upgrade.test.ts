@@ -17,7 +17,7 @@ const SHA256 = sha256Hex(BYTES);
 const parsed = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 
 interface Draft {
-  proposal: { duplicateOf: string | null; payload: { checks: Array<{ code: string }> }; duplicateGuard: { upgrades?: boolean; lookup: { totals?: { subtotal: string; vatTotal: string; total: string } }; check: { code: string } } };
+  proposal: { duplicateOf: string | null; payload: { checks: Array<{ code: string }> }; duplicateGuard: { upgrades?: boolean; lookup: { totals?: { currency: string; subtotal: string; vatTotal: string; total: string } }; check: { code: string } } };
 }
 
 // Reads `file` as `kind` and returns the proposal draft sent to kernel.extraction.record, with the lookup answering `lookup`.
@@ -86,7 +86,7 @@ describe('an original after a posted PDF reading (#2320)', () => {
     expect(proposal.duplicateOf).toBeNull();
     expect(proposal.payload.checks.map((c) => c.code)).not.toContain('duplicate.found');
     expect(proposal.duplicateGuard.upgrades).toBe(true);
-    expect(proposal.duplicateGuard.lookup.totals).toEqual({ subtotal: '1800000', vatTotal: '180000', total: '1980000' });
+    expect(proposal.duplicateGuard.lookup.totals).toEqual({ currency: 'VND', subtotal: '1800000', vatTotal: '180000', total: '1980000' });
   });
 
   it('is flagged as before when a document of another proposal is in force, and a PDF never attaches', async () => {

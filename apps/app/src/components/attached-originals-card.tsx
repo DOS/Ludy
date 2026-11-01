@@ -11,6 +11,7 @@ import { errorMessage, fetchFile } from '../lib/api.ts';
 import { useFormat } from '../i18n/provider.tsx';
 
 type Original = InboxOriginal;
+const REVOKE_AFTER_MS = 60_000;
 
 function OriginalRow({ original }: { original: Original }) {
   const t = useTranslations('inboxDetail.originals');
@@ -28,7 +29,8 @@ function OriginalRow({ original }: { original: Original }) {
       a.href = url;
       a.download = original.filename;
       a.click();
-      URL.revokeObjectURL(url);
+      // Some browsers cancel the download when the URL goes at once.
+      setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
     } catch (e) {
       setError(e ?? new Error());
     } finally {
@@ -44,7 +46,7 @@ function OriginalRow({ original }: { original: Original }) {
           {t('download')}
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground" data-testid="attached-original-signature">
+      <p className={signature === 'verified' ? 'text-xs text-muted-foreground' : 'text-sm font-medium text-destructive'} data-testid="attached-original-signature">
         {signature === 'verified' ? t('signatureVerified') : signature === 'unverified' ? t('signatureUnverified') : t('signatureNone')}
       </p>
       {original.differs ? (

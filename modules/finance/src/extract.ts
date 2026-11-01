@@ -10,6 +10,9 @@ import { defineQuery, readVerified, sha256Hex, type BlobStore, type Runtime } fr
 import { AiNotConfiguredError, AmountFormatError, type AiUsage, type InvoiceReader } from '@crove/agent';
 import { journalMemo } from './memo.ts';
 import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/foreign-currency.ts';
+
+// A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
+const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
 import { isOwnTaxCode } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -106,8 +109,10 @@ export const purchaseLookup = defineQuery({
     related: z.object({ series: z.string(), number: z.string() }).nullable().default(null),
     // The legal entity whose learned rules apply (#1280); omitted, the org's default entity.
     legalEntityId: zId.optional(),
-    // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's.
-    totals: z.object({ subtotal: z.string(), vatTotal: z.string(), total: z.string() }).optional(),
+    // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
+    // the invoice's own currency when it is not VND (each side converts at its own rate, so the dong amounts may differ
+    // while the invoice is the same), else the amounts booked.
+    totals: z.object({ currency: z.string().max(10), subtotal: zAmount, vatTotal: zAmount, total: zAmount }).optional(),
   }),
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
@@ -137,7 +142,7 @@ export const purchaseLookup = defineQuery({
     const inForce = (series: string, number: string) => {
       let documents = ctx.trx
         .selectFrom('crove_finance.purchase_document as d')
-        .select(['d.id', 'd.proposal_id', 'd.subtotal', 'd.vat_amount', 'd.total'])
+        .select(['d.id', 'd.proposal_id', 'd.currency', 'd.subtotal', 'd.vat_amount', 'd.total', 'd.foreign_subtotal', 'd.foreign_vat_amount', 'd.foreign_total'])
         .where('d.org_id', '=', ctx.orgId)
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
         .where('d.invoice_series', '=', series)
@@ -221,14 +226,27 @@ export const purchaseLookup = defineQuery({
         (duplicate.method === 'pdf_text_ai' || duplicate.method === 'image_ai') &&
         document !== undefined &&
         document.proposal_id === duplicate.id,
-      attachDiffers:
-        document !== undefined && input.totals !== undefined
-          ? !(money(document.subtotal).equals(money(input.totals.subtotal)) && money(document.vat_amount).equals(money(input.totals.vatTotal)) && money(document.total).equals(money(input.totals.total)))
-          : false,
+      attachDiffers: document !== undefined && input.totals !== undefined ? amountsDiffer(document, input.totals) : false,
       relatedDocumentId: original?.id ?? null,
     };
   },
 });
+
+// Whether the amounts an original reads are not the posted document's (#2320): the currency, then the three totals, in the
+// invoice's own currency for a foreign one (its dong amounts depend on the rate each side used) and in dong otherwise.
+function amountsDiffer(
+  document: { currency: string; subtotal: string; vat_amount: string; total: string; foreign_subtotal: string | null; foreign_vat_amount: string | null; foreign_total: string | null },
+  totals: { currency: string; subtotal: string; vatTotal: string; total: string },
+): boolean {
+  const currency = document.currency.trim().toUpperCase();
+  if (currency !== totals.currency.trim().toUpperCase()) return true;
+  const posted =
+    currency === BOOK_CURRENCY
+      ? [document.subtotal, document.vat_amount, document.total]
+      : [document.foreign_subtotal, document.foreign_vat_amount, document.foreign_total];
+  const read = [totals.subtotal, totals.vatTotal, totals.total];
+  return posted.some((amount, i) => amount === null || !money(amount).equals(money(read[i] ?? '0')));
+}
 
 // The invoice a replacement or an adjustment corrects (#916), as the proposal keeps it: the date only when it is a
 // calendar date, the original's document when it is in force.
@@ -619,7 +637,18 @@ export async function extractAndPropose(
           // Hashed: a seller name can be 500 characters, and the key is only a name for the lock.
           key: sha256Hex(new TextEncoder().encode(JSON.stringify([lookup.direction === 'sale' ? 'sale' : 'purchase', lookup.direction === 'sale' ? '' : (sellerTaxCode ?? invoice.seller.name), invoice.series, invoice.number]))),
           // An original also gives the amounts it reads, so the guard can say whether they are the posted document's (#2320).
-          lookup: method === 'einvoice_xml' ? { ...lookupInput, totals: { subtotal: booked.subtotal, vatTotal: booked.vatTotal, total: booked.total } } : lookupInput,
+          lookup:
+            method === 'einvoice_xml'
+              ? {
+                  ...lookupInput,
+                  totals: {
+                    currency: invoice.currency.toUpperCase(),
+                    ...(converted
+                      ? { subtotal: invoice.subtotal, vatTotal: invoice.vatTotal, total: invoice.total }
+                      : { subtotal: booked.subtotal, vatTotal: booked.vatTotal, total: booked.total }),
+                  },
+                }
+              : lookupInput,
           check: DUPLICATE_CHECK,
         },
       },

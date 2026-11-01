@@ -42,7 +42,9 @@ export const zDuplicateGuard = z.object({
   key: z.string().min(1).max(500),
   // The reading is the seller's original (an e-invoice XML, #2269) and may take the place of a duplicate that is still
   // pending and was read from a PDF or a photo: the guard asks the lookup (`duplicateProposalUpgradable`) under its
-  // lock, and the record revises that proposal instead of flagging this reading as its duplicate.
+  // lock, and the record revises that proposal instead of flagging this reading as its duplicate. The same reading of an
+  // invoice already posted from a PDF or a photo (`duplicateProposalAttachable`, #2320) is attached to the posted proposal
+  // as evidence instead, and creates no proposal of its own.
   upgrades: z.boolean().optional(),
   // The input of the lookup query, without the file (the command adds it).
   lookup: z.record(z.string(), z.unknown()),
@@ -450,7 +452,9 @@ async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.
 // The executed proposal an original is attached to (#2320), locked, or undefined when it cannot any more: it is not executed
 // (or was voided by a reversal, then the original is a new invoice to read), it is of another kind or command, it was not
 // read from a PDF or a photo, or it belongs to another legal entity than the original's. Shared, not exclusive: nothing of
-// the proposal changes; the lock only keeps a reversal from voiding it between this check and the run's insert.
+// the proposal changes. A reversal does not lock the proposal, so one that commits between this check and the run's insert
+// leaves the original attached to a posting that is voided; its file may then be read again like any file of a voided
+// posting, which makes a new proposal.
 async function lockAttachable(
   ctx: CommandContext,
   proposalId: string,
@@ -517,8 +521,16 @@ export const recordExtraction = defineCommand({
       guarded.upgrade !== null && original.version === undefined && original.proposal ? await lockUpgradable(ctx, guarded.upgrade, original.proposal, file) : undefined;
     // The original of an invoice already posted from a PDF or a photo (#2320) is attached to the posted proposal: the first
     // run only, and only while that proposal still qualifies.
+    // A reading with a failing check (a buyer that is not the org's, amounts that do not add up) is not attached as the
+    // invoice's evidence: it is flagged as before, for a person to look at.
     const attachedTo =
-      !upgraded && guarded.attach !== null && original.version === undefined && original.proposal && original.status === 'done'
+      !upgraded &&
+      guarded.attach !== null &&
+      original.version === undefined &&
+      original.proposal &&
+      original.method === 'einvoice_xml' &&
+      original.status === 'done' &&
+      original.checks.every((c) => c.status !== 'fail')
         ? await lockAttachable(ctx, guarded.attach.proposalId, original.proposal, file)
         : undefined;
     const input = upgraded || attachedTo ? guarded.input : guarded.flagged;
@@ -565,13 +577,14 @@ export const recordExtraction = defineCommand({
           .executeTakeFirstOrThrow();
         ctx.audit({ version: attached.version, status: input.status, attached_to_proposal_id: attachedTo.id, differs });
         const signature = (input.result as { signature?: { status?: unknown } } | null)?.signature?.status;
+        const sealed = signature === 'verified' ? 'hợp lệ' : signature === 'unverified' ? 'chưa xác minh được' : 'không có';
         await ctx.activity(
           'kernel.proposal',
           attachedTo.id,
           'proposal.original_attached',
-          `Đã nhận hóa đơn gốc XML ${file.filename} cho hóa đơn đã ghi sổ (chữ ký: ${typeof signature === 'string' ? signature : 'không có'}; ${differs ? 'số liệu KHÁC chứng từ đã ghi sổ, cần người kiểm tra' : 'số liệu khớp chứng từ đã ghi sổ'})`.slice(0, 500),
+          `Đã nhận hóa đơn gốc XML ${file.filename} cho hóa đơn đã ghi sổ (chữ ký số: ${sealed}; ${differs ? 'số liệu KHÁC chứng từ đã ghi sổ, cần người kiểm tra' : 'số liệu khớp chứng từ đã ghi sổ'})`.slice(0, 500),
         );
-        await ctx.activity('kernel.file', input.fileId, 'extraction.read', `Hóa đơn gốc của hóa đơn đã ghi sổ từ tệp khác`);
+        await ctx.activity('kernel.file', input.fileId, 'extraction.read', 'Hóa đơn gốc của hóa đơn đã ghi sổ từ tệp khác');
         return { extractionId: attached.id, proposalId: null, duplicate: false };
       }
       run = await ctx.trx
