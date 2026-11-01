@@ -185,6 +185,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -1330,6 +1331,16 @@ export const contract = {
     list: oc.input(z.object({})).output(zNotifications),
     read: oc.input(z.union([z.strictObject({ ids: z.array(zId).min(1).max(100) }), z.strictObject({ all: z.literal(true) })])).output(z.object({ read: z.number().int() })),
     mute: oc.input(z.strictObject({ kind: zNotificationKind, muted: z.boolean() })).output(z.object({ kind: zNotificationKind, muted: z.boolean() })),
+  },
+  // Saved views of a list (CRM plan 4.3, #2227), the kernel's: named filters and a sort, private or shared with the org, at
+  // most 30 per member per scope. Members see their own and the shared ones; the owner changes and deletes a view, and
+  // owners and admins a shared one. The input is checked against the scope registry by the command (422).
+  savedViews: {
+    list: oc.input(zSavedViewList).output(z.array(zSavedView)),
+    save: oc.input(zSavedViewSaveShape).output(z.object({ viewId: zId })),
+    rename: oc.input(zSavedViewRename).output(z.object({ viewId: zId })),
+    setShared: oc.input(zSavedViewSetShared).output(z.object({ viewId: zId })),
+    remove: oc.input(zSavedViewDelete).output(z.object({ viewId: zId })),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.

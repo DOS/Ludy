@@ -59,7 +59,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_sync_run',
   'crove_crm.import_batch',
   'crove_crm.import_row',
-  'crove_kernel.saved_view',
   'crove_notes.link',
   'crove_notes.note',
 ]);

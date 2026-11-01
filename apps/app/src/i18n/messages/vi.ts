@@ -6613,6 +6613,13 @@ export const vi = {
         get: 'Xem quy định duyệt đề xuất',
         save: 'Lưu quy định duyệt đề xuất',
       },
+      saved_view: {
+        delete: 'Xóa chế độ xem đã lưu của một danh sách',
+        list: 'Xem các chế độ xem đã lưu của một danh sách',
+        rename: 'Đổi tên chế độ xem đã lưu',
+        save: 'Lưu chế độ xem của một danh sách',
+        set_shared: 'Chia sẻ hoặc thôi chia sẻ chế độ xem đã lưu',
+      },
       session: {
         revoke: 'Đăng xuất phiên đăng nhập',
       },

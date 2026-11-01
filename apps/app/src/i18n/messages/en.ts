@@ -6613,6 +6613,13 @@ export const en = {
         get: 'Read the approval policy',
         save: 'Save the approval policy',
       },
+      saved_view: {
+        delete: 'Delete a saved view of a list',
+        list: 'View the saved views of a list',
+        rename: 'Rename a saved view',
+        save: 'Save a view of a list',
+        set_shared: 'Share or unshare a saved view',
+      },
       session: {
         revoke: 'Revoke a session',
       },
