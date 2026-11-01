@@ -6089,6 +6089,7 @@ export const vi = {
       FOUR_EYES_REQUIRED: 'Cần một người khác duyệt (bạn đã tải lên hoặc chỉnh sửa đề xuất này)',
       CONTENT_CHANGED: 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt',
       EXTRACTION_PENDING: 'Tệp đang được đọc; hãy chờ kết quả rồi thử lại',
+      READ_FROM_ORIGINAL: 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp PDF sẽ không đổi gì; hãy đọc lại tệp XML',
       REEXTRACT_LIMIT: 'Tệp này đã được đọc tối đa số lần, không đọc lại thêm được',
       ARCHIVE_NOT_READ: 'Tệp ZIP chỉ được mở thành từng chứng từ một lần; hãy đọc lại từng chứng từ',
       CHECKS_BLOCKING: 'Số tiền trên hóa đơn không khớp nhau nên không ghi sổ được; hãy từ chối và xin hóa đơn điều chỉnh',

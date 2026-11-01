@@ -660,7 +660,7 @@ export const editProposal = defineCommand({
     // A proposal stays in its legal entity (#1764): moving it would show one entity's document to another's members,
     // and its entity never changes (ADR-0021, b_legal_entity). The database refuses it too (proposal_entity_payload).
     if (input.legalEntityId !== undefined && input.legalEntityId.toLowerCase() !== proposal.legal_entity_id) throw legalEntityMoveRefused();
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     // The module's reviser for this proposal's command, from the registered definitions (their `revises`).
     const reviser = ctx.reviserOf(proposal.command);
     if (!reviser) throw new DomainError('NOT_EDITABLE', 422, 'Loại đề xuất này không chỉnh sửa được');
@@ -737,7 +737,7 @@ export const approveProposal = defineCommand({
       throw new DomainError('POSTING_DATE_NOT_ALLOWED', 422, 'Chỉ hóa đơn mua vào mới chọn được ngày ghi sổ khác ngày hóa đơn');
     }
     // A re-extraction in flight would replace this revision's content (issue #40).
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     if (!PROPOSAL_COMMANDS.has(proposal.command)) throw new DomainError('FORBIDDEN', 403, 'Loại đề xuất không được hỗ trợ');
     if (input.lineAccounts && changesContent(proposal.payload, input.lineAccounts)) {
       throw new DomainError('CONTENT_CHANGED', 409, 'Bạn đã đổi tài khoản nhưng chưa lưu; hãy lưu chỉnh sửa trước khi duyệt');
@@ -968,7 +968,7 @@ export const rejectProposal = defineCommand({
   handler: async (ctx, input) => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới từ chối được');
     const proposal = await lockPendingProposal(ctx, input.id);
-    await refuseWhileReextracting(ctx, proposal.source_file_id);
+    await refuseWhileReextracting(ctx, proposal.source_file_id, proposal.extraction_id);
     await ctx.trx
       .updateTable('crove_kernel.proposal')
       .set({ status: 'rejected', decided_by: ctx.actor.userId, decided_at: ctx.now, decision_note: input.reason ?? null })

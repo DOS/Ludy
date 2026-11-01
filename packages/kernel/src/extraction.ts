@@ -40,6 +40,10 @@ export const DUPLICATE_LOOKUP_QUERY = 'finance.extraction.lookup';
 // payload's. The second to record is the one flagged, since it sees the first's committed proposal.
 export const zDuplicateGuard = z.object({
   key: z.string().min(1).max(500),
+  // The reading is the seller's original (an e-invoice XML, #2269) and may take the place of a duplicate that is still
+  // pending and was read from a PDF or a photo: the guard asks the lookup (`duplicateProposalUpgradable`) under its
+  // lock, and the record revises that proposal instead of flagging this reading as its duplicate.
+  upgrades: z.boolean().optional(),
   // The input of the lookup query, without the file (the command adds it).
   lookup: z.record(z.string(), z.unknown()),
   check: zCheck,
@@ -105,14 +109,21 @@ export async function executedButVoided(ctx: QueryContext, proposal: { id: strin
 
 // Refuses a decision (approve, edit, reject) on a proposal whose file is being read again: the result would
 // replace the content being decided on. Called after the proposal row is locked, so a re-extraction requested
-// first is seen here, and one requested later finds the decided proposal.
-export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null): Promise<void> {
-  if (!fileId) return;
+// first is seen here, and one requested later finds the decided proposal. `extractionId` is the run the proposal's
+// current revision was read from: when it is of another file than the proposal's source file (the original XML of an
+// invoice first read from a PDF, #2269), that file's re-reading counts too.
+export async function refuseWhileReextracting(ctx: CommandContext, fileId: string | null, extractionId: string | null = null): Promise<void> {
+  const files = fileId ? [fileId] : [];
+  if (extractionId) {
+    const read = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', extractionId).executeTakeFirst();
+    if (read && !files.includes(read.file_id)) files.push(read.file_id);
+  }
+  if (files.length === 0) return;
   const pending = await ctx.trx
     .selectFrom('crove_kernel.extraction')
     .select('version')
     .where('org_id', '=', ctx.orgId)
-    .where('file_id', '=', fileId)
+    .where('file_id', 'in', files)
     .where('status', '=', 'pending')
     .where(pendingSince)
     .executeTakeFirst();
@@ -188,18 +199,31 @@ async function readAsStatement(ctx: CommandContext, fileId: string): Promise<boo
 }
 
 // The file's newest proposal, locked. A file has one proposal unless an earlier one was rejected and the file was
-// read again.
+// read again. A proposal revised from the file's reading (the original of a PDF's invoice, #2269) is the file's too.
 async function lockFileProposal(ctx: CommandContext, fileId: string) {
   return ctx.trx
     .selectFrom('crove_kernel.proposal')
     .selectAll()
     .where('org_id', '=', ctx.orgId)
-    .where('source_file_id', '=', fileId)
+    .where((eb) =>
+      eb.or([
+        eb('source_file_id', '=', fileId),
+        eb('extraction_id', 'in', eb.selectFrom('crove_kernel.extraction').select('id').where('org_id', '=', ctx.orgId).where('file_id', '=', fileId)),
+      ]),
+    )
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(1)
     .forUpdate()
     .executeTakeFirst();
+}
+
+// Whether the proposal's current revision was read from a file other than `fileId`: the original (XML) of an invoice
+// first read from a PDF took its place (#2269), so reading the PDF again must not put the weaker reading back.
+async function readFromAnotherFile(ctx: CommandContext, proposal: { extraction_id: string | null }, fileId: string): Promise<boolean> {
+  if (!proposal.extraction_id) return false;
+  const run = await ctx.trx.selectFrom('crove_kernel.extraction').select('file_id').where('org_id', '=', ctx.orgId).where('id', '=', proposal.extraction_id).executeTakeFirst();
+  return run !== undefined && run.file_id !== fileId;
 }
 
 // A proposal stays in its legal entity (#1764): its entity never changes (ADR-0021, b_legal_entity).
@@ -247,6 +271,9 @@ export const reextractFile = defineCommand({
     const proposal = await lockFileProposal(ctx, input.fileId);
     if (proposal?.status === 'executed' && !(await executedButVoided(ctx, proposal))) {
       throw new DomainError('PROPOSAL_DECIDED', 409, 'Hóa đơn này đã được ghi sổ nên không đọc lại được');
+    }
+    if (proposal?.status === 'pending' && (await readFromAnotherFile(ctx, proposal, input.fileId))) {
+      throw new DomainError('READ_FROM_ORIGINAL', 409, 'Đề xuất này đã được cập nhật từ hóa đơn gốc XML nên đọc lại tệp này sẽ không đổi gì; hãy đọc lại tệp XML');
     }
     let entity = latest.legalEntityId;
     if (input.legalEntityId !== undefined && input.legalEntityId.toLowerCase() !== latest.legalEntityId) {
@@ -323,35 +350,82 @@ export async function readAgainIn(ctx: CommandContext, fileId: string, legalEnti
 interface DuplicateAnswer {
   duplicateDocumentId: string | null;
   duplicateProposalId: string | null;
+  // The duplicate proposal is pending and was read from a PDF or a photo (#2269).
+  duplicateProposalUpgradable?: boolean;
 }
+
+// The readings of an invoice that a pending proposal can be revised from: the weak ones, read from a PDF or a photo.
+const UPGRADABLE_METHODS: readonly unknown[] = ['pdf_text_ai', 'image_ai'];
 
 // The input of kernel.extraction.record with its duplicate guard applied (#2137, zDuplicateGuard): the lock on the
 // document's identity taken first, the lookup asked again, and a copy found now flagged. The lock is held until the
 // command commits, so a reader that recorded the same document a moment earlier has committed (or not started) by the
 // time this one looks. Without a guard, or without a proposal, the input is returned as it is.
+// `flagged` is the input with a copy found now flagged; `input` is the input as it came, and `upgrade` the id of a pending
+// proposal this reading may take the place of (#2269) when the guard says it is the original's: the caller revises it
+// instead, and falls back to `flagged` when the proposal can no longer be revised.
 async function withDuplicateGuard<T extends { fileId: string; checks: Array<z.infer<typeof zCheck>>; proposal: z.infer<typeof zProposalDraft> | null }>(
   ctx: CommandContext,
   input: T,
-): Promise<T> {
+): Promise<{ input: T; flagged: T; upgrade: string | null }> {
   const guard = input.proposal?.duplicateGuard;
-  if (!input.proposal || !guard) return input;
+  if (!input.proposal || !guard) return { input, flagged: input, upgrade: null };
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.extraction_duplicate:${ctx.orgId}:${guard.key}`}, 0))`.execute(ctx.trx);
   const answer = await ctx.query<DuplicateAnswer>(DUPLICATE_LOOKUP_QUERY, { ...guard.lookup, fileId: input.fileId });
-  if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return input;
-  ctx.audit({ duplicate_guard: 'found', duplicate_of: answer.value.duplicateProposalId });
+  if (answer.status !== 'ok' || (!answer.value.duplicateDocumentId && !answer.value.duplicateProposalId)) return { input, flagged: input, upgrade: null };
+  const upgrade =
+    guard.upgrades === true && answer.value.duplicateProposalUpgradable === true && !answer.value.duplicateDocumentId ? (answer.value.duplicateProposalId ?? null) : null;
+  // The input without the duplicate flag the worker may have set from its own, earlier lookup: an original that takes a
+  // proposal's place is not its duplicate.
+  const unflag = (checks: Array<z.infer<typeof zCheck>>) => checks.filter((c) => c.code !== guard.check.code);
+  const payloadChecksIn = input.proposal.payload['checks'];
+  const clean: T = {
+    ...input,
+    checks: unflag(input.checks),
+    proposal: {
+      ...input.proposal,
+      duplicateOf: null,
+      payload: Array.isArray(payloadChecksIn) ? { ...input.proposal.payload, checks: unflag(payloadChecksIn as Array<z.infer<typeof zCheck>>) } : input.proposal.payload,
+    },
+  };
+  ctx.audit({ duplicate_guard: upgrade ? 'upgrade' : 'found', duplicate_of: answer.value.duplicateProposalId });
   const flagged = (checks: Array<z.infer<typeof zCheck>>) => (checks.some((c) => c.code === guard.check.code) ? checks : [guard.check, ...checks]);
   const payloadChecks = input.proposal.payload['checks'];
   return {
-    ...input,
-    checks: flagged(input.checks),
-    proposal: {
-      ...input.proposal,
-      duplicateOf: input.proposal.duplicateOf ?? answer.value.duplicateProposalId,
-      payload: Array.isArray(payloadChecks)
-        ? { ...input.proposal.payload, checks: flagged(payloadChecks as Array<z.infer<typeof zCheck>>) }
-        : input.proposal.payload,
+    input: upgrade ? clean : input,
+    upgrade,
+    flagged: {
+      ...input,
+      checks: flagged(input.checks),
+      proposal: {
+        ...input.proposal,
+        duplicateOf: input.proposal.duplicateOf ?? answer.value.duplicateProposalId,
+        payload: Array.isArray(payloadChecks)
+          ? { ...input.proposal.payload, checks: flagged(payloadChecks as Array<z.infer<typeof zCheck>>) }
+          : input.proposal.payload,
+      },
     },
   };
+}
+
+// The pending proposal an original may take the place of (#2269), locked, or undefined when it cannot any more: a decision
+// came first (it is no longer pending), a person changed it (an account, a rate or an entity they chose), it is of another
+// kind or command, it was not read from a PDF or a photo, or it belongs to another legal entity than the original's (a
+// proposal stays in its entity). The lock is taken
+// after the guard's, so a decision that went through first is seen here and one that comes later finds the new revision.
+async function lockUpgradable(ctx: CommandContext, proposalId: string, draft: z.infer<typeof zProposalDraft>, file: { created_by: string | null; upload_entity_id: string | null }) {
+  const row = await ctx.trx.selectFrom('crove_kernel.proposal').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', proposalId).forUpdate().executeTakeFirst();
+  if (!row || row.status !== 'pending' || row.kind !== draft.kind || row.command !== draft.command) return undefined;
+  const payload = row.payload as { extractionMethod?: unknown; legalEntityId?: unknown; lines?: Array<{ accountRule?: { source?: unknown } }>; invoice?: { foreign?: { source?: unknown } } } | null;
+  if (!UPGRADABLE_METHODS.includes(payload?.extractionMethod)) return undefined;
+  // What a person chose on the reading (an account for a line, an exchange rate, a legal entity) is theirs: the original
+  // does not replace it silently, it is flagged for them to decide, as before.
+  if (payload?.legalEntityId !== undefined || payload?.invoice?.foreign?.source === 'entered' || payload?.lines?.some((l) => l.accountRule?.source === 'user')) return undefined;
+  const entity =
+    file.upload_entity_id ??
+    (await uploaderEntity(ctx, file.created_by)) ??
+    (await ctx.trx.selectFrom('crove_kernel.legal_entity').select('id').where('org_id', '=', ctx.orgId).where('is_default', '=', true).executeTakeFirst())?.id;
+  return row.legal_entity_id === entity ? row : undefined;
 }
 
 // Records the result of an extraction run (worker only). Without `version` it is the first extraction of a new
@@ -395,7 +469,12 @@ export const recordExtraction = defineCommand({
       throw new DomainError('STATEMENT_TOO_LARGE', 422, 'Sao kê có quá nhiều dữ liệu để chờ nhập; hãy chia thành nhiều tệp theo tháng');
     }
     const file = await lockFile(ctx, original.fileId, original.statement === true);
-    const input = await withDuplicateGuard(ctx, original);
+    const guarded = await withDuplicateGuard(ctx, original);
+    // An original (XML) read while the same invoice's PDF or photo reading is still pending takes its place (#2269): the
+    // first run only; a re-read never does.
+    const upgraded =
+      guarded.upgrade !== null && original.version === undefined && original.proposal ? await lockUpgradable(ctx, guarded.upgrade, original.proposal, file) : undefined;
+    const input = upgraded ? guarded.input : guarded.flagged;
     const outcome = {
       method: input.method,
       status: input.status,
@@ -425,7 +504,8 @@ export const recordExtraction = defineCommand({
         .values({ org_id: ctx.orgId, file_id: input.fileId, ...(entity ? { legal_entity_id: entity } : {}), ...outcome })
         .returning(['id', 'version', 'requested_by'])
         .executeTakeFirstOrThrow();
-      current = undefined;
+      // The proposal the original takes the place of is revised below, as a pending proposal is by a re-reading.
+      current = upgraded;
     } else {
       const pending = await ctx.trx
         .selectFrom('crove_kernel.extraction')
@@ -470,6 +550,8 @@ export const recordExtraction = defineCommand({
         SELECT created_at > pg_catalog.clock_timestamp() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int) AS fresh
         FROM crove_kernel.extraction WHERE org_id = ${ctx.orgId}::uuid AND id = ${pending.id}::uuid`.execute(ctx.trx);
       applies = rows[0]?.fresh === true;
+      // The proposal's revision was read from another file (the original, #2269): a re-reading of this one leaves it.
+      if (applies && current?.status === 'pending' && (await readFromAnotherFile(ctx, current, input.fileId))) applies = false;
       await ctx.trx
         .updateTable('crove_kernel.extraction')
         .set(outcome)
@@ -532,7 +614,9 @@ export const recordExtraction = defineCommand({
         .where('id', '=', current.id)
         .execute();
       ctx.audit({ proposal_id: current.id, revision });
-      await ctx.activity('kernel.proposal', current.id, 'proposal.reextracted', `Đọc lại chứng từ (lần đọc ${run.version}, bản ${revision})`);
+      await (upgraded
+        ? ctx.activity('kernel.proposal', current.id, 'proposal.original_received', `Đã nhận hóa đơn gốc XML ${file.filename}; số liệu lấy từ hóa đơn gốc (bản ${revision})`.slice(0, 500))
+        : ctx.activity('kernel.proposal', current.id, 'proposal.reextracted', `Đọc lại chứng từ (lần đọc ${run.version}, bản ${revision})`));
       return { extractionId: run.id, proposalId: current.id, duplicate: false };
     }
 
