@@ -136,6 +136,21 @@ export async function sweepStaleReplies(deps: { workerDb: Db; runtime: Runtime; 
   return rows.length;
 }
 
+// A reply or a hide queued where this worker has no channel to send it through (no publisher or no credential broker): the call is
+// begun and recorded as refused, so the message shows as failed, a person may send it again once the deployment has the channel,
+// and nothing stays queued with no job. Nothing was sent.
+export async function failUnsendable(runtime: Runtime, job: ConversationJob): Promise<void> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const result = { kind: 'rejected', error: 'bad_request', code: 'CHANNEL_NOT_CONFIGURED' };
+  if (job.action === 'hide') {
+    const work = await runtime.execute<{ action: string; callKey?: string }>('kernel.conversation.hide_begin', { messageId: job.messageId }, options);
+    if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.hide_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
+    return;
+  }
+  const work = await runtime.execute<{ action: string; callKey?: string }>('kernel.conversation.reply_begin', { messageId: job.messageId }, options);
+  if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
+}
+
 export interface ConversationJob {
   orgId: string;
   messageId: string;

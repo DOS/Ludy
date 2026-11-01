@@ -171,7 +171,7 @@ export type ConversationCounted = z.infer<typeof zConversationCounted>;
 export const zConversationGet = z.strictObject({ conversationId: zId });
 export const zConversationReply = z.strictObject({
   conversationId: zId,
-  body: z.string().trim().min(1).max(CONVERSATION_REPLY_MAX),
+  body: z.string().trim().min(1).max(CONVERSATION_REPLY_MAX).refine(noNul, 'NUL character'),
   // The last message the sender saw: a newer one refuses the reply (CONVERSATION_MOVED).
   lastSeenSeq: z.number().int().min(0),
 });

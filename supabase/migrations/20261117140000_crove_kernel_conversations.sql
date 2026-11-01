@@ -252,7 +252,7 @@ CREATE POLICY conversation_identity_scope ON crove_kernel.conversation_identity 
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = conversation_identity.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin'))
     OR EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = conversation_identity.org_id AND c.identity_id = conversation_identity.id))
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
-    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = conversation_identity.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = conversation_identity.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
 
 -- Deleting a thread, a message, a note or an identity is the owner's, an admin's or the system's alone (the erasure of a customer and
 -- the retention purge, CV6): the scope policies above are FOR ALL and so let anyone who may read a row delete it, with its cascades.
@@ -295,6 +295,8 @@ RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, p
 DECLARE
   v_seq bigint;
 BEGIN
+  -- The count and the insert are one step: concurrent calls near the limit queue here, so the cap holds exactly.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove.conversation_inbound_enqueue', 0));
   IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_kernel.conversation_inbound_pending LIMIT 10001) s) > 10000 THEN
     RAISE EXCEPTION 'CONVERSATION_BACKLOG' USING ERRCODE = '53400';
   END IF;
