@@ -640,6 +640,12 @@ export function createRpcHandler(
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
       },
+      contactImport: {
+        stage: os.crm.contactImport.stage.handler(crmCommand('crm.import.stage')),
+        preview: os.crm.contactImport.preview.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.import.preview', input, { actor, orgId }))),
+        commit: os.crm.contactImport.commit.handler(crmCommand('crm.import.commit')),
+        cancel: os.crm.contactImport.cancel.handler(crmCommand('crm.import.cancel')),
+      },
       bookings: {
         list: os.crm.bookings.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.booking.list', input, { actor, orgId }))),
         cancel: os.crm.bookings.cancel.handler(crmCommand('crm.booking.cancel')),

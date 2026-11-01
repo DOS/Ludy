@@ -240,6 +240,7 @@ function AddContact({ onDone }: { onDone: () => void }) {
 const TRI: Tri[] = ['', 'yes', 'no'];
 
 export function ContactsPage() {
+  const { slug } = useParams({ strict: false }) as { slug: string };
   const t = useTranslations('contacts');
   const org = useQuery(orpc.org.get.queryOptions());
   const canEdit = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
@@ -287,9 +288,14 @@ export function ContactsPage() {
         subtitle={t('subtitle')}
         actions={
           canEdit && !adding ? (
-            <Button size="sm" onClick={() => setAdding(true)}>
-              {t('add')}
-            </Button>
+            <div className="flex flex-wrap items-center gap-3">
+              <Button size="sm" onClick={() => setAdding(true)}>
+                {t('add')}
+              </Button>
+              <Link to="/o/$slug/contacts/import" params={{ slug }} className="text-sm text-link underline">
+                {t('importFile')}
+              </Link>
+            </div>
           ) : undefined
         }
       />

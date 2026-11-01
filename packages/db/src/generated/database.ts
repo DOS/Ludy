@@ -17,6 +17,8 @@ export interface CroveCrmSchema {
   'crove_crm.booking_feed': CrmBookingFeedTable;
   'crove_crm.deal': CrmDealTable;
   'crove_crm.event_type': CrmEventTypeTable;
+  'crove_crm.import_batch': CrmImportBatchTable;
+  'crove_crm.import_row': CrmImportRowTable;
   'crove_crm.pipeline_stage': CrmPipelineStageTable;
 }
 
@@ -250,6 +252,42 @@ export interface CrmEventTypeTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   assignment: Generated<string>;
   co_host_user_ids: Generated<string[]>;
+}
+
+/** crove_crm.import_batch */
+export interface CrmImportBatchTable {
+  org_id: string;
+  id: Generated<string>;
+  filename: string;
+  status: Generated<string>;
+  on_duplicate: Generated<string>;
+  total_rows: Generated<number>;
+  new_rows: Generated<number>;
+  duplicate_rows: Generated<number>;
+  conflict_rows: Generated<number>;
+  invalid_rows: Generated<number>;
+  created_rows: Generated<number>;
+  updated_rows: Generated<number>;
+  created_by: string;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_crm.import_row */
+export interface CrmImportRowTable {
+  org_id: string;
+  id: Generated<string>;
+  batch_id: string;
+  row_no: number;
+  kind: Generated<string>;
+  name: Generated<string>;
+  tax_code: string | null;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  outcome: string;
+  reason: string | null;
+  match_party_id: string | null;
 }
 
 /** crove_crm.pipeline_stage */

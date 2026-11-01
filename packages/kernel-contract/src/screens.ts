@@ -103,7 +103,7 @@ const SOCIAL_SCREENS = {
 
 const CRM_SCREENS = {
   // Bookings of the public booking page (#1320).
-  routes: [{ path: 'bookings' }, { path: 'deals' }, { path: 'contacts' }],
+  routes: [{ path: 'bookings' }, { path: 'deals' }, { path: 'contacts' }, { path: 'contacts/import' }],
   // The public booking page (#1318), no account.
   outside: [{ path: '/-/b/$org/$type', public: true }],
   nav: [

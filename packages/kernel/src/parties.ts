@@ -66,6 +66,26 @@ function normalizedFields(input: PartyFieldsInput) {
   return { name, address, email, phone, taxCode };
 }
 
+// The same checks without throwing, for the contact import (CRM plan 5, #2229): each row of a file either gives the fields as
+// a party stores them or the fixed code of the first one that cannot be stored, so the preview can say so per row.
+export type PartyFieldsCheck = { ok: true; fields: ReturnType<typeof normalizedFields> } | { ok: false; reason: 'INVALID_NAME' | 'INVALID_ADDRESS' | 'INVALID_EMAIL' | 'INVALID_PHONE' | 'INVALID_TAX_CODE' };
+const FIELD_REASONS: Record<string, Extract<PartyFieldsCheck, { ok: false }>['reason']> = {
+  INVALID_PARTY_NAME: 'INVALID_NAME',
+  INVALID_ADDRESS: 'INVALID_ADDRESS',
+  INVALID_EMAIL: 'INVALID_EMAIL',
+  INVALID_PHONE: 'INVALID_PHONE',
+  INVALID_TAX_CODE: 'INVALID_TAX_CODE',
+};
+export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
+  try {
+    return { ok: true, fields: normalizedFields(input) };
+  } catch (error) {
+    const reason = error instanceof DomainError ? FIELD_REASONS[error.code] : undefined;
+    if (!reason) throw error;
+    return { ok: false, reason };
+  }
+}
+
 export const updateParty = defineCommand({
   name: 'kernel.party.update',
   input: z.object({
