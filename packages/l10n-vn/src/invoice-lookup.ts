@@ -57,14 +57,26 @@ function plausibleCode(token: string): boolean {
 }
 
 // The text without diacritics and in lower case, and for each of its characters the position of its source character, so
-// a label found in the folded text can be followed by the code in the original. Combining marks drop out.
+// a label found in the folded text can be followed by the code in the original. Combining marks drop out, and a run of
+// white space is one space, so a label wrapped over two lines or typed with two spaces still matches.
 function fold(text: string): { folded: string; at: number[] } {
   let folded = '';
   const at: number[] = [];
   let i = 0;
+  let lastWasSpace = false;
   for (const ch of text) {
     for (const piece of ch.normalize('NFD')) {
       if (/\p{M}/u.test(piece)) continue;
+      if (/\s/u.test(piece)) {
+        // (A flag, not folded.endsWith: that flattens the string being built on every white space, which is quadratic.)
+        if (!lastWasSpace) {
+          at.push(i);
+          folded += ' ';
+          lastWasSpace = true;
+        }
+        continue;
+      }
+      lastWasSpace = false;
       const mapped = piece === 'đ' || piece === 'Đ' ? 'd' : piece.toLowerCase();
       for (let k = 0; k < mapped.length; k++) at.push(i);
       folded += mapped;
@@ -75,6 +87,8 @@ function fold(text: string): { folded: string; at: number[] } {
   return { folded, at };
 }
 
+// The seller's tax code as digits (10, or 13 with a branch), or null when it is missing or not one: a VNPT link is then
+// not checked against it (the invoice names no seller to compare with).
 function normalizeSeller(taxCode: string | null | undefined): string | null {
   if (!taxCode) return null;
   const digits = taxCode.replace(/\D/g, '');
@@ -99,11 +113,20 @@ export function lookupProviderOfHost(host: string, sellerTaxCode?: string | null
   return null;
 }
 
+// A space, a control character or a C1 control character anywhere in the text.
+function hasControlOrSpace(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c <= 0x20 || (c >= 0x7f && c <= 0x9f)) return true;
+  }
+  return false;
+}
+
 // A link as the person may open it: https on a table host, no credentials, no port, no fragment, no control or space
 // characters, at most 400 characters. A link written with http is read as https. Anything else gives null.
 export function safeLookupUrl(raw: string, sellerTaxCode?: string | null): { url: string; provider: LookupProvider } | null {
   const text = raw.trim();
-  if (text.length === 0 || text.length > URL_MAX || /[\u0000- \u007f-\u009f]/.test(text)) return null;
+  if (text.length === 0 || text.length > URL_MAX || hasControlOrSpace(text)) return null;
   const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : `https://${text}`;
   let url: URL;
   try {
@@ -150,7 +173,8 @@ function findLinks(text: string, sellerTaxCode: string | null | undefined): Arra
   return out;
 }
 
-function findCodes(text: string): Array<Found & { provider: LookupProvider | null }> {
+function findCodes(text: string, sellerTaxCode: string | null | undefined): Array<Found & { provider: LookupProvider | null }> {
+  const seller = normalizeSeller(sellerTaxCode);
   const { folded, at: sourceAt } = fold(text);
   const out: Array<Found & { provider: LookupProvider | null }> = [];
   for (const label of CODE_LABELS) {
@@ -159,12 +183,22 @@ function findCodes(text: string): Array<Found & { provider: LookupProvider | nul
       const at = folded.indexOf(label, from);
       if (at < 0) break;
       from = at + label.length;
+      // The label is a word of its own: "Gamma tra cuu" is not one.
+      if (/[a-z0-9]/.test(folded.charAt(at - 1))) continue;
       const after = sourceAt[from] ?? text.length;
-      // After the label: separators (a colon, a dash, spaces, a line break), then the code.
-      const rest = text.slice(after, after + 80);
-      const m = /^[\s:：\-–=.]*([A-Za-z0-9]+)/.exec(rest);
-      const token = m?.[1];
-      if (token && plausibleCode(token) && !out.some((f) => f.value === token)) {
+      // After the label: an optional "(Search code)" and "là", separators (a colon, a dash, spaces, a line break), an
+      // optional "(Search code)", then the code.
+      const rest = text.slice(after, after + 160);
+      const m = /^(?:\s*\([^)]{0,40}\))?(?:\s+l[aàáảãạ])?([\s:：\-–=.]*)(?:\([^)]{0,40}\)\s*)?([A-Za-z0-9]+)/i.exec(rest);
+      const token = m?.[2];
+      if (m && token && plausibleCode(token) && !out.some((f) => f.value === token)) {
+        // The whole token or nothing: a code cut at a dash, a slash or a decimal point is not the code.
+        const next = rest.charAt(m[0].length);
+        if (next === '-' || next === '_' || next === '/' || /\p{L}/u.test(next) || (next === '.' && /[A-Za-z0-9]/.test(rest.charAt(m[0].length + 1)))) continue;
+        // On a line of its own the value may be any word under the label; then only a code with a digit counts.
+        if (/\n/.test(m[1] ?? '') && !/[0-9]/.test(token)) continue;
+        // The seller's own tax code is not the lookup code.
+        if (seller !== null && token === seller) continue;
         const own = LOOKUP_PROVIDER_TABLE.find((spec) => spec.ownLabel === label);
         out.push({ at: sourceAt[at] ?? 0, value: token, provider: own?.id ?? null });
       }
@@ -180,19 +214,22 @@ export function readLookupHints(rawText: string, options: { sellerTaxCode?: stri
   // NFC first: text with separate accent marks folds to the same letters as the composed form.
   const text = (rawText.length > TEXT_MAX ? rawText.slice(0, TEXT_MAX) : rawText).normalize('NFC');
   const links = findLinks(text, options.sellerTaxCode);
-  const codes = findCodes(text);
+  const codes = findCodes(text, options.sellerTaxCode);
   const hints: LookupHint[] = [];
-  const used = new Set<string>();
+  // Each code goes to at most one link: the nearest one that is not another provider's own (a "mã số bí mật" is
+  // Viettel's, so it does not go with a MISA link).
+  const taken = new Set<number>();
   for (const link of links) {
-    let best: (typeof codes)[number] | null = null;
-    for (const code of codes) {
-      if (best === null || Math.abs(code.at - link.at) < Math.abs(best.at - link.at)) best = code;
-    }
-    if (best !== null) used.add(best.value);
-    hints.push({ provider: link.provider, url: link.value, code: best?.value ?? null });
+    let best = -1;
+    codes.forEach((code, i) => {
+      if (taken.has(i) || (code.provider !== null && code.provider !== link.provider)) return;
+      if (best < 0 || Math.abs(code.at - link.at) < Math.abs((codes[best]?.at ?? 0) - link.at)) best = i;
+    });
+    if (best >= 0) taken.add(best);
+    hints.push({ provider: link.provider, url: link.value, code: codes[best]?.value ?? null });
   }
-  for (const code of codes) {
-    if (!used.has(code.value)) hints.push({ provider: code.provider, url: null, code: code.value });
-  }
+  codes.forEach((code, i) => {
+    if (!taken.has(i)) hints.push({ provider: code.provider, url: null, code: code.value });
+  });
   return hints.slice(0, LOOKUP_HINTS_MAX);
 }

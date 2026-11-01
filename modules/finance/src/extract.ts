@@ -503,7 +503,15 @@ export async function extractAndPropose(
   const direction = sale ? { direction: 'sale' as const } : {};
   // The seller's lookup link and code printed on a PDF (#2267): the reader is deterministic and follows no link. Only a
   // purchase has an original to look up at the seller's provider.
-  const lookupHints = !sale && pdfText ? readLookupHints(pdfText, { sellerTaxCode }) : [];
+  // The hints are a convenience: whatever the reader meets, the extraction itself goes on.
+  let lookupHints: ReturnType<typeof readLookupHints> = [];
+  if (!sale && pdfText) {
+    try {
+      lookupHints = readLookupHints(pdfText, { sellerTaxCode });
+    } catch {
+      lookupHints = [];
+    }
+  }
   const memo = journalMemo({ ...direction, seller, buyer, invoice });
   const payload: PurchaseProposal = {
     ...direction,
