@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS crove_crm.import_batch (
 );
 CREATE INDEX IF NOT EXISTS import_batch_status_idx ON crove_crm.import_batch (org_id, status, created_at);
 SELECT crove_kernel.apply_tenant_rls('crove_crm.import_batch');
+-- A batch changes only as the import runs: its status, the duplicate choice, the counts and when it was decided.
+REVOKE UPDATE ON crove_crm.import_batch FROM crove_tenant;
+GRANT UPDATE (status, on_duplicate, total_rows, new_rows, duplicate_rows, conflict_rows, invalid_rows, created_rows, updated_rows, decided_at) ON crove_crm.import_batch TO crove_tenant;
 
 CREATE TABLE IF NOT EXISTS crove_crm.import_row (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
@@ -57,3 +60,5 @@ CREATE TABLE IF NOT EXISTS crove_crm.import_row (
 );
 CREATE INDEX IF NOT EXISTS import_row_party_idx ON crove_crm.import_row (org_id, match_party_id);
 SELECT crove_kernel.apply_tenant_rls('crove_crm.import_row');
+-- A staged row is written once and deleted; nothing edits what was read from the file.
+REVOKE UPDATE ON crove_crm.import_row FROM crove_tenant;

@@ -256,9 +256,9 @@ export interface CrmEventTypeTable {
 
 /** crove_crm.import_batch */
 export interface CrmImportBatchTable {
-  org_id: string;
-  id: Generated<string>;
-  filename: string;
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  filename: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   on_duplicate: Generated<string>;
   total_rows: Generated<number>;
@@ -268,26 +268,26 @@ export interface CrmImportBatchTable {
   invalid_rows: Generated<number>;
   created_rows: Generated<number>;
   updated_rows: Generated<number>;
-  created_by: string;
-  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_crm.import_row */
 export interface CrmImportRowTable {
-  org_id: string;
-  id: Generated<string>;
-  batch_id: string;
-  row_no: number;
-  kind: Generated<string>;
-  name: Generated<string>;
-  tax_code: string | null;
-  email: string | null;
-  phone: string | null;
-  address: string | null;
-  outcome: string;
-  reason: string | null;
-  match_party_id: string | null;
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  batch_id: ColumnType<string, string, NotGranted>;
+  row_no: ColumnType<number, number, NotGranted>;
+  kind: ColumnType<string, string | undefined, NotGranted>;
+  name: ColumnType<string, string | undefined, NotGranted>;
+  tax_code: ColumnType<string | null, string | null, NotGranted>;
+  email: ColumnType<string | null, string | null, NotGranted>;
+  phone: ColumnType<string | null, string | null, NotGranted>;
+  address: ColumnType<string | null, string | null, NotGranted>;
+  outcome: ColumnType<string, string, NotGranted>;
+  reason: ColumnType<string | null, string | null, NotGranted>;
+  match_party_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_crm.pipeline_stage */

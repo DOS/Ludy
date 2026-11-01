@@ -184,7 +184,12 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const done = await o.commit(o.owner, staged.batch.id, 'fill_empty');
     expect(done.batch).toMatchObject({ createdRows: 0, updatedRows: 1, onDuplicate: 'fill_empty' });
     const after = await admin((c) => c.query<{ name: string; email: string; phone: string; address: string; tax_code: string; version: number }>('SELECT name, email, phone, address, tax_code, version FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
-    expect(after.rows[0]).toMatchObject({ name: 'Khách Cũ', email: 'cu@khach.test', phone: '0901 000 111', address: '12 Lê Lợi, Quận 1', tax_code: '0123456780', version: 2 });
+    // The tax code is never filled: the party was matched by its email, which does not say that code is its own.
+    expect(after.rows[0]).toMatchObject({ name: 'Khách Cũ', email: 'cu@khach.test', phone: '0901 000 111', address: '12 Lê Lợi, Quận 1', tax_code: null, version: 2 });
+    // The audit row lists the field names filled per party, never a value.
+    const audit = await admin((c) => c.query<{ detail: { filled: { partyId: string; fields: string[] }[] } }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' AND outcome = 'ok'", [o.orgId]));
+    expect(audit.rows[0]?.detail.filled).toEqual([{ partyId: id, fields: ['address'] }]);
+    expect(JSON.stringify(audit.rows)).not.toContain('Lê Lợi');
     // With skip, the same row changes nothing.
     const other = await o.party({ name: 'Khách Hai', email: 'hai@khach.test' });
     const second = await o.stage(o.owner, [row({ name: 'Khách Hai', email: 'hai@khach.test', address: 'Hà Nội' })]);
@@ -206,6 +211,32 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(done.batch).toMatchObject({ status: 'committed', createdRows: 1 });
     const after = await admin((c) => c.query<{ tax_code: string | null; phone: string | null }>('SELECT tax_code, phone FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [o.orgId, id]));
     expect(after.rows[0]).toEqual({ tax_code: null, phone: null });
+  });
+
+  it('keeps one open batch per person: staging again cancels the earlier one and deletes its rows', async () => {
+    const o = await org();
+    const first = await o.stage(o.lan, [row({ name: 'Lô Một' })]);
+    const other = await o.stage(o.huy, [row({ name: 'Lô Của Huy' })]);
+    const second = await o.stage(o.lan, [row({ name: 'Lô Hai' })]);
+    expect(await o.stagedRows(first.batch.id)).toBe(0);
+    await expect(o.commit(o.lan, first.batch.id)).rejects.toMatchObject({ code: 'IMPORT_NOT_STAGED', status: 409 });
+    const status = await admin((c) => c.query<{ id: string; status: string }>('SELECT id, status FROM crove_crm.import_batch WHERE org_id = $1', [o.orgId]));
+    expect(new Map(status.rows.map((r) => [r.id, r.status]))).toEqual(new Map([[first.batch.id, 'cancelled'], [other.batch.id, 'staged'], [second.batch.id, 'staged']]));
+    expect(await o.stagedRows(other.batch.id)).toBe(1);
+    // Two stagings at once by one person leave one open batch.
+    await Promise.all([o.stage(o.owner, [row({ name: 'A' })]), o.stage(o.owner, [row({ name: 'B' })])]);
+    const open = await admin((c) => c.query("SELECT 1 FROM crove_crm.import_batch WHERE org_id = $1 AND created_by = $2 AND status = 'staged'", [o.orgId, o.owner]));
+    expect(open.rowCount).toBe(1);
+  });
+
+  it('lets the tenant role update an import batch only in its status, choice, counts and decision time, and a staged row never', async () => {
+    const o = await org();
+    const grants = await admin((c) =>
+      c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'crove_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
+    );
+    expect(grants.rows.filter((g) => g.table_name === 'import_row')).toEqual([]);
+    expect(grants.rows.map((g) => g.column_name)).toEqual(['conflict_rows', 'created_rows', 'decided_at', 'duplicate_rows', 'invalid_rows', 'new_rows', 'on_duplicate', 'status', 'total_rows', 'updated_rows']);
+    expect(o.orgId).toBeTruthy();
   });
 
   it('judges the rows again at commit: a party made since the preview turns a new row into a skipped duplicate', async () => {

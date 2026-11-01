@@ -185,6 +185,9 @@ function batchView(r: BatchRow, expired = false): ImportBatch {
   };
 }
 
+// The most parties whose filled field names the audit row lists; the count of all of them is `updated`.
+const FILLED_AUDIT_MAX = 500;
+
 const notFound = () => new DomainError('IMPORT_NOT_FOUND', 404, 'Không tìm thấy lần nhập này');
 
 // Staged batches of this org older than the limit lose their rows and are marked expired.
@@ -209,6 +212,15 @@ export const importStage = defineCommand({
   handler: async (ctx, input): Promise<ImportPreview> => {
     const userId = userOf(ctx.actor);
     await expireStale(ctx);
+    // One open batch per person: staging again cancels the one staged before, rows deleted, so staged personal data cannot pile
+    // up behind a person who keeps choosing files. Two stagings at once by the same person wait for each other.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crm.import:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
+    const replaced = await ctx.trx.selectFrom('crove_crm.import_batch').select('id').where('org_id', '=', ctx.orgId).where('status', '=', 'staged').where('created_by', '=', userId).execute();
+    if (replaced.length > 0) {
+      const old = replaced.map((b) => b.id);
+      await ctx.trx.deleteFrom('crove_crm.import_row').where('org_id', '=', ctx.orgId).where('batch_id', 'in', old).execute();
+      await ctx.trx.updateTable('crove_crm.import_batch').set({ status: 'cancelled', decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', 'in', old).execute();
+    }
     // What each row is as a party would store it, or why it cannot be.
     const candidates: Candidate[] = [];
     const invalid: { rowNo: number; raw: ImportRowInput; reason: ImportReason }[] = [];
@@ -256,7 +268,7 @@ export const importStage = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', batch.id)
       .execute();
-    ctx.audit({ batchId: batch.id, rows: staged.length, new: count('new'), duplicate: count('duplicate'), conflict: count('conflict'), invalid: count('invalid') });
+    ctx.audit({ batchId: batch.id, rows: staged.length, new: count('new'), duplicate: count('duplicate'), conflict: count('conflict'), invalid: count('invalid'), replaced: replaced.length });
     return previewOf(ctx, { batchId: batch.id });
   },
 });
@@ -348,21 +360,6 @@ interface StagedRow extends Candidate {
   reason: ImportReason | null;
 }
 
-// Sets a party's tax code when no party holds it; false when the unique index refuses. A savepoint keeps the refusal from
-// ending the commit's transaction.
-async function fillTaxCode(ctx: CommandContext, partyId: string, taxCode: string): Promise<boolean> {
-  await sql`SAVEPOINT import_tax_code`.execute(ctx.trx);
-  try {
-    await ctx.trx.updateTable('crove_kernel.party').set({ tax_code: taxCode }).where('org_id', '=', ctx.orgId).where('id', '=', partyId).where('tax_code', 'is', null).execute();
-    await sql`RELEASE SAVEPOINT import_tax_code`.execute(ctx.trx);
-    return true;
-  } catch (error) {
-    if ((error as { code?: string }).code !== '23505') throw error;
-    await sql`ROLLBACK TO SAVEPOINT import_tax_code`.execute(ctx.trx);
-    return false;
-  }
-}
-
 export const importCommit = defineCommand({
   name: 'crm.import.commit',
   input: zImportCommit,
@@ -399,8 +396,10 @@ export const importCommit = defineCommand({
 
     let created = 0;
     let updated = 0;
-    // What the rows created in this commit hold, so a duplicate row's fill never gives their tax code, email or phone to an old party.
-    const taken = { tax: new Set<string>(), email: new Set<string>(), phone: new Set<string>() };
+    // What the rows created in this commit hold, so a duplicate row's fill never gives their email or phone to an old party.
+    const taken = { email: new Set<string>(), phone: new Set<string>() };
+    // The fields each filled party got, by name, for the audit row.
+    const filled: { partyId: string; fields: string[] }[] = [];
     for (const c of live) {
       const v = verdicts.get(c.rowNo) as Verdict;
       if (v.outcome === 'new') {
@@ -417,7 +416,6 @@ export const importCommit = defineCommand({
           continue;
         }
         created++;
-        if (c.taxCode) taken.tax.add(c.taxCode);
         if (c.email) taken.email.add(c.email.toLowerCase());
         const pk = phoneKey(c.phone);
         if (pk) taken.phone.add(pk);
@@ -429,22 +427,21 @@ export const importCommit = defineCommand({
         // Empty fields only, read again under the row lock: a value somebody typed is never replaced.
         const locked = await ctx.trx
           .selectFrom('crove_kernel.party')
-          .select(['id', 'tax_code', 'email', 'phone', 'address', 'version'])
+          .select(['id', 'email', 'phone', 'address', 'version'])
           .where('org_id', '=', ctx.orgId)
           .where('id', '=', v.matchId)
           .forUpdate()
           .executeTakeFirst();
         if (party && locked) {
           const pk = phoneKey(c.phone);
+          // The tax code is never filled: a party matched by its email or phone is not known to be the one that tax code names,
+          // and a wrong code written here would stay and misroute its invoices. A party matched by its tax code has one.
           const set = {
             ...(locked.email === null && c.email !== null && !taken.email.has(c.email.toLowerCase()) ? { email: c.email } : {}),
             ...(locked.phone === null && c.phone !== null && !(pk && taken.phone.has(pk)) ? { phone: c.phone } : {}),
             ...(locked.address === null && c.address !== null ? { address: c.address } : {}),
           };
-          // The tax code is unique in the org, whoever holds it (a party out of reach of this member, one marked a duplicate, one
-          // made a moment ago): it is tried on its own, and a refusal by the unique index leaves it out and nothing else.
-          const taxFilled = c.taxCode !== null && locked.tax_code === null && !taken.tax.has(c.taxCode) && (await fillTaxCode(ctx, locked.id, c.taxCode));
-          if (Object.keys(set).length > 0 || taxFilled) {
+          if (Object.keys(set).length > 0) {
             await ctx.trx
               .updateTable('crove_kernel.party')
               .set({ ...set, version: locked.version + 1, updated_at: ctx.now })
@@ -452,6 +449,12 @@ export const importCommit = defineCommand({
               .where('id', '=', locked.id)
               .execute();
             updated++;
+            // Field names, never values.
+            const fields: string[] = [];
+            if ('email' in set) fields.push('email');
+            if ('phone' in set) fields.push('phone');
+            if ('address' in set) fields.push('address');
+            if (filled.length < FILLED_AUDIT_MAX) filled.push({ partyId: locked.id, fields });
             await ctx.activity('kernel.party', locked.id, 'party.import_filled', 'Bổ sung thông tin từ tệp');
             continue;
           }
@@ -468,7 +471,7 @@ export const importCommit = defineCommand({
       .where('id', '=', batch.id)
       .execute();
     // Counts only: the rows held personal data, and audit rows outlive an erasure.
-    ctx.audit({ batchId: batch.id, rows: staged.length, created, updated, notImported: skipped.length, onDuplicate: input.onDuplicate });
+    ctx.audit({ batchId: batch.id, rows: staged.length, created, updated, notImported: skipped.length, onDuplicate: input.onDuplicate, filled });
     const after = await ctx.trx.selectFrom('crove_crm.import_batch').select(BATCH_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', batch.id).executeTakeFirstOrThrow();
     return { batch: batchView(after), skipped };
   },
