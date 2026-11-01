@@ -442,8 +442,8 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
         await c.query(`CREATE TABLE sv_party (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), name text NOT NULL, kind text NOT NULL, email text, phone text, tax_code text,
           created_at timestamptz NOT NULL, open_deal boolean NOT NULL)`);
         await c.query(`INSERT INTO sv_party (name, kind, email, phone, tax_code, created_at, open_deal) VALUES
-          ('Công ty Nguyễn', 'organization', 'kinhdoanh@nguyen.vn', '0912345678', '0101234567', '2026-11-09T00:00:00Z', true),
-          ('Trần Văn B', 'person', NULL, '0903000111', NULL, '2026-10-01T00:00:00Z', false),
+          ('Công ty Nguyễn', 'organization', 'kinhdoanh@example.com', '0912345678', '0101234567', '2026-11-09T00:00:00Z', true),
+          ('Trần Văn B', 'person', NULL, '0903000000', NULL, '2026-10-01T00:00:00Z', false),
           ('Lê Thị C', 'person', '', '   ', '', '2026-11-10T01:00:00Z', false)`);
       });
     });
