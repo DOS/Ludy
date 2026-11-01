@@ -99,6 +99,19 @@ describe('roundInvoiceToDong', () => {
     expect(roundInvoiceToDong(build([line(1, '10.4'), line(2, '20.4')], '32')).applied).toMatchObject({ difference: '2', lineNo: 2 });
   });
 
+  it('gives a note or a promotion line no allowance of its own', () => {
+    const notes = [line(2, '0', 'note'), line(3, '0', 'note'), line(4, '0', 'note'), line(5, '0', 'note'), line(6, '0', 'note')];
+    expect(roundInvoiceToDong(build([line(1, '94.4'), ...notes], '100')).refused).toBe('94.4');
+    expect(roundInvoiceToDong(build([line(1, '99.4'), ...notes], '100')).applied).toMatchObject({ difference: '1', lineNo: 1 });
+  });
+
+  it('adjusts the negative lines of a credit invoice, and never turns a line over', () => {
+    const credit = roundInvoiceToDong(build([line(1, '-0.5'), line(2, '-10.5')], '-11'));
+    expect(amounts(credit.invoice)).toEqual(['-1', '-10']);
+    expect(credit.applied).toEqual({ firstFraction: '-0.5', difference: '1', lineNo: 2 });
+    expect(roundInvoiceToDong(build([line(1, '0.4'), line(2, '0.4')], '-1')).refused).toBe('0.4');
+  });
+
   it('refuses a total that is not the rounded subtotal plus the VAT', () => {
     expect(roundInvoiceToDong(build([line(1, '100.4')], '100', '10', '112')).refused).toBe('100.4');
   });
@@ -132,7 +145,7 @@ describe('amount_scale check with rounding', () => {
         status: 'warn',
         code: 'amount_scale.rounded',
         params: { amount: '10.4', difference: '1', line: '3' },
-        message: expect.stringContaining('dồn chênh lệch 1 đồng vào dòng 3'),
+        message: expect.stringContaining('dòng 3 được điều chỉnh 1 đồng'),
       },
     ]);
     const checks = checkInvoice(invoice, '2026-10-13');

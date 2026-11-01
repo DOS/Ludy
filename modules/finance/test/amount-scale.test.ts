@@ -55,7 +55,7 @@ describe('invoice amounts below one dong', () => {
     const error = amountBelowDongError('1000000.5');
     expect(error).toMatchObject({ code: 'AMOUNT_BELOW_DONG', status: 422, details: { amount: '1000000.5' } });
     expect(error.message).toContain('dưới một đồng (1000000.5)');
-    expect(error.message).toContain('Hệ thống không làm tròn về đồng được');
+    expect(error.message).toContain('Hệ thống không tự làm tròn về đồng được');
     expect(amountBelowDongError(null).details).toBeUndefined();
   });
 });

@@ -57,9 +57,9 @@ describe('invoice check wording', () => {
     expect(invoiceCheckMessage(check('accounts.unclassified', { count: '2', lines: '2, 3' }), en, format)).toBe('No account rule matched 2 line(s) (line 2, 3): choose their accounts before approving');
     expect(invoiceCheckMessage(check('accounts.unclassified', { count: '2', lines: '2, 3' }), vi, format)).toContain('Chưa phân loại 2 dòng (dòng 2, 3)');
     expect(invoiceCheckMessage(check('accounts.unclassified', null), en, format)).toBe('STORED');
-    // #2235: the rounding warning names the dong and the line; one without them keeps its stored sentence.
-    expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4', difference: '1', line: '3' }), vi, format)).toContain('dồn chênh lệch 1 đồng vào dòng 3');
-    expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4', difference: '1', line: '3' }), en, format)).toContain('difference of 1 dong was put on line 3');
+    // #2235: the rounding warning names the line and the dong; one without them keeps its stored sentence.
+    expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4', difference: '1', line: '3' }), vi, format)).toContain('dòng 3 được điều chỉnh 1 đồng');
+    expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4', difference: '1', line: '3' }), en, format)).toContain('line 3 was adjusted by 1 dong');
     expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4' }), en, format)).toBe('STORED');
     expect(invoiceCheckMessage(check('related.adjusts_missing'), en, format)).toMatch(/^Adjustment invoice for invoice C26TAB\/1234/);
   });

@@ -233,8 +233,8 @@ export interface DongRounding<T extends DongRoundable> {
 // Rounds every amount of a VND invoice half up to the dong, then puts the difference between the rounded lines and the
 // invoice's own subtotal on its largest goods or service line (the first on a tie), so the lines add up to the subtotal
 // exactly. VAT is never adjusted: an invoice whose VAT has a fraction of a dong is refused, as is one whose rounded total
-// is not its rounded subtotal plus its VAT, one with a difference above 1 dong per line (it is probably wrong), and one
-// with no goods line to carry the difference.
+// is not its rounded subtotal plus its VAT, one with a difference above 1 dong per goods or discount line (it is probably
+// wrong), and one with no goods line to carry the difference or whose largest line the difference would turn over.
 export function roundInvoiceToDong<T extends DongRoundable>(invoice: T): DongRounding<T> {
   if (invoice.currency.trim().toUpperCase() !== 'VND') return { invoice, applied: null, refused: null };
   const firstFraction = belowOneDong(invoice);
@@ -248,7 +248,8 @@ export function roundInvoiceToDong<T extends DongRoundable>(invoice: T): DongRou
 
   const lines = invoice.lines.map((l) => ({ ...l, amount: wholeDong(l.amount) }));
   const difference = money(subtotal).minus(sum(lines.map(lineContribution)));
-  if (difference.abs().greaterThan(lines.length)) return refused;
+  // 1 dong per line that carries an amount: a note or a promotion line adds nothing to the subtotal, so it adds no allowance.
+  if (difference.abs().greaterThan(lines.filter((l) => l.nature === 'goods' || l.nature === 'discount').length)) return refused;
   let lineNo: number | null = null;
   if (!difference.isZero()) {
     let largest = -1;
@@ -256,8 +257,10 @@ export function roundInvoiceToDong<T extends DongRoundable>(invoice: T): DongRou
       if (l.nature === 'goods' && (largest < 0 || money(l.amount).abs().greaterThan(money(lines[largest]!.amount).abs()))) largest = i;
     });
     if (largest < 0) return refused;
-    const adjusted = money(lines[largest]!.amount).plus(difference);
-    if (adjusted.isNegative()) return refused;
+    const before = money(lines[largest]!.amount);
+    const adjusted = before.plus(difference);
+    // The adjustment never turns a line over: a credit invoice's negative line stays negative, a positive one positive.
+    if (!adjusted.isZero() && adjusted.isNegative() !== before.isNegative()) return refused;
     lines[largest] = { ...lines[largest]!, amount: adjusted.toFixed() };
     lineNo = lines[largest]!.lineNo;
   }
@@ -338,7 +341,7 @@ export function checkInvoice(
             status: 'warn',
             code: 'amount_scale.rounded',
             params: { amount: firstFraction, difference, line: String(lineNo) },
-            message: `Hóa đơn có số tiền lẻ dưới một đồng (${firstFraction}); đã làm tròn từng dòng về đồng và dồn chênh lệch ${difference} đồng vào dòng ${lineNo}`,
+            message: `Hóa đơn có số tiền lẻ dưới một đồng (${firstFraction}); đã làm tròn từng dòng về đồng, dòng ${lineNo} được điều chỉnh ${difference} đồng để khớp tiền trước thuế`,
           },
     );
   } else if (rounding.refused !== null) {
@@ -347,7 +350,7 @@ export function checkInvoice(
       status: 'fail',
       code: 'amount_scale.fraction',
       params: { amount: rounding.refused },
-      message: `Hóa đơn có số tiền lẻ dưới một đồng (${rounding.refused}) mà không làm tròn về đồng được (thuế GTGT có số lẻ hoặc chênh lệch quá một đồng mỗi dòng); hãy xin người bán điều chỉnh hóa đơn`,
+      message: `Hóa đơn có số tiền lẻ dưới một đồng (${rounding.refused}) mà không tự làm tròn về đồng được; hãy xin người bán điều chỉnh hóa đơn`,
     });
   }
 

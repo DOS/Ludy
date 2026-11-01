@@ -222,7 +222,7 @@ export function amountBelowDongError(amount: string | null): DomainError {
   return new DomainError(
     'AMOUNT_BELOW_DONG',
     422,
-    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Hệ thống không làm tròn về đồng được (thuế GTGT có số lẻ, hoặc chênh lệch quá một đồng mỗi dòng); có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
+    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Hệ thống không tự làm tròn về đồng được; có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
     amount === null ? undefined : { amount },
   );
 }
