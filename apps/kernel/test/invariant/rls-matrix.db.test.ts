@@ -62,6 +62,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_kernel.conversation_message',
   'crove_kernel.conversation_note',
   'crove_kernel.conversation_read',
+  'crove_kernel.conversation_setting',
   'crove_notes.link',
   'crove_notes.note',
   'crove_social.channel_access',
@@ -891,6 +892,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), conversation_id: thread, user_id: o.owner },
       };
     },
+  },
+  // The org's one row of conversation settings (CV6, #2305): how long a thread is kept after its last message. Org-wide, so no entity.
+  // Tenant roles update the retention and who set it only (a column grant), so the update probes assign the retention to itself.
+  'crove_kernel.conversation_setting': {
+    update: { set: 'retention_months = retention_months' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (conversations-retention.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   'crove_kernel.credential': {
     make: (o) => {
