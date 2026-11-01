@@ -9,7 +9,7 @@ import { XlsxError, readFirstSheet, writeWorkbook } from '../src/lib/xlsx.ts';
 const TABLE = [
   ['Tên', 'Mã số thuế', 'Email', 'Số điện thoại', 'Địa chỉ'],
   ['Công ty ABC', '0123456780', 'abc@khach.test', '0901 111 222', '12 Lê Lợi, Quận 1'],
-  ['Nguyễn Văn An', '', 'an@khach.test', '0902 333 444', ''],
+  ['Nguyễn Văn An', '', 'an@khach.test', '0900 333 333', ''],
 ];
 const csvOf = (rows: string[][]) => rows.map((r) => r.map((c) => (/[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c)).join(',')).join('\n');
 
