@@ -7,7 +7,7 @@ import { createOrg, newEmail, signInNewUser } from '../lib/session.ts';
 
 test.use({ timezoneId: 'Asia/Ho_Chi_Minh' });
 
-const CSV = ['Tên,Mã số thuế,Email,Số điện thoại', 'Công ty ABC,0123456780,abc@khach.test,0901 111 222', 'Nguyễn Văn An,,an@khach.test,0902 333 444', 'Trần Thị Bình,,,0903 555 666'].join('\n');
+const CSV = ['Tên,Mã số thuế,Email,Số điện thoại', 'Công ty ABC,0123456780,abc@khach.test,0901 111 222', 'Nguyễn Văn An,,an@khach.test,0900 333 333', 'Trần Thị Bình,,,0900 555 555'].join('\n');
 
 test('import contacts, find and save a view, add a deal, move it to Won, read the timeline', async ({ page }) => {
   const email = newEmail('crm-slice');
