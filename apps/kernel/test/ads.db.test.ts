@@ -17,7 +17,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
-import { CredentialVault, DomainError, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
@@ -821,6 +821,83 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await callAs(owner, 'ads/writeEnable', { idempotencyKey: key() })).toMatchObject({ status: 200, body: { changed: true } });
       expect((await state()).launchesBlocked).toBe(true);
       expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })).toMatchObject({ status: 200 });
+    });
+
+    // The database keeps the switches to their owners whatever path reaches the table (the Platform PO's condition on #2294): the
+    // commands check the role too, so these go to the table directly, in a context of each kind, and roll back.
+    async function inContext<T>(who: Account | 'system', fn: (c: pg.Client | pg.PoolClient) => Promise<T>): Promise<T> {
+      const c = await (who === 'system' ? (workerPools[0] as pg.Pool) : pool).connect();
+      try {
+        await c.query('BEGIN');
+        if (who === 'system') await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [orgId]);
+        else {
+          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+        }
+        await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
+        return await fn(c);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        c.release();
+      }
+    }
+    const refused = (c: pg.Client | pg.PoolClient, sqlText: string, params: unknown[] = []) => expect(c.query(sqlText, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_SWITCH_FORBIDDEN') });
+
+    it('lets only a signed-in owner turn a switch on and only an owner or admin turn it off, in the database whatever the command says', async () => {
+      const on = 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
+      const blockOn = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = true WHERE org_id = $1';
+      const blockOff = 'UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1';
+      const off = 'UPDATE crove_ads.ad_org_setting SET write_enabled = false WHERE org_id = $1';
+      // Start from writing off and launches open (the commands' own way), so every change below is a change.
+      await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() }, false);
+      expect(await callAs(owner, 'ads/unblockLaunches', { idempotencyKey: key() })).toMatchObject({ status: 200 });
+      expect(await state()).toMatchObject({ writeEnabled: false, launchesBlocked: false });
+      // The owner: both ways.
+      await inContext(owner, async (c) => {
+        await c.query(on, [orgId]);
+        await c.query(blockOn, [orgId]);
+        await c.query(blockOff, [orgId]);
+        await c.query(off, [orgId]);
+      });
+      // The admin may stop (block launches, turn off) and may not open (turn on, unblock).
+      await inContext(adminAccount, async (c) => {
+        await c.query(blockOn, [orgId]);
+        await refused(c, blockOff, [orgId]);
+      });
+      await inContext(adminAccount, (c) => refused(c, on, [orgId]));
+      // A member and a viewer may do neither; nor the system (the worker), an agent's context being the same non-user kind.
+      for (const who of [member, viewer, 'system'] as const) {
+        await inContext(who, (c) => refused(c, on, [orgId]));
+        await inContext(who, (c) => refused(c, blockOn, [orgId]));
+      }
+      // A change that touches neither switch (the audit columns) is not the guard's concern.
+      await inContext(member, async (c) => {
+        await c.query('UPDATE crove_ads.ad_org_setting SET updated_by = $2 WHERE org_id = $1', [orgId, member.userId]);
+      });
+      // The same for one account's flag.
+      const { adAccountId } = await connect('Cổng ở cơ sở dữ liệu');
+      const accountOn = 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
+      await inContext(owner, async (c) => {
+        await c.query(accountOn, [orgId, adAccountId]);
+      });
+      await inContext(adminAccount, (c) => refused(c, accountOn, [orgId, adAccountId]));
+      await inContext(member, (c) => refused(c, accountOn, [orgId, adAccountId]));
+      await inContext('system', (c) => refused(c, accountOn, [orgId, adAccountId]));
+      // Nothing above was committed: the switches stand as the commands left them.
+      expect((await state()).launchesBlocked).toBeDefined();
+    });
+
+    it('keeps the cap history append-only for every tenant role: no update and no delete of a row', async () => {
+      const insert = 'INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id';
+      // Each refusal in a transaction of its own: a refused statement aborts the one it ran in.
+      for (const who of [owner, adminAccount, member, 'system'] as const) {
+        for (const change of ['UPDATE crove_ads.ad_spend_cap SET amount = 1 WHERE org_id = $1 AND id = $2', 'DELETE FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND id = $2']) {
+          await inContext(who, async (c) => {
+            const id = ((await c.query(insert, [orgId, 'org', 'daily', '1000', 'VND', owner.userId])).rows[0] as { id: string }).id;
+            await expect(c.query(change, [orgId, id])).rejects.toMatchObject({ code: '42501' });
+          });
+        }
+      }
     });
 
     it('keeps one row of switches per org however the commands interleave, and none for another org', async () => {
