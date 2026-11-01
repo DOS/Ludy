@@ -183,15 +183,17 @@ export const zAdsProposalView = z.object({ change: zAdsChange.nullable() });
 export const zAdsChangeRequest = z.discriminatedUnion('change', [
   z.strictObject({ change: z.literal('write_enable'), idempotencyKey: zId }),
   z.strictObject({ change: z.literal('account_enable'), adAccountId: zId, idempotencyKey: zId }),
-  z.strictObject({
-    change: z.literal('cap_set'),
-    scope: z.enum(ADS_CAP_SCOPES),
-    adAccountId: zId.optional(),
-    period: z.enum(ADS_CAP_PERIODS),
-    amount: zCapAmount,
-    currency: zCapCurrency,
-    idempotencyKey: zId,
-  }),
+  z
+    .strictObject({
+      change: z.literal('cap_set'),
+      scope: z.enum(ADS_CAP_SCOPES),
+      adAccountId: zId.optional(),
+      period: z.enum(ADS_CAP_PERIODS),
+      amount: zCapAmount,
+      currency: zCapCurrency,
+      idempotencyKey: zId,
+    })
+    .refine(capNamesAccount, capNamesAccountIssue),
   z.strictObject({ change: z.literal('launches_unblock'), idempotencyKey: zId }),
 ]);
 export type AdsChangeRequest = z.infer<typeof zAdsChangeRequest>;

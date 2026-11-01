@@ -1088,13 +1088,16 @@ suite('ads on PostgreSQL (#2217)', () => {
         const capProposal = proposalId(await ask(owner, { change: 'cap_set', scope: 'org', period: 'daily', amount: '90000000', currency: 'VND' }));
         const capSql = `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', $2, $3, 'VND', $4)`;
         const capParams = (amount: string, period: string) => [orgId, period, amount, adminAccount.userId];
-        await inContext(adminAccount, async (c) => {
-          await approveRaw(c, capProposal);
-          await refused(c, capSql, capParams('95000000', 'daily'), 'ADS_CAP_FORBIDDEN');
-          await refused(c, capSql, capParams('90000000', 'monthly'), 'ADS_CAP_FORBIDDEN');
-          await refused(c, on, [orgId]);
-          await c.query(capSql, capParams('90000000', 'daily'));
-        });
+        // Each attempt in a transaction of its own: a refused statement aborts the one it ran in.
+        const approvedCap = (attempt: (c: pg.Client | pg.PoolClient) => Promise<unknown>) =>
+          inContext(adminAccount, async (c) => {
+            await approveRaw(c, capProposal);
+            await attempt(c);
+          });
+        await approvedCap((c) => refused(c, capSql, capParams('95000000', 'daily'), 'ADS_CAP_FORBIDDEN'));
+        await approvedCap((c) => refused(c, capSql, capParams('90000000', 'monthly'), 'ADS_CAP_FORBIDDEN'));
+        await approvedCap((c) => refused(c, on, [orgId]));
+        await approvedCap((c) => c.query(capSql, capParams('90000000', 'daily')));
         // The system's kind of context never passes, even with a row in the state `approved`: only a user decides.
         await inContext('system', async (c) => {
           await c.query(`UPDATE crove_kernel.proposal SET status = 'approved', executed_command_id = $2::uuid, decided_at = now() WHERE org_id = $1 AND id = $3`, [orgId, randomUUID(), enable]);
