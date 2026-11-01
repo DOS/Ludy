@@ -344,7 +344,7 @@ rules:
     table-cells: "0"
   spacing-base: "4px base unit"
   spacing-scale-px: "4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128"
-  breakpoints-tested-px: "360, 768, 1280, 1920px"
+  breakpoints-checked-px: "360, 768, 1280, 1920px"
   motion-ms:
     hover-press: "120ms"
     open-close: "200ms"
@@ -360,7 +360,7 @@ Version 4.0 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), t
 
 ## What changed since 3.0 (2026-10-18)
 
-- **Names and logo.** Ludy is the suite and Vy the AI assistant (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Ô tia mark and the three-tile mark are gone.
+- **Names and logo.** Ludy is the suite and Vy the AI assistant (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
 - **What Ludy is.** Section 1 describes the apps as they are today (Ludy Kế toán, Ludy CRM, Ludy Notes, Social, Vy) and the focus on one-person companies and SMEs first (owner decision, 2026-10-31).
 - **App pages on ludy.vn.** Section 6.4 is new: the shared app page template, the `APP_PAGES` registry, the routes of each app in both languages, the call-to-action line for apps that are not on Ludy Cloud yet, and the rule that a claim needs a merged PR behind it ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282)). Section 6.1 is the home page as it is now.
 - **Rules added piecemeal are now in their places:** form field borders reach 3:1 ([#2114](https://github.com/DOS/Ludy/issues/2114), 3.1 and 7), every screen has a title, a skip link and a focus move on navigation ([#2115](https://github.com/DOS/Ludy/issues/2115), 7), `<Button loading>` ([#2116](https://github.com/DOS/Ludy/issues/2116), 4.1), reduced motion in the app's base layer ([#1605](https://github.com/DOS/Ludy/issues/1605), 3.6).
@@ -373,7 +373,7 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 
 | Date | Decision | Where |
 | :--- | :--- | :--- |
-| 2026-10-18 | Visual direction: the frame of mockup B (the product UI is the hero, keyboard-first, graphite neutrals), the agents section of E, the phone section of D, the ledger of A. Radius 6px for controls (the v2 look was too round). | the line under this table, 3.3 |
+| 2026-10-18 | Visual direction, from the [mockups](docs/design/mockups/): the frame of mockup B (the product UI is the hero, keyboard-first, graphite neutrals), the agents section of E, the phone section of D, the ledger of A. Radius 6px for controls (the v2 look was too round). | the line under this table, 3.3 |
 | 2026-10-19 | Option C (paper invoice, seal and routing slip) dropped. Per element from one page: the hero of E (headline centered on top, the live org chart at full width under it), the how-it-works pipeline of E (four stages of equal height, each with a small piece of the app), the module grid of E (each module with its people and agents). | 6.1 |
 | 2026-10-19 | Light is the default theme everywhere; the app lets each user pick light, dark or system. | 3.1 |
 | 2026-10-19 | Be Vietnam Pro for headings, body and UI; JetBrains Mono for amounts and codes. | 3.2 |
@@ -381,7 +381,7 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | 2026-10-30 | The landing page is served on ludy.vn (canonical) and ludy.so, the hosted app on app.ludy.vn (ADR-0027). | 1.1, 6 |
 | 2026-10-31 | One-person companies and SMEs first; enterprise models wait. | 1 |
 | 2026-11-01 | The logo is four keys that spell L, U, D and Y. Interim: the owner is still choosing among the round-2 options of the logo canvas. | 1.2 |
-| 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named. | 6.4 |
+| 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (Ludy CRM and Ludy Notes use the exact line of 6.4, Ludy Kế toán says the same in its own words). | 6.4 |
 | decision D5 | Social is paused, except the slice the owner reopened on 2026-11-01 (the Facebook Page and Zalo OA channels, [#236](https://github.com/DOS/Ludy/issues/236)). Screens of the paused part are the only exceptions to the rules below that say so (4.1). | 4.1 |
 
 The visual direction in one line: the brand violet is the single, restrained accent, and teal marks done and approved states (`ok` on the marketing site, `success` in `packages/ui`); controls use a 6px radius; the marketing site implements it in `apps/web` (tokens in `apps/web/src/app/globals.css`) and the web app's `packages/ui` tokens use the same values (3.1), with the `proposal` token for AI proposals nobody has approved yet.
@@ -394,11 +394,11 @@ Ludy is an open-source, AI-native Business OS for one-person companies, solo fou
 
 - **Ludy Kế toán** (accounting): the AI Inbox, TT133 books, VAT and the tax calendar, vouchers, fixed assets, bank statements, exports. The core app, and the one the product leads with.
 - **Ludy CRM**: contacts shared with Ludy Kế toán, deals on a board by stage, the public booking page and the calendar.
-- **Ludy Notes**: notes and personal to-dos, linked to the records they are about.
-- **Social**: posts and channels, paused under decision D5 except the Facebook Page and Zalo OA slice (see the decision records).
+- **Ludy Notes**: notes and personal to-dos, linked to the records they are about. A product of its own on ludy.vn; its screens sit in the app's Home.
+- **Social**: posts and channels, with an Ads group; paused under decision D5 except the Facebook Page and Zalo OA slice (see the decision records).
 - **Vy**, the AI assistant, works inside these apps: it reads, proposes, suggests and drafts, and a person approves.
 
-The shell also has Home (the AI Inbox, Tasks, Notes, "Việc của tôi" and notifications) and the organization's own screens (the org chart with its AI settings, and Settings), which belong to no app.
+The shell's apps are Home (the overview, the AI Inbox, Tasks, Notes, "Việc của tôi" and notifications), Ludy Kế toán, Ludy CRM and Social. The organization's own screens (the org chart with its AI settings, and Settings) belong to no app.
 
 The people using it:
 
@@ -480,11 +480,11 @@ Rules:
 - **Every font must ship the Vietnamese subset** and render stacked diacritics (`Ở`, `ữ`, `ặ`) cleanly at all weights. Test with "Hoá đơn giá trị gia tăng, Thuế GTGT được khấu trừ, Người mua hàng" before adopting a face.
 - At most two families: one for display and UI, an optional second for display or for numbers. Monospace only for amounts in dense tables, account numbers, codes (MST, mã CQT, invoice numbers) and keyboard keys, never for decorative labels.
 - Subset to latin, latin-ext and vietnamese, `font-display: swap`, self-hosted in production (no third-party font requests from the app). Use the variable font where the family has one (JetBrains Mono); Be Vietnam Pro has none, so the app ships the four static weights its UI uses, 400 to 700. The app's files and their OFL licenses live in `packages/ui/src/fonts/`; the marketing site loads the same faces through `next/font` (Be Vietnam Pro 400, 500 and 600; JetBrains Mono 400 and 500, `apps/web/src/app/fonts.ts`). The families, weights and CSS variables are in the token block.
-- Line height: body at least 1.55, headings at least 1.12. Letter spacing on headings no tighter than -0.025em, or diacritics collide. No all-caps on Vietnamese phrases longer than two words; uppercase labels get +0.04em tracking.
+- Line height: running text at least 1.55 (the marketing body is 1.6; the app's UI text takes Tailwind's own line heights, 1.43 at 0.875rem), headings at least 1.12. Letter spacing on headings no tighter than -0.025em, or diacritics collide. No all-caps on Vietnamese phrases longer than two words; uppercase labels get `tracking-wide` (+0.025em).
 - Line length 60 to 75 characters for running text.
 - Numbers: `font-variant-numeric: tabular-nums` wherever digits line up.
 
-Scale (rem at 16px root):
+Target scale (rem at 16px root). The owner's v3 table; the code has not caught up everywhere. Measured on 2026-11-02: the app's `PageHeader` h1 is 1.25 (most screen headings are 1.125), h2 is 1 or 0.875 and h3 is 0.875 at weight 500; the marketing hero h1 runs 2.375 to 3.75 (3.5 on app pages) with no `clamp`, section h2 runs 1.75 to 2.25, h3 1.125 to 1.5, body 1 to 1.125. New screens follow the target.
 
 | Role | Marketing | App |
 | :--- | :--- | :--- |
@@ -503,7 +503,7 @@ Feedback on v2 was that controls looked dated because they were too round. Measu
 
 | Element | Radius |
 | :--- | :--- |
-| Buttons, inputs, selects, segmented controls | 6px (`--radius: 0.375rem`; components use `rounded-lg`, which is `--radius`) |
+| Buttons, inputs, selects, segmented controls | 6px (`--radius: 0.375rem`; components use `rounded-lg`, which is `--radius`; the `sm`, `xs` and small icon buttons use `--radius-md`, 4.8px) |
 | Cards, panels, table containers | 8px (cards use `rounded-xl`, `--radius` times 1.4, about 8.4px) |
 | Dialogs, sheets, large marketing tiles | 12px maximum |
 | Chips, status badges, avatars, toggles | Full round allowed; these are small and not actions |
@@ -516,9 +516,9 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 - 4px base unit. Scale: 4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128.
 - Related items sit close; groups are separated by at least twice the inner spacing. Equal spacing everywhere flattens hierarchy.
 - Use `gap` in flex and grid, not per-element margins.
-- Marketing: max content width 1200px (the `.wrap` column adds a 1rem side gutter, 1.5rem from 640px, that also clears a phone's side system bar), 12-column grid, left-aligned text by default. Section padding 96 to 128px desktop, 64px phone.
-- App: a sidebar (collapsible) with an app switcher and a short menu for the app in use, plus content; on a phone the menu is a drawer. List and detail as a split view on wide screens, stacked on phones.
-- Breakpoints tested: 360, 768, 1280, 1920px. No horizontal page scroll at 360px; wide tables scroll inside their own container.
+- Marketing: max content width 1200px (the `.wrap` column adds a 1rem side gutter, 1.5rem from 640px, that also clears a phone's side system bar), left-aligned text by default. Section padding 96px desktop, 64px phone.
+- App: a sidebar with an app switcher and a short menu for the app in use, plus content; on a phone the menu is a drawer. List and detail side by side on wide screens (the AI Inbox, from 84rem), stacked below.
+- Check every screen at 360, 768, 1280, 1920px; CI automates 360 and 1280. No horizontal page scroll at 360px; wide tables scroll inside their own container.
 - Separate sections with space and typography first, hairlines second, boxes last. Do not nest cards.
 
 ### 3.5 Elevation
@@ -528,11 +528,11 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 
 ### 3.6 Motion
 
-- Durations: 120ms (hover, press), 200ms (open, close, expand), 320ms (page-level transitions). Easing: `cubic-bezier(0.2, 0, 0, 1)` for entrances, `cubic-bezier(0.4, 0, 1, 1)` for exits. No bounce or elastic on routine UI.
+- Target durations: 120ms (hover, press), 200ms (open, close, expand), 320ms (page-level transitions). Easing: `cubic-bezier(0.2, 0, 0, 1)` for entrances, `cubic-bezier(0.4, 0, 1, 1)` for exits. They are not tokens yet: the components use Tailwind's defaults (150ms transitions, 100ms for the dialog). No bounce or elastic on routine UI.
 - Motion answers an action or shows what changed (a row moving to "Đã duyệt", a total reconciling). Status that is not changing does not pulse or blink.
 - Marketing pages get at most one orchestrated moment (for example the invoice becoming a balanced entry). Content is fully visible at rest; nothing waits at `opacity: 0` for a scroll observer.
 - The one ambient loop allowed is the hero chart's proposal path: a small dot travels slowly up the dashed line from an agent to its manager, the way a proposal goes up for approval. Scroll-linked motion may move decoration (the pipeline's check marks), never hide text.
-- Reduced motion (#1605): when the system asks for it, nothing slides, zooms, fades or pulses. In the app's base layer every animation and transition ends at once (a near-zero duration, so the `animationend` and `transitionend` events overlays wait for still fire); the spinner keeps turning, being the only sign that work is running (WCAG 2.3.3 counts that as essential), and scroll-linked fades follow the user's own scroll and keep working. On the marketing site the ambient loop is not drawn and the check marks do not animate. Any other non-essential motion sits inside `@media (prefers-reduced-motion: no-preference)`.
+- Reduced motion (#1605): when the system asks for it, nothing slides, zooms, fades or pulses. In the app's base layer every animation and transition ends at once (a near-zero duration, so the `animationend` and `transitionend` events overlays wait for still fire); the standalone `<Spinner>` (`data-slot="spinner"`) keeps turning, being the only sign that work is running (WCAG 2.3.3 counts that as essential); the spinner of a loading `Button` (`data-slot="button-spinner"`) is not in that exception and stands still, and scroll-linked fades follow the user's own scroll and keep working. On the marketing site the ambient loop is not drawn and the check marks do not animate. Any other non-essential motion sits inside `@media (prefers-reduced-motion: no-preference)`.
 - No marquees, no auto-advancing carousels, no hover zoom on images, no scale-on-hover buttons.
 
 ### 3.7 Icons
@@ -562,7 +562,7 @@ Components come from shadcn (base-nova style on Base UI) and are themed only thr
 
 ### 4.3 Tables
 
-- Row height 36px (compact) or 44px (comfortable, default on touch). Sticky header. Zebra striping off; hover row tint on.
+- Row height 36px, the only density built; 44px (comfortable, for touch) is the target for touch-first tables. Sticky header. Zebra striping off; hover row tint on.
 - Amounts right-aligned, tabular, same number of decimals in a column; codes and account numbers in the numeric face; text left-aligned.
 - Totals row visually separated by a stronger rule, never by color alone.
 - Empty, loading (skeleton rows of the right height) and error states are designed for every table.
@@ -592,8 +592,8 @@ Approve, edit and reject have equal visual access (reject is not hidden in a men
 
 ### 5.2 Keyboard
 
-- `⌘K` / `Ctrl K` opens the command palette everywhere in the app. It goes to screens and runs commands, and where the apps run it also searches the org's data without Vietnamese marks: parties by name or tax code, invoices by number or party, journal entries by description or amount (`finance.search`, #673), and notes (#1745).
-- Lists: `J` / `K` move, `Enter` opens, `A` approves, `E` edits, `R` rejects, `Esc` closes. Shortcuts are shown in menus and tooltips, and every one has a pointer equivalent.
+- `⌘K` / `Ctrl K` opens the command palette on every screen of an organization. It goes to screens and runs commands, and where the apps run it also searches the org's data without Vietnamese marks: parties by name or tax code, invoices by number or party, journal entries by description or amount (`finance.search`, #673), and notes (#1745).
+- In the AI Inbox and on Social posts: `J` or `N` and `K` or `P` move between items and `Enter` opens one; on a proposal's own screen `A` approves, `E` edits and `R` rejects; `Esc` closes. The keys are listed in a hint line on the screen, and every one has a pointer equivalent.
 - Drag interactions always have a non-drag alternative (WCAG 2.5.7): the deal board's stage select on each card is the example.
 
 ### 5.3 Empty, loading and error states
@@ -663,7 +663,7 @@ Each app that has users today has a page of its own on ludy.vn (the page of one 
 
 **The template.** `AppPage` (`apps/web/src/components/apps/app-page.tsx`) renders, in order: a breadcrumb; the hero (the promise in one sentence, a lead, two actions, the note line and the app's product visual); the numbered steps of the job, each with the outcome it leaves behind as a chip; the feature groups (text and bullets on one side, a fragment of the real product on the other, alternating); "coming soon" when there is something to say; what Vy does here and does not do; who it is for; the FAQ; the call to action. It is server-rendered with no client JavaScript of its own. An app supplies its copy as `AppPageCopy` (`apps/web/src/content/app-page.ts`: `<app>-vi.ts`, with `<app>-en.ts` typed from it so a missing English string fails typecheck), its hero and one visual per feature group (`components/apps/<app>-visuals.tsx`) and `<app>-page.tsx`.
 
-**The call to action.** The two actions are "self-host" (the `#tu-host` anchor of the home page) and "sign in". The line under the hero names what is true about where the app runs: an app that is not on Ludy Cloud yet says "Ludy CRM is in the self-hosted edition. On Ludy Cloud: coming soon." ("Ludy CRM có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt."). It names no plan, tier or price (owner decision, 2026-11-01), and the page names no feature that is not built: the FAQ does not answer for work that does not exist.
+**The call to action.** The two actions are "self-host" (the `#tu-host` anchor of the home page) and "sign in". The line under the hero names what is true about where the app runs: an app that is not on Ludy Cloud yet says "Ludy CRM is in the self-hosted edition. On Ludy Cloud: coming soon." ("Ludy CRM có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt."). Ludy CRM and Ludy Notes use this line; Ludy Kế toán says the same in its own words ("Runs on your own server with docker compose. Ludy Cloud is coming soon."). It names no plan, tier or price (Frontend PO ruling, 2026-11-01), and the page names no feature that is not built: the FAQ does not answer for work that does not exist.
 
 **The claim table.** Every claim on an app page is backed by a merged PR and a code path on `main`, and the PR that adds or changes the page carries a table of them (claim, PR numbers, code path), checked by a reviewer with fresh context against the code. What is not yet accepted is stated plainly on the page, not implied: an export the tax authority's or an accounting package's own software has not yet been seen to take, a table of due dates no accountant has confirmed, statements that are drafts. Planned work appears only under the "coming soon" strip, labelled as such. As everywhere (6.2): no price, customer, logo, statistic or testimonial, and example data is fictional and marked "Dữ liệu mẫu" once per fragment.
 
@@ -691,7 +691,7 @@ Each app that has users today has a page of its own on ludy.vn (the page of one 
 
 ## 9. App engineering notes
 
-- Routing: TanStack Router. Server state: TanStack Query through the oRPC client (`apps/app/src/lib/api.ts`); realtime invalidation comes from the SSE stream (`apps/app/src/lib/stream.ts`), not polling.
+- Routing: TanStack Router. Server state: TanStack Query through the oRPC client (`apps/app/src/lib/api.ts`); realtime invalidation comes from the SSE stream (`apps/app/src/lib/stream.ts`); the screens poll only while the stream is down.
 - Every write goes through a kernel command (`Runtime.execute()`); the UI updates optimistically only where the command is idempotent and the rollback is visible.
 - Modules contribute their own apps, menu groups, items and routes through their manifests (ADR-0031, `MODULE_SCREENS`); the shell keeps only how they look (`apps/app/src/lib/apps.ts`) and does not hardcode module navigation.
 
