@@ -70,7 +70,7 @@ footer{margin-top:48px;color:var(--muted);font-size:14px}
 <h2>3. Chín loại sự cố đã có hướng dẫn</h2>
 <div class="table-wrap"><table>
 <tr><th>Sự cố</th><th>Người dùng thấy gì</th><th>Cách xử lý chính</th><th>Mức</th></tr>
-<tr><td>Bộ xử lý nền bị treo (worker)</td><td>Tệp tải lên cứ "Đang đọc", email không vào Hộp thư</td><td>Khởi động lại; không mất việc nào vì việc nằm trong cơ sở dữ liệu</td><td><span class="tag sev1">SEV1</span></td></tr>
+<tr><td>Bộ xử lý nền bị treo (worker)</td><td>Tệp tải lên cứ "Đang đọc", email không vào Chứng từ chờ duyệt</td><td>Khởi động lại; không mất việc nào vì việc nằm trong cơ sở dữ liệu</td><td><span class="tag sev1">SEV1</span></td></tr>
 <tr><td>Hàng sự kiện bị chậm (outbox)</td><td>Màn hình không tự cập nhật, thông báo đến trễ</td><td>Thường do bộ xử lý nền; khởi động lại nó</td><td><span class="tag sev2">SEV2</span></td></tr>
 <tr><td>Việc nền lỗi hẳn (dead letter, tức là việc đã thử lại hết lần mà vẫn lỗi)</td><td>Thường không thấy gì</td><td>Đọc lỗi, sửa nguyên nhân, rồi chạy lại hoặc bỏ qua</td><td><span class="tag sev2">SEV2</span></td></tr>
 <tr><td>Dịch vụ đăng nhập hỏng (Supabase Auth)</td><td>Không ai đăng nhập được; người đang dùng bị đăng xuất sau tối đa 15 phút; không duyệt được</td><td>Khởi động lại dịch vụ đăng nhập, hoặc quay về bản trước</td><td><span class="tag sev1">SEV1</span></td></tr>

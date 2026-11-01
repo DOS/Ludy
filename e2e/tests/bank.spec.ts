@@ -76,7 +76,7 @@ test('import a bank statement, then an overlapping one, and find each line once'
 
   await test.step('the Inbox lists the lines still without a voucher and opens their account and month', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
-    await page.getByRole('navigation').getByRole('link', { name: 'Hộp thư' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Chứng từ chờ duyệt' }).click();
     await expect(page.getByText('Dòng sao kê ngân hàng chưa lập chứng từ')).toBeVisible();
     // FT002 waits for approval; the three others are open.
     await page.getByRole('link', { name: '1121: 3 dòng; cũ nhất ngày 01/09/2026' }).click();

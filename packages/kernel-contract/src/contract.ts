@@ -186,6 +186,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
+import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -457,6 +458,15 @@ export const contract = {
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
     contacts: {
       list: oc.input(zContactList).output(zContactPage),
+    },
+    // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
+    // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every
+    // role may read a preview.
+    contactImport: {
+      stage: oc.input(zImportStage).output(zImportPreview),
+      preview: oc.input(zImportPreviewQuery).output(zImportPreview),
+      commit: oc.input(zImportCommit).output(zImportCommitted),
+      cancel: oc.input(zImportRef).output(zImportBatch),
     },
     // The org's one pipeline and its deals (#2225, docs/plan/crm.md): everyone reads; owners, admins and members write.
     pipeline: {

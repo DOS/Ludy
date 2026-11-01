@@ -215,14 +215,14 @@ export function belowOneDongBooked(payload: Pick<PurchaseProposal, 'invoice' | '
   return amounts.find((a) => !money(a).isInteger()) ?? null;
 }
 
-// The refusal of an invoice with an amount below one dong (#1282). Nothing is rounded: where the difference goes is the
-// accountant's decision (#1308).
+// The refusal of an invoice with an amount below one dong (#1282). Extraction rounds one it can (#2235), so this holds an
+// invoice that cannot be rounded to the dong and a proposal stored before the rounding; nothing is rounded here.
 export function amountBelowDongError(amount: string | null): DomainError {
   const shown = amount === null ? '' : ` (${amount})`;
   return new DomainError(
     'AMOUNT_BELOW_DONG',
     422,
-    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Kế toán cần quyết định cách làm tròn; trong lúc chờ, có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
+    `Hóa đơn có số tiền lẻ dưới một đồng${shown}, mà sổ VND không ghi số lẻ, nên chưa ghi sổ được. Hệ thống không tự làm tròn về đồng được; có thể từ chối đề xuất và xin người bán hóa đơn điều chỉnh.`,
     amount === null ? undefined : { amount },
   );
 }
@@ -416,9 +416,9 @@ export const recordPurchase = defineCommand({
       throw new DomainError('FOREIGN_MISMATCH', 422, 'Hóa đơn VND không có tỷ giá quy đổi');
     }
     const failed = payload.checks.filter((c) => c.status === 'fail');
-    // An amount below one dong (#1282): the VND ledger refuses it rather than round it, and how to round is the
-    // accountant's decision (#1308). Read from the amounts being booked, so a proposal stored before the amount_scale
-    // check is held here too, before anything is written, and never only at the posting definer.
+    // An amount below one dong (#1282): the VND ledger refuses it rather than round it. Extraction rounds what it can
+    // (#2235), so what is left here was not rounded. Read from the amounts being booked, so a proposal stored before the
+    // amount_scale check is held here too, before anything is written, and never only at the posting definer.
     const fraction = belowOneDongBooked(payload);
     if (fraction !== null || failed.some((c) => c.id === 'amount_scale')) {
       throw amountBelowDongError(fraction);

@@ -27,7 +27,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await expect(page).toHaveURL(/\/login$/);
     await signUp(page, email);
     await createOrg(page, 'Công ty Duyệt hàng loạt');
-    await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await page.locator('input[type=file]').setInputFiles(NUMBERS.map(invoice));
     // The worker reads each XML and raises its proposal; the Inbox polls every few seconds.
     await expect(page.getByRole('link', { name: SELLER })).toHaveCount(NUMBERS.length, { timeout: 90_000 });
@@ -78,7 +78,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('j');
     await expect(page.getByRole('combobox', { name: 'Tài khoản nợ cho dòng 1' })).toBeFocused();
     expect(page.url()).toBe(second);
-    await page.getByRole('link', { name: '← Hộp thư chứng từ' }).click();
+    await page.getByRole('link', { name: '← Chứng từ chờ duyệt' }).click();
   });
 
   await test.step('the command palette opens with Ctrl K and goes where the user types (#439)', async () => {
@@ -90,7 +90,7 @@ test('review shortcuts, then approve several proposals under one step-up', async
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/ledger$`));
     await page.keyboard.press('Control+k');
-    await palette.fill('hop thu');
+    await palette.fill('chung tu cho');
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/o/${slug}/inbox$`));
   });

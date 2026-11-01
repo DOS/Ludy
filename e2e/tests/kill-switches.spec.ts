@@ -127,7 +127,7 @@ test('the org switch on the Agents page and the deployment ai switch refuse agen
 
     await test.step('a new PDF in the Inbox is left unread: "AI đang tạm dừng"', async () => {
       await page.goto(`/o/${slug}/inbox`);
-      await expect(page.getByRole('heading', { name: 'Hộp thư chứng từ' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
       await page.locator('input[type=file]').setInputFiles({ name: 'hoa-don-dien-tap.pdf', mimeType: 'application/pdf', buffer: PDF });
       await expect(page.getByText(/^AI đang tạm dừng trong tổ chức nên chưa đọc tệp này/)).toBeVisible({ timeout: 60_000 });
       const [file] = sql<{ status: string; error: string | null }>(

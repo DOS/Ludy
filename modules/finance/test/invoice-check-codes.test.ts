@@ -36,9 +36,18 @@ const VARIANTS: ParsedInvoice[] = [
     i.taxAuthorityCode = null;
     i.hasSignature = false;
   }),
-  // A VND invoice with an amount below one dong (#1282).
+  // A VND invoice with an amount below one dong (#1282) that cannot be rounded: its total is not its rounded subtotal plus VAT.
   invoice((i) => {
     i.total = `${i.total}.5`;
+  }),
+  // And ones that are rounded (#2235): with the rounded lines adding up already, and with a difference on the largest line.
+  invoice((i) => {
+    i.lines[0]!.amount = '1000000.4';
+  }),
+  invoice((i) => {
+    i.lines[0]!.amount = '1000000.4';
+    i.subtotal = '1800001';
+    i.total = '1980001';
   }),
   invoice((i) => {
     i.seller.taxCode = 'not a code';
@@ -107,14 +116,16 @@ describe('invoice check codes', () => {
     expect(byCode.get('seller_tax_code.ok')?.params).toEqual({ taxCode: VALID_CODE });
     expect(byCode.get('issue_date.ok')?.params).toEqual({ date: parsed.issueDate });
     expect(byCode.get('amount_scale.fraction')?.params).toEqual({ amount: '1980000.5' });
+    expect(byCode.get('amount_scale.rounded')?.params).toEqual({ amount: '1000000.4', difference: '1', line: '1' });
+    expect(byCode.get('amount_scale.rounded_even')?.params).toEqual({ amount: '1000000.4' });
   });
 
-  it('fails a VND invoice with an amount below one dong, and not a foreign one or a whole-dong one (#1282)', () => {
+  it('warns of a VND invoice rounded to the dong, fails one that cannot be, and says nothing of a foreign or a whole-dong one (#1282, #2235)', () => {
     const scale = (i: ParsedInvoice) => checkInvoice(i, '2026-10-13').filter((c) => c.id === 'amount_scale');
     expect(scale(invoice())).toEqual([]);
     expect(scale(invoice((i) => (i.lines[0]!.amount = `${i.lines[0]!.amount}.0000`)))).toEqual([]);
-    expect(scale(invoice((i) => (i.lines[0]!.amount = `${i.lines[0]!.amount}.25`)))).toMatchObject([{ status: 'fail', code: 'amount_scale.fraction' }]);
-    expect(scale(invoice((i) => (i.vatTotal = `${i.vatTotal}.5`)))).toMatchObject([{ status: 'fail' }]);
+    expect(scale(invoice((i) => (i.lines[0]!.amount = `${i.lines[0]!.amount}.25`)))).toMatchObject([{ status: 'warn', code: 'amount_scale.rounded_even' }]);
+    expect(scale(invoice((i) => (i.vatTotal = `${i.vatTotal}.5`)))).toMatchObject([{ status: 'fail', code: 'amount_scale.fraction' }]);
     expect(
       scale(
         invoice((i) => {
