@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // The ads module (issue #2217, plan docs/plan/ads.md, ADR-0040): the ad accounts an org connected and the daily spend and
 // results their platforms report, read only. The inputs its commands and queries take and the views they return; the app
 // reads the same types. Money is a decimal string, never a number (AGENTS.md); counts are whole numbers.
