@@ -1,4 +1,4 @@
-import { approxEqual, money, sum, toMoney, type Money } from './money.ts';
+import { Decimal, approxEqual, money, sum, toMoney, type Money } from './money.ts';
 import { parseTaxCode } from './tax-code.ts';
 
 // Normalized purchase invoice, produced by the e-invoice XML parser or by AI extraction.
@@ -211,6 +211,72 @@ export function belowOneDong(invoice: Pick<ParsedInvoice, 'lines' | 'taxBreakdow
   return amounts.find((a) => !money(a).isInteger()) ?? null;
 }
 
+function wholeDong(amount: Money): Money {
+  const rounded = money(amount).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  // decimal.js keeps the sign of a negative amount rounded to zero ("-0").
+  return rounded.isZero() ? '0' : rounded.toFixed();
+}
+
+export type DongRoundable = Pick<ParsedInvoice, 'currency' | 'lines' | 'taxBreakdown' | 'subtotal' | 'vatTotal' | 'total'>;
+
+// What rounding a VND invoice to whole dong did (#1308, option 2; ADR-0021 decision 1: round once, at the line).
+//   applied   set when the invoice had an amount below one dong and was rounded: firstFraction is the first such amount,
+//             difference the dong (signed) put on the line lineNo (null when the rounded lines already add up)
+//   refused   set when it had one and could not be rounded: the first amount below one dong, which keeps the blocking check
+// `invoice` is the rounded invoice when applied, else the one given.
+export interface DongRounding<T extends DongRoundable> {
+  invoice: T;
+  applied: { firstFraction: Money; difference: Money; lineNo: number | null } | null;
+  refused: Money | null;
+}
+
+// Rounds every amount of a VND invoice half up to the dong, then puts the difference between the rounded lines and the
+// invoice's own subtotal on its largest goods or service line (the first on a tie), so the lines add up to the subtotal
+// exactly. VAT is never adjusted: an invoice whose VAT has a fraction of a dong is refused, as is one whose rounded total
+// is not its rounded subtotal plus its VAT, one with a difference above 1 dong per goods or discount line (it is probably
+// wrong), and one with no goods line to carry the difference or whose largest line the difference would turn over.
+export function roundInvoiceToDong<T extends DongRoundable>(invoice: T): DongRounding<T> {
+  if (invoice.currency.trim().toUpperCase() !== 'VND') return { invoice, applied: null, refused: null };
+  const firstFraction = belowOneDong(invoice);
+  if (firstFraction === null) return { invoice, applied: null, refused: null };
+  const refused: DongRounding<T> = { invoice, applied: null, refused: firstFraction };
+  if (!money(invoice.vatTotal).isInteger() || invoice.taxBreakdown.some((t) => !money(t.vatAmount).isInteger())) return refused;
+
+  const subtotal = wholeDong(invoice.subtotal);
+  const total = money(subtotal).plus(money(invoice.vatTotal));
+  if (!total.equals(money(wholeDong(invoice.total)))) return refused;
+
+  const lines = invoice.lines.map((l) => ({ ...l, amount: wholeDong(l.amount) }));
+  const difference = money(subtotal).minus(sum(lines.map(lineContribution)));
+  // 1 dong per line that carries an amount: a note or a promotion line adds nothing to the subtotal, so it adds no allowance.
+  if (difference.abs().greaterThan(lines.filter((l) => l.nature === 'goods' || l.nature === 'discount').length)) return refused;
+  let lineNo: number | null = null;
+  if (!difference.isZero()) {
+    let largest = -1;
+    lines.forEach((l, i) => {
+      if (l.nature === 'goods' && (largest < 0 || money(l.amount).abs().greaterThan(money(lines[largest]!.amount).abs()))) largest = i;
+    });
+    if (largest < 0) return refused;
+    const before = money(lines[largest]!.amount);
+    const adjusted = before.plus(difference);
+    // The adjustment never turns a line over: a credit invoice's negative line stays negative, a positive one positive.
+    if (!adjusted.isZero() && adjusted.isNegative() !== before.isNegative()) return refused;
+    lines[largest] = { ...lines[largest]!, amount: adjusted.toFixed() };
+    lineNo = lines[largest]!.lineNo;
+  }
+  return {
+    invoice: {
+      ...invoice,
+      lines,
+      taxBreakdown: invoice.taxBreakdown.map((t) => ({ ...t, taxableAmount: wholeDong(t.taxableAmount) })),
+      subtotal,
+      total: total.toFixed(),
+    },
+    applied: { firstFraction, difference: difference.toFixed(), lineNo },
+    refused: null,
+  };
+}
+
 // Deterministic checks. Confidence comes from these, never from a model's self-assessment.
 export function checkInvoice(
   invoice: ParsedInvoice,
@@ -230,41 +296,62 @@ export function checkInvoice(
       checks.push({ id: 'currency', status: 'fail', code: 'currency.unsupported', params: { currency }, message: `Hóa đơn bằng ${currency}, chưa có tỷ giá để ghi sổ; nhập tỷ giá khi sửa đề xuất` });
     }
   }
-  const linesTotal = sum(invoice.lines.map(lineContribution));
+  // A VND invoice with amounts below one dong is read as rounded to the dong (#2235): the lines, the subtotal and the
+  // total below are the rounded ones, and the amount_scale warning says what was moved.
+  const rounding = roundInvoiceToDong(invoice);
+  const view = rounding.invoice;
+  const linesTotal = sum(view.lines.map(lineContribution));
 
   checks.push(
-    approxEqual(linesTotal, invoice.subtotal, '0')
+    approxEqual(linesTotal, view.subtotal, '0')
       ? { id: 'lines_sum', status: 'pass', code: 'lines_sum.ok', message: 'Tổng các dòng khớp tiền trước thuế' }
       : {
           id: 'lines_sum',
           status: 'fail',
           code: 'lines_sum.mismatch',
-          params: { lines: toMoney(linesTotal), subtotal: invoice.subtotal },
-          message: `Tổng các dòng (${toMoney(linesTotal)}) lệch tiền trước thuế (${invoice.subtotal})`,
+          params: { lines: toMoney(linesTotal), subtotal: view.subtotal },
+          message: `Tổng các dòng (${toMoney(linesTotal)}) lệch tiền trước thuế (${view.subtotal})`,
         },
   );
 
   checks.push(
-    approxEqual(money(invoice.subtotal).plus(money(invoice.vatTotal)), invoice.total, '0')
+    approxEqual(money(view.subtotal).plus(money(view.vatTotal)), view.total, '0')
       ? { id: 'total', status: 'pass', code: 'total.ok', message: 'Tiền trước thuế + VAT khớp tổng thanh toán' }
       : { id: 'total', status: 'fail', code: 'total.mismatch', message: 'Tiền trước thuế + VAT lệch tổng thanh toán' },
   );
 
-  // VND has no minor units (ADR-0021, #1282): the ledger refuses an amount below one dong instead of rounding it, so an
-  // invoice in VND with one cannot be posted as it is. Where a rounding difference would be booked is the accountant's
-  // decision (#1308); until it is made, the invoice is held here, visibly, rather than at posting. A foreign-currency
-  // invoice is booked in VND after conversion, which rounds to the dong.
-  if (invoice.currency.trim().toUpperCase() === 'VND') {
-    const fraction = belowOneDong(invoice);
-    if (fraction !== null) {
-      checks.push({
-        id: 'amount_scale',
-        status: 'fail',
-        code: 'amount_scale.fraction',
-        params: { amount: fraction },
-        message: `Hóa đơn có số tiền lẻ dưới một đồng (${fraction}); kế toán cần quyết định cách làm tròn trước khi ghi sổ`,
-      });
-    }
+  // VND has no minor units (ADR-0021, #1282): the ledger refuses an amount below one dong instead of rounding it. The
+  // owner's rule (#1308, option 2): each line is rounded half up to the dong and the difference goes to the largest line,
+  // VAT untouched; the approver sees a warning naming it. What cannot be rounded that way (a fraction in the VAT, a
+  // difference above 1 dong per line, no goods line) stays a blocking check, so the invoice waits in the Inbox. A
+  // foreign-currency invoice is booked in VND after conversion, which rounds to the dong.
+  if (rounding.applied) {
+    const { firstFraction, difference, lineNo } = rounding.applied;
+    checks.push(
+      lineNo === null
+        ? {
+            id: 'amount_scale',
+            status: 'warn',
+            code: 'amount_scale.rounded_even',
+            params: { amount: firstFraction },
+            message: `Hóa đơn có số tiền lẻ dưới một đồng (${firstFraction}); đã làm tròn từng dòng về đồng, tổng các dòng vẫn khớp tiền trước thuế`,
+          }
+        : {
+            id: 'amount_scale',
+            status: 'warn',
+            code: 'amount_scale.rounded',
+            params: { amount: firstFraction, difference, line: String(lineNo) },
+            message: `Hóa đơn có số tiền lẻ dưới một đồng (${firstFraction}); đã làm tròn từng dòng về đồng, dòng ${lineNo} được điều chỉnh ${difference} đồng để khớp tiền trước thuế`,
+          },
+    );
+  } else if (rounding.refused !== null) {
+    checks.push({
+      id: 'amount_scale',
+      status: 'fail',
+      code: 'amount_scale.fraction',
+      params: { amount: rounding.refused },
+      message: `Hóa đơn có số tiền lẻ dưới một đồng (${rounding.refused}) mà không tự làm tròn về đồng được; hãy xin người bán điều chỉnh hóa đơn`,
+    });
   }
 
   if (invoice.taxBreakdown.length > 0) {

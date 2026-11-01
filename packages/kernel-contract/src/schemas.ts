@@ -24,7 +24,7 @@ export function isCalendarDate(value: string): boolean {
 // Same rule as isCalendarDate in @crove/l10n-vn, which does not depend on this package.
 export const zLocalDate = z.string().refine(isCalendarDate, 'YYYY-MM-DD calendar date');
 // Failed checks that make an invoice impossible to post as-is; confirming them does not help.
-// amount_scale: a VND invoice with an amount below one dong (#1282, rounding policy #1308).
+// amount_scale: a VND invoice with an amount below one dong that cannot be rounded (#1282, rounding rule #1308, #2235).
 export const BLOCKING_CHECK_IDS: readonly string[] = ['currency', 'lines_sum', 'total', 'amount_scale'];
 // A TT133 account code or one of the org's sub-accounts (11211, 1121.VCB; see accounts.ts).
 export const zAccountCode = z.string().regex(ACCOUNT_CODE_PATTERN);
@@ -43,9 +43,12 @@ export const INVOICE_CHECK_CODES = [
   'lines_sum.mismatch',
   'total.ok',
   'total.mismatch',
-  // A VND invoice with an amount below one dong, which the ledger refuses (#1282); how to round it is the accountant's
-  // decision, #1308.
+  // A VND invoice with an amount below one dong, which the ledger refuses (#1282): fraction when it cannot be rounded
+  // (blocking); rounded and rounded_even, warnings, when it was rounded to the dong with the difference on its largest
+  // line (#1308, #2235), rounded_even when the rounded lines already add up.
   'amount_scale.fraction',
+  'amount_scale.rounded',
+  'amount_scale.rounded_even',
   'vat_breakdown.ok',
   'vat_breakdown.mismatch',
   'seller_tax_code.unreadable',

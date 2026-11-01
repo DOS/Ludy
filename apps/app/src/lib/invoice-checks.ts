@@ -27,6 +27,12 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
       return has('lines', 'subtotal') ? t('invoiceChecks.lines_sum.mismatch', { lines: money(p.lines ?? ''), subtotal: money(p.subtotal ?? '') }) : check.message;
     case 'amount_scale.fraction':
       return has('amount') ? t('invoiceChecks.amount_scale.fraction', { amount: p.amount ?? '' }) : check.message;
+    case 'amount_scale.rounded':
+      return has('amount', 'difference', 'line')
+        ? t('invoiceChecks.amount_scale.rounded', { amount: p.amount ?? '', difference: p.difference ?? '', line: p.line ?? '' })
+        : check.message;
+    case 'amount_scale.rounded_even':
+      return has('amount') ? t('invoiceChecks.amount_scale.rounded_even', { amount: p.amount ?? '' }) : check.message;
     case 'seller_tax_code.checksum':
       return has('taxCode') ? t('invoiceChecks.seller_tax_code.checksum', { taxCode: p.taxCode ?? '' }) : check.message;
     case 'seller_tax_code.ok':
