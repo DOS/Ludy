@@ -109,12 +109,15 @@ export type AdsSyncFailure = z.infer<typeof zAdsSyncFailure>;
 export const ADS_CAP_SCOPES = ['org', 'account'] as const;
 export const ADS_CAP_PERIODS = ['daily', 'monthly'] as const;
 const zCapAmount = z.string().regex(/^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/, 'a decimal above zero');
+// A currency code of ISO 4217, from the platform's own list (a typo such as VDN is refused before it is a cap).
+const ISO_CURRENCIES: ReadonlySet<string> = new Set(Intl.supportedValuesOf('currency'));
+const zCapCurrency = zCurrency.refine((code) => ISO_CURRENCIES.has(code), 'an ISO 4217 currency code');
 const capShape = {
   scope: z.enum(ADS_CAP_SCOPES),
   adAccountId: zId.optional(),
   period: z.enum(ADS_CAP_PERIODS),
   amount: zCapAmount,
-  currency: zCurrency,
+  currency: zCapCurrency,
 };
 // An org cap names no account, an account cap names one.
 const capNamesAccount = (c: { scope: 'org' | 'account'; adAccountId?: string | undefined }) => (c.scope === 'org') === (c.adAccountId === undefined);

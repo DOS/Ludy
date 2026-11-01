@@ -753,7 +753,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: false });
     });
 
-    it('sets a cap only in the account’s own currency, one currency for the org’s, as a new row each time, and shows the latest', async () => {
+    it('sets a cap only in the account’s own currency, any ISO currency for the org’s, as a new row each time, and shows the latest', async () => {
       const { connectionId, adAccountId } = await connect('Có hạn mức');
       const cap = (input: Record<string, unknown>, mfa = true) => callAs(owner, 'ads/setCap', { idempotencyKey: key(), ...input }, mfa);
       const orgCap = { scope: 'org', period: 'daily', amount: '5000000', currency: 'VND' };
@@ -765,8 +765,11 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(await cap({ ...orgCap, amount: '8000000.50' })).toMatchObject({ status: 200, body: { previous: '5000000' } });
       expect(await row(`SELECT 1 FROM crove_ads.ad_spend_cap WHERE org_id = $1 AND scope = 'org' AND period = 'daily'`, [orgId])).toHaveLength(2);
       expect(await cap({ scope: 'org', period: 'monthly', amount: '100000000', currency: 'VND' })).toMatchObject({ status: 200 });
-      // One currency for the org's caps.
-      expect(await cap({ scope: 'org', period: 'monthly', amount: '1000', currency: 'USD' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_CURRENCY' } });
+      // Each cap has its own currency, so the org's currency can be changed by setting the cap again (a launch on an account in
+      // another currency is refused, W2); a code that is not an ISO currency, such as a typo, is not a cap.
+      expect((await cap({ scope: 'org', period: 'monthly', amount: '1000', currency: 'VDN' })).status).toBe(400);
+      expect(await cap({ scope: 'org', period: 'monthly', amount: '1000', currency: 'USD' })).toMatchObject({ status: 200, body: { previous: '100000000' } });
+      expect(await cap({ scope: 'org', period: 'monthly', amount: '100000000', currency: 'VND' })).toMatchObject({ status: 200, body: { previous: '1000' } });
       // An account's cap waits for its first update (its currency is the platform's), then must be in it.
       await row(`UPDATE crove_ads.ad_account SET currency = NULL WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
       const accountCap = { scope: 'account', adAccountId, period: 'daily', amount: '1000000', currency: 'VND' };

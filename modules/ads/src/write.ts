@@ -124,7 +124,7 @@ export const adsAccountDisableWrite = defineCommand({
   },
 });
 
-const capCurrency = () => new DomainError('ADS_CAP_CURRENCY', 422, 'Hạn mức phải tính bằng tiền của tài khoản quảng cáo, và hạn mức của tổ chức bằng một loại tiền duy nhất');
+const capCurrency = () => new DomainError('ADS_CAP_CURRENCY', 422, 'Hạn mức của một tài khoản phải tính bằng tiền của tài khoản quảng cáo đó');
 
 export const adsCapSet = defineCommand({
   name: 'ads.cap.set',
@@ -144,10 +144,9 @@ export const adsCapSet = defineCommand({
       accountCurrency = account.currency;
       if (input.currency !== accountCurrency) throw capCurrency();
     } else {
-      // One currency for the org's caps: another one beside it would add up to nothing a launch can check.
+      // The org's caps are taken one at a time under the org's lock, so "the latest" below is the order they were committed in.
+      // Each carries its own currency; a launch on an account in another currency is refused (ADS_CAP_CURRENCY, W2).
       await lockedSetting(ctx);
-      const other = await ctx.trx.selectFrom('crove_ads.ad_spend_cap').select('currency').where('org_id', '=', ctx.orgId).where('scope', '=', 'org').where('currency', '<>', input.currency).limit(1).executeTakeFirst();
-      if (other) throw capCurrency();
     }
     const latest = await ctx.trx
       .selectFrom('crove_ads.ad_spend_cap')
@@ -156,7 +155,8 @@ export const adsCapSet = defineCommand({
       .where('scope', '=', input.scope)
       .where('period', '=', input.period)
       .where((eb) => (input.adAccountId ? eb('ad_account_id', '=', input.adAccountId) : eb('ad_account_id', 'is', null)))
-      .orderBy('set_at', 'desc')
+      // The latest is the newest id: a uuid v7 is made when the row is inserted, under the lock above, so it follows the order of
+      // commit, which the transaction's start time (set_at) does not (a second factor check can hold a command up first).
       .orderBy('id', 'desc')
       .limit(1)
       .executeTakeFirst();
@@ -218,7 +218,7 @@ export const adsWriteState = defineQuery({
       FROM crove_ads.ad_spend_cap c
       LEFT JOIN crove_ads.ad_account a ON a.org_id = c.org_id AND a.id = c.ad_account_id
       WHERE c.org_id = ${ctx.orgId} AND (c.scope = 'org' OR a.id IS NOT NULL)
-      ORDER BY c.scope, c.ad_account_id, c.period, c.set_at DESC, c.id DESC`.execute(ctx.trx);
+      ORDER BY c.scope, c.ad_account_id, c.period, c.id DESC`.execute(ctx.trx);
     const caps: AdsCapView[] = rows.map((r) => ({ scope: r.scope, adAccountId: r.ad_account_id, period: r.period, amount: r.amount, currency: r.currency, setBy: r.set_by, setAt: new Date(r.set_at).toISOString() }));
     return {
       writeEnabled: setting?.write_enabled ?? false,
