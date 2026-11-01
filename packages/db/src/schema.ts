@@ -702,6 +702,11 @@ export type CrmEventTypeTable = Refine<
   G.CrmEventTypeTable,
   { location_kind: Generated<(typeof EVENT_TYPE_LOCATION_KINDS)[number]>; assignment: Generated<(typeof EVENT_TYPE_ASSIGNMENTS)[number]> }
 >;
+// The CRM pipeline (#2225): a stage is open, or closes its deals as won or lost; a deal's amount is in VND for now.
+export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
+export const DEAL_CURRENCIES = ['VND'] as const;
+export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
+export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
 // Bookings of the public booking page (#1318): requested, then confirmed or refused by the worker.
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
 export const BOOKING_REFUSALS = ['taken', 'unavailable'] as const;
@@ -731,7 +736,9 @@ export type NotesTodoTable = Refine<G.NotesTodoTable, { status: Generated<TodoSt
 
 type Refined = Tables<{
   'crove_crm.booking': CrmBookingTable;
+  'crove_crm.deal': CrmDealTable;
   'crove_crm.event_type': CrmEventTypeTable;
+  'crove_crm.pipeline_stage': CrmPipelineStageTable;
   'crove_notes.link': NotesLinkTable;
   'crove_notes.note': NotesNoteTable;
   'crove_notes.todo': NotesTodoTable;
