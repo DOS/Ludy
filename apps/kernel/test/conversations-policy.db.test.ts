@@ -273,7 +273,7 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     // A database migrated only up to the version before the move.
     const dir = mkdtempSync(join(tmpdir(), 'crove-migrations-'));
     mkdirSync(dir, { recursive: true });
-    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f < '20261117130000')) copyFileSync(join(MIGRATIONS, file), join(dir, file));
+    for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql') && f < '20261118110000')) copyFileSync(join(MIGRATIONS, file), join(dir, file));
     const moveDb = `${dbName}_move`;
     await withClient(ADMIN as string, async (c) => void (await c.query(`CREATE DATABASE ${moveDb}`)));
     const base = new URL(ADMIN as string);
@@ -302,6 +302,22 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     // A second run changes nothing.
     await migrate({ adminUrl: url, dir: MIGRATIONS });
     expect((await withClient(url, (c) => c.query('SELECT count(*)::int AS n FROM crove_kernel.channel_access WHERE org_id = $1', [orgId]))).rows[0].n).toBe(1);
+  });
+
+  it('keeps the expired and the live notices of one claim within its limit, the oldest first', async () => {
+    const enqueue = (body: string) => withClient(appUrl, async (c) => (await c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from(body)])).rows[0].seq as string);
+    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+    const stale: string[] = [];
+    for (let i = 0; i < 6; i++) stale.push(await enqueue(`{"v":1,"old":${i}}`));
+    await rows("UPDATE crove_kernel.conversation_inbound_pending SET received_at = now() - interval '8 days'");
+    for (let i = 0; i < 6; i++) await enqueue(`{"v":1,"live":${i}}`);
+    const first = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, dropped, reason FROM crove_kernel.conversation_inbound_claim(4, 60)')).rows);
+    expect(first).toHaveLength(4);
+    expect(first.every((r: { dropped: boolean; reason: string }) => r.dropped && r.reason === 'expired')).toBe(true);
+    const second = await withClient(workerUrl, async (c) => (await c.query('SELECT seq, dropped, reason FROM crove_kernel.conversation_inbound_claim(4, 60)')).rows);
+    expect(second).toHaveLength(4);
+    expect(second.filter((r: { dropped: boolean }) => r.dropped)).toHaveLength(2);
+    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
   });
 
   it('drops a waiting notice older than seven days with its body, returned by id, and keeps a fresh one', async () => {

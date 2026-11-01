@@ -1157,6 +1157,8 @@ export interface KernelExtractionTable {
   completed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   entry_count: ColumnType<number | null, number | null, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  original_of_proposal_id: ColumnType<string | null, string | null, NotGranted>;
+  original_differs: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
 /** crove_kernel.file */

@@ -174,7 +174,7 @@ export type ConversationCounted = z.infer<typeof zConversationCounted>;
 export const zConversationGet = z.strictObject({ conversationId: zId });
 export const zConversationReply = z.strictObject({
   conversationId: zId,
-  body: z.string().trim().min(1).max(CONVERSATION_REPLY_MAX),
+  body: z.string().trim().min(1).max(CONVERSATION_REPLY_MAX).refine(noNul, 'NUL character'),
   // The last message the sender saw: a newer one refuses the reply (CONVERSATION_MOVED).
   lastSeenSeq: z.number().int().min(0),
 });
@@ -183,7 +183,7 @@ export const zConversationSettle = z.strictObject({ messageId: zId, action: z.en
 export const zConversationHide = z.strictObject({ messageId: zId, hidden: z.boolean() });
 export const zConversationAssign = z.strictObject({ conversationId: zId, assigneeUserId: zId.nullable() });
 export const zConversationId = z.strictObject({ conversationId: zId });
-export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX) });
+export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
 export const zConversationMarkRead = z.strictObject({ conversationId: zId, seq: z.number().int().min(0) });
 export const zConversationDone = z.strictObject({ conversationId: zId });

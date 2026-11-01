@@ -16,6 +16,7 @@
 // people from answering one customer. Hide and unhide are idempotent calls, so a job may repeat them.
 //
 // Nothing the customer wrote reaches an audit row, an event or a log: those carry ids, counts and lengths (ADR-0037).
+import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   CONVERSATION_CALL_STALE_MS,
@@ -91,10 +92,11 @@ interface ConversationRow {
   last_inbound_at: Date | null;
   last_message_at: Date | null;
   reply_window_until: Date | null;
+  resolved_at: Date | null;
 }
 const CONVERSATION_COLUMNS = [
   'id', 'channel_connection_id', 'kind', 'external_thread_id', 'external_post_id', 'identity_id', 'party_id', 'status',
-  'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until',
+  'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'resolved_at',
 ] as const;
 
 // The thread, locked. A thread the caller may not read is not found (row-level security hides it).
@@ -228,8 +230,72 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     }
     return 'duplicates';
   }
-  // A removal of a message never seen leaves nothing to blank.
-  if (event.removed) return 'ignored';
+  // A removal of a message never seen: a blank tombstone takes the message's id, so the add that arrives later (the platform does not
+  // order its notices) finds it and never stores the body.
+  if (event.removed) {
+    const findThread = async () =>
+      (await ctx.trx
+        .selectFrom('crove_kernel.conversation')
+        .select(CONVERSATION_COLUMNS)
+        .where('org_id', '=', ctx.orgId)
+        .where('channel_connection_id', '=', connectionId)
+        .where('kind', '=', event.kind)
+        .where('external_thread_id', '=', event.threadId)
+        .forUpdate()
+        .executeTakeFirst()) as ConversationRow | undefined;
+    let thread = await findThread();
+    if (!thread) {
+      // No thread yet: it is made, already resolved (a thread of one removed message needs no answer), so the add that arrives later
+      // finds the tombstone and the body is never stored. A later real message reopens it as usual.
+      const who = await ctx.trx
+        .insertInto('crove_kernel.conversation_identity')
+        .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
+        .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
+        .returning(['id'])
+        .executeTakeFirstOrThrow();
+      await ctx.trx
+        .insertInto('crove_kernel.conversation')
+        .values({
+          org_id: ctx.orgId,
+          channel_connection_id: connectionId,
+          kind: event.kind,
+          external_thread_id: event.threadId,
+          external_post_id: event.postId ?? null,
+          identity_id: who.id,
+          status: 'resolved',
+          resolved_at: ctx.now,
+          opened_at: ctx.now,
+          created_at: ctx.now,
+          updated_at: ctx.now,
+        })
+        .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind', 'external_thread_id']).doNothing())
+        .execute();
+      thread = await findThread();
+    }
+    if (!thread) return 'ignored';
+    const next = thread.last_seq + 1;
+    await ctx.trx
+      .insertInto('crove_kernel.conversation_message')
+      .values({
+        org_id: ctx.orgId,
+        conversation_id: thread.id,
+        channel_connection_id: connectionId,
+        kind: event.kind,
+        seq: next,
+        direction: event.direction,
+        external_message_id: event.messageId,
+        sent_at: new Date(event.at),
+        received_at: ctx.now,
+        author_kind: event.direction === 'in' ? 'contact' : 'system',
+        body: '',
+        send_state: event.direction === 'in' ? null : 'sent',
+        tainted: event.direction === 'in',
+        platform_removed_at: ctx.now,
+      })
+      .execute();
+    await ctx.trx.updateTable('crove_kernel.conversation').set({ last_seq: next, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', thread.id).execute();
+    return 'stored';
+  }
 
   const identity = await ctx.trx
     .insertInto('crove_kernel.conversation_identity')
@@ -298,13 +364,17 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   if (event.direction === 'out') {
     const ours = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
-      .select(['id'])
+      .select(['id', 'send_attempt'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', conversation.id)
       .where('direction', '=', 'out')
       .where('send_state', 'in', ['sending', 'unknown'])
       .where('body', '=', event.text)
       .where('external_message_id', 'is', null)
+      // An echo belongs to the reply it follows: not one stored after the platform dated the echo (clock skew aside), nor one
+      // queued more than a day before it.
+      .where('received_at', '<=', new Date(sentAt.getTime() + 5 * 60_000))
+      .where('received_at', '>=', new Date(sentAt.getTime() - 24 * HOUR_MS))
       .orderBy('seq')
       .limit(1)
       .executeTakeFirst();
@@ -314,6 +384,14 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .set({ external_message_id: event.messageId, send_state: 'sent', send_error_code: null, sent_at: sentAt })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', ours.id)
+        .execute();
+      // The platform has the message, so the call that may or may not have gone through did: nothing is left unfinished or ambiguous.
+      await ctx.trx
+        .updateTable('crove_kernel.external_call')
+        .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('key', '=', replyCallKey(ours.id, ours.send_attempt))
+        .where('state', 'in', ['started', 'ambiguous'])
         .execute();
       return 'stored';
     }
@@ -344,7 +422,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
   const lastInbound = inbound && (!conversation.last_inbound_at || conversation.last_inbound_at.getTime() < sentAt.getTime()) ? sentAt : conversation.last_inbound_at;
   // A customer's new message reopens the thread as new; the org's own message from the platform's inbox answers it.
-  const status = inbound ? 'new' : conversation.status === 'new' ? 'pending' : conversation.status;
+  // A customer message the platform dated before the thread was resolved does not reopen it.
+  const predatesResolution = inbound && conversation.status === 'resolved' && conversation.resolved_at !== null && sentAt.getTime() <= conversation.resolved_at.getTime();
+  const status = inbound ? (predatesResolution ? 'resolved' : 'new') : conversation.status === 'new' ? 'pending' : conversation.status;
   await ctx.trx
     .updateTable('crove_kernel.conversation')
     .set({
@@ -846,7 +926,10 @@ export const conversationReplySettle = defineCommand({
     }
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
-    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select('reply_window_until').where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
+    // The same rule as a new reply: a newer message means the customer's words changed what is worth saying, so an earlier reply is not
+    // sent after it; a person writes a new one.
+    if (thread && thread.last_seq > message.seq) throw new DomainError('CONVERSATION_MOVED', 409, 'Hội thoại vừa có tin mới nên chưa gửi lại. Hãy đọc tin mới rồi viết câu trả lời mới');
     if (thread?.reply_window_until && thread.reply_window_until.getTime() < ctx.now.getTime()) throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     await ctx.trx
       .updateTable('crove_kernel.conversation_message')
@@ -1186,7 +1269,8 @@ export const conversationSandboxComment = defineCommand({
       messageId,
       direction: 'in',
       // One demo customer per name, so a follow-up comes from the same person.
-      contact: { id: `sbx_user_${input.fromName.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}`, name: input.fromName },
+      // The id is a hash of the whole name, so two names never share one customer, whatever their script.
+      contact: { id: `sbx_user_${createHash('sha256').update(input.fromName.normalize('NFC').toLowerCase()).digest('hex').slice(0, 24)}`, name: input.fromName },
       text: input.text,
       at: ctx.now.toISOString(),
     };

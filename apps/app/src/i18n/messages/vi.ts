@@ -2794,6 +2794,17 @@ export const vi = {
       newTab: 'mở trong thẻ mới',
       dismiss: 'Bỏ qua',
     },
+    originals: {
+      title: 'Hóa đơn gốc (XML) đã nhận',
+      hint: 'Hóa đơn này đã ghi sổ từ bản PDF hoặc ảnh. Tệp XML của người bán đến sau được giữ lại làm chứng từ kèm theo; sổ không bị thay đổi.',
+      received: 'nhận ngày {date}',
+      download: 'Tải xuống',
+      signatureVerified: 'Chữ ký số hợp lệ.',
+      signatureUnverified: 'Chưa xác minh được chữ ký số của tệp này.',
+      signatureNone: 'Tệp này không có kết quả kiểm tra chữ ký số.',
+      matches: 'Số liệu trong XML khớp chứng từ đã ghi sổ.',
+      differs: 'Số liệu trong XML KHÁC chứng từ đã ghi sổ (tiền hàng, thuế GTGT hoặc tổng). Sổ không bị sửa; kế toán cần xem lại.',
+    },
     signatureUnverifiedTitle: 'Chưa xác minh được chữ ký số của hóa đơn này',
     signatureUnverifiedHint:
       'Hóa đơn có thể đã bị sửa sau khi ký, hoặc được ký bằng chứng thư số {brand} chưa tin cậy. Hãy tra cứu hóa đơn trên cổng của cơ quan thuế hoặc xin người bán bản gốc trước khi duyệt.',

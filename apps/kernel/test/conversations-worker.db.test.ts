@@ -14,7 +14,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { ConversationDetail, ConversationEvent } from '@crove/kernel-contract';
 import { CredentialVault, parseVaultKey, Runtime } from '@crove/kernel-runtime';
-import { runConversationIntake, runConversationJob, sweepStaleReplies } from '../src/conversations-worker.ts';
+import { failUnsendable, runConversationIntake, runConversationJob, sweepStaleReplies } from '../src/conversations-worker.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -133,6 +133,17 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     await root.connect();
     await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
     await root.end();
+  });
+
+  it('fails a queued reply visibly when this worker has no channel to send it through, so a person can send it again', async () => {
+    const o = await org();
+    const { id, messageId } = await queuedReply(o);
+    await failUnsendable(worker, { orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'reply' });
+    const [row] = await rows<{ send_state: string; send_error_code: string | null }>('SELECT send_state, send_error_code FROM crove_kernel.conversation_message WHERE org_id = $1 AND id = $2', [o.orgId, messageId]);
+    expect(row).toEqual({ send_state: 'failed', send_error_code: 'CHANNEL_NOT_CONFIGURED' });
+    // A person may send it again (a new attempt), which a message left queued could never be.
+    await expect(rt.execute('kernel.conversation.reply_settle', { messageId, action: 'retry' }, { actor: asUser(o.lan), orgId: o.orgId })).resolves.toMatchObject({ state: 'queued' });
+    expect((await detail(o, id)).conversation.id).toBe(id);
   });
 
   it('stores a parked notice under the org of its connection and deletes it at once', async () => {
@@ -275,6 +286,18 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     const broken = { ...jobDeps(new SandboxPublisher().conversations), broker: { open: () => { throw new Error('vault down'); } } as never };
     expect(await runConversationJob(broken, { orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'reply' })).toBe('credential_error');
     expect((await detail(o, id)).messages[1]).toMatchObject({ sendState: 'failed', sendErrorCode: 'CREDENTIAL_ERROR' });
+  });
+
+  it('fails the hide, not leaves it pending with no code, when the credential cannot be opened', async () => {
+    const o = await org();
+    await park(sandboxNoticeBody({ accountId: o.accountId, events: [event('c-1', 'Spam', { messageId: 'm-spam' })] }));
+    await intake();
+    const id = await threadOf(o, 'c-1');
+    const messageId = (await detail(o, id)).messages[0]?.id as string;
+    await rt.execute('kernel.conversation.hide', { messageId, hidden: true }, { actor: asUser(o.lan), orgId: o.orgId });
+    const broken = { ...jobDeps(new SandboxPublisher().conversations), broker: { open: () => { throw new Error('vault down'); } } as never };
+    expect(await runConversationJob(broken, { orgId: o.orgId, messageId, connectionId: o.connectionId, action: 'hide' })).toBe('credential_error');
+    expect((await detail(o, id)).messages[0]).toMatchObject({ hidden: false, hideRequest: null, hideErrorCode: 'CREDENTIAL_ERROR' });
   });
 
   it('hides a comment on the platform, and repeats an unclear hide', async () => {

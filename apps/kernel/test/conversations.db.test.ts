@@ -215,7 +215,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const id = await threadOf(o, ch, 'c-1');
     await exec(o, o.lan, 'kernel.conversation.resolve', { conversationId: id });
     expect((await detail(o, o.lan, id)).conversation.status).toBe('resolved');
-    await ingest(o, ch, [comment('c-1', 'Alo?', { messageId: 'm-again' })]);
+    await ingest(o, ch, [comment('c-1', 'Alo?', { messageId: 'm-again', at: new Date(Date.now() + 1000).toISOString() })]);
     expect((await detail(o, o.lan, id)).conversation.status).toBe('new');
     // The platform tells us the first one is gone: the body goes, the row stays.
     await ingest(o, ch, [{ ...first, removed: true }]);
@@ -296,6 +296,72 @@ suite('conversations on PostgreSQL (#2303)', () => {
     await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: call.callKey, result: { kind: 'accepted', externalId: 'platform-echo-1' } });
     const seen = await detail(o, o.owner, id);
     expect(seen.messages.map((m) => [m.direction, m.sendState])).toEqual([['in', null], ['out', 'sent']]);
+  });
+
+  it('keeps a resolved thread resolved for a customer message dated before the resolution, and never stores the body of a message removed before it arrived', async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await ingest(o, ch, [comment('r-1', 'Xin chào')]);
+    const id = await threadOf(o, ch, 'r-1');
+    await exec(o, o.lan, 'kernel.conversation.resolve', { conversationId: id });
+    // A late notice of an older message: the platform dated it before the thread was resolved.
+    await ingest(o, ch, [comment('r-1', 'Tin đến muộn', { messageId: 'm-late', at: new Date(Date.now() - 3_600_000).toISOString() })]);
+    const late = await detail(o, o.lan, id);
+    expect(late.conversation.status).toBe('resolved');
+    expect(late.messages.map((m) => m.body)).toEqual(['Xin chào', 'Tin đến muộn']);
+    // The removal of a comment reaches the worker before the comment itself: a blank tombstone takes its id, and the add that follows
+    // finds it, so the text the platform removed is never stored.
+    const first = await ingest(o, ch, [comment('r-1', 'Bình luận đã bị gỡ', { messageId: 'm-gone', removed: true })]);
+    expect(first.stored).toBe(1);
+    const second = await ingest(o, ch, [comment('r-1', 'Bình luận đã bị gỡ', { messageId: 'm-gone' })]);
+    expect(second.duplicates).toBe(1);
+    const after = await detail(o, o.lan, id);
+    expect(after.messages.map((m) => m.body)).not.toContain('Bình luận đã bị gỡ');
+    expect(after.messages.at(-1)).toMatchObject({ body: '', removed: true });
+    // A removal for a thread never seen makes the thread, already resolved, with the tombstone; the add that follows stores no text.
+    expect((await ingest(o, ch, [comment('r-none', 'Chữ đã bị gỡ', { messageId: 'm-none', removed: true })])).stored).toBe(1);
+    const none = await threadOf(o, ch, 'r-none');
+    expect((await detail(o, o.lan, none)).conversation.status).toBe('resolved');
+    expect((await ingest(o, ch, [comment('r-none', 'Chữ đã bị gỡ', { messageId: 'm-none' })])).duplicates).toBe(1);
+    expect((await detail(o, o.lan, none)).messages.map((m) => m.body)).toEqual(['']);
+  });
+
+  it("binds the platform's echo to the reply it follows and settles the reply's call", async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await ingest(o, ch, [{ ...comment('e-1', 'Alo', { kind: 'direct', postId: undefined }) }]);
+    const id = await threadOf(o, ch, 'e-1');
+    const { messageId } = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: id, body: 'Dạ vâng', lastSeenSeq: 1 });
+    const call = await sys<{ callKey: string }>(o, 'kernel.conversation.reply_begin', { messageId });
+    // An echo of the same words dated a day before the reply was written is not this reply's.
+    await ingest(o, ch, [comment('e-1', 'Dạ vâng', { kind: 'direct', postId: undefined, direction: 'out', messageId: 'old-echo', at: new Date(Date.now() - 2 * 86_400_000).toISOString() })]);
+    expect((await detail(o, o.owner, id)).messages.filter((m) => m.direction === 'out').map((m) => m.sendState)).toEqual(['sending', 'sent']);
+    await ingest(o, ch, [comment('e-1', 'Dạ vâng', { kind: 'direct', postId: undefined, direction: 'out', messageId: 'platform-echo-2', at: new Date().toISOString() })]);
+    const states = (await detail(o, o.owner, id)).messages.filter((m) => m.direction === 'out').map((m) => m.sendState);
+    expect(states).toEqual(['sent', 'sent']);
+    // The call row is finished, not left started.
+    expect((await rows<{ state: string }>('SELECT state FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2', [o.orgId, call.callKey]))[0]?.state).toBe('succeeded');
+  });
+
+  it('refuses to send an earlier reply again after a newer message, and a note with a NUL character as input', async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await ingest(o, ch, [comment('f-1', 'Alo', { kind: 'direct', postId: undefined })]);
+    const id = await threadOf(o, ch, 'f-1');
+    const { messageId } = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: id, body: 'Dạ', lastSeenSeq: 1 });
+    const call = await sys<{ callKey: string }>(o, 'kernel.conversation.reply_begin', { messageId });
+    await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: call.callKey, result: { kind: 'rejected', error: 'transient', code: 'ZALO_5XX' } });
+    await ingest(o, ch, [comment('f-1', 'Sao không trả lời?', { kind: 'direct', postId: undefined, at: new Date(Date.now() + 1000).toISOString() })]);
+    await expect(exec(o, o.owner, 'kernel.conversation.reply_settle', { messageId, action: 'retry' })).rejects.toMatchObject({ code: 'CONVERSATION_MOVED' });
+    await expect(exec(o, o.owner, 'kernel.conversation.note', { conversationId: id, body: 'a b' })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it('refuses a reply with a NUL character as input, not as a server error', async () => {
+    const o = await org();
+    const ch = await connection(o);
+    await ingest(o, ch, [comment('n-1', 'Alo')]);
+    const id = await threadOf(o, ch, 'n-1');
+    await expect(exec(o, o.owner, 'kernel.conversation.reply', { conversationId: id, body: 'a b', lastSeenSeq: 1 })).rejects.toMatchObject({ status: 422 });
   });
 
   it('reads a comment thread like its channel, and a private message only as owners and admins', async () => {

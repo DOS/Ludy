@@ -4,7 +4,7 @@
 --
 -- The conversation tables go first, children before the rows they reference (notes and read marks, messages, threads,
 -- identities), with the org's other working rows and before the channel connections and members they name; crove_kernel.
--- channel_access (moved from Social, 20261117130000) goes with them and leaves crove_social's list. Otherwise this is the body
+-- channel_access (moved from Social, 20261118110000) goes with them and leaves crove_social's list. Otherwise this is the body
 -- of 20261117120100 (the newest, which carries Ads' spend caps and settings, the contact import staging, the deals, the saved
 -- views and the ad accounts), with its signature, owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';

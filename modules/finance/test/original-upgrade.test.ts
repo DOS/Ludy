@@ -17,7 +17,7 @@ const SHA256 = sha256Hex(BYTES);
 const parsed = JSON.parse(readFileSync(new URL('../../../packages/l10n-vn/test/fixtures/einvoice-basic.parsed.json', import.meta.url), 'utf8')) as ParsedInvoice;
 
 interface Draft {
-  proposal: { duplicateOf: string | null; payload: { checks: Array<{ code: string }> }; duplicateGuard: { upgrades?: boolean; check: { code: string } } };
+  proposal: { duplicateOf: string | null; payload: { checks: Array<{ code: string }> }; duplicateGuard: { upgrades?: boolean; lookup: { totals?: { currency: string; subtotal: string; vatTotal: string; total: string } }; check: { code: string } } };
 }
 
 // Reads `file` as `kind` and returns the proposal draft sent to kernel.extraction.record, with the lookup answering `lookup`.
@@ -77,5 +77,25 @@ describe('an original after a pending PDF reading (#2269)', () => {
     expect(proposal.duplicateOf).toBe(OTHER);
     expect(proposal.payload.checks.map((c) => c.code)).toContain('duplicate.found');
     expect(proposal.duplicateGuard.upgrades).toBeUndefined();
+  });
+});
+
+describe('an original after a posted PDF reading (#2320)', () => {
+  it('is not flagged as the duplicate of the posted proposal, and its guard gives its amounts so the kernel can compare them', async () => {
+    const proposal = await draft('xml', { duplicateProposalId: OTHER, duplicateProposalAttachable: true });
+    expect(proposal.duplicateOf).toBeNull();
+    expect(proposal.payload.checks.map((c) => c.code)).not.toContain('duplicate.found');
+    expect(proposal.duplicateGuard.upgrades).toBe(true);
+    expect(proposal.duplicateGuard.lookup.totals).toEqual({ currency: 'VND', subtotal: '1800000', vatTotal: '180000', total: '1980000' });
+  });
+
+  it('is flagged as before when a document of another proposal is in force, and a PDF never attaches', async () => {
+    const withDocument = await draft('xml', { duplicateDocumentId: OTHER, duplicateProposalId: OTHER });
+    expect(withDocument.duplicateOf).toBe(OTHER);
+    expect(withDocument.payload.checks.map((c) => c.code)).toContain('duplicate.found');
+    const pdf = await draft('pdf', { duplicateProposalId: OTHER, duplicateProposalAttachable: true });
+    expect(pdf.duplicateOf).toBe(OTHER);
+    expect(pdf.payload.checks.map((c) => c.code)).toContain('duplicate.found');
+    expect(pdf.duplicateGuard.lookup.totals).toBeUndefined();
   });
 });
