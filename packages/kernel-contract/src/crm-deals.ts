@@ -3,6 +3,7 @@
 // ordered stages and the deals that sit in them. The amount is a decimal string, never a number; a deal's status is its
 // stage's kind.
 import { z } from 'zod';
+import { zFilterAstShape, zSavedViewSortShape } from './saved-view.ts';
 import { zId } from './schemas.ts';
 
 export const DEAL_STAGE_KINDS = ['open', 'won', 'lost'] as const;
@@ -62,7 +63,9 @@ export interface DealPage {
   next: DealCursor | null;
 }
 
-export const zDealCursor = z.strictObject({ createdAt: z.string(), id: zId });
+// `value` is the last deal's value of the view's sort field as the page was served (null for a deal with no value, text
+// otherwise): the next page starts past that value, so a deal edited or deleted meanwhile cannot repeat or skip rows.
+export const zDealCursor = z.strictObject({ createdAt: z.string(), id: zId, value: z.string().max(400).nullable().optional() });
 export type DealCursor = z.infer<typeof zDealCursor>;
 
 export const zDealCreate = z.strictObject({
@@ -113,6 +116,13 @@ export const zDealListQuery = z.strictObject({
   ownerUserId: zId.optional(),
   cursor: zDealCursor.nullable().optional(),
   limit: z.number().int().min(1).max(DEAL_PAGE_SIZE).optional(),
+  // A saved view's filter and sort (K3, #2227): a Filter AST of the `crm.deal` scope and one sort, checked against the
+  // registry (422 otherwise) and ANDed with the filters above. With a filter or a sort the list pages by `after`, the last
+  // deal shown (the `next` of the previous page: its id and sort value); without them `cursor` pages the newest-first list
+  // as before.
+  filters: zFilterAstShape.optional(),
+  sort: zSavedViewSortShape.nullable().optional(),
+  after: z.strictObject({ id: zId, value: z.string().max(400).nullable() }).optional(),
 });
 export type DealListQuery = z.infer<typeof zDealListQuery>;
 
@@ -175,3 +185,6 @@ export interface Board {
 }
 export const zBoardColumn = z.object({ stage: zPipelineStage, count: z.number().int(), total: zDealAmount, cards: z.array(zDeal), truncated: z.boolean() });
 export const zBoard = z.object({ columns: z.array(zBoardColumn) });
+// The board of a saved view (K3, #2227): the same Filter AST of the `crm.deal` scope as the list takes, so one view shows the
+// same deals as cards and as rows. The counts and totals of each column are over the deals the filter leaves.
+export const zBoardQuery = z.strictObject({ filters: zFilterAstShape.optional() });
