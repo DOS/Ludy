@@ -64,7 +64,7 @@ Mỗi câu có phương án, đề xuất và hệ quả nếu không trả lờ
 3. **Google Ads trên Ludy Cloud: người dùng tự mang project hay DOS giữ project chung?** Đề xuất: **tự mang project** trong v1. DOS giữ chung cần CASA, mức Standard và các quy tắc Required Minimum Functionality, và trái chính sách Google. Nếu không trả lời: làm theo kiểu tự mang project.
 4. **Giữ bao nhiêu lịch sử, và khi ngắt kết nối thì sao?** Đề xuất: **13 tháng, giữ lại sau khi ngắt kết nối kèm lựa chọn xóa rõ ràng.** Khác: xóa khi ngắt, hoặc chỉ giữ 3 tháng. Nếu không trả lời: phương án đề xuất, và cần xem lại điều khoản Meta về mặt pháp lý trước khi chạy Ludy Cloud.
 5. **Thuế GTGT và thuế nhà thầu trên hóa đơn quảng cáo: bao giờ hiển thị?** Người làm: kế toán (#61), qua JOY. Đề xuất: **v1 không hiển thị**, chờ kế toán xác nhận. Nếu không trả lời: như đề xuất.
-6. **Hỏi Adtima xem Zalo Ads có API báo cáo không?** Người làm: JOY (ads@zalo.me, 1900 988 912). Đề xuất: **hỏi**, một tin nhắn là rõ. Nếu không trả lời: Zalo Ads chưa được hỗ trợ.
+6. **Hỏi Adtima xem Zalo Ads có API báo cáo không?** Người làm: JOY, qua kênh hỗ trợ của Adtima trên trang của họ. Đề xuất: **hỏi**, một tin nhắn là rõ. Nếu không trả lời: Zalo Ads chưa được hỗ trợ.
 
 ## Việc JOY phải làm tay khi bắt đầu build (không agent nào làm)
 

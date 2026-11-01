@@ -93,7 +93,7 @@ All of this is an `owner-action`: no agent creates a developer app, signs in or 
 
 **TikTok** (slice C): a TikTok for Business developer app, approved for the Reporting scope [U], separate from the content-posting app of Social on `developers.tiktok.com` (whether it must be a separate app is [U]). Token lifetime is unclear: sources conflict (no expiry or 24 hours) [U], so the build issue verifies it against a real token.
 
-**Zalo** (slice E): ask Adtima (`ads@zalo.me`, 1900 988 912, from its homepage [C]) whether a reporting API exists for advertisers.
+**Zalo** (slice E): ask Adtima (its support contact is on its website [C]) whether a reporting API exists for advertisers.
 
 ## 5. How data comes in
 
@@ -288,7 +288,7 @@ Without an answer: A, and a legal read of Meta's terms before Ludy Cloud launche
 Without an answer: A.
 
 **Q6. Zalo Ads: ask Adtima whether a reporting API exists?** (Who acts: JOY.) It decides whether Zalo Ads is an adapter or a CSV import.
-- **A. Ask Adtima support (ads@zalo.me, 1900 988 912) (recommended).** One message settles it.
+- **A. Ask Adtima through its support contact on its website (recommended).** One message settles it.
 - B. Plan CSV import now, without asking.
 
 Without an answer: slice E waits; Zalo Ads is not covered.
