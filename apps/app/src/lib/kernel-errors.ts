@@ -310,6 +310,17 @@ export const KERNEL_ERROR_CODES = [
   'ADS_SANDBOX_DISABLED',
   'ADS_ROWS_INVALID',
   'ADS_CURRENCY_CHANGED',
+  // Running ads (ADR-0043, #2294): the requests that open the way to spend, and lowering a cap.
+  'ADS_WRITE_OFF',
+  'ADS_CAP_ACCOUNT_UNSYNCED',
+  'ADS_CAP_CURRENCY',
+  'ADS_REQUEST_OPEN',
+  'ADS_WRITE_ALREADY_ON',
+  'ADS_ACCOUNT_ALREADY_ON',
+  'ADS_LAUNCHES_NOT_BLOCKED',
+  'ADS_CAP_NOT_RAISED',
+  'ADS_CAP_NOT_SET',
+  'ADS_CAP_NOT_LOWER',
   // The chart of accounts and vendor defaults (#319).
   'ACCOUNT_CODE_TAKEN',
   'ACCOUNT_HAS_SUB_ACCOUNTS',

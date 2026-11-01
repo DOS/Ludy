@@ -4,7 +4,7 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest } from '@crove/kernel-contract';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -357,6 +357,23 @@ export function createRpcHandler(
 
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
+  // The proposal request an ads change makes (kernel.proposal.request): the command it would run once approved, and what that
+  // command's preparer takes.
+  const adsRequestOf = (change: AdsChangeRequest) => {
+    switch (change.change) {
+      case 'write_enable':
+        return { command: 'ads.write.enable', input: {} };
+      case 'account_enable':
+        return { command: 'ads.account.enable_write', input: { adAccountId: change.adAccountId } };
+      case 'cap_set':
+        return {
+          command: 'ads.cap.set',
+          input: { scope: change.scope, ...(change.adAccountId ? { adAccountId: change.adAccountId } : {}), period: change.period, amount: change.amount, currency: change.currency },
+        };
+      case 'launches_unblock':
+        return { command: 'ads.launches.unblock', input: {} };
+    }
+  };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!ads) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Quảng cáo chưa được bật' });
     return inOrg(context, fn);
@@ -2122,6 +2139,17 @@ export function createRpcHandler(
       ),
       // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
+      // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
+      requestChange: os.ads.requestChange.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => runtime.execute('kernel.proposal.request', adsRequestOf(input), { actor, orgId, idempotencyKey: input.idempotencyKey })),
+      ),
+      proposal: os.ads.proposal.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.proposal.change', input, { actor, orgId }))),
+      lowerCap: os.ads.lowerCap.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.cap.lower', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       writeDisable: os.ads.writeDisable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.disable', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
       disableAccountWrite: os.ads.disableAccountWrite.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => runtime.execute('ads.account.disable_write', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),

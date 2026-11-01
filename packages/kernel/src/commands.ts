@@ -83,6 +83,11 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.journal_voucher.record',
   'finance.closing.record',
   'finance.depreciation.record',
+  // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
+  'ads.write.enable',
+  'ads.account.enable_write',
+  'ads.cap.set',
+  'ads.launches.unblock',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -864,6 +869,12 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   // A legal entity the approver may not see, or a document posted in another entity before (#1280).
   'LEGAL_ENTITY_NOT_ALLOWED',
   'SOURCE_LEGAL_ENTITY',
+  // Opening the way to spend on an ad platform (ads.write.enable, ads.account.enable_write, ads.cap.set; #2294): the org
+  // switch is off now, the account is gone, or the cap no longer fits the account's currency.
+  'ADS_WRITE_OFF',
+  'ADS_ACCOUNT_NOT_FOUND',
+  'ADS_CAP_ACCOUNT_UNSYNCED',
+  'ADS_CAP_CURRENCY',
 ]);
 
 // Whether a nested approval's error refuses only that item.

@@ -205,6 +205,17 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
       ['ads.write.disable', {}],
       ['ads.account.disable_write', { adAccountId }],
       ['ads.pause_all', {}],
+      ['ads.cap.lower', { scope: 'org', period: 'daily', amount: '1' }],
+      // Asking for what opens the way to spend, and the commands an approval runs, are no agent's either.
+      ['ads.write.prepare_enable', {}],
+      ['ads.account.prepare_enable_write', { adAccountId }],
+      ['ads.cap.prepare_set', { scope: 'org', period: 'daily', amount: '1', currency: 'VND' }],
+      ['ads.launches.prepare_unblock', {}],
+      ['kernel.proposal.request', { command: 'ads.write.enable', input: {} }],
+      ['ads.write.enable', { payload: {} }],
+      ['ads.account.enable_write', { payload: { adAccountId, adAccountName: 'x' } }],
+      ['ads.cap.set', { payload: { scope: 'org', period: 'daily', amount: '1', currency: 'VND', previous: null, previousCurrency: null } }],
+      ['ads.launches.unblock', { payload: {} }],
     ] as Array<[string, unknown]>) {
       await expect(worker.execute(name, input, { actor: agent, orgId }), name).rejects.toMatchObject({ status: 403 });
     }

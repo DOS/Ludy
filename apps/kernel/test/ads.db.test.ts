@@ -712,7 +712,7 @@ suite('ads on PostgreSQL (#2217)', () => {
   describe('the stops, switches and spend caps of running ads (W0a-1)', () => {
     const callAs = async (who: Account, path: string, input: unknown) => rpc(path, await tokenFor(who), input);
     const key = () => randomUUID();
-    const state = async (who: Account = owner) => (await ok('ads/writeState', who, undefined)) as { writeEnabled: boolean; launchesBlocked: boolean; updatedAt: string | null; caps: Array<{ scope: string; adAccountId: string | null; period: string; amount: string; currency: string; setBy: string }> };
+    const state = async (who: Account = owner) => (await ok('ads/writeState', who, undefined)) as { writeEnabled: boolean; launchesBlocked: boolean; updatedAt: string | null; caps: Array<{ scope: string; adAccountId: string | null; period: string; amount: string; currency: string; setBy: string }>; pending: Array<{ proposalId: string; change: unknown; requestedAt: string }> };
     const settingRows = async () => row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_org_setting WHERE org_id = $1`, [orgId]);
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -891,17 +891,6 @@ suite('ads on PostgreSQL (#2217)', () => {
       }
     });
 
-    it('keeps the second way through the guards, the execution of an approved proposal, closed: it answers false and no login role can call it', async () => {
-      for (const command of ['ads.write.enable', 'ads.account.enable_write', 'ads.launches.unblock', 'ads.cap.set']) {
-        expect((await row<{ open: boolean }>('SELECT crove_ads.approved_execution($1) AS open', [command]))[0]?.open, command).toBe(false);
-      }
-      for (const who of [owner, adminAccount, 'system'] as const) {
-        await inContext(who, async (c) => {
-          await expect(c.query(`SELECT crove_ads.approved_execution('ads.cap.set')`)).rejects.toMatchObject({ code: '42501' });
-        });
-      }
-    });
-
     describe('the spend caps', () => {
       const crafted = 'ffffffff-ffff-7fff-bfff-ffffffffffff';
       const insert = `INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, period, amount, currency, set_by, set_at) VALUES ($1, $2, 'org', 'daily', $3, 'VND', $4, '2999-01-01T00:00:00Z') RETURNING id, set_by, set_at`;
@@ -950,6 +939,170 @@ suite('ads on PostgreSQL (#2217)', () => {
       // The other org's owner reads their own, never ours.
       const theirs = (await ok('ads/writeState', outsider, undefined, otherSlug)) as { writeEnabled: boolean; caps: unknown[] };
       expect(theirs).toMatchObject({ writeEnabled: false, caps: [] });
+    });
+
+    // W0a-2: what opens the way to spend is a proposal, approved in the Inbox (P10 four-eyes with the one-person path, P11
+    // second factor), and the database lets it through for an owner and for that approved proposal's execution alone.
+    describe('opening as proposals (W0a-2)', () => {
+      const ask = (who: Account, body: Record<string, unknown>, org: string | null = slug) =>
+        tokenFor(who).then((token) => rpc('ads/requestChange', token, { idempotencyKey: key(), ...body }, org));
+      const approve = async (who: Account, id: string, options: { mfa?: boolean; org?: string | null } = {}) =>
+        rpc('inbox/approve', await tokenFor(who, { mfa: options.mfa ?? true }), { id, revision: 1, idempotencyKey: key() }, options.org === undefined ? slug : options.org);
+      const proposalId = (made: { status: number; body: { proposalId?: string } }) => {
+        expect(made.status, JSON.stringify(made.body)).toBe(200);
+        return made.body.proposalId as string;
+      };
+      const reject = async (who: Account, id: string) => rpc('inbox/reject', await tokenFor(who), { id });
+      const orgMonthly = async () => (await state()).caps.filter((c) => c.scope === 'org' && c.period === 'monthly');
+
+      it('asks for writing to be turned on: nothing changes until another eligible person approves it behind a second factor', async () => {
+        await closed();
+        const id = proposalId(await ask(owner, { change: 'write_enable' }));
+        expect(await state()).toMatchObject({ writeEnabled: false, pending: [expect.objectContaining({ proposalId: id, change: { change: 'write_enable' } })] });
+        // One question at a time, and only owners and admins ask.
+        expect(await ask(adminAccount, { change: 'write_enable' })).toMatchObject({ status: 409, body: { code: 'ADS_REQUEST_OPEN' } });
+        for (const who of [member, viewer]) expect((await ask(who, { change: 'write_enable' })).status, who.email).toBe(403);
+        // The author does not approve it when another eligible person exists (P10); the admin needs a second factor (P11).
+        expect(await approve(owner, id)).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+        expect(await approve(adminAccount, id, { mfa: false })).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
+        expect((await state()).writeEnabled).toBe(false);
+        expect((await approve(adminAccount, id)).status).toBe(200);
+        expect(await state()).toMatchObject({ writeEnabled: true, pending: [] });
+        // The switch records the approver, and a repeat is refused before it is a proposal.
+        expect(await row(`SELECT 1 FROM crove_ads.ad_org_setting WHERE org_id = $1 AND updated_by = $2`, [orgId, adminAccount.userId])).toHaveLength(1);
+        expect(await ask(owner, { change: 'write_enable' })).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_ALREADY_ON' } });
+      });
+
+      it('enables an account only while the org switch is on, by approval, and says so before it is asked', async () => {
+        await open();
+        const { adAccountId } = await connect('Mở bằng đề xuất');
+        const other = await connect('Chưa xin mở');
+        const id = proposalId(await ask(adminAccount, { change: 'account_enable', adAccountId }));
+        expect(await ask(owner, { change: 'account_enable', adAccountId })).toMatchObject({ status: 409, body: { code: 'ADS_REQUEST_OPEN' } });
+        expect((await view(owner, adAccountId))?.writeEnabled).toBe(false);
+        expect((await approve(owner, id)).status).toBe(200);
+        expect(await view(owner, adAccountId)).toMatchObject({ writeEnabled: true });
+        expect(await view(owner, other.adAccountId)).toMatchObject({ writeEnabled: false });
+        expect(await ask(owner, { change: 'account_enable', adAccountId })).toMatchObject({ status: 409, body: { code: 'ADS_ACCOUNT_ALREADY_ON' } });
+        expect((await ask(owner, { change: 'account_enable', adAccountId: randomUUID() })).status).toBe(404);
+        // With the org switch off it is refused at the request.
+        await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() });
+        expect(await ask(owner, { change: 'account_enable', adAccountId: other.adAccountId })).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
+      });
+
+      it('sets and raises a cap by approval, lowers it directly for the owner, and checks the account’s currency', async () => {
+        await open();
+        const orgCap = { change: 'cap_set', scope: 'org', period: 'monthly', amount: '5000000', currency: 'VND' };
+        expect((await approve(owner, proposalId(await ask(adminAccount, orgCap)))).status).toBe(200);
+        expect(await orgMonthly()).toEqual([expect.objectContaining({ amount: '5000000', currency: 'VND', setBy: owner.userId })]);
+        // A raise is a proposal; a cap that is not above the one in force is refused, with the way to lower it.
+        expect(await ask(owner, { ...orgCap, amount: '5000000.00' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_NOT_RAISED' } });
+        expect(await ask(owner, { ...orgCap, amount: '4000000' })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_NOT_RAISED' } });
+        expect((await approve(owner, proposalId(await ask(adminAccount, { ...orgCap, amount: '8000000.50' })))).status).toBe(200);
+        expect(await orgMonthly()).toEqual([expect.objectContaining({ amount: '8000000.50' })]);
+        // Lowering needs no proposal and no second factor, is the owner's, and goes strictly below the cap in force.
+        const lower = (who: Account, body: Record<string, unknown>) => callAs(who, 'ads/lowerCap', { idempotencyKey: key(), ...body });
+        const lowerOrg = { scope: 'org', period: 'monthly', amount: '7000000' };
+        expect((await lower(adminAccount, lowerOrg)).status).toBe(403);
+        expect(await lower(owner, lowerOrg)).toMatchObject({ status: 200, body: { previous: '8000000.50' } });
+        expect(await lower(owner, lowerOrg)).toMatchObject({ status: 422, body: { code: 'ADS_CAP_NOT_LOWER' } });
+        expect(await lower(owner, { ...lowerOrg, scope: 'account', adAccountId: randomUUID() })).toMatchObject({ status: 404 });
+        expect(await orgMonthly()).toEqual([expect.objectContaining({ amount: '7000000', currency: 'VND' })]);
+        // An account cap is in the account's own currency, and only once the account has updated.
+        const usd = await connect('Hạn mức USD', { currency: 'USD' });
+        // The account's currency is the platform's, known after its first sync.
+        await sync(usd.connectionId);
+        const accountCap = { change: 'cap_set', scope: 'account', adAccountId: usd.adAccountId, period: 'daily', amount: '200', currency: 'VND' };
+        expect(await ask(owner, accountCap)).toMatchObject({ status: 422, body: { code: 'ADS_CAP_CURRENCY' } });
+        expect((await approve(owner, proposalId(await ask(adminAccount, { ...accountCap, currency: 'USD' })))).status).toBe(200);
+        expect((await state()).caps).toContainEqual(expect.objectContaining({ scope: 'account', adAccountId: usd.adAccountId, currency: 'USD', amount: '200' }));
+        expect(await lower(owner, { scope: 'account', adAccountId: usd.adAccountId, period: 'monthly', amount: '100' })).toMatchObject({ status: 409, body: { code: 'ADS_CAP_NOT_SET' } });
+        const fresh = await connect('Chưa cập nhật');
+        await row(`UPDATE crove_ads.ad_account SET currency = NULL WHERE org_id = $1 AND id = $2`, [orgId, fresh.adAccountId]);
+        expect(await ask(owner, { ...accountCap, adAccountId: fresh.adAccountId })).toMatchObject({ status: 422, body: { code: 'ADS_CAP_ACCOUNT_UNSYNCED' } });
+        // The shapes the request refuses: an org cap naming an account, an account cap naming none, zero, a third decimal, a typo.
+        for (const bad of [{ ...orgCap, adAccountId: usd.adAccountId }, { change: 'cap_set', scope: 'account', period: 'daily', amount: '1', currency: 'VND' }, { ...orgCap, amount: '0' }, { ...orgCap, amount: '1.234' }, { ...orgCap, currency: 'VDN' }]) {
+          expect((await ask(owner, bad)).status, JSON.stringify(bad)).toBe(400);
+        }
+      });
+
+      it('opens launches again by approval, and only while they are blocked', async () => {
+        await open();
+        expect(await ask(owner, { change: 'launches_unblock' })).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCHES_NOT_BLOCKED' } });
+        await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() });
+        expect((await state()).launchesBlocked).toBe(true);
+        const id = proposalId(await ask(adminAccount, { change: 'launches_unblock' }));
+        expect((await approve(owner, id)).status).toBe(200);
+        expect((await state()).launchesBlocked).toBe(false);
+      });
+
+      it('lets a one-person org approve its own request, flagged, and shows the request to nobody of another org', async () => {
+        const id = proposalId(await ask(outsider, { change: 'write_enable' }, otherSlug));
+        // The first org sees none of it.
+        expect((await state()).pending.map((p) => p.proposalId)).not.toContain(id);
+        expect((await approve(outsider, id, { org: otherSlug })).status).toBe(200);
+        expect(await ok('ads/writeState', outsider, undefined, otherSlug)).toMatchObject({ writeEnabled: true });
+        const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [otherOrgId]);
+        expect(audit[0]?.detail).toMatchObject({ self_approved: true, policy: { P10: 'self_approved' } });
+        // Another org's request cannot be approved from here.
+        expect((await approve(owner, id)).status).toBe(404);
+      });
+
+      it('rejects a request without changing anything, and a rejected one can be asked for again', async () => {
+        await closed();
+        const id = proposalId(await ask(owner, { change: 'write_enable' }));
+        expect((await reject(adminAccount, id)).status).toBe(200);
+        expect(await state()).toMatchObject({ writeEnabled: false, pending: [] });
+        const again = proposalId(await ask(owner, { change: 'write_enable' }));
+        expect((await reject(adminAccount, again)).status).toBe(200);
+      });
+
+      // The database half, in SQL, in a context of each kind (rolled back): the change goes through for the execution of an
+      // approved proposal of its own command that names this very change, in the transaction that approved it, and for
+      // nothing else.
+      it('lets the database pass a change only inside the execution of its own approved proposal, naming that change', async () => {
+        // Writing off and launches blocked, so there are two different openings to try.
+        await inContext(owner, (c) => c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]), true);
+        const enable = proposalId(await ask(owner, { change: 'write_enable' }));
+        const on = 'UPDATE crove_ads.ad_org_setting SET write_enabled = true WHERE org_id = $1';
+        const approveRaw = (c: pg.Client | pg.PoolClient, id: string) => c.query('SELECT crove_kernel.proposal_approve($1::uuid, 1, $2::uuid)', [id, randomUUID()]);
+        // Pending is not approved: the admin's own statement is refused.
+        await inContext(adminAccount, (c) => refused(c, on, [orgId]));
+        // Approved in this transaction by this user, for this command: it passes; another opening still does not.
+        await inContext(adminAccount, async (c) => {
+          await approveRaw(c, enable);
+          await c.query(on, [orgId]);
+          await refused(c, 'UPDATE crove_ads.ad_org_setting SET launches_blocked = false WHERE org_id = $1', [orgId]);
+        });
+        // Approving a proposal does not make any other change: another account, then another cap, are still refused.
+        await open();
+        const { adAccountId } = await connect('Cổng đề xuất');
+        const other = await connect('Tài khoản khác');
+        const account = proposalId(await ask(owner, { change: 'account_enable', adAccountId }));
+        const flag = 'UPDATE crove_ads.ad_account SET write_enabled = true WHERE org_id = $1 AND id = $2';
+        await inContext(adminAccount, async (c) => {
+          await approveRaw(c, account);
+          await c.query(flag, [orgId, adAccountId]);
+          await refused(c, flag, [orgId, other.adAccountId]);
+        });
+        const capProposal = proposalId(await ask(owner, { change: 'cap_set', scope: 'org', period: 'daily', amount: '90000000', currency: 'VND' }));
+        const capSql = `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, period, amount, currency, set_by) VALUES ($1, 'org', $2, $3, 'VND', $4)`;
+        const capParams = (amount: string, period: string) => [orgId, period, amount, adminAccount.userId];
+        await inContext(adminAccount, async (c) => {
+          await approveRaw(c, capProposal);
+          await refused(c, capSql, capParams('95000000', 'daily'), 'ADS_CAP_FORBIDDEN');
+          await refused(c, capSql, capParams('90000000', 'monthly'), 'ADS_CAP_FORBIDDEN');
+          await refused(c, on, [orgId]);
+          await c.query(capSql, capParams('90000000', 'daily'));
+        });
+        // The system's kind of context never passes, even with a row in the state `approved`: only a user decides.
+        await inContext('system', async (c) => {
+          await c.query(`UPDATE crove_kernel.proposal SET status = 'approved', executed_command_id = $2::uuid, decided_at = now() WHERE org_id = $1 AND id = $3`, [orgId, randomUUID(), enable]);
+          await refused(c, on, [orgId]);
+        });
+        // Clear what is left open in the org.
+        for (const id of [enable, account, capProposal]) await reject(adminAccount, id);
+      });
     });
   });
 

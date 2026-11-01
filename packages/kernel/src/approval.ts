@@ -49,9 +49,12 @@ interface CommandPolicy {
 // database (crove_kernel.proposal_approval_decide, approval_eligible_now and the chief accountant keep guard, #1793).
 export const LEDGER_APPROVE_PERMISSION = 'finance.proposal.approve';
 
-// Approval policy per proposal command. Every proposal command today is R3 and posts to the ledger, so the roles that
-// may post approve (#71), and so does a member an owner made chief accountant (the permission above).
+// Approval policy per proposal command. Every proposal command is R3. The ledger's post to it, so the roles that may post
+// approve (#71), and so does a member an owner made chief accountant (the permission above); the ads commands that open
+// the way to spend post nothing and are approved by the base roles alone.
 const LEDGER: CommandPolicy = { roles: ['owner', 'admin'], permission: LEDGER_APPROVE_PERMISSION, fourEyes: true };
+// A distinct object, so approvalPolicies() reports it as no ledger policy (the database's `ledger` false for these commands).
+const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -64,6 +67,13 @@ const POLICIES: Record<string, CommandPolicy> = {
   'finance.closing.record': LEDGER,
   // A month's depreciation and allocation (#919) is a general journal voucher built from the register: the same rule.
   'finance.depreciation.record': LEDGER,
+  // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): a plain base-role policy, no approval
+  // permission and no ledger. Owners and admins approve (Q2), with four-eyes and the one-person path (P10): an owner alone
+  // approves their own request, flagged self_approved; with two eligible approvers someone other than an author approves.
+  'ads.write.enable': ADS,
+  'ads.account.enable_write': ADS,
+  'ads.cap.set': ADS,
+  'ads.launches.unblock': ADS,
 };
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
@@ -77,7 +87,7 @@ export function approvalPolicies(): Array<{ command: string; roles: readonly str
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.
-export const APPROVAL_POLICY_VERSION = 2;
+export const APPROVAL_POLICY_VERSION = 3;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

@@ -308,7 +308,28 @@ describe('what an account says about its figures', () => {
 });
 
 describe('the words of the screen', () => {
-  const CODES = ['ADS_ACCOUNT_NOT_FOUND', 'ADS_CONNECTION_NOT_FOUND', 'ADS_CONNECTION_INACTIVE', 'ADS_SYNC_TOO_SOON', 'ADS_SYNC_ON_HOLD', 'ADS_RANGE_INVALID', 'ADS_SANDBOX_DISABLED', 'ADS_ROWS_INVALID', 'ADS_CURRENCY_CHANGED'] as const;
+  const CODES = [
+    'ADS_ACCOUNT_NOT_FOUND',
+    'ADS_CONNECTION_NOT_FOUND',
+    'ADS_CONNECTION_INACTIVE',
+    'ADS_SYNC_TOO_SOON',
+    'ADS_SYNC_ON_HOLD',
+    'ADS_RANGE_INVALID',
+    'ADS_SANDBOX_DISABLED',
+    'ADS_ROWS_INVALID',
+    'ADS_CURRENCY_CHANGED',
+    // Running ads (ADR-0043, #2294): the requests and the lowering of a cap.
+    'ADS_WRITE_OFF',
+    'ADS_CAP_ACCOUNT_UNSYNCED',
+    'ADS_CAP_CURRENCY',
+    'ADS_REQUEST_OPEN',
+    'ADS_WRITE_ALREADY_ON',
+    'ADS_ACCOUNT_ALREADY_ON',
+    'ADS_LAUNCHES_NOT_BLOCKED',
+    'ADS_CAP_NOT_RAISED',
+    'ADS_CAP_NOT_SET',
+    'ADS_CAP_NOT_LOWER',
+  ] as const;
 
   it('words every refusal of the ads module in both languages, the kernel Vietnamese when the reader reads Vietnamese', () => {
     for (const code of CODES) {

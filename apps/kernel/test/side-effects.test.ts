@@ -149,26 +149,34 @@ describe('declared risk and side effects (#1563)', () => {
 });
 
 // Running ads (ADR-0043, #2294): what only stops or reduces spend is a direct R2 command; what starts or raises it, or opens the
-// way to it, is a proposal (W0a-2) and no direct command at all, so none of those names may exist as a command yet. Pinned by
-// name so an annotation cannot raise the first or a later change quietly add a direct opening.
+// way to it, runs only as an approved proposal (R3 financial, access 'proposal') asked for through an R1 preparer. Pinned by
+// name so an annotation cannot lower the first, raise the second or make a direct command of what must be a proposal.
 describe('the risk of the commands of running ads (#2294)', () => {
   const byName = () => new Map(all().map((c) => [c.name, c]));
+  const OPENING = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock'];
+  const PREPARERS = ['ads.write.prepare_enable', 'ads.account.prepare_enable_write', 'ads.cap.prepare_set', 'ads.launches.prepare_unblock'];
 
-  it('has no direct command that opens the way to spend', () => {
-    for (const name of ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock']) {
-      expect(byName().has(name), name).toBe(false);
+  it('keeps every command that opens the way to spend an R3 financial proposal command, never a direct one', () => {
+    for (const name of OPENING) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
     }
   });
 
-  it('keeps what only stops spend R2 external, and the switch off the owner’s', () => {
+  it('asks for each of them through an R1 preparer of owners and admins that posts nothing', () => {
+    for (const name of PREPARERS) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+    }
+  });
+
+  it('keeps what only stops or lowers spend R2 external, and the switch off and the lowering the owner’s', () => {
     expect(byName().get('ads.pause_all')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
-    for (const name of ['ads.write.disable', 'ads.account.disable_write']) {
+    for (const name of ['ads.write.disable', 'ads.account.disable_write', 'ads.cap.lower']) {
       expect(byName().get(name), name).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner'] });
     }
   });
 
   it('lets no agent run any of them', () => {
-    for (const name of ['ads.write.disable', 'ads.account.disable_write', 'ads.pause_all']) {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });
