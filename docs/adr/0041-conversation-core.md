@@ -59,7 +59,7 @@ Facts that shape the choices (sources and confidence tags in the [plan](../plan/
 
 ### 4. Permissions follow the kind, in the database
 
-A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind = 'direct'`, not only in the screen (the permission is `kernel.conversation.direct.read`: a manifest permission carries its module's prefix, and no role holds it until the Service inbox). Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
+A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind = 'direct'`, not only in the screen (the permission is `kernel.conversation.direct.read`: a manifest permission carries its module's prefix, and no role holds it until the Service inbox seeds it for `desk.agent`). Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
 
 ### 5. Collision, assignment and availability
 

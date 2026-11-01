@@ -262,7 +262,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_inbound_pending (
   provider text NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_]{1,31}$'),
   body bytea NOT NULL CHECK (pg_catalog.octet_length(body) BETWEEN 1 AND 262144),
   received_at timestamptz NOT NULL DEFAULT now(),
-  -- The worker's lease: a notice a crashed worker held is claimed again once it passes, up to 5 times, then dropped.
+  -- The worker's lease: a notice a crashed worker held is claimed again once it passes, up to 5 times, then dropped; one older than 7
+  -- days is dropped whoever holds it.
   claimed_until timestamptz,
   attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0)
 );
@@ -286,14 +287,20 @@ BEGIN
   RETURN v_seq;
 END $$;
 
--- The worker takes the oldest waiting notices under a lease. A notice claimed 5 times without being finished is deleted (a
--- poison notice must not block the rest, and its body is personal data): it comes back as a row with no body and dropped.
+-- The worker takes the oldest waiting notices under a lease. Two kinds of notice never come back as a body, because a body is
+-- personal data of a third party and must not outlive its use: one claimed 5 times without being finished (a poison notice
+-- must not block the rest), and one waiting longer than 7 days (a worker that was down that long would otherwise hold the
+-- bodies indefinitely). Both are deleted here and returned with dropped and the reason, so the worker logs and alerts with the
+-- ids only.
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_inbound_claim(p_limit integer, p_lease_seconds integer)
-RETURNS TABLE (seq bigint, provider text, body bytea, attempts integer, dropped boolean)
+RETURNS TABLE (seq bigint, provider text, body bytea, attempts integer, dropped boolean, reason text)
 LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  WITH due AS (
+  WITH expired AS (
+    DELETE FROM crove_kernel.conversation_inbound_pending p WHERE p.received_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
+    RETURNING p.seq, p.provider, p.attempts
+  ), due AS (
     SELECT p.seq FROM crove_kernel.conversation_inbound_pending p
-    WHERE p.claimed_until IS NULL OR p.claimed_until < pg_catalog.now()
+    WHERE (p.claimed_until IS NULL OR p.claimed_until < pg_catalog.now()) AND p.received_at >= pg_catalog.now() - pg_catalog.make_interval(days => 7)
     ORDER BY p.seq LIMIT p_limit FOR UPDATE SKIP LOCKED
   ), poison AS (
     DELETE FROM crove_kernel.conversation_inbound_pending p USING due WHERE p.seq = due.seq AND p.attempts >= 5
@@ -304,9 +311,11 @@ LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
     FROM due WHERE p.seq = due.seq AND p.attempts < 5
     RETURNING p.seq, p.provider, p.body, p.attempts
   )
-  SELECT t.seq, t.provider, t.body, t.attempts, false FROM taken t
+  SELECT t.seq, t.provider, t.body, t.attempts, false, NULL::text FROM taken t
   UNION ALL
-  SELECT d.seq, d.provider, NULL::bytea, d.attempts, true FROM poison d
+  SELECT d.seq, d.provider, NULL::bytea, d.attempts, true, 'poison'::text FROM poison d
+  UNION ALL
+  SELECT e.seq, e.provider, NULL::bytea, e.attempts, true, 'expired'::text FROM expired e
   ORDER BY 1
 $$;
 

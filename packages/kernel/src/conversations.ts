@@ -38,6 +38,8 @@ import {
   type ConversationCounted,
   type ConversationDetail,
   type ConversationEvent,
+  type ConversationKind,
+  type ConversationStatus,
   type ConversationIngested,
   type ConversationListed,
   type ConversationSummary,
@@ -70,12 +72,12 @@ const messageNotFound = () => new DomainError('MESSAGE_NOT_FOUND', 404, 'Không 
 interface ConversationRow {
   id: string;
   channel_connection_id: string;
-  kind: string;
+  kind: ConversationKind;
   external_thread_id: string;
   external_post_id: string | null;
   identity_id: string | null;
   party_id: string | null;
-  status: string;
+  status: ConversationStatus;
   assignee_user_id: string | null;
   last_seq: number;
   last_inbound_at: Date | null;
@@ -104,7 +106,7 @@ interface MessageRow {
   id: string;
   conversation_id: string;
   channel_connection_id: string;
-  kind: string;
+  kind: ConversationKind;
   seq: number;
   direction: string;
   external_message_id: string | null;
@@ -493,7 +495,7 @@ export const conversationGet = defineQuery({
     const rules = connection ? conversationRules(connection.provider) : null;
     let reason: ConversationDetail['reply']['reason'] = null;
     if (!connection || connection.status !== 'active') reason = 'channel_inactive';
-    else if (!rules || !rules.kinds.includes(row.kind as 'comment_thread' | 'direct')) reason = 'not_supported';
+    else if (!rules || !rules.kinds.includes(row.kind as ConversationKind)) reason = 'not_supported';
     else if (row.reply_window_until && row.reply_window_until.getTime() < Date.now()) reason = 'window_closed';
     return {
       conversation,
@@ -555,7 +557,7 @@ export const conversationReply = defineCommand({
     const connection = await connectionOf(ctx, conversation.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     const rules = conversationRules(connection.provider);
-    if (!rules || !rules.kinds.includes(conversation.kind as 'comment_thread' | 'direct')) throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
+    if (!rules || !rules.kinds.includes(conversation.kind)) throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
     if (input.body.length > rules.replyMax) throw new DomainError('REPLY_TOO_LONG', 422, `Câu trả lời dài tối đa ${rules.replyMax} ký tự`, { max: String(rules.replyMax) });
     if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
       throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
@@ -694,7 +696,7 @@ export const conversationReplyBegin = defineCommand({
       provider: connection.provider,
       connectionId: connection.id,
       connectionVersion: connection.updated_at.toISOString(),
-      kind: message.kind as 'comment_thread' | 'direct',
+      kind: message.kind,
       threadId: conversation.thread,
       postId: conversation.post,
       contactId: conversation.contact,

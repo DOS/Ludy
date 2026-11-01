@@ -58,13 +58,13 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
   const intake = () => runConversationIntake({ workerDb, runtime: worker, log: () => {} });
 
   type Org = { orgId: string; owner: string; lan: string; connectionId: string; accountId: string };
-  async function org(): Promise<Org> {
+  async function org(sharedAccount?: string): Promise<Org> {
     const owner = (await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `owner-${randomUUID().slice(0, 8)}@cw.test`, name: null })) as string;
     const lan = (await upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `lan-${randomUUID().slice(0, 8)}@cw.test`, name: null })) as string;
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, lan]));
     // The owner connects a sandbox channel through the command, the secret sealed as the API seals it.
-    const accountId = `sandbox-${randomUUID().slice(0, 8)}`;
+    const accountId = sharedAccount ?? `sandbox-${randomUUID().slice(0, 8)}`;
     const sealed = vault.seal(JSON.stringify({ accessToken: `sbx_${randomBytes(24).toString('base64url')}` }), { orgId, provider: 'sandbox', externalAccountId: accountId });
     const { connectionId } = await rt.execute<{ connectionId: string }>(
       'kernel.channel.connect',
@@ -159,6 +159,33 @@ suite('conversations, the worker side, on PostgreSQL (#2303)', () => {
     await park(sandboxNoticeBody({ accountId: o.accountId, events: [event('', 'x')] }));
     expect(await intake()).toEqual({ stored: 0, dropped: 1 });
     expect(await waiting()).toBe(0);
+  });
+
+  it('takes a sandbox notice to the connection it names and no other, even when two orgs chose the same sandbox key', async () => {
+    const key = `sandbox-shared-${randomUUID().slice(0, 8)}`;
+    const a = await org(key);
+    const b = await org(key);
+    await park(sandboxNoticeBody({ accountId: key, connectionId: a.connectionId, events: [event('c-1', 'Chỉ cho tổ chức A')] }));
+    expect(await intake()).toEqual({ stored: 1, dropped: 0 });
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [a.orgId])).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [b.orgId])).toHaveLength(0);
+    // A platform's notice names no connection: both orgs that connected the same page get it.
+    await park(sandboxNoticeBody({ accountId: key, events: [event('c-2', 'Cho cả hai')] }));
+    expect(await intake()).toEqual({ stored: 2, dropped: 0 });
+  });
+
+  it('drops a notice that waited seven days, and counts it', async () => {
+    const o = await org();
+    await park(sandboxNoticeBody({ accountId: o.accountId, events: [event('c-1', 'Quá cũ')] }));
+    await rows("UPDATE crove_kernel.conversation_inbound_pending SET received_at = now() - interval '8 days'");
+    const lines: string[] = [];
+    expect(await runConversationIntake({ workerDb, runtime: worker, log: (m) => lines.push(m) })).toEqual({ stored: 0, dropped: 1 });
+    expect(await rows('SELECT 1 FROM crove_kernel.conversation WHERE org_id = $1', [o.orgId])).toHaveLength(0);
+    expect(await waiting()).toBe(0);
+    // The log names its id, provider and why, never its text.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^dropped notice \d+ \(sandbox, expired\)/);
+    expect(lines[0]).not.toContain('Quá cũ');
   });
 
   it('sends a reply once with the sealed credential, and a second job does nothing', async () => {

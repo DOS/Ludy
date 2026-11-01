@@ -26,6 +26,9 @@ export interface InboundConversationEvent {
 export interface ConversationNotice {
   accountId: string;
   events: InboundConversationEvent[];
+  // The sandbox only: the one connection its notice is for. Its account id is a key a member chose, so two orgs may pick the
+  // same one, and a demo comment must reach only the connection it was made on. A platform's notice never has it.
+  connectionId?: string | undefined;
 }
 
 export class ConversationNoticeError extends Error {
@@ -91,15 +94,15 @@ export function parseSandboxNotice(body: Uint8Array): ConversationNotice {
   } catch {
     throw new ConversationNoticeError('malformed');
   }
-  const notice = parsed as { v?: unknown; accountId?: unknown; events?: unknown };
+  const notice = parsed as { v?: unknown; accountId?: unknown; connectionId?: unknown; events?: unknown };
   if (notice.v !== 1 || typeof notice.accountId !== 'string' || notice.accountId.length === 0 || !Array.isArray(notice.events)) {
     throw new ConversationNoticeError('malformed');
   }
-  return { accountId: notice.accountId, events: notice.events as InboundConversationEvent[] };
+  return { accountId: notice.accountId, events: notice.events as InboundConversationEvent[], ...(typeof notice.connectionId === 'string' ? { connectionId: notice.connectionId } : {}) };
 }
 
 export function sandboxNoticeBody(notice: ConversationNotice): Buffer {
-  return Buffer.from(JSON.stringify({ v: 1, accountId: notice.accountId, events: notice.events }), 'utf8');
+  return Buffer.from(JSON.stringify({ v: 1, accountId: notice.accountId, ...(notice.connectionId ? { connectionId: notice.connectionId } : {}), events: notice.events }), 'utf8');
 }
 
 function sandboxToken(secret: string): boolean {

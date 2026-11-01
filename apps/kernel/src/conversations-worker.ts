@@ -16,6 +16,7 @@ import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import type { HideWork, ReplyWork } from '@crove/kernel';
+import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 
@@ -37,11 +38,13 @@ export interface ClaimedNotice {
   body: Buffer | null;
   attempts: number;
   dropped: boolean;
+  // Why a notice was dropped: claimed five times without being finished, or waiting longer than seven days.
+  reason: 'poison' | 'expired' | null;
 }
 
 export async function claimNotices(workerDb: Db): Promise<ClaimedNotice[]> {
-  const { rows } = await sql<{ seq: string; provider: string; body: Buffer | null; attempts: number; dropped: boolean }>`
-    SELECT seq::text AS seq, provider, body, attempts, dropped
+  const { rows } = await sql<ClaimedNotice>`
+    SELECT seq::text AS seq, provider, body, attempts, dropped, reason
     FROM crove_kernel.conversation_inbound_claim(${CONVERSATION_CLAIM}::int, ${CONVERSATION_LEASE_SECONDS}::int)`.execute(workerDb);
   return rows;
 }
@@ -71,10 +74,13 @@ const isPermanent = (error: unknown): boolean => error instanceof DomainError &&
 export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored: number; dropped: number }> {
   const log = deps.log ?? ((message: string) => console.log(`[conversations] ${message}`));
   const out = { stored: 0, dropped: 0 };
+  // The notices the database dropped (poison or too old), by id: a body is personal data, so an alert names ids and counts only.
+  const lost: ClaimedNotice[] = [];
   for (const notice of await claimNotices(deps.workerDb)) {
     if (notice.dropped || notice.body === null) {
       out.dropped++;
-      log(`dropped a ${notice.provider} notice after ${notice.attempts} attempts`);
+      lost.push(notice);
+      log(`dropped notice ${notice.seq} (${notice.provider}, ${notice.reason ?? 'unknown'}) after ${notice.attempts} attempt(s)`);
       continue;
     }
     const parse = Object.hasOwn(NOTICE_PARSERS, notice.provider) ? NOTICE_PARSERS[notice.provider] : undefined;
@@ -88,11 +94,11 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       // Not a notice we can read: nothing to retry, so nothing to keep.
       await finishNotice(deps.workerDb, notice.seq);
       out.dropped++;
-      log(`dropped an unreadable ${notice.provider} notice of ${notice.body.byteLength} bytes`);
+      log(`dropped notice ${notice.seq} (${notice.provider}): unreadable, ${notice.body.byteLength} bytes`);
       continue;
     }
     let failed = false;
-    for (const target of await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)) {
+    for (const target of (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId)) {
       try {
         const done = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: target.connectionId, events: parsed.events }, { actor: SYSTEM, orgId: target.orgId });
         out.stored += done.stored;
@@ -103,6 +109,10 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       }
     }
     if (!failed) await finishNotice(deps.workerDb, notice.seq);
+  }
+  if (lost.length > 0) {
+    const expired = lost.filter((n) => n.reason === 'expired').length;
+    opsAlert(`[conversations] ALERT ${lost.length} waiting notice(s) dropped (${expired} older than 7 days, ${lost.length - expired} that failed 5 times): ${lost.slice(0, 20).map((n) => n.seq).join(', ')}${lost.length > 20 ? ', ...' : ''}`);
   }
   return out;
 }

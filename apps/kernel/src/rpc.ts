@@ -1815,7 +1815,7 @@ export function createRpcHandler(
       sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
           const made = await runtime.execute<{ accountId: string; events: ConversationEvent[] }>('kernel.conversation.sandbox_comment', input, { actor, orgId });
-          const body = sandboxNoticeBody(made);
+          const body = sandboxNoticeBody({ ...made, connectionId: input.connectionId });
           await runtime.orgless(async (db) => {
             await sql`SELECT crove_kernel.conversation_inbound_enqueue('sandbox', ${body})`.execute(db);
           });

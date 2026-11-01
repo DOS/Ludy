@@ -435,9 +435,9 @@ suite('conversations on PostgreSQL (#2303)', () => {
     await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_claim(10, 60)'))).rejects.toMatchObject({ code: '42501' });
     await expect(asRole(workerUrl.toString(), (c) => c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2)', ['sandbox', Buffer.from('x')]))).rejects.toMatchObject({ code: '42501' });
     await expect(asRole(appUrl, (c) => c.query('SELECT * FROM crove_kernel.conversation_inbound_pending'))).rejects.toMatchObject({ code: '42501' });
-    const claim = () => asRole(workerUrl.toString(), async (c) => (await c.query('SELECT seq, provider, body, attempts, dropped FROM crove_kernel.conversation_inbound_claim(10, 60)')).rows);
+    const claim = () => asRole(workerUrl.toString(), async (c) => (await c.query('SELECT seq, provider, body, attempts, dropped, reason FROM crove_kernel.conversation_inbound_claim(10, 60)')).rows);
     const first = await claim();
-    expect(first).toEqual([{ seq, provider: 'sandbox', body: Buffer.from('{"v":1}'), attempts: 1, dropped: false }]);
+    expect(first).toEqual([{ seq, provider: 'sandbox', body: Buffer.from('{"v":1}'), attempts: 1, dropped: false, reason: null }]);
     // Leased: a second worker finds nothing until the lease passes.
     expect(await claim()).toEqual([]);
     for (let attempt = 2; attempt <= 5; attempt++) {
@@ -446,7 +446,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     }
     // Claimed five times and never finished: dropped with its body, so one poison notice never blocks the rest.
     await admin((c) => c.query("UPDATE crove_kernel.conversation_inbound_pending SET claimed_until = now() - interval '1 second' WHERE seq = $1", [seq]));
-    expect(await claim()).toEqual([{ seq, provider: 'sandbox', body: null, attempts: 5, dropped: true }]);
+    expect(await claim()).toEqual([{ seq, provider: 'sandbox', body: null, attempts: 5, dropped: true, reason: 'poison' }]);
     expect(await rows('SELECT 1 FROM crove_kernel.conversation_inbound_pending')).toHaveLength(0);
     const next = await asRole(appUrl, async (c) => (await c.query('SELECT crove_kernel.conversation_inbound_enqueue($1, $2) AS seq', ['sandbox', Buffer.from('{}')])).rows[0].seq);
     await asRole(workerUrl.toString(), (c) => c.query('SELECT crove_kernel.conversation_inbound_done($1)', [next]));
