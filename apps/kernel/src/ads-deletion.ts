@@ -20,10 +20,16 @@ export const ADS_DELETION_PATH = '/api/ads/meta/data-deletion';
 
 const base64urlDecode = (text: string): Buffer | null => (/^[A-Za-z0-9_-]+$/.test(text) ? Buffer.from(text, 'base64url') : null);
 
+// How old a signed request may be, by the time Meta stamped it (`issued_at`, seconds): a replay of an old one is refused. A day
+// leaves room for Meta to retry a request our endpoint failed to answer [U: Meta says nothing of its retries]; one stamped
+// more than five minutes ahead of our clock is refused too.
+export const SIGNED_REQUEST_MAX_AGE_SECONDS = 24 * 3600;
+export const SIGNED_REQUEST_MAX_AHEAD_SECONDS = 300;
+
 // The Meta user id inside a signed request, or null when it is not one: two base64url parts, the first the HMAC-SHA256 of the
-// second as sent (the encoded text) under the app secret, compared in constant time, and a payload that names that algorithm
-// and an app-scoped user id (digits).
-export function verifySignedRequest(signedRequest: string, appSecret: string): string | null {
+// second as sent (the encoded text) under the app secret, compared in constant time, and a payload that names that algorithm,
+// is not expired, and carries an app-scoped user id (digits).
+export function verifySignedRequest(signedRequest: string, appSecret: string, now: number = Date.now()): string | null {
   const parts = signedRequest.split('.');
   if (parts.length !== 2) return null;
   const [encodedSignature, encodedPayload] = parts as [string, string];
@@ -38,17 +44,21 @@ export function verifySignedRequest(signedRequest: string, appSecret: string): s
     return null;
   }
   if (typeof payload !== 'object' || payload === null) return null;
-  const { algorithm, user_id: userId } = payload as { algorithm?: unknown; user_id?: unknown };
+  const { algorithm, user_id: userId, issued_at: issuedAt } = payload as { algorithm?: unknown; user_id?: unknown; issued_at?: unknown };
   if (typeof algorithm !== 'string' || algorithm.toUpperCase() !== 'HMAC-SHA256') return null;
+  // No stamp, or a stamp outside the window: not a request to act on, whoever signed it.
+  if (typeof issuedAt !== 'number' || !Number.isFinite(issuedAt)) return null;
+  const age = now / 1000 - issuedAt;
+  if (age > SIGNED_REQUEST_MAX_AGE_SECONDS || age < -SIGNED_REQUEST_MAX_AHEAD_SECONDS) return null;
   return typeof userId === 'string' && /^\d{1,32}$/.test(userId) ? userId : null;
 }
 
 export type AdsDeletionOutcome = { status: 200; code: string } | { status: 400; code: 'DELETION_MALFORMED' } | { status: 401; code: 'DELETION_SIGNATURE' } | { status: 503; code: 'DELETION_BACKLOG' };
 
-export async function acceptAdsDeletion(runtime: Runtime, appSecret: string, body: string): Promise<AdsDeletionOutcome> {
+export async function acceptAdsDeletion(runtime: Runtime, appSecret: string, body: string, now: number = Date.now()): Promise<AdsDeletionOutcome> {
   const signed = new URLSearchParams(body).get('signed_request');
   if (!signed) return { status: 400, code: 'DELETION_MALFORMED' };
-  const userId = verifySignedRequest(signed, appSecret);
+  const userId = verifySignedRequest(signed, appSecret, now);
   if (userId === null) return { status: 401, code: 'DELETION_SIGNATURE' };
   const code = randomBytes(16).toString('hex');
   try {

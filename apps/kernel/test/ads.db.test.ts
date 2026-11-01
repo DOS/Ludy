@@ -23,6 +23,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
 import { loadConfig } from '../src/config.ts';
+import { RateLimiter } from '../src/rate-limit.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -718,7 +719,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     const notices = async (kind: string) =>
       row<{ user_id: string; detail: Record<string, string> }>(`SELECT user_id, detail FROM crove_kernel.notification WHERE org_id = $1 AND kind = $2 ORDER BY created_at, id`, [orgId, kind]);
     // Meta's signed request: the payload and its HMAC-SHA256 under the app secret, both base64url.
-    const signed = (userId: string, secret = SECRET_META, payload: Record<string, unknown> = { algorithm: 'HMAC-SHA256', issued_at: 1_700_000_000, user_id: userId }) => {
+    const signed = (userId: string, secret = SECRET_META, payload: Record<string, unknown> = { algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId }) => {
       const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
       return `${createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}`;
     };
@@ -843,6 +844,12 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect((await post(form(signed('not-a-number')))).status).toBe(401);
       expect((await post(form(`${signed('4242').split('.')[0]}.${Buffer.from('{"algorithm":"HMAC-SHA256","user_id":"9999"}').toString('base64url')}`))).status).toBe(401);
       expect((await post(form('no-dot'))).status).toBe(401);
+      // Signed by Meta but expired, with no stamp, or stamped in the future: not a request to act on (a replay of an old one).
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: nowSeconds - 25 * 3600, user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: String(nowSeconds), user_id: '4242' })))).status).toBe(401);
+      expect((await post(form(signed('4242', SECRET_META, { algorithm: 'HMAC-SHA256', issued_at: nowSeconds + 3600, user_id: '4242' })))).status).toBe(401);
       expect((await post('other=1')).status).toBe(400);
       expect((await post('')).status).toBe(400);
       expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
@@ -869,6 +876,33 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(done).toMatchObject({ accounts: 0 });
       expect(done?.completedAt).toBeInstanceOf(Date);
       expect(await (await app.request(`/api/ads/meta/data-deletion?code=${body.confirmation_code}`)).text()).toContain('không giữ dữ liệu quảng cáo nào');
+    });
+
+    it('refuses a body past the cap before reading it, and a client address past its rate, and stores nothing of either', async () => {
+      const limited = createHttpApp({
+        config: appConfig,
+        runtime: api,
+        store: new MemoryStore(),
+        authenticate: createAuthenticator(appConfig, appDb),
+        pool,
+        aiEnabled: false,
+        channels: { broker: vault, sandbox: true, adsPlatforms: sandbox, connectors: {}, publicUrl: 'https://ludy.example.test' },
+        adsDeletion: { appSecret: SECRET_META },
+        adsDeletionLimit: new RateLimiter({ perMinute: 3 }),
+      });
+      const post = (body: string) => limited.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+      const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`);
+      // A body past 8 KiB is refused whatever it holds, before it is read (so it does not use up the address's calls).
+      const big = await post(`signed_request=${'a'.repeat(9 * 1024)}`);
+      expect(big.status).toBe(413);
+      // Three calls a minute from one address: the fourth is refused, with the time to wait, and still stores nothing.
+      for (let i = 0; i < 3; i++) expect((await post('other=1')).status).toBe(400);
+      const refused = await post(form(signed('4242')));
+      expect(refused.status).toBe(429);
+      expect(Number(refused.headers.get('retry-after'))).toBeGreaterThan(0);
+      expect(await row(`SELECT count(*)::text AS n FROM crove_ads.deletion_request`)).toEqual(before);
+      // The status page shares the limit: it too answers 429 once the address has used it.
+      expect((await limited.request(`/api/ads/meta/data-deletion?code=${'0'.repeat(32)}`)).status).toBe(429);
     });
 
     it('erases the ad accounts a deletion request names in every org, closes their connections, and leaves other people’s alone', async () => {
