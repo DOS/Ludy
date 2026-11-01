@@ -8,6 +8,11 @@ import pg from 'pg';
 
 const FILE_PATTERN = /^(\d{14})_crove_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 
+// Migrations that change state for the whole database, not for Ludy's roles and schemas: in a shared database one of them runs
+// only through a variant (#2284). A pending one without a variant stops the run, so a missing or mislocated variants
+// directory can never silently apply the original to the other system's database.
+export const DATABASE_WIDE_MIGRATIONS: ReadonlySet<string> = new Set(['20261015120000_crove_kernel_revoke_temp.sql']);
+
 // CROVE_SHARED_DATABASE (#2284): Ludy lives in a database that other systems own schemas, roles and event triggers in
 // (Ludy Cloud inside DOS's Supabase project). Only the exact value `true` turns it on; unset, empty and `false` are the
 // owned-database mode, the default, which keeps every guard.
@@ -213,7 +218,8 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
   const log = options.log ?? (() => {});
   const files = await readMigrations(options.dir);
   const shared = options.sharedDatabase ?? sharedDatabaseSetting(process.env['CROVE_SHARED_DATABASE']);
-  const variants = shared ? await readSharedVariants(options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants'), files) : new Map<string, string>();
+  const variantsDir = options.sharedVariantsDir ?? join(dirname(options.dir), 'shared-variants');
+  const variants = shared ? await readSharedVariants(variantsDir, files) : new Map<string, string>();
   if (shared) log('shared-database mode: effects are limited to crove_* roles and schemas');
   const client = new pg.Client({ connectionString: options.adminUrl, application_name: 'crove-migrate' });
   await client.connect();
@@ -265,6 +271,9 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
         continue;
       }
       const variant = variants.get(file.name);
+      if (shared && variant === undefined && DATABASE_WIDE_MIGRATIONS.has(file.name)) {
+        throw new Error(`shared database: ${file.name} changes state for the whole database and has no shared-database variant (looked in ${variantsDir}); refusing to apply it`);
+      }
       log(variant === undefined ? `applying ${file.name}` : `applying ${file.name} (shared-database variant)`);
       await client.query('BEGIN');
       try {
@@ -307,6 +316,8 @@ export async function migrate(options: MigrateOptions): Promise<string[]> {
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     if (contextTokenKey?.trim()) await installContextTokenKey(client, contextTokenKey, log);
   } finally {
+    // A run that failed halfway still leaves the tables it committed: the other system's default grants must not stay on them.
+    if (shared) await isolateFromForeignRoles(client, log).catch(() => {});
     await unmarkPipelineSession(client).catch(() => {});
     await client.query("SELECT pg_advisory_unlock(hashtext('crove_migrate'))").catch(() => {});
     await client.end();
@@ -921,6 +932,20 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
      ORDER BY 1`,
   );
   const foreign = shared ? await foreignPrivileges(client) : [];
+  // The membership rule without its TEMPORARY condition: in a shared database every role holds TEMPORARY, so what must
+  // still be refused is a role that is not Ludy's, not a superuser and not the runner acting as a Ludy role (a membership,
+  // SET, or ADMIN OPTION, directly or through other roles): it would carry that role's rights into the definer owners.
+  const { rows: actors } = shared
+    ? await client.query<{ rolname: string; via: string }>(
+        `SELECT r.rolname::text AS rolname,
+                (SELECT pg_catalog.string_agg(c.rolname::text, ', ' ORDER BY c.rolname::text COLLATE "C")
+                 FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%' AND ${actsAs('r.oid', 'c.oid')}) AS via
+         FROM pg_catalog.pg_roles r
+         WHERE r.rolname NOT LIKE 'crove\\_%' AND r.rolname NOT LIKE 'pg\\_%' AND r.rolname <> current_user AND NOT r.rolsuper
+           AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles c WHERE c.rolname LIKE 'crove\\_%' AND ${actsAs('r.oid', 'c.oid')})
+         ORDER BY r.rolname::text COLLATE "C"`,
+      )
+    : { rows: [] as Array<{ rolname: string; via: string }> };
   const { rows: dbRows } = await client.query<{ name: string }>('SELECT pg_catalog.quote_ident(pg_catalog.current_database()) AS name');
   const dbName = dbRows[0]?.name ?? 'current_database';
   return [
@@ -945,6 +970,11 @@ async function listHardeningViolations(client: pg.ClientBase, shared: boolean): 
       (f) =>
         `role ${f.role} holds privileges on objects of the Ludy schema ${f.schema} and is not a Ludy role (a shared database); fix: ` +
         `REVOKE ALL ON ALL TABLES, ALL SEQUENCES, ALL ROUTINES IN SCHEMA ${f.schema} and ON SCHEMA ${f.schema} FROM ${f.role}, which migrate does on every run`,
+    ),
+    ...actors.map(
+      (r) =>
+        `role ${r.rolname} is not a Ludy role but can act as ${r.via} (a shared database); fix as the owner of that membership: ` +
+        `REVOKE ${r.via} FROM ${r.rolname}`,
     ),
     ...roles.map(
       (r) =>
