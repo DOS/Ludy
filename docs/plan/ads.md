@@ -44,6 +44,15 @@ Ludy already holds the books (Finance), the bank and card lines, the documents a
 | VAT or foreign contractor tax (FCT) figures, declarations | Law changed in 2025 and 2026 and is only confirmed by secondary sources: needs the accountant (section 6, Q5) |
 | Agents that read or act on ad data | No agent writes `crove_ads` (the write allowlist of ADR-0029 stays as it is); reading by an agent waits for a use case |
 | Agency view (many client accounts, white label) | Not the OPC and SME focus |
+| **Boost** (paying to promote an organic post from the composer or the post list) | It writes to the ad account and spends money; it also needs the write review of each platform. Hootsuite lists it next to Ads; Ludy does not in v1 |
+
+### Where Ads sits in the app
+
+Reference (the owner, 2026-11-01, a screenshot of Hootsuite's current dashboard): Ads is not a product of its own on the rail. It is a group inside its publishing product, next to Plan (calendar, drafts, content) and Analytics, with two items, Ads and Boost.
+
+**Recommendation: a group inside the Social (posting) app on the rail, not a rail item of its own.** The same person reads the calendar and the ad numbers, the two share the platform connections (section 5.1), and a fourth or fifth rail item for a module with one or two screens crowds a small business's shell. Each group is shown **only when its module is enabled**: with `ads` out of `CROVE_MODULES` the Ads group does not appear and Social looks as it does today; with `social` out and `ads` in, Ads has no home group, so it falls back to a rail item of its own.
+
+How: the shell builds its apps, menus and module guard from each module's entry in `MODULE_SCREENS` (`packages/kernel-contract/src/screens.ts`), so Ads declares its own entry, `ADS_SCREENS`, with its routes, nav labels (Vietnamese and English) and permissions; the module guard already hides a module that is not enabled. Whether a module's `nav` can place its items inside another module's app is not checked here: slice A1 checks it and, if it cannot, makes the small shell change in the same PR. The product name stays "Ludy Ads" for the module; the group's label in the app is a copy decision for the owner and not blocking.
 
 ## 3. First slice (recommended): Meta ad account, read only, next to the books
 
