@@ -1,5 +1,5 @@
 import type { Dictionary } from '../../content/vi';
-import { DOCS_URL, GITHUB_URL, LICENSE_URL, SECURITY_URL, SIGN_IN_URL } from '../../content/site';
+import { APP_PAGES, appPagePath, DOCS_URL, GITHUB_URL, LICENSE_URL, SECURITY_URL, SIGN_IN_URL, type AppPageKey } from '../../content/site';
 import { LudyMark } from './ui';
 
 export function SiteFooter({ dict }: { dict: Dictionary }) {
@@ -15,6 +15,11 @@ export function SiteFooter({ dict }: { dict: Dictionary }) {
           <p className="mt-3 text-sm text-muted">{footer.tagline}</p>
         </div>
         <nav aria-label={footer.navLabel} className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          {(Object.keys(APP_PAGES) as AppPageKey[]).map((key) => (
+            <a key={key} href={appPagePath(key, dict.lang)} className="text-muted hover:text-fg">
+              {dict.modules[APP_PAGES[key].module].name}
+            </a>
+          ))}
           <a href={SIGN_IN_URL} className="text-muted hover:text-fg">
             {nav.signIn}
           </a>

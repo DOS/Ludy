@@ -2648,6 +2648,26 @@ export const en = {
     failedChecks:
       '{count, plural, one {# check failed. Compare with the original document before approving.} other {# checks failed. Compare with the original document before approving.}}',
     acceptFailed: 'I compared it with the original document and still want to post it',
+    // Where the PDF carried the seller's lookup link and code (#2268): the original XML comes from the provider's page.
+    lookup: {
+      title: 'The original invoice (XML) is needed',
+      hint: "This invoice was read from a PDF, so the seller's digital signature could not be checked. Open the invoice provider's lookup page, enter the lookup code and the verification code there, download the XML file and upload it here. The app does not look it up for you.",
+      unknownProvider: 'Invoice provider not recognized',
+      code: 'Lookup code:',
+      copy: 'Copy code',
+      copied: 'Copied',
+      open: 'Open the lookup page',
+      linkAsText: 'Address printed on the invoice (cannot be opened from here):',
+      upload: 'Upload XML',
+      sent: 'Sent. The XML file will be read and appear as a new proposal in the list.',
+      preparing: 'Getting ready to upload…',
+      duplicate: 'This file is already in the system, so it is not read again.',
+      unreadable: 'This file could not be read.',
+      waiting: "The file was received and waits for the next day's document reading budget.",
+      notXml: 'Only .xml files are taken here. Upload a PDF or a photo invoice in the Inbox.',
+      copyByHand: 'The code could not be copied automatically; copy it by hand.',
+      newTab: 'opens in a new tab',
+    },
     signatureUnverifiedTitle: 'The digital signature of this invoice could not be verified',
     signatureUnverifiedHint:
       'The invoice may have been edited after it was signed, or signed with a certificate {brand} does not trust. Look the invoice up on the tax authority portal or ask the seller for the original before approving.',

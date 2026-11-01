@@ -10,9 +10,12 @@ const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 // The landmark and heading rules of axe (best-practice), asked for by id as in e2e/tests/layout.spec.ts.
 const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page-has-heading-one', 'heading-order'];
 
+// The home page and every app page (content/site.ts APP_PAGES), each in both languages.
 const PAGES = [
   { path: '/', lang: 'vi' },
   { path: '/en', lang: 'en' },
+  { path: '/ke-toan', lang: 'vi' },
+  { path: '/en/accounting', lang: 'en' },
 ] as const;
 const VIEWPORTS = [
   { name: '360px', width: 360, height: 780 },
@@ -227,21 +230,23 @@ for (const { path, lang } of PAGES) {
 // The rendered English page, so a word typed into a component instead of content/en.ts is caught too: its title, every
 // text node (also the closed FAQ answers, the closed menu and what shows at one width only) and the names and hints a
 // screen reader or a hover reads out.
-test('/en shows no Vietnamese but the allowed example names', async ({ page }) => {
-  await page.goto('/en');
-  const texts = await page.evaluate(() => {
-    const found = [document.title];
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      if (!node.parentElement?.closest('script, style, noscript, template')) found.push(node.textContent ?? '');
-    }
-    for (const el of document.querySelectorAll('[aria-label], [alt], [title], [placeholder]')) {
-      for (const name of ['aria-label', 'alt', 'title', 'placeholder']) {
-        const value = el.getAttribute(name);
-        if (value) found.push(value);
+for (const path of PAGES.filter((page) => page.lang === 'en').map((page) => page.path)) {
+  test(`${path} shows no Vietnamese but the allowed example names`, async ({ page }) => {
+    await page.goto(path);
+    const texts = await page.evaluate(() => {
+      const found = [document.title];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (!node.parentElement?.closest('script, style, noscript, template')) found.push(node.textContent ?? '');
       }
-    }
-    return found;
+      for (const el of document.querySelectorAll('[aria-label], [alt], [title], [placeholder]')) {
+        for (const name of ['aria-label', 'alt', 'title', 'placeholder']) {
+          const value = el.getAttribute(name);
+          if (value) found.push(value);
+        }
+      }
+      return found;
+    });
+    expect(vietnameseLeft(texts.join('\n'))).toEqual([]);
   });
-  expect(vietnameseLeft(texts.join('\n'))).toEqual([]);
-});
+}

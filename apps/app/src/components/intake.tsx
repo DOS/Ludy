@@ -52,7 +52,9 @@ export interface Intake {
   refused: unknown;
 }
 
-export function useIntake(): Intake {
+// forcedEntityId: a document that belongs to one legal entity's books (the original of an invoice already proposed
+// there, #2268) is booked there, whatever entity the shell works in.
+export function useIntake(forcedEntityId?: string): Intake {
   const [items, setItems] = useState<IntakeItem[]>([]);
   const [uploading, setUploading] = useState(false);
   const [refused, setRefused] = useState<unknown>(null);
@@ -62,7 +64,8 @@ export function useIntake(): Intake {
   current.current = items;
   // The entity the shell works in when a batch starts: all its documents are booked there (#1764). A batch started
   // before the entities are known waits for them, so it never splits between the default entity and the chosen one.
-  const chosen = useChosenEntity();
+  const shell = useChosenEntity();
+  const chosen = forcedEntityId ? { ready: true, legalEntityId: forcedEntityId } : shell;
   const entity = useRef(chosen);
   entity.current = chosen;
   const waiting = useRef<File[]>([]);
