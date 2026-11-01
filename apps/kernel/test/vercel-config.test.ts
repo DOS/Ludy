@@ -63,11 +63,22 @@ describe('the ignored build step', () => {
 describe('.github/workflows/release-branch.yml', () => {
   const workflow = readFileSync(root('.github/workflows/release-branch.yml'), 'utf8').replaceAll('\r\n', '\n');
 
-  it('runs on v* tags only, and only moves the release branch of a commit on main', () => {
-    expect(workflow).toMatch(/on:\n {2}push:\n {4}tags: \['v\*'\]\n\npermissions:/);
-    expect(workflow).not.toMatch(/branches:/);
-    expect(workflow).toContain('merge-base --is-ancestor "$SHA" origin/main');
-    expect(workflow).toContain('git push --force origin "$SHA:refs/heads/release"');
+  it('runs by hand only (never on a tag push, so the app cannot go live before its API), from main, for a v* tag', () => {
+    expect(workflow).toMatch(/\non:\n {2}workflow_dispatch:\n/);
+    expect(workflow).not.toMatch(/\n {2}push:/);
+    expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
+    expect(workflow).toContain('environment: release');
+    expect(workflow).toContain('^v[A-Za-z0-9._-]{1,63}$');
+  });
+
+  it('moves the release branch only to a commit of main whose CI is green', () => {
+    expect(workflow).toContain('merge-base --is-ancestor "$sha" origin/main');
+    expect(workflow).toContain('DEPLOY_REQUIRED_CHECKS');
+    expect(workflow).toContain('required check not green');
+    const ci = workflow.indexOf('CI is green');
+    const push = workflow.indexOf('git push --force origin "$SHA:refs/heads/release"');
+    expect(ci).toBeGreaterThan(0);
+    expect(push).toBeGreaterThan(ci);
   });
 
   it('gets write access for the one job that needs it, and pins the checkout action by commit', () => {

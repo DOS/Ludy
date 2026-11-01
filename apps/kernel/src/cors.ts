@@ -13,8 +13,9 @@ import { INVITE_TOKEN_HEADER } from './auth-signup-policy.ts';
 export const CORS_MAX_ORIGINS = 10;
 
 // The request headers the web app sends cross-origin: the session and org headers, JSON bodies, the invite token of a
-// sign-up (#563) and the headers Supabase's auth client adds (`apikey`, `x-client-info`, `x-supabase-api-version`).
-const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, INVITE_TOKEN_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version'];
+// sign-up (#563), the headers Supabase's auth client adds (`apikey`, `x-client-info`, `x-supabase-api-version`) and the
+// no-cache pair a browser adds to a fetch with `cache: 'no-store'`.
+const ALLOWED_HEADERS = ['authorization', 'content-type', ORG_HEADER, INVITE_TOKEN_HEADER, 'apikey', 'x-client-info', 'x-supabase-api-version', 'cache-control', 'pragma'];
 const ALLOWED_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
 // The response headers a page may read: the request id for a report, Retry-After for a busy answer and a download's
 // name and size.
@@ -58,8 +59,13 @@ export function corsMiddleware(allowed: readonly string[]): MiddlewareHandler {
   const set = new Set(allowed);
   return async (c, next) => {
     const origin = c.req.header('origin');
-    // Same-origin requests and non-browser clients send no Origin header: nothing to answer.
-    if (origin === undefined) return next();
+    // Same-origin requests and non-browser clients send no Origin header: no CORS headers, but the answer still varies by
+    // Origin, so a shared cache does not serve it to a later cross-origin request.
+    if (origin === undefined) {
+      await next();
+      c.res.headers.append('vary', 'Origin');
+      return;
+    }
     const preflight = c.req.method === 'OPTIONS' && c.req.header('access-control-request-method') !== undefined;
     const permitted = set.has(origin);
     if (preflight) {

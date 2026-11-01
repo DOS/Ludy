@@ -22,7 +22,7 @@ export function isStaleBuild(mine: string, server: unknown): boolean {
 // The API's build from /version. A 503 (database down) still names the build; anything else, or a failure, is null.
 export async function fetchServerBuild(fetchFn: typeof fetch = fetch): Promise<string | null> {
   try {
-    const response = await fetchFn(apiUrl('/version'), { cache: 'no-store', credentials: 'omit' });
+    const response = await fetchFn(apiUrl('/version'), { credentials: 'omit' });
     const body = (await response.json()) as { build?: unknown };
     return typeof body.build === 'string' ? body.build : null;
   } catch {

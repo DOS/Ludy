@@ -21,7 +21,7 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 
 **Alternative, pending the owner's decision: the deployment's own `PUBLIC_URL`** (for example the pilot instance on its public address). Read "the deployment's `PUBLIC_URL`" wherever the steps below say `http://localhost:8080`. It needs more:
 
-- `PUBLIC_URL` is https, and the Meta app lists `<PUBLIC_URL>/channels/oauth/meta_ads/callback` as a valid OAuth redirect URI.
+- `PUBLIC_URL` is https, and the Meta app lists `<APP_URL>/channels/oauth/meta_ads/callback` as a valid OAuth redirect URI.
 - The module list includes `ads` (`CROVE_MODULES`; the pilot runs `finance` only, so it must be changed first, and Social's routes stay out unless asked for).
 - `ADS_SANDBOX=false`: the server refuses `ADS_SANDBOX=true` on a public address when the Ads module runs.
 - A credential key is set (`CREDENTIAL_KEY`), as for any connected channel.
@@ -43,7 +43,7 @@ The app secret goes from the Meta app's settings page into the `.env` file of th
 
 ### 1. Add the redirect address to the Meta app **[PERSON]**
 
-In the Meta app (developers.facebook.com, the app's dashboard): Facebook Login, Settings, "Valid OAuth Redirect URIs": add `http://localhost:8080/channels/oauth/meta_ads/callback` (or the deployment's `<PUBLIC_URL>/channels/oauth/meta_ads/callback`). Meta documents Strict Mode (an exact match) and an "Enforce HTTPS" switch; whether `http://localhost` is accepted is [U]: if the dialog refuses it, record the message and use a public https address instead.
+In the Meta app (developers.facebook.com, the app's dashboard): Facebook Login, Settings, "Valid OAuth Redirect URIs": add `http://localhost:8080/channels/oauth/meta_ads/callback` (or the deployment's `<APP_URL>/channels/oauth/meta_ads/callback`). Meta documents Strict Mode (an exact match) and an "Enforce HTTPS" switch; whether `http://localhost` is accepted is [U]: if the dialog refuses it, record the message and use a public https address instead.
 
 In the same app, Settings, Advanced, Security: turn on **"Require App Secret"**. Ludy sends the proof of the app secret (`appsecret_proof`) with every Graph request it makes, so a leaked token alone cannot call the API once this is on; with it off, the proof is sent but not required. **[CHECK]** after turning it on, connecting (step 4) still works; if Meta then refuses, record the error.
 
@@ -117,7 +117,7 @@ Record in the issue (#2218) without any id, name or amount of a real account:
 ## When something goes wrong
 
 - **The app will not start:** the pair is incomplete or the App ID is not digits; the log names the variable. On a public address the log can also name `ADS_SANDBOX=true` or a plain http `PUBLIC_URL`.
-- **Meta says the redirect URI is not allowed:** the address in step 1 differs from `PUBLIC_URL` plus `/channels/oauth/meta_ads/callback`, character for character.
+- **Meta says the redirect URI is not allowed:** the address in step 1 differs from `APP_URL` (else `PUBLIC_URL`) plus `/channels/oauth/meta_ads/callback`, character for character.
 - **The connect button is missing:** `/api/config` does not list `meta_ads` (step 3), the Ads module is off, or the person is not an owner or admin.
 - **"Không có tài khoản nào" after the dialog:** the person has no ad account on the app's business, or did not tick one; record it.
 - **A run fails with `permission` (Meta codes 10, 200 to 299):** the person lost access to the ad account or the app lacks the Marketing API product; the connection stays and the error is shown.

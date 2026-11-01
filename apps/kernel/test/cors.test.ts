@@ -57,6 +57,12 @@ describe('APP_URL', () => {
     expect(() => loadConfig({ ...env, APP_URL: 'http://localhost:5173' })).toThrow(/APP_URL.*https/);
   });
 
+  it('refuses an http origin in CORS_ALLOWED_ORIGINS on a public deployment', () => {
+    const env = { ...base, PUBLIC_URL: 'https://api.example.com', AUTH_UPSTREAM_URL: 'http://auth:9999' };
+    expect(() => loadConfig({ ...env, CORS_ALLOWED_ORIGINS: 'http://localhost:5173' })).toThrow(/http origin on a public deployment/);
+    expect(loadConfig({ ...base, CORS_ALLOWED_ORIGINS: 'http://localhost:5173' }).CORS_ALLOWED_ORIGINS).toEqual(['http://localhost:5173']);
+  });
+
   it('is where channel OAuth returns, so a public app must be https when an app is set', () => {
     const env = { ...base, PUBLIC_URL: 'https://api.example.com', AUTH_UPSTREAM_URL: 'http://auth:9999', CHANNEL_TELEGRAM: 'true', CALENDAR_GOOGLE_CLIENT_ID: '123456-abcdefgh.apps.googleusercontent.com', CALENDAR_GOOGLE_CLIENT_SECRET: 's' };
     expect(() => loadConfig({ ...env, APP_URL: APP, CORS_ALLOWED_ORIGINS: APP })).not.toThrow();
@@ -128,10 +134,18 @@ describe('corsMiddleware', () => {
     expect(stranger.headers.get('vary')).toContain('Origin');
   });
 
-  it('leaves a request with no Origin header alone (same origin, curl)', async () => {
+  it('leaves a request with no Origin header without CORS headers (same origin, curl), but still varying by Origin', async () => {
     const answer = await (await appWith([APP])).request('/x');
     expect(answer.status).toBe(200);
     expect(answer.headers.get('access-control-allow-origin')).toBeNull();
+    expect(answer.headers.get('vary')).toContain('Origin');
+  });
+
+  it('lets a fetch with cache: no-store through the preflight', async () => {
+    const answer = await (await appWith([APP])).request('/x', { method: 'OPTIONS', headers: { origin: APP, 'access-control-request-method': 'GET', 'access-control-request-headers': 'cache-control,pragma' } });
+    const headers = answer.headers.get('access-control-allow-headers') ?? '';
+    expect(headers).toContain('cache-control');
+    expect(headers).toContain('pragma');
   });
 });
 

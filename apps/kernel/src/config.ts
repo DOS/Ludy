@@ -317,7 +317,7 @@ const schema = z.object({
   // every call to a site goes through the egress guard. On unless false.
   CHANNEL_WORDPRESS: z.enum(['true', 'false']).default('true'),
   // The deployment's Meta app (Facebook Pages, Social plan S6). Set both to offer Facebook Pages; neither hides them.
-  // The app's valid OAuth redirect URI is PUBLIC_URL/channels/oauth/facebook_page/callback.
+  // The app's valid OAuth redirect URI is APP_URL/channels/oauth/facebook_page/callback.
   CHANNEL_META_APP_ID: optional,
   CHANNEL_META_APP_SECRET: optional,
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
@@ -326,45 +326,45 @@ const schema = z.object({
   // Marketing API together), so the same id and secret can be given twice; but a Meta user token carries every permission
   // the person ever granted that app, so with a shared app the ads token can also hold the Pages ones (the connection
   // records the full set), and a separate app keeps it to ads_read. The app's valid OAuth redirect URI is
-  // PUBLIC_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
+  // APP_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_APP_ID: optional,
   CHANNEL_META_ADS_APP_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
-  // callback URL is PUBLIC_URL/channels/oauth/zalo_oa/callback.
+  // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
   CHANNEL_ZALO_APP_SECRET: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/threads/callback.
+  // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
   CHANNEL_THREADS_APP_SECRET: optional,
   // The deployment's LinkedIn app (Share on LinkedIn, Sign In with OpenID Connect), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/linkedin/callback.
+  // APP_URL/channels/oauth/linkedin/callback.
   CHANNEL_LINKEDIN_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_CLIENT_SECRET: optional,
   // LinkedIn post counts (#797): true once the LinkedIn app has member post analytics (r_member_postAnalytics).
   CHANNEL_LINKEDIN_ANALYTICS: z.enum(['true', 'false']).default('false'),
   // LinkedIn Company Pages (#1077): true once the LinkedIn app has the Community Management API (w_organization_social,
-  // r_organization_admin). Callback URL: PUBLIC_URL/channels/oauth/linkedin_page/callback.
+  // r_organization_admin). Callback URL: APP_URL/channels/oauth/linkedin_page/callback.
   CHANNEL_LINKEDIN_ORGANIZATIONS: z.enum(['true', 'false']).default('false'),
   // A separate LinkedIn app for Company Pages: LinkedIn grants the Community Management API only to an app with no other
   // product, so a deployment that also posts as members sets these; without them pages use the member app above.
   CHANNEL_LINKEDIN_PAGE_CLIENT_ID: optional,
   CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET: optional,
   // The deployment's Google Cloud project for YouTube uploads (YouTube Data API v3, an OAuth web client), S9. Callback
-  // URL: PUBLIC_URL/channels/oauth/youtube/callback.
+  // URL: APP_URL/channels/oauth/youtube/callback.
   CHANNEL_GOOGLE_CLIENT_ID: optional,
   CHANNEL_GOOGLE_CLIENT_SECRET: optional,
   // Google Business Profile posts (#709), with the same Google project once Google has approved it for the Business
   // Profile APIs (Basic API Access). Off by default: an unapproved project gets no answer from them. Callback URL:
-  // PUBLIC_URL/channels/oauth/google_business/callback.
+  // APP_URL/channels/oauth/google_business/callback.
   CHANNEL_GOOGLE_BUSINESS: z.enum(['true', 'false']).default('false'),
   // Outside calendars members connect (#2123, #1374): the operator's own Google OAuth web client with the Calendar API
   // enabled (scope calendar.freebusy). Not the project above: it is a different app and consent screen. Callback URL:
-  // PUBLIC_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
+  // APP_URL/calendar/oauth/google_calendar/callback. With neither set, the connect button is not offered.
   CALENDAR_GOOGLE_CLIENT_ID: optional,
   CALENDAR_GOOGLE_CLIENT_SECRET: optional,
   // The deployment's TikTok app (Login Kit and Content Posting API, Direct Post), S9. Callback URL:
-  // PUBLIC_URL/channels/oauth/tiktok/callback.
+  // APP_URL/channels/oauth/tiktok/callback.
   CHANNEL_TIKTOK_CLIENT_KEY: optional,
   CHANNEL_TIKTOK_CLIENT_SECRET: optional,
   // The TikTok app also has the Display API: connections ask for video.list, and posts' counts are read (#744).
@@ -373,7 +373,7 @@ const schema = z.object({
   // to the creator's TikTok inbox as a draft. Off by default: TikTok refuses a sign-in that asks for a scope the app lacks.
   CHANNEL_TIKTOK_INBOX: z.enum(['true', 'false']).default('false'),
   // The deployment's X app (OAuth 2.0, a confidential client with PKCE), S9; X bills each post to its account.
-  // Callback URL: PUBLIC_URL/channels/oauth/x/callback.
+  // Callback URL: APP_URL/channels/oauth/x/callback.
   CHANNEL_X_CLIENT_ID: optional,
   CHANNEL_X_CLIENT_SECRET: optional,
   // X post counts (#797): every read is billed by X, so the metrics sweep reads X posts only when this is true.
@@ -706,6 +706,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     if (config.APP_URL !== undefined && !config.APP_URL.startsWith('https://')) {
       throw new Error('APP_URL is where people open the app and every link in mail points at it; a public APP_URL must be https');
+    }
+    // A browser origin on plain http (a laptop's dev server) is no caller of a public API.
+    if (config.CORS_ALLOWED_ORIGINS.some((origin) => !origin.startsWith('https://'))) {
+      throw new Error('CORS_ALLOWED_ORIGINS lists an http origin on a public deployment; list https origins only');
     }
     // Browsers send files to, and fetch them from, this endpoint, and it is allowed in the app's CSP connect-src.
     const browserEndpoint = config.S3_PUBLIC_ENDPOINT ?? config.S3_ENDPOINT;
