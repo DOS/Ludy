@@ -331,6 +331,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // switch to itself.
   'crove_ads.ad_org_setting': {
     update: { set: 'write_enabled = write_enabled' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); the seed already holds it',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // A spend cap of the org or of one ad account, a row per change (the history, the latest is the cap): written once and never
