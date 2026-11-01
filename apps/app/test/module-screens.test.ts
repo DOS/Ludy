@@ -175,7 +175,7 @@ describe('module screens against the router (#1652)', () => {
       [
         'social',
         [
-          ['social', ['/o/$slug/social', '/o/$slug/social/notifications']],
+          ['social', ['/o/$slug/social', '/o/$slug/social/comments', '/o/$slug/social/notifications']],
           ['ads', ['/o/$slug/ads']],
         ],
       ],
@@ -186,7 +186,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'ads', 'bookings', 'deals', 'contacts', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'comments', 'notifications', 'ads', 'bookings', 'deals', 'contacts', 'agents', 'settings',
     ]);
   });
 });

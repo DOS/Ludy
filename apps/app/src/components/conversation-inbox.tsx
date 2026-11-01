@@ -62,10 +62,20 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
   const items = list.data?.conversations ?? [];
   // The thread shown: the one chosen while it is still in the list or was opened from it, else the first.
   const openId = selected ?? items[0]?.id ?? null;
+  // The first thread of a tab is opened for good: answering it moves it to another tab, and it stays on screen.
+  useEffect(() => {
+    if (selected === null && items[0]) setSelected(items[0].id);
+  }, [selected, items]);
   return (
     <div className="grid gap-4 md:grid-cols-[minmax(0,20rem)_minmax(0,1fr)]" data-testid="conversation-inbox">
       <section aria-label={t('listLabel')} className="min-w-0 space-y-3">
-        <Tabs value={status} onValueChange={(v) => setStatus(v as ConversationStatus)}>
+        <Tabs
+          value={status}
+          onValueChange={(v) => {
+            setStatus(v as ConversationStatus);
+            setSelected(null);
+          }}
+        >
           <TabsList>
             {STATUSES.map((s) => (
               <TabsTrigger key={s} value={s} data-testid={`conversation-tab-${s}`}>
