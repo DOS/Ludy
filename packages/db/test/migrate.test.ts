@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { applyConcurrentIndexes, CONCURRENT_INDEX_MARKER, concurrentIndexes, readMigrations, takeMigrateLock } from '../src/migrate.ts';
+import { applyConcurrentIndexes, CONCURRENT_INDEX_MARKER, concurrentIndexes, readMigrations, readSharedVariants, sharedDatabaseSetting, takeMigrateLock } from '../src/migrate.ts';
 
 describe('migration files', () => {
   it('hash the same with CRLF and LF line endings', async () => {
@@ -165,6 +165,45 @@ describe('migration files', () => {
     for (const f of files) {
       expect(byHash.get(f.sha256), `${f.name} repeats ${byHash.get(f.sha256)}`).toBeUndefined();
       byHash.set(f.sha256, f.name);
+    }
+  });
+});
+
+describe('shared-database mode (#2284)', () => {
+  it('is on only for the exact value true, and an unknown value stops the run', () => {
+    for (const off of [undefined, '', '  ', 'false']) expect(sharedDatabaseSetting(off), String(off)).toBe(false);
+    expect(sharedDatabaseSetting('true')).toBe(true);
+    expect(sharedDatabaseSetting(' true ')).toBe(true);
+    for (const bad of ['TRUE', '1', 'yes', 'on']) expect(() => sharedDatabaseSetting(bad), bad).toThrow(/CROVE_SHARED_DATABASE/);
+  });
+
+  const migrations = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+  const variants = fileURLToPath(new URL('../../../supabase/shared-variants', import.meta.url));
+
+  it('reads a variant for each migration that has one, and none from a missing directory', async () => {
+    const files = await readMigrations(migrations);
+    const found = await readSharedVariants(variants, files);
+    expect([...found.keys()]).toEqual(['20261015120000_crove_kernel_revoke_temp.sql']);
+    expect(found.get('20261015120000_crove_kernel_revoke_temp.sql')).not.toContain('REVOKE TEMPORARY');
+    expect((await readSharedVariants(join(tmpdir(), 'crove-no-such-variants'), files)).size).toBe(0);
+  });
+
+  it('refuses a variant without a migration of that name, and one for a concurrent index build', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'crove-variants-'));
+    const files = [{ version: '20260101000000', name: '20260101000000_crove_kernel_a.sql', sql: 'SELECT 1;', sha256: 'x' }];
+    await writeFile(join(dir, '20260101000000_crove_kernel_orphan.sql'), 'SELECT 1;');
+    await expect(readSharedVariants(dir, files)).rejects.toThrow(/has no migration of that name/);
+    const indexed = [{ ...files[0]!, sql: `${CONCURRENT_INDEX_MARKER}\nCREATE INDEX CONCURRENTLY IF NOT EXISTS i ON crove_kernel.t (a);\n` }];
+    const dir2 = await mkdtemp(join(tmpdir(), 'crove-variants-'));
+    await writeFile(join(dir2, '20260101000000_crove_kernel_a.sql'), 'SELECT 1;');
+    await expect(readSharedVariants(dir2, indexed)).rejects.toThrow(/cannot have one/);
+  });
+
+  it('keeps the variant free of anything database-wide: no statement on the database, PUBLIC or another role', async () => {
+    const files = await readMigrations(migrations);
+    for (const [name, sql] of await readSharedVariants(variants, files)) {
+      const code = sql.split('\n').filter((l) => !l.trim().startsWith('--')).join('\n');
+      expect(code, name).not.toMatch(/ON DATABASE|FROM PUBLIC|GRANT|REVOKE|CREATE ROLE|ALTER ROLE|EVENT TRIGGER|ALTER DEFAULT|CREATE EXTENSION/i);
     }
   });
 });

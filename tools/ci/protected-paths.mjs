@@ -61,6 +61,8 @@ export const PROTECTED_PATHS = [
   // Schema: every migration change (G6 lists GRANT/POLICY/DEFINER/ROLE; any SQL can drop a trigger or
   // replace a function, so all of them count).
   [/^supabase\/migrations\//, 'migration'],
+  // The SQL `migrate` runs in place of a migration in a shared database (#2284): as much a change to the schema as the migration.
+  [/^supabase\/shared-variants\//, 'shared-database migration variant'],
   // SQL tests and legal documents.
   [/(^|\/)_[^/]*\.test\.sql$/, 'SQL invariant test'],
   [/^LICENSE$/, 'license'],

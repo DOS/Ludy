@@ -56,6 +56,7 @@ describe('protected-path detection (G6)', () => {
       'apps/kernel/src/http.ts',
       'apps/web/src/auth/login.tsx',
       'supabase/migrations/20261016000000_crove_finance_add_column.sql',
+      'supabase/shared-variants/20261015120000_crove_kernel_revoke_temp.sql',
       'supabase/tests/_rls_matrix.test.sql',
       'supabase/tests/database/_conformance.test.sql',
       'LICENSE',

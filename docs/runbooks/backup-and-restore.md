@@ -1,5 +1,7 @@
 # Runbook: backups and restore
 
+This runbook is for a database Ludy owns (the pilot's compose stack). Ludy inside a database it shares with other systems backs up and restores only its own schemas: [shared-database.md](shared-database.md).
+
 How a Ludy instance that runs the `docker compose` stack on one server (the pilot setup, backlog item M1-7) is backed up every night, how it is restored, and how the restore is tested. Issues #307 and #351.
 
 | Target | Value | Why |
