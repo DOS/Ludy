@@ -1124,6 +1124,20 @@ export const en = {
     connect: 'Connect test account',
     connectedToast: 'Connected the test ad account. The first figures arrive in a few seconds.',
     addAnother: 'Connect another test account',
+    // Meta (Facebook and Instagram) ad accounts, connected through Meta's own sign-in dialog, read only (#2218).
+    connectMeta: {
+      title: 'Meta ads',
+      action: 'Connect a Meta ad account',
+      another: 'Connect another Meta ad account',
+      note: '{brand} only asks Meta for permission to read ad reports (the ads_read permission). It never creates or changes a campaign, and never spends your money.',
+      expiry: 'The connection lasts about 60 days, then Meta asks you to connect again.',
+    },
+    oauth: {
+      title: 'Connect an ad account',
+      connected: 'Connected: {list}. The figures arrive within a few minutes.',
+      lost: 'This connection attempt was not found in this browser (it may have been opened in another tab). Start again from the Ads page.',
+      backToAds: 'Back to Ads',
+    },
     accountLabel: 'Ad account',
     sandboxBadge: 'Sandbox (sample figures)',
     currencyAndZone: 'Currency {currency}, time zone {zone}',

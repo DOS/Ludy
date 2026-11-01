@@ -1,7 +1,7 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
 import type { AdAccountView } from '@crove/kernel-contract';
@@ -361,6 +361,8 @@ export function createRpcHandler(
   const oauthConnector = async (context: RpcContext, provider: string) => {
     const { orgId, role } = await resolveMembership(runtime, context.user, context.orgSlug);
     if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được kênh');
+    // An ad platform (ADR-0040) connects only where the Ads module runs: its accounts are linked as the grant is finished.
+    if (isAdProviderId(provider) && !runtime.installed('ads')) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Mô-đun Quảng cáo chưa được bật');
     const connector = channels?.connectors?.[provider];
     if (!channels || !connector) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed, and the user
@@ -1524,6 +1526,17 @@ export function createRpcHandler(
             };
             try {
               const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+              // An ad account is also linked to the org's books as it connects (the entity the member reads by default), so
+              // its first sync starts at once; a link that is refused closes the connection it just made, which no screen would
+              // list, and the account is reported as failed. An account connected again keeps its row, history and settings.
+              if (isAdProviderId(account.provider)) {
+                try {
+                  await runtime.execute('ads.account.link', { connectionId: done.connectionId }, { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` });
+                } catch (linkError) {
+                  if (!done.reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch(() => undefined);
+                  throw linkError;
+                }
+              }
               connections.push({ connectionId: done.connectionId, displayName: account.displayName, reconnected: done.reconnected });
             } catch (error) {
               // Only a refusal of this one account lets the others go on; a failure of the server (an outage, a bug)

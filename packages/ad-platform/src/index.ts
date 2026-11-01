@@ -8,9 +8,13 @@
 // @crove/channel, which this package does not copy.
 import { createHash, randomBytes } from 'node:crypto';
 
-// The provider ids a channel connection of an ad account names. `sandbox_ads` is the offline sandbox; the real ones
-// (`meta_ads`, `google_ads`, `tiktok_ads`) join when their adapters do (plan slices A2, B and C).
-export const AD_PLATFORM_PROVIDERS = ['sandbox_ads'] as const;
+import { MetaAdsPlatform } from './meta.ts';
+
+export * from './meta.ts';
+
+// The provider ids a channel connection of an ad account names. `sandbox_ads` is the offline sandbox, `meta_ads` is Meta
+// (plan slice A2); `google_ads` and `tiktok_ads` join when their adapters do (slices B and C).
+export const AD_PLATFORM_PROVIDERS = ['sandbox_ads', 'meta_ads'] as const;
 export type AdPlatformId = (typeof AD_PLATFORM_PROVIDERS)[number];
 
 export function isAdPlatformProvider(value: string): value is AdPlatformId {
@@ -88,10 +92,13 @@ export interface AdPlatform {
   readDaily(secret: string, externalAccountId: string, range: { from: string; to: string }): Promise<AdDailyRow[]>;
 }
 
-// The adapters this deployment offers, by provider id: the sandbox when it is on (ADS_SANDBOX). A real adapter is built
-// here with its own fetch; none exists yet.
-export function adPlatforms(options: { sandbox: boolean; now?: () => Date }): Readonly<Record<string, AdPlatform>> {
-  return options.sandbox ? { sandbox_ads: sandboxAdPlatform(options.now) } : {};
+// The adapters this deployment offers, by provider id: the sandbox when it is on (ADS_SANDBOX), Meta when the deployment
+// has its app (CHANNEL_META_ADS_APP_ID and _SECRET). A real adapter is built here with its own fetch bound to its hosts.
+export function adPlatforms(options: { sandbox: boolean; now?: () => Date; meta?: { appSecret: string; graphVersion?: string } }): Readonly<Record<string, AdPlatform>> {
+  const out: Record<string, AdPlatform> = {};
+  if (options.sandbox) out.sandbox_ads = sandboxAdPlatform(options.now);
+  if (options.meta) out.meta_ads = new MetaAdsPlatform({ ...options.meta, ...(options.now ? { now: options.now } : {}) });
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

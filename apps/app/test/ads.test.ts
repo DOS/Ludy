@@ -8,8 +8,11 @@ import { en } from '../src/i18n/messages/en.ts';
 import { vi } from '../src/i18n/messages/vi.ts';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
+  AD_OAUTH_PROVIDERS,
   ADS_RANGES,
   NAMED_RESULT_KINDS,
+  adOAuthProviders,
+  adProviderName,
   adsRange,
   awaitsFirstSync,
   booksDifference,
@@ -19,6 +22,7 @@ import {
   errorCode,
   expenseCodeProblem,
   hasFigures,
+  isAdOAuthProvider,
   isCalmRefusal,
   isNamedResultKind,
   isSandboxProvider,
@@ -270,6 +274,28 @@ describe('what an account says about its figures', () => {
     expect(isSandboxProvider('meta_ads')).toBe(false);
   });
 
+  it('knows the ad platforms connected through an OAuth dialog, and names them', () => {
+    expect(AD_OAUTH_PROVIDERS).toEqual(['meta_ads']);
+    expect(isAdOAuthProvider('meta_ads')).toBe(true);
+    expect(isAdOAuthProvider('sandbox_ads')).toBe(false);
+    expect(isAdOAuthProvider('facebook_page')).toBe(false);
+    expect(adProviderName('meta_ads')).toBe('Meta');
+    // An unknown platform is shown by its id.
+    expect(adProviderName('google_ads')).toBe('google_ads');
+  });
+
+  it('offers an ad platform only where the deployment lists it among the OAuth providers', () => {
+    expect(adOAuthProviders({ channels: { oauth: ['facebook_page', 'meta_ads'] } })).toEqual(['meta_ads']);
+    // Social providers alone offer no ad platform.
+    expect(adOAuthProviders({ channels: { oauth: ['facebook_page', 'instagram'] } })).toEqual([]);
+    expect(adOAuthProviders({ channels: { oauth: [] } })).toEqual([]);
+    // A config without the list, without channels, or none at all.
+    expect(adOAuthProviders({ channels: {} })).toEqual([]);
+    expect(adOAuthProviders({})).toEqual([]);
+    expect(adOAuthProviders(null)).toEqual([]);
+    expect(adOAuthProviders(undefined)).toEqual([]);
+  });
+
   it('reads the code of an error, when it has one', () => {
     expect(errorCode(new ApiError('ADS_SYNC_TOO_SOON', 429, null))).toBe('ADS_SYNC_TOO_SOON');
     expect(errorCode(new Error('x'))).toBeNull();
@@ -310,6 +336,27 @@ describe('the words of the screen', () => {
     expect(en.ads.settings.disconnectBody).toContain('The stored figures are kept, to read.');
     expect(vi.ads.connectionHint.expired).toContain('Chủ sở hữu hoặc quản trị viên cần kết nối lại');
     expect(en.ads.connectionHint.expired).toContain('An owner or admin must connect the account again');
+  });
+
+  it('has the Meta connection words in both languages, with the same shape and the same arguments', () => {
+    for (const messages of [vi.ads, en.ads]) {
+      for (const text of [...Object.values(messages.connectMeta), ...Object.values(messages.oauth)]) expect(text).toBeTruthy();
+    }
+    expect(Object.keys(vi.ads.connectMeta).sort()).toEqual(Object.keys(en.ads.connectMeta).sort());
+    expect(Object.keys(vi.ads.oauth).sort()).toEqual(Object.keys(en.ads.oauth).sort());
+    expect(vi.ads.connectMeta.action).toBe('Kết nối tài khoản quảng cáo Meta');
+    expect(en.ads.connectMeta.action).toBe('Connect a Meta ad account');
+    expect(en.ads.connectMeta.another).toBe('Connect another Meta ad account');
+    expect(vi.ads.oauth.backToAds).toBe('Về Quảng cáo');
+    expect(en.ads.oauth.backToAds).toBe('Back to Ads');
+    // They say it only reads, with the permission named, and that the connection lasts about 60 days.
+    expect(en.ads.connectMeta.note).toContain('ads_read');
+    expect(vi.ads.connectMeta.note).toContain('ads_read');
+    expect(en.ads.connectMeta.expiry).toContain('60 days');
+    expect(vi.ads.connectMeta.expiry).toContain('60 ngày');
+    // The success text names the connected accounts in both languages.
+    expect(vi.ads.oauth.connected).toContain('{list}');
+    expect(en.ads.oauth.connected).toContain('{list}');
   });
 
   it('writes no tax or VAT figure and no em or en dash anywhere in the screen', () => {

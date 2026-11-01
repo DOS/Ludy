@@ -1122,6 +1122,20 @@ export const vi = {
     connect: 'Kết nối tài khoản thử',
     connectedToast: 'Đã kết nối tài khoản quảng cáo thử. Số liệu đầu tiên sẽ về sau vài giây.',
     addAnother: 'Kết nối tài khoản thử khác',
+    // Meta (Facebook and Instagram) ad accounts, connected through Meta's own sign-in dialog, read only (#2218).
+    connectMeta: {
+      title: 'Quảng cáo Meta',
+      action: 'Kết nối tài khoản quảng cáo Meta',
+      another: 'Kết nối thêm tài khoản quảng cáo Meta',
+      note: '{brand} chỉ xin Meta quyền đọc báo cáo quảng cáo (quyền ads_read). Không bao giờ tạo hay sửa chiến dịch, và không tiêu tiền của bạn.',
+      expiry: 'Kết nối kéo dài khoảng 60 ngày, sau đó Meta sẽ yêu cầu bạn kết nối lại.',
+    },
+    oauth: {
+      title: 'Kết nối tài khoản quảng cáo',
+      connected: 'Đã kết nối: {list}. Số liệu sẽ về trong vài phút.',
+      lost: 'Không tìm thấy lượt kết nối này trên trình duyệt (có thể đã mở ở tab khác). Hãy bắt đầu lại từ trang Quảng cáo.',
+      backToAds: 'Về Quảng cáo',
+    },
     accountLabel: 'Tài khoản quảng cáo',
     sandboxBadge: 'Thử nghiệm (số liệu mẫu)',
     currencyAndZone: 'Tiền tệ {currency}, múi giờ {zone}',

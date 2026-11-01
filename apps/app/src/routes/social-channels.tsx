@@ -30,6 +30,7 @@ import { queueRoom, slotsToAdd } from '../lib/social-queue-slots.ts';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { connectPlatforms, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
@@ -418,7 +419,9 @@ export function SocialChannelsPage() {
       void queryClient.invalidateQueries();
     },
   });
-  const oauth = getConfig().channels?.oauth ?? [];
+  // The ad platforms (meta_ads) are connected from the Ads screen, never here: the list of connect buttons walks the Social
+  // platforms only, and an org with only an ad app configured has nothing to connect on this screen.
+  const oauth = (getConfig().channels?.oauth ?? []).filter((p) => !isAdOAuthProvider(p));
   // Bluesky: the account's handle and an app password, checked by the server and sealed; the form forgets them.
   const blueskyOn = getConfig().channels?.bluesky ?? false;
   const [bsky, setBsky] = useState({ handle: '', appPassword: '' });
