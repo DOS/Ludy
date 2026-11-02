@@ -1,13 +1,14 @@
 import type { Dictionary } from './vi';
+import { N, team } from './roster';
 
 // English copy. The example company, its vendors, amounts and document numbers stay Vietnamese: they are the sample
 // documents a Vietnamese business would see.
 export const en: Dictionary = {
   lang: 'en',
   meta: {
-    title: 'Ludy: the all-in-one business OS where AI agents are your coworkers',
+    title: 'Ludy: the all-in-one Business OS, with an AI team for every department',
     description:
-      'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters. Ludy is an open-source business OS you run on your own server.',
+      `${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve. Ludy is an open-source business OS you run on your own server.`,
   },
   nav: {
     label: 'Main navigation',
@@ -26,8 +27,8 @@ export const en: Dictionary = {
     closeMenu: 'Close menu',
   },
   hero: {
-    title: 'The all-in-one business OS where AI agents are your coworkers',
-    lead: 'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters.',
+    title: 'The all-in-one Business OS, with an AI team for every department.',
+    lead: `${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve.`,
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',
     note: 'Open source under the AGPL. Runs on your own server with docker compose. Ludy Cloud is coming soon.',
@@ -45,7 +46,7 @@ export const en: Dictionary = {
     inbox: 'AI Inbox',
     groups: [
       { label: 'Finance', items: ['Documents', 'Journal', 'Ledger', 'Vendors', 'VAT'] },
-      { label: 'Operations', items: ['Tasks', 'Agents', 'Social'] },
+      { label: 'Operations', items: ['Tasks', 'Agents', 'Engage'] },
     ],
     user: { name: 'Chị Lan', role: 'Chief accountant' },
     metaWait: '4 to review',
@@ -180,7 +181,7 @@ export const en: Dictionary = {
       {
         name: 'Propose',
         body: 'A TT133 entry lands in the AI Inbox with the reason for each account. Accounts are learned per vendor.',
-        actor: 'Accounting agent',
+        actor: `${N.finance}`,
         time: '14/10/2026 15:59',
         confirm: 'Proposed, not posted',
         final: false,
@@ -199,7 +200,7 @@ export const en: Dictionary = {
     chartTitle: 'Org chart',
     chartSub: 'Gạo Sạch Mekong, example data',
     legendPerson: 'Person',
-    legendAgent: 'Agent',
+    legendAgent: 'AI coworker',
     hint: 'Pick a position to see what is waiting.',
     budget: 'October budget',
     risk: 'Risk limit',
@@ -209,9 +210,9 @@ export const en: Dictionary = {
       { id: 'tuan', kind: 'person', name: 'Anh Tuấn', role: 'Director', initials: 'AT', chip: null, budget: null },
       { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Chief accountant', initials: 'L', chip: { tone: 'ok', label: 'Approved inv. 1284' }, budget: null },
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
-      { id: 'acc', kind: 'agent', name: 'Accounting agent', role: 'Reports to Chị Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
+      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Chị Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: 'Social agent', role: 'Reports to Anh Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.engage}`, role: 'Reports to Anh Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
@@ -226,23 +227,23 @@ export const en: Dictionary = {
       lan: {
         kicker: 'Person',
         title: 'Chị Lan',
-        sub: 'Chief accountant. Approves the accounting agent’s entries.',
+        sub: `Chief accountant. Approves ${N.finance}’s entries.`,
         items: [
           { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: 'Approved with two-factor code', note: '16:05 14/10/2026' },
-          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'No authority code', note: 'Escalated by the agent, waiting for her' },
+          { title: 'Rice purchase slip', amount: '₫148,500,000', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'No authority code', note: `Escalated by ${N.finance}, waiting for her` },
         ],
       },
       minh: {
         kicker: 'Person',
         title: 'Anh Minh',
-        sub: 'Marketing. Approves the social agent’s posts before they go out.',
+        sub: `Marketing. Approves ${N.engage}’s posts before they go out.`,
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for him', note: '' },
         ],
       },
       acc: {
-        kicker: 'Agent',
-        title: 'Accounting agent',
+        kicker: 'AI coworker',
+        title: `${N.finance}`,
         sub: 'Reports to Chị Lan (chief accountant). May propose, may not post.',
         items: [
           { title: 'Invoice 00001284', amount: '₫32,832,000', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: '5/5 checks passed', note: 'Dr 152, 1331 / Cr 331' },
@@ -255,14 +256,14 @@ export const en: Dictionary = {
         title: 'Tasks',
         sub: 'Work for people and agents, with a due date and an owner.',
         items: [
-          { title: 'Reconcile payables with Bao Bì Phú Thịnh', amount: '', sub: 'Assigned to the accounting agent, due 20/10/2026', tone: 'accent', chip: 'Agent working', note: '' },
+          { title: 'Reconcile payables with Bao Bì Phú Thịnh', amount: '', sub: `Assigned to ${N.finance}, due 20/10/2026`, tone: 'accent', chip: 'Ly working', note: '' },
           { title: 'Add the authority code to the HTX Tân Hồng voucher', amount: '', sub: 'Assigned to Chị Lan, due 21/10/2026', tone: 'neutral', chip: 'Open', note: '' },
           { title: 'Photograph the ST25 rice for the post', amount: '', sub: 'Assigned to Anh Minh, due 18/10/2026', tone: 'neutral', chip: 'Open', note: '' },
         ],
       },
       social: {
-        kicker: 'Agent',
-        title: 'Social agent',
+        kicker: 'AI coworker',
+        title: `${N.engage}`,
         sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, publishes once approved.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Anh Minh', note: '' },
@@ -270,8 +271,13 @@ export const en: Dictionary = {
       },
     },
     edgeLabel: 'Agent proposes, a person approves',
+    team: {
+      title: 'The AI coworkers of Ludy',
+      lead: `Every department has an AI coworker. It holds a position in the org chart, with a manager, a monthly budget and a kill switch. ${N.gm} is the general manager, coordinating across the apps.`,
+      members: team('en'),
+    },
     matrix: {
-      title: 'What an agent may and may not do',
+      title: 'What an AI coworker may and may not do',
       lead: 'Every action has a risk level. An agent acts on its own up to its limit; above it, the action goes to its manager in the org chart.',
       selfLabel: 'Agent acts alone (limit R1)',
       humanLabel: 'Goes to a person',
@@ -286,7 +292,7 @@ export const en: Dictionary = {
         { task: 'Read invoices, books and the chart of accounts', level: 0, label: 'On its own' },
         { task: 'Propose an entry when all 5 checks pass', level: 1, label: 'Proposes' },
         { task: 'Propose an entry with a warning, such as no authority code', level: 2, label: 'Chị Lan approves' },
-        { task: 'Schedule a social post', level: 2, label: 'Anh Minh approves' },
+        { task: 'Schedule a post', level: 2, label: 'Anh Minh approves' },
         { task: 'Post an entry to the ledger', level: 3, label: 'Approval and code' },
       ],
       note: 'Example configuration. Limits are set per agent, by Anh Tuấn.',
@@ -325,7 +331,7 @@ export const en: Dictionary = {
   },
   modules: {
     title: 'One module per department, one org chart',
-    lead: 'The people and agents of each department work on the same data, with the same approvals and the same change log. Turn on the modules you need.',
+    lead: 'The people and AI coworkers of each department work on the same data, with the same approvals and the same change log. Turn on the modules you need.',
     deptLabel: 'Department of',
     pageLink: 'See the product page',
     finance: {
@@ -341,7 +347,7 @@ export const en: Dictionary = {
       soon: 'Fetching the invoice list from the tax portal and comparing sales invoices with it',
       people: [
         { name: 'Chị Lan', initials: 'L', agent: false },
-        { name: 'Accounting agent', initials: '', agent: true },
+        { name: `${N.finance}`, initials: '', agent: true },
       ],
       inboxTitle: 'AI Inbox',
       inboxSub: '1 posted, 3 waiting for approval',
@@ -390,8 +396,8 @@ export const en: Dictionary = {
       budgetLabel: 'October budget',
       running: 'Running',
       roster: [
-        { name: 'Accounting agent', risk: 'R1', manager: 'Manager: Chị Lan', spent: '₫1,240,000 / ₫2,000,000', pct: 62 },
-        { name: 'Social agent', risk: 'R1', manager: 'Manager: Anh Minh', spent: '₫310,000 / ₫1,000,000', pct: 31 },
+        { name: `${N.finance}`, risk: 'R1', manager: 'Manager: Chị Lan', spent: '₫1,240,000 / ₫2,000,000', pct: 62 },
+        { name: `${N.engage}`, risk: 'R1', manager: 'Manager: Anh Minh', spent: '₫310,000 / ₫1,000,000', pct: 31 },
       ],
     },
     tasks: {
@@ -399,10 +405,10 @@ export const en: Dictionary = {
       body: 'One task list for people and agents, with due dates and an assignee.',
       doneLabel: 'Done',
       items: [
-        { title: 'Reconcile payables with Bao Bì Phú Thịnh', who: 'Accounting agent', initials: '', agent: true, due: '20/10/2026', done: false },
+        { title: 'Reconcile payables with Bao Bì Phú Thịnh', who: `${N.finance}`, initials: '', agent: true, due: '20/10/2026', done: false },
         { title: 'Add the authority code to the HTX Tân Hồng voucher', who: 'Chị Lan', initials: 'L', agent: false, due: '21/10/2026', done: false },
         { title: 'Photograph the ST25 rice for the post', who: 'Anh Minh', initials: 'M', agent: false, due: '18/10/2026', done: false },
-        { title: 'Export the September general journal', who: 'Accounting agent', initials: '', agent: true, due: '15/10/2026', done: true },
+        { title: 'Export the September general journal', who: `${N.finance}`, initials: '', agent: true, due: '15/10/2026', done: true },
       ],
     },
     notes: {
@@ -445,11 +451,11 @@ export const en: Dictionary = {
       ],
     },
     social: {
-      name: 'Social',
+      name: 'Ludy Engage',
       body: 'Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more. Each channel has its own approval steps, and photos and videos live in one shared library. For the large platforms, whoever installs Ludy sets up the app of that platform first.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
-        { name: 'Social agent', initials: '', agent: true },
+        { name: `${N.engage}`, initials: '', agent: true },
       ],
       weekLabel: 'Posting calendar, 16/10 to 22/10/2026',
       todayLabel: 'Today',
@@ -496,11 +502,11 @@ export const en: Dictionary = {
       noSlots: 'Fully booked',
       pickedLabel: 'Picked',
       booked: { title: 'New booking', who: 'Gạo Sạch Miền Tây Co., Ltd.', when: '14:00, Tue 20/10/2026', state: 'Confirmed' },
-      suggest: 'A client writes "is Tuesday afternoon OK?": Vy suggests 14:00 or 15:30, and Chị Hoa checks and sends the reply.',
+      suggest: `A client writes "is Tuesday afternoon OK?": ${N.crm} suggests 14:00 or 15:30, and Chị Hoa checks and sends the reply.`,
     },
   },
   trust: {
-    title: 'Vy proposes, people approve, every change is recorded',
+    title: 'AI coworkers propose, people approve, every change is recorded',
     lead: 'Ludy never trusts AI output on its own. Every number goes through fixed checks and every entry needs a person to approve it.',
     points: [
       { title: 'Fixed checks decide', body: 'Line totals, VAT rates, tax codes, authority codes and duplicates are checked by rules, not by AI.' },
@@ -513,7 +519,7 @@ export const en: Dictionary = {
     log: [
       ['14/10/2026 15:58', 'Ludy', 'Received invoice 00001284 at the invoice mailbox'],
       ['14/10/2026 15:58', 'Checks', '5/5 passed: line totals, VAT rate, tax code, authority code, duplicates'],
-      ['14/10/2026 15:59', 'Accounting agent', 'Proposed Dr 152, 1331 / Cr 331'],
+      ['14/10/2026 15:59', `${N.finance}`, 'Proposed Dr 152, 1331 / Cr 331'],
       ['14/10/2026 16:05', 'Chị Lan', 'Approved with a two-factor code, posted'],
     ],
     selfHostTitle: 'Run it on your own machine',
@@ -556,8 +562,8 @@ export const en: Dictionary = {
         a: 'Yes. Ludy drafts the entry and explains why it chose each account. You check the amount and the vendor and approve; Ludy points out anything that is missing.',
       },
       {
-        q: 'Does Vy post entries by itself?',
-        a: 'No. Vy, the AI assistant, only proposes. Fixed checks decide whether the numbers are right, and an entry is posted only when someone with the right role approves it with a two-factor code.',
+        q: 'Do the AI coworkers post entries by themselves?',
+        a: `No. Ludy’s AI coworkers, such as ${N.finance} in accounting, only propose. Fixed checks decide whether the numbers are right, and an entry is posted only when someone with the right role approves it with a two-factor code.`,
       },
       {
         q: 'Which invoices can Ludy read?',

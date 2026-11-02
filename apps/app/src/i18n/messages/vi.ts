@@ -146,41 +146,24 @@ export const vi = {
     support: 'Góp ý / Hỗ trợ',
     status: 'Trạng thái hệ thống',
   },
-  overview: {
-    title: 'Tổng quan',
-    subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',
-    lastActivity: 'Những việc đang chờ bạn và các hạn thuế sắp tới. Hoạt động gần nhất lúc {when}.',
-    upload: 'Tải chứng từ lên',
-    loading: 'Đang đếm các việc đang chờ',
-    taxSubtitle: 'Tờ khai, khoản nộp và báo cáo của tổ chức này đến hạn trong 30 ngày, cùng các việc đã quá hạn mà chưa đánh dấu xong.',
-    vatNext: 'Tờ khai thuế GTGT {period} đến hạn ngày',
-    // One card per installed app (#1528).
-    apps: {
-      title: 'Ứng dụng',
-      open: 'Mở {app}',
-      failed: 'Chưa tải được số liệu.',
-      retry: 'Thử lại',
-      accounting: {
-        vatDue: '{days, plural, other {ngày nữa}} đến hạn tờ khai GTGT {period}',
-        vatOverdue: '{days, plural, other {ngày}} quá hạn tờ khai GTGT {period}',
-        noPeriod: 'Chưa chọn kỳ khai GTGT',
-      },
-      social: { scheduled: '{count, plural, other {bài đăng lên lịch trong 7 ngày tới}}' },
-      crm: { upcoming: '{count, plural, other {lịch hẹn sắp tới của bạn}}' },
-    },
-    waiting: {
-      title: 'Đang chờ bạn',
-      empty: 'Không có việc gì đang chờ bạn',
-      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán ở Chứng từ chờ duyệt, và hiện ở đây khi cần bạn xem.',
-      proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
-      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt bài' },
-      failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
-      notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
-      tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
-      bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
-    },
-  },
   today: {
+    title: 'Hôm nay cần bạn',
+    subtitle: 'Việc cần bạn xem trong các ứng dụng, cảnh báo xếp trước.',
+    empty: 'Hôm nay chưa có việc nào cần bạn',
+    emptyHint: 'Cảnh báo, đề xuất chờ duyệt, tin nhắn chưa trả lời và hạn sắp đến sẽ hiện ở đây khi có.',
+    kinds: { flag: 'Cảnh báo', proposal: 'Chờ bạn duyệt', message: 'Tin nhắn chưa trả lời', deadline: 'Sắp đến hạn' },
+    severity: { block: 'Đang chặn', warn: 'Cần xem', info: 'Lưu ý' },
+    count: '{count, plural, other {# mục}}',
+    due: 'Hạn {when}',
+    open: 'Mở',
+    fallback: {
+      flag: 'Một cảnh báo cần bạn xem',
+      proposal: 'Một đề xuất đang chờ bạn duyệt',
+      message: 'Một tin nhắn chưa được trả lời',
+      deadline: 'Một việc sắp đến hạn',
+    },
+    // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
+    // line adds its keys here, in both languages, with the read.
     items: {
       social: {
         review: '{count, plural, other {# bài}} đang chờ bạn duyệt',
@@ -214,6 +197,40 @@ export const vi = {
       financeBankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
       financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
       financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
+    },
+  },
+  overview: {
+    title: 'Tổng quan',
+    subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',
+    lastActivity: 'Những việc đang chờ bạn và các hạn thuế sắp tới. Hoạt động gần nhất lúc {when}.',
+    upload: 'Tải chứng từ lên',
+    loading: 'Đang đếm các việc đang chờ',
+    taxSubtitle: 'Tờ khai, khoản nộp và báo cáo của tổ chức này đến hạn trong 30 ngày, cùng các việc đã quá hạn mà chưa đánh dấu xong.',
+    vatNext: 'Tờ khai thuế GTGT {period} đến hạn ngày',
+    // One card per installed app (#1528).
+    apps: {
+      title: 'Ứng dụng',
+      open: 'Mở {app}',
+      failed: 'Chưa tải được số liệu.',
+      retry: 'Thử lại',
+      accounting: {
+        vatDue: '{days, plural, other {ngày nữa}} đến hạn tờ khai GTGT {period}',
+        vatOverdue: '{days, plural, other {ngày}} quá hạn tờ khai GTGT {period}',
+        noPeriod: 'Chưa chọn kỳ khai GTGT',
+      },
+      social: { scheduled: '{count, plural, other {bài đăng lên lịch trong 7 ngày tới}}' },
+      crm: { upcoming: '{count, plural, other {lịch hẹn sắp tới của bạn}}' },
+    },
+    waiting: {
+      title: 'Đang chờ bạn',
+      empty: 'Không có việc gì đang chờ bạn',
+      emptyHint: 'Hóa đơn được chuyển tới hoặc tải lên sẽ thành đề xuất bút toán ở Chứng từ chờ duyệt, và hiện ở đây khi cần bạn xem.',
+      proposals: { label: '{count, plural, other {đề xuất bút toán chờ duyệt}}', hint: 'Kiểm tra từng hóa đơn rồi duyệt để ghi sổ', open: 'Mở Chứng từ chờ duyệt' },
+      socialReviews: { label: '{count, plural, other {bài đăng chờ bạn duyệt}}', hint: 'Bài đăng mạng xã hội cần bạn xem trước khi lên lịch', open: 'Mở màn duyệt bài' },
+      failedFiles: { label: '{count, plural, other {tệp không đọc được}}', hint: 'Xem lý do rồi tải lên tệp khác', open: 'Mở Chứng từ chờ duyệt' },
+      notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
+      tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
+      bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
     },
   },
   notifications: {
@@ -7692,6 +7709,7 @@ export const vi = {
         get: 'Xem thông tin thuế',
         save: 'Lưu thông tin thuế',
       },
+      today: 'Xem việc cần bạn hôm nay',
       usage: {
         defer: 'Hoãn việc vì vượt hạn mức',
         over: 'Kiểm tra hạn mức sử dụng',

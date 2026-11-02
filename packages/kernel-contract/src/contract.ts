@@ -228,6 +228,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
+import { zTodayList } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
@@ -295,6 +296,11 @@ export const contract = {
     // own org, and how many orgs the user has (#495). One at a time per user: a second while the first runs is
     // refused with OVERLOADED (503).
     clients: oc.output(zClientOverviews),
+  },
+  // "Hôm nay cần bạn" on Home (issue #2383): what needs the member today across the apps, merged from each line's own
+  // today read and ordered flags first. Every role; each line shows only what the member could open there. Reads only.
+  today: {
+    list: oc.output(zTodayList),
   },
   org: {
     // A retry with the same idempotencyKey returns the org the first request created.

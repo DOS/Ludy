@@ -3,6 +3,7 @@
 // main today (the PR lists the PR or route behind each one); planned work is not named. Company names, amounts and
 // dates are example data and stay the same in both languages where they are names.
 import type { AppPageCopy } from './app-page';
+import { N } from './roster';
 
 type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 
@@ -73,27 +74,27 @@ export const crmVi = {
         ],
       },
       {
-        id: 'lich-va-vy',
-        title: 'Lịch Google và Vy',
+        id: 'lich-va-thy',
+        title: `Lịch Google và ${N.crm}`,
         lead: 'Nối lịch của bạn để giờ bận không bị hẹn trùng.',
         points: [
           'Nối Google Calendar: giờ bận chặn giờ hẹn, chỉ đọc giờ chứ không đọc tiêu đề. Cần khoá Google do người cài đặt cấu hình',
           'Có thể bật ghi lịch hẹn mới vào Google Calendar; tiêu đề gồm loại hẹn và tên khách',
           'Địa chỉ đăng ký để xem lịch hẹn trong Google Calendar, Outlook hoặc Lịch của Apple',
-          'Vy đọc tin nhắn của khách, chọn giờ trống thật và soạn sẵn thư trả lời kèm liên kết đặt lịch. Bạn xem rồi tự gửi. Cần model AI do người cài đặt cấu hình',
+          `${N.crm} đọc tin nhắn của khách, chọn giờ trống thật và soạn sẵn thư trả lời kèm liên kết đặt lịch. Bạn xem rồi tự gửi. Cần model AI do người cài đặt cấu hình`,
         ],
       },
     ],
   },
-  assistant: {
-    title: 'Vy làm gì trong Ludy CRM',
-    lead: 'Vy giúp phần hẹn lịch. Danh sách liên hệ và cơ hội do bạn quản lý.',
-    doesTitle: 'Vy làm',
+  coworker: {
+    title: `${N.crm} làm gì trong Ludy CRM`,
+    lead: `${N.crm} là trưởng phòng bán hàng AI, đồng nghiệp của bạn trong phần hẹn lịch, làm việc dưới sự điều phối của ${N.gm}. Danh sách liên hệ và cơ hội do bạn quản lý.`,
+    doesTitle: `${N.crm} làm`,
     does: [
       'Gợi ý giờ hẹn từ tin nhắn của khách và soạn sẵn thư trả lời',
-      'Khi khách huỷ hẹn, Agent Điều phối lịch hẹn (nếu bạn thêm vào sơ đồ tổ chức) ghi 3 giờ trống gần nhất vào một việc và chuyển cho người phụ trách',
+      'Khi khách huỷ hẹn, agent Điều phối lịch hẹn (một vị trí riêng, nếu bạn thêm vào sơ đồ tổ chức) ghi 3 giờ trống gần nhất vào một việc và chuyển cho người phụ trách',
     ],
-    doesNotTitle: 'Vy không làm',
+    doesNotTitle: `${N.crm} không làm`,
     doesNot: ['Không tự đặt lịch và không tự gửi thư', 'Không ghi vào danh sách liên hệ hay cơ hội'],
   },
   audience: {

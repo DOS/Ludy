@@ -148,41 +148,24 @@ export const en = {
     support: 'Feedback / Support',
     status: 'System status',
   },
-  overview: {
-    title: 'Overview',
-    subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',
-    lastActivity: 'What waits for you, and the tax deadlines ahead. Last activity at {when}.',
-    upload: 'Upload documents',
-    loading: 'Counting what waits',
-    taxSubtitle: "This organization's returns, payments and reports due in the next 30 days, and overdue ones not yet marked done.",
-    vatNext: 'The VAT return for {period} is due on',
-    // One card per installed app (#1528).
-    apps: {
-      title: 'Apps',
-      open: 'Open {app}',
-      failed: 'Could not load this figure.',
-      retry: 'Try again',
-      accounting: {
-        vatDue: '{days, plural, one {day until} other {days until}} the VAT return for {period} is due',
-        vatOverdue: '{days, plural, one {day overdue} other {days overdue}}: the VAT return for {period}',
-        noPeriod: 'No VAT filing period chosen',
-      },
-      social: { scheduled: '{count, plural, one {post scheduled} other {posts scheduled}} in the next 7 days' },
-      crm: { upcoming: '{count, plural, one {upcoming booking} other {upcoming bookings}} of yours' },
-    },
-    waiting: {
-      title: 'Waiting for you',
-      empty: 'Nothing is waiting for you',
-      emptyHint: 'Invoices you forward or upload become proposed entries in the Document inbox, and show here when they need your approval.',
-      proposals: { label: '{count, plural, one {proposed entry to approve} other {proposed entries to approve}}', hint: 'Check each invoice, then approve it to post it', open: 'Open the inbox' },
-      socialReviews: { label: '{count, plural, one {post for you to review} other {posts for you to review}}', hint: 'Social posts that need your look before they are scheduled', open: 'Review the posts' },
-      failedFiles: { label: '{count, plural, one {file that could not be read} other {files that could not be read}}', hint: 'See why, then upload another file', open: 'Open the inbox' },
-      notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Proposals, unreadable files, statements and filing periods coming due', open: 'See notifications' },
-      tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
-      bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
-    },
-  },
   today: {
+    title: 'Needs you today',
+    subtitle: 'What needs you across the apps, warnings first.',
+    empty: 'Nothing needs you today',
+    emptyHint: 'Warnings, proposals waiting for approval, unanswered messages and upcoming deadlines show up here when there are some.',
+    kinds: { flag: 'Warnings', proposal: 'Waiting for your approval', message: 'Unanswered messages', deadline: 'Coming up' },
+    severity: { block: 'Blocking', warn: 'Needs a look', info: 'Note' },
+    count: '{count, plural, one {# item} other {# items}}',
+    due: 'Due {when}',
+    open: 'Open',
+    fallback: {
+      flag: 'A warning needs your attention',
+      proposal: 'A proposal is waiting for your approval',
+      message: 'A message has not been answered',
+      deadline: 'Something is coming due',
+    },
+    // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
+    // line adds its keys here, in both languages, with the read.
     items: {
       social: {
         review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
@@ -216,6 +199,40 @@ export const en = {
       financeBankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
       financeVatDue: 'VAT return for {period}: due on {date}',
       financePeriodClose: 'Lock the books of {period} before {date}',
+    },
+  },
+  overview: {
+    title: 'Overview',
+    subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',
+    lastActivity: 'What waits for you, and the tax deadlines ahead. Last activity at {when}.',
+    upload: 'Upload documents',
+    loading: 'Counting what waits',
+    taxSubtitle: "This organization's returns, payments and reports due in the next 30 days, and overdue ones not yet marked done.",
+    vatNext: 'The VAT return for {period} is due on',
+    // One card per installed app (#1528).
+    apps: {
+      title: 'Apps',
+      open: 'Open {app}',
+      failed: 'Could not load this figure.',
+      retry: 'Try again',
+      accounting: {
+        vatDue: '{days, plural, one {day until} other {days until}} the VAT return for {period} is due',
+        vatOverdue: '{days, plural, one {day overdue} other {days overdue}}: the VAT return for {period}',
+        noPeriod: 'No VAT filing period chosen',
+      },
+      social: { scheduled: '{count, plural, one {post scheduled} other {posts scheduled}} in the next 7 days' },
+      crm: { upcoming: '{count, plural, one {upcoming booking} other {upcoming bookings}} of yours' },
+    },
+    waiting: {
+      title: 'Waiting for you',
+      empty: 'Nothing is waiting for you',
+      emptyHint: 'Invoices you forward or upload become proposed entries in the Document inbox, and show here when they need your approval.',
+      proposals: { label: '{count, plural, one {proposed entry to approve} other {proposed entries to approve}}', hint: 'Check each invoice, then approve it to post it', open: 'Open the inbox' },
+      socialReviews: { label: '{count, plural, one {post for you to review} other {posts for you to review}}', hint: 'Social posts that need your look before they are scheduled', open: 'Review the posts' },
+      failedFiles: { label: '{count, plural, one {file that could not be read} other {files that could not be read}}', hint: 'See why, then upload another file', open: 'Open the inbox' },
+      notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Proposals, unreadable files, statements and filing periods coming due', open: 'See notifications' },
+      tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
+      bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
     },
   },
   notifications: {
@@ -7693,6 +7710,7 @@ export const en = {
         get: 'Read the tax profile',
         save: 'Save the tax profile',
       },
+      today: 'Read what needs you today',
       usage: {
         defer: 'Defer an item over a usage limit',
         over: 'Check the usage limits',
