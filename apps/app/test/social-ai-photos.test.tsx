@@ -7,6 +7,7 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { describe, expect, it, vi } from 'vitest';
+import { COWORKERS } from '../src/i18n/brand.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 vi.mock('../src/lib/api.ts', () => ({
@@ -53,7 +54,7 @@ describe('the AI photo picker', () => {
     expect(html).not.toContain('clip.mp4');
     expect(html).not.toContain('lon.jpg');
     expect(html).not.toContain('menu.pdf');
-    expect(html).toContain('Video, tệp PDF và ảnh lớn hơn 10 MB không dùng được để My viết bài.');
+    expect(html).toContain(`Video, tệp PDF và ảnh lớn hơn 10 MB không dùng được để ${COWORKERS.marketing} viết bài.`);
     expect(html).toContain('Đã chọn 1/4 ảnh');
     expect(html).toContain('Chọn từ thư viện');
     expect(html).toContain('không tự bịa ra giá hay cam kết nào');

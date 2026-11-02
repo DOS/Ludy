@@ -1,17 +1,17 @@
 // The product name users see (BRAND_NAME, issue #1040). Messages and guides say `{brand}` where they name the
 // product; the catalogs handed to use-intl have it filled in, so no t() call passes it. The kernel serves the name in
 // /api/config; main.tsx sets it once, before the first render, and "Ludy" stands until then (or when the server
-// sends none). `{brandSlug}` is the same name as a file-name prefix ("ludy", "ten-moi"; #1045). `{vy}`, `{ly}`, `{my}`,
-// `{thy}`, `{duy}` and `{hy}` are the names of the AI coworkers (#1683, #2410), whatever the brand: a message names the one
-// of its own app (Ly in accounting, My in Social and Ads, Thy in CRM, Duy in the conversations inbox, Hy in integrations
-// and settings), and Vy, the general manager, where the work spans apps.
-import { brandSlug } from '@crove/kernel-contract';
+// sends none). `{brandSlug}` is the same name as a file-name prefix ("ludy", "ten-moi"; #1045). `{gm}`, `{finance}`,
+// `{sales}`, `{marketing}` and `{system}` are the names of the AI coworkers by ROLE (#1683, #2410), whatever the brand: a
+// message names the coworker of its own app (the accounting app's, the sales and customer-care one's, the marketing one's) and
+// the general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@crove/kernel-contract).
+import { COWORKER_ROLES, COWORKER_ROSTER, brandSlug, type CoworkerRole } from '@crove/kernel-contract';
 
 export const DEFAULT_BRAND = 'Ludy';
-// The AI coworkers (DESIGN.md 1.1): Vy is the general manager across every app; the others each hold one department.
-export const COWORKERS = { vy: 'Vy', ly: 'Ly', my: 'My', thy: 'Thy', duy: 'Duy', hy: 'Hy' } as const;
-export type CoworkerKey = keyof typeof COWORKERS;
-const COWORKER_KEYS = Object.keys(COWORKERS) as CoworkerKey[];
+// The AI coworkers by role (DESIGN.md 1.1); the names are the roster's.
+export const COWORKERS = COWORKER_ROSTER;
+export type CoworkerKey = CoworkerRole;
+const COWORKER_KEYS = COWORKER_ROLES;
 
 function fillCoworkers(text: string): string {
   let out = text;

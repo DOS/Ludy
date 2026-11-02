@@ -476,10 +476,10 @@ test('says AI drafting is off on a server without a model', async ({ page, reque
   await connectSandbox(page, 'Trang Không AI');
   await compose(page, 'Bài viết tay, không nhờ AI');
 
-  await expect(page.getByText('Soạn cùng My', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+$/u)).toBeVisible();
   await expect(page.getByText('Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Nhờ My soạn nháp' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Nhờ My viết lại' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ soạn nháp$/u })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ viết lại$/u })).toHaveCount(0);
 });
 
 test('approves several posts at once from the review list (#635)', async ({ page }) => {

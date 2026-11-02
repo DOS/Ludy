@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
+import { COWORKERS } from '../src/i18n/brand.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -91,8 +92,8 @@ describe('AgentsPage', () => {
     const notes = { ...templates[0]!, key: 'notes.x', module: 'notes', title: 'Notes helper' };
     const html = page('owner', oneEntity, [finance, crm, notes]);
     const cards = html.split('data-testid="template"').slice(1);
-    expect(cards[0]).toContain('Default name: Ly');
-    expect(cards[1]).toContain('Default name: Thy');
+    expect(cards[0]).toContain(`Default name: ${COWORKERS.finance}`);
+    expect(cards[1]).toContain(`Default name: ${COWORKERS.sales}`);
     expect(cards[2]).not.toContain('Default name');
   });
 
