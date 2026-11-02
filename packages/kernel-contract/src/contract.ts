@@ -6,6 +6,8 @@ import {
   zAccount,
   zCategorizationRule,
   zAgentBudget,
+  zAiMeter,
+  zAiUsageReport,
   zAgentRisk,
   zAgentRoleKey,
   zAgentScope,
@@ -1794,6 +1796,13 @@ export const contract = {
       .output(z.object({ killSwitchId: zId, stoppedRuns: z.number().int() })),
     // Owner (R3, fresh MFA): turns a kill switch off again.
     release: oc.input(z.object({ id: zId, idempotencyKey: zId })).output(z.object({ ok: z.literal(true) })),
+  },
+  // The AI budget meter (#2382). Raising a budget is agents.setBudget: R3, owner only, a fresh second factor.
+  ai: {
+    // Every member: where the tightest org or module budget stands (the small meter beside Vy's panels).
+    meter: oc.input(z.object({ module: z.string().max(40).optional() })).output(zAiMeter),
+    // Owners and admins: this month's use by feature and by agent.
+    usage: oc.output(zAiUsageReport),
   },
   // Work given to positions, held by members or agents (ADR-0029). Every member reads; owners, admins and members
   // create, comment and change status.

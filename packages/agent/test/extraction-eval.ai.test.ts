@@ -3,7 +3,7 @@
 // Run with `pnpm ai:eval`; skipped without an endpoint. One test per fixture, so each gets its own time budget.
 import { describe, expect, it } from 'vitest';
 import { classifyAiError, formatEvalSummary, InvoiceExtractor, scoreExtraction, summarizeEval, type FixtureScore } from '../src/index.ts';
-import { aiConfigFromEnv, loadExtractionFixtures, SKIP_NOTICE } from './support.ts';
+import { aiConfigFromEnv, loadExtractionFixtures, SKIP_NOTICE, unmetered } from './support.ts';
 
 const config = aiConfigFromEnv();
 if (!config) console.warn(SKIP_NOTICE);
@@ -20,7 +20,7 @@ describe.skipIf(!config)('extraction eval', () => {
 
   it.each(fixtures.map((f) => [f.id, f] as const))('extracts %s', async (_id, fixture) => {
     try {
-      scores.push(scoreExtraction(fixture.id, fixture.expected, await extractor!.fromText(fixture.text)));
+      scores.push(scoreExtraction(fixture.id, fixture.expected, await unmetered(() => extractor!.fromText(fixture.text))));
     } catch (error) {
       // An endpoint failure (HTTP error, timeout, network) says nothing about accuracy: fail instead of scoring it.
       if (classifyAiError(error).kind !== 'unknown') throw error;

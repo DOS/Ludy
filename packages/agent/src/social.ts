@@ -4,6 +4,7 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
+import { metered } from './meter.ts';
 import { ProofreadChangedError, proofreadChanges } from './proofread.ts';
 import { SUMMARY_MAX, SummaryFigureError, summaryAsk, summaryNumbersOutside, type SummaryRequest } from './summary.ts';
 
@@ -183,75 +184,87 @@ export class SocialWriter {
     this.generateSummary =
       generateSummary ??
       (async ({ system, prompt }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zSummary }),
-          system,
-          prompt,
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.summary', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zSummary }),
+            system,
+            prompt,
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
     this.generateIdeas =
       generateIdeas ??
       (async ({ system, prompt }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zIdeas }),
-          system,
-          prompt,
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.ideas', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zIdeas }),
+            system,
+            prompt,
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
     this.generateDescription =
       generateDescription ??
       (async ({ system, prompt, image, mime }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zAlt }),
-          system,
-          messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image', image, mediaType: mime }] }],
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.alt_text', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zAlt }),
+            system,
+            messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image', image, mediaType: mime }] }],
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
     this.generateHashtags =
       generateHashtags ??
       (async ({ system, prompt }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zHashtags }),
-          system,
-          prompt,
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.hashtags', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zHashtags }),
+            system,
+            prompt,
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
     this.generateRewrite =
       generateRewrite ??
       (async ({ system, prompt }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zRewrite }),
-          system,
-          prompt,
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.rewrite', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zRewrite }),
+            system,
+            prompt,
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
     this.generate =
       generate ??
       (async ({ system, prompt, images }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zDraft }),
-          system,
-          ...(images && images.length > 0
-            ? { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: prompt }, ...images.map((i) => ({ type: 'image' as const, image: i.image, mediaType: i.mime }))] }] }
-            : { prompt }),
-          abortSignal: AbortSignal.timeout(this.timeoutMs),
-        });
+        const { output } = await metered('social.draft', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zDraft }),
+            system,
+            ...(images && images.length > 0
+              ? { messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: prompt }, ...images.map((i) => ({ type: 'image' as const, image: i.image, mediaType: i.mime }))] }] }
+              : { prompt }),
+            abortSignal: AbortSignal.timeout(this.timeoutMs),
+          }),
+        );
         return output ?? null;
       });
   }

@@ -240,14 +240,14 @@ suite('AI agents through the API (ADR-0029, #258)', () => {
     for (const who of ['member', 'viewer'] as const) expect((await rpc('agents/budgets', who, undefined)).status, who).toBe(403);
   });
 
-  it('counts the AI run costs of this month per budget scope, exactly', async () => {
-    // Runs the worker would have recorded: this month in two modules, and one last month that no budget counts.
+  it('counts the AI costs of this month per budget scope, exactly', async () => {
+    // The model calls the meter would have recorded (#2382): this month in two modules, and one last month that no budget counts.
     await admin((c) =>
       c.query(
-        `INSERT INTO crove_kernel.ai_run (org_id, agent_id, module, status, cost, started_at, expires_at, finished_at) VALUES
-           ($1, $2, 'finance', 'succeeded', 10.25, now(), now() + interval '1 minute', now()),
-           ($1, $2, 'crm', 'succeeded', 1.5, now(), now() + interval '1 minute', now()),
-           ($1, $2, 'finance', 'succeeded', 99, now() - interval '40 days', now() - interval '40 days' + interval '1 minute', now() - interval '40 days')`,
+        `INSERT INTO crove_kernel.org_usage (org_id, metric, amount, feature, module, agent_id, created_at) VALUES
+           ($1, 'ai_cost', 10.25, 'finance.invoice_extract', 'finance', $2, now()),
+           ($1, 'ai_cost', 1.5, 'crm.booking_schedule', 'crm', $2, now()),
+           ($1, 'ai_cost', 99, 'finance.invoice_extract', 'finance', $2, now() - interval '40 days')`,
         [orgId, agentId],
       ),
     );

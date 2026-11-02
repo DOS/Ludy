@@ -7,6 +7,7 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig } from './index.ts';
+import { metered } from './meter.ts';
 
 // The longest message read, and the most windows kept.
 export const SCHEDULE_MESSAGE_MAX = 4000;
@@ -109,13 +110,15 @@ export class SchedulingReader {
     this.generate =
       generate ??
       (async ({ system, prompt }) => {
-        const { output } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zScheduleOut }),
-          system,
-          prompt,
-          abortSignal: AbortSignal.timeout(timeoutMs),
-        });
+        const { output } = await metered('crm.booking_schedule', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zScheduleOut }),
+            system,
+            prompt,
+            abortSignal: AbortSignal.timeout(timeoutMs),
+          }),
+        );
         return output ?? null;
       });
   }
