@@ -346,6 +346,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // A request to the AI coworker for a campaign draft (W1b, #2295): the member's brief and objective for one ad account, in the account's
+  // entity (b_legal_entity, the composite foreign key). A member inserts it in their own name (the guard stamps who and when and holds the
+  // state to requested); only the system context settles it, and no tenant role updates or deletes a row, so there is no update probe.
+  'crove_ads.ad_campaign_request': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, objective: 'traffic', brief: 'RLS matrix request', requested_by: o.owner },
+      };
+    },
+  },
   // The org's one row of spend-flag thresholds (#2378): how many days of a month must be over before the pace is judged, and by what factor a
   // day or a campaign's cost per result may exceed its share or its median. A NULL threshold means the default. Org-wide, so no entity. Tenant
   // roles update the thresholds and who set them only (a column grant), so the update probes assign a threshold to itself.
