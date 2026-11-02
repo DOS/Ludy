@@ -28,6 +28,8 @@ export const AI_FEATURES = {
   'crm.booking_schedule': 'crm',
   // Vy's reply drafts of the conversation core (CV8, #2310).
   'conversation.draft': 'conversation',
+  // Vy's daily brief on Home (#2383): it spans the apps, so it counts against the kernel's own budget line.
+  'today.brief': 'kernel',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

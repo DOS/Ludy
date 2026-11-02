@@ -82,7 +82,9 @@ const SOCIAL_SCREENS = {
     { path: 'social/feeds' },
     { path: 'social/bio' },
     { path: 'social/notifications' },
-    // The comment inbox (#2303): the comments on the org's own posts, answered in Social.
+    // The Inbox (CV3, #2306): comments and private messages together, in three panes. The path `inbox` is the kernel's documents Inbox, so Social's is
+    // under `social/`. The comment inbox of CV1 (#2303) keeps its address and redirects here.
+    { path: 'social/inbox' },
     { path: 'social/comments' },
     { path: 'social/$id' },
     // The content plan to print (#978), outside the org's frame so only the plan reaches the paper.
@@ -100,8 +102,10 @@ const SOCIAL_SCREENS = {
   ],
   nav: [
     { app: 'social', group: 'social', path: 'social', label: 'social' },
-    { app: 'social', group: 'social', path: 'social/comments', label: 'comments' },
     { app: 'social', group: 'social', path: 'social/notifications', label: 'notifications' },
+    // The Hộp thư group of the Social app (CV3): one Inbox, shown when this module is enabled, with the comments of the org's posts and the private
+    // messages together (a private message only to those who may read it).
+    { app: 'social', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
   ],
 } as const satisfies ModuleScreens;
 

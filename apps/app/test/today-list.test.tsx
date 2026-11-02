@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TodayItem } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
@@ -22,12 +23,13 @@ vi.mock('../src/lib/api.ts', async () => {
         return node([...path, prop]);
       },
     });
-  return { orpc: node([]), queryClient: client.current, errorMessage: (e: unknown) => String(e) };
+  return { orpc: node([]), client: {}, queryClient: client.current, errorMessage: (e: unknown) => String(e) };
 });
 vi.mock('../src/lib/stream-hook.ts', () => ({ useStreamLive: () => false, pollEvery: () => false, SAFETY_POLL_MS: 300_000 }));
 vi.mock('@tanstack/react-router', () => ({ useRouter: () => ({ history: { push: () => undefined } }) }));
 
 const { TodayList } = await import('../src/components/today-list.tsx');
+const { briefDay, briefStorageKey, listFingerprint } = await import('../src/lib/today-brief.ts');
 
 const base = { app: 'finance', title: { key: 'finance.unknown' }, href: '/inbox' };
 const ITEMS = [
@@ -37,11 +39,16 @@ const ITEMS = [
   { ...base, app: 'ads', kind: 'flag', id: 'f2', severity: 'warn', amount: '120', currency: 'USD', title: { key: 'ads.pace' }, href: '/o/acme/ads' },
 ];
 
-function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi' } = {}): string {
+function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; brief?: unknown } = {}): string {
   const qc = client.current;
   qc.clear();
   const key = ['today', 'list'];
   if (opts.data !== undefined) qc.setQueryData(key, opts.data);
+  if (opts.brief !== undefined) {
+    // Vy's brief is cached by day, language and the list it was written from; seed both languages.
+    const items = (opts.data as { items: TodayItem[] }).items;
+    for (const language of ['vi', 'en']) qc.setQueryData(['today', 'brief', briefStorageKey('acme', briefDay(), language, listFingerprint(items))], opts.brief);
+  }
   if (opts.error) void qc.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('boom')), retry: false }).catch(() => undefined);
   const locale = opts.locale ?? 'en';
   const messages = structuredClone(catalog(locale)) as unknown as { today: { items: Record<string, unknown> } };
@@ -92,6 +99,31 @@ describe('TodayList', () => {
     expect(html).toContain('Cảnh báo');
     expect(html).toContain('Đang chặn');
     expect(html).toContain('Phú Thịnh: đề xuất chờ duyệt');
+  });
+
+  it('shows the general manager’s brief above the list, marked as written by it', () => {
+    const brief = { writtenBy: 'vy', sentences: ['Hôm nay có 4 việc cần bạn.', 'Hạn gần nhất là 20/11/2026.'], budgetSpent: false, final: true };
+    const html = render({ data: { items: ITEMS, dropped: 0 }, brief });
+    expect(html).toContain('data-testid="today-brief"');
+    expect(html).toContain('Hôm nay có 4 việc cần bạn. Hạn gần nhất là 20/11/2026.');
+    expect(html).toContain(catalog('en').today.brief.aiBadge);
+    expect(html).toContain(catalog('en').today.brief.byVy);
+    expect(html.indexOf('data-testid="today-brief"')).toBeLessThan(html.indexOf('<h3', html.indexOf('data-testid="today-brief"') + 1));
+  });
+
+  it('says a template brief is automatic, with no AI mark', () => {
+    const html = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: 'template', sentences: ['Hôm nay có 4 việc cần bạn.'], budgetSpent: false, final: true } });
+    expect(html).toContain(catalog('en').today.brief.byTemplate);
+    expect(html).not.toContain(catalog('en').today.brief.aiBadge);
+  });
+
+  it('shows the list alone when there is no brief (the month’s AI budget is spent), and a quiet placeholder while it loads', () => {
+    const spent = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: null, sentences: [], budgetSpent: true, final: false } });
+    expect(spent).not.toContain('data-testid="today-brief"');
+    expect(spent).toContain('A voucher does not balance');
+    const loading = render({ data: { items: ITEMS, dropped: 0 } });
+    expect(loading).toContain(catalog('en').today.brief.loading);
+    expect(loading).toContain('A voucher does not balance');
   });
 
   it('falls back to the kind’s sentence for a title key the catalog does not have', () => {

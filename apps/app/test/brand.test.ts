@@ -137,7 +137,7 @@ describe('brand name (#1040)', () => {
       finance: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
       sales: /^(bookings\.|conversations\.|commands\.)/,
       marketing: /^(social\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
-      gm: /^(aiMeter\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
+      gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {
       expect(named('vi', role).length, role).toBeGreaterThan(0);
