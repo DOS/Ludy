@@ -42,6 +42,8 @@ import {
 import type { OrgExportView } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
@@ -1714,11 +1716,14 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // Cash receipts and payments in MISA SME's "Phiếu thu" and "Phiếu chi" templates (#657), one file per voucher type
-    // (MISA imports one type per file), same roles, range and audit as the purchase export.
+    // Cash and bank receipts and payments in MISA SME's "Phiếu thu", "Phiếu chi", "Chứng từ thu tiền" (giấy báo Có) and
+    // "Chứng từ Chi tiền gửi" (giấy báo Nợ) templates (#657), one file per voucher type (MISA imports one type per file),
+    // same roles, range and audit as the purchase export.
     const cashExports = [
       { path: '/api/export/misa/receipts.xlsx', type: 'cash_receipt', template: MISA_SME_CASH_RECEIPT, format: 'misa_sme_cash_receipts', name: 'misa-phieu-thu' },
       { path: '/api/export/misa/payments.xlsx', type: 'cash_payment', template: MISA_SME_CASH_PAYMENT, format: 'misa_sme_cash_payments', name: 'misa-phieu-chi' },
+      { path: '/api/export/misa/bank-receipts.xlsx', type: 'bank_credit', template: MISA_SME_BANK_CREDIT, format: 'misa_sme_bank_credits', name: 'misa-bao-co' },
+      { path: '/api/export/misa/bank-payments.xlsx', type: 'bank_debit', template: MISA_SME_BANK_DEBIT, format: 'misa_sme_bank_debits', name: 'misa-bao-no' },
     ] as const;
     for (const cash of cashExports) {
       app.get(cash.path, async (c) => {

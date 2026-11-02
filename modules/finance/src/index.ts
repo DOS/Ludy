@@ -91,6 +91,8 @@ export { buildStatementsHtkkXml, type StatementsFiling } from './statements-htkk
 export * from './domain/statements-htkk-xml.ts';
 export { buildFixedAssetsWorkbook } from './fixed-assets-export.ts';
 export {
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
