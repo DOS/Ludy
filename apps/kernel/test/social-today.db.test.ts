@@ -187,7 +187,7 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     expect(block(await today(o, o.owner))).toEqual([]);
   });
 
-  it('lists the posts due in the next 24 hours that still wait for approval, each with its time, for the channels a member may use', async () => {
+  it('lists the posts due in the next 24 hours, or overdue by up to 7 days, that still wait for approval, each with its time, for the channels a member may use', async () => {
     const o = await org();
     const mine = await connection(o.orgId, o.owner);
     const theirs = await connection(o.orgId, o.owner);
@@ -195,7 +195,10 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     const soon = await submitted(o, o.owner, [mine], 'Sắp đến giờ');
     const named = await submitted(o, o.owner, [mine], 'Có tên');
     const later = await submitted(o, o.owner, [mine], 'Còn lâu');
+    // A time that has passed stays on Home for 7 days, with its own wording; after that it is gone.
     const past = await submitted(o, o.owner, [mine], 'Đã quá giờ');
+    const fewDays = await submitted(o, o.owner, [mine], 'Quá giờ mấy ngày');
+    const longAgo = await submitted(o, o.owner, [mine], 'Quá giờ lâu rồi');
     const elsewhere = await submitted(o, o.owner, [theirs], 'Kênh khác');
     // The calendar's time of a variant is its own when it has one: a variant meant for 3 hours from now on a post dated 40, and the reverse.
     const viaVariant = await submitted(o, o.owner, [mine], 'Giờ của kênh');
@@ -208,6 +211,9 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [named, '  Khuyến   mãi\ncuối \u202Etuần\u200B ']));
     await schedule(later, hoursFromNow(30));
     await schedule(past, hoursFromNow(-1));
+    await schedule(fewDays, hoursFromNow(-6 * 24));
+    await admin((c) => c.query('UPDATE crove_social.post SET title = $2 WHERE id = $1', [fewDays, 'Bài cũ']));
+    await schedule(longAgo, hoursFromNow(-8 * 24));
     await schedule(elsewhere, hoursFromNow(5));
     await schedule(viaVariant, hoursFromNow(40));
     await admin((c) => c.query('UPDATE crove_social.post_variant SET scheduled_at = $2 WHERE post_id = $1', [viaVariant, hoursFromNow(3)]));
@@ -219,20 +225,23 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     await admin((c) => c.query("UPDATE crove_social.post_variant SET status = 'approved' WHERE post_id = $1 AND channel_connection_id = $2", [split, mine]));
     const due = (items: TodayItem[]) => ofKind(items, 'deadline');
     const forOwner = due(await today(o, o.owner));
-    // The soonest first; none for a post past its time, 30 hours away, with its channel's time 40 hours away, archived, or with no time.
-    expect(forOwner.map((i) => i.id)).toEqual([`due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`, `due:${soon}`]);
+    // The oldest first; none for a post 8 days overdue, 30 hours away, with its channel's time 40 hours away, archived, or with no time.
+    expect(forOwner.map((i) => i.id)).toEqual([`due:${fewDays}`, `due:${past}`, `due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`, `due:${soon}`]);
+    // An overdue one is said to be overdue, with its title when it has one.
+    expect(forOwner[0]).toMatchObject({ title: { key: 'social.dueOverdueTitled', params: { title: 'Bài cũ' } }, dueAt: hoursFromNow(-6 * 24).toISOString() });
+    expect(forOwner[1]).toMatchObject({ title: { key: 'social.dueOverdue' }, dueAt: hoursFromNow(-1).toISOString() });
     // The title is one short line, with no invisible or control character.
-    expect(forOwner[0]).toEqual({ kind: 'deadline', app: 'social', id: `due:${named}`, title: { key: 'social.dueTitled', params: { title: 'Khuyến mãi cuối tuần' } }, dueAt: hoursFromNow(2).toISOString(), href: `/social/${named}` });
-    expect(forOwner[1]).toMatchObject({ dueAt: hoursFromNow(3).toISOString() });
-    expect(forOwner[4]).toEqual({ kind: 'deadline', app: 'social', id: `due:${soon}`, title: { key: 'social.due' }, dueAt: hoursFromNow(10).toISOString(), href: `/social/${soon}` });
+    expect(forOwner[2]).toEqual({ kind: 'deadline', app: 'social', id: `due:${named}`, title: { key: 'social.dueTitled', params: { title: 'Khuyến mãi cuối tuần' } }, dueAt: hoursFromNow(2).toISOString(), href: `/social/${named}` });
+    expect(forOwner[3]).toMatchObject({ dueAt: hoursFromNow(3).toISOString() });
+    expect(forOwner[6]).toEqual({ kind: 'deadline', app: 'social', id: `due:${soon}`, title: { key: 'social.due' }, dueAt: hoursFromNow(10).toISOString(), href: `/social/${soon}` });
     // The limited member sees theirs only, and not a post whose only channel in review is another's; the member with no limit sees all; a viewer none.
-    expect(due(await today(o, o.limited)).map((i) => i.id)).toEqual([`due:${named}`, `due:${viaVariant}`, `due:${soon}`]);
-    expect(due(await today(o, o.free)).map((i) => i.id)).toEqual([`due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`, `due:${soon}`]);
+    expect(due(await today(o, o.limited)).map((i) => i.id)).toEqual([`due:${fewDays}`, `due:${past}`, `due:${named}`, `due:${viaVariant}`, `due:${soon}`]);
+    expect(due(await today(o, o.free)).map((i) => i.id)).toEqual([`due:${fewDays}`, `due:${past}`, `due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`, `due:${soon}`]);
     expect(await today(o, o.viewer)).toEqual([]);
     // Approved: no longer waiting.
     const view = await rt.query<{ variants: { id: string; revision: number; contentHash: string }[] }>('social.post.get', { postId: soon }, { actor: asUser(o.owner), orgId: o.orgId });
     await exec(o, o.owner, 'social.variant.decide', { postId: soon, decision: 'approved', variants: view.variants.map((v) => ({ variantId: v.id, revision: v.revision, contentHash: v.contentHash })) });
-    expect(due(await today(o, o.owner)).map((i) => i.id)).toEqual([`due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`]);
+    expect(due(await today(o, o.owner)).map((i) => i.id)).toEqual([`due:${fewDays}`, `due:${past}`, `due:${named}`, `due:${viaVariant}`, `due:${elsewhere}`, `due:${split}`]);
   });
 
   it('groups the posts past the limit into one item with their count and the next time, and every item is valid for the shared schema', async () => {

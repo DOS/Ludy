@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
   zMoney,
@@ -212,6 +213,7 @@ function toInboxItem(row: {
     warnChecks: countChecks(payload, 'warn'),
     anomalyChecks: payload?.checks.filter((c) => c.id.startsWith(ANOMALY_CHECK_PREFIX)).length ?? 0,
     unclassifiedLines: countUnclassified(payload),
+    ...ruleFields(payload),
     // As the approval decides: an invoice read from XML whose signature is not verified is unverified (#674).
     signatureStatus: payload
       ? payload.extractionMethod === 'einvoice_xml' && payload.signature?.status !== 'verified'
@@ -223,6 +225,22 @@ function toInboxItem(row: {
     expiredAfterDays: expiredAfterDays(row),
     ...agentFields(row, agentName),
   };
+}
+
+// The learned rules that set an invoice's line accounts and how many lines no learned rule set (#2379), from a parsed
+// payload (kernel.inbox.get) as the list's SQL reads them.
+function ruleFields(payload: PurchaseProposal | null) {
+  const lines = payload?.lines ?? [];
+  return listedRuleFields(
+    lines.flatMap((l) => (l.accountRule?.source === 'learned' && l.accountRule.ruleId ? [l.accountRule.ruleId] : [])),
+    String(lines.filter((l) => l.accountRule?.source !== 'learned').length),
+  );
+}
+
+function listedRuleFields(ids: readonly string[], otherLines: string) {
+  const learned = [...new Set(ids.map((id) => id.toLowerCase()).filter((id) => zId.safeParse(id).success))].sort();
+  // At most LEARNED_RULE_IDS_MAX rules are listed; an invoice naming more is grouped by the first of them.
+  return { learnedRuleIds: learned.slice(0, LEARNED_RULE_IDS_MAX), otherRuleLines: Number(otherLines) };
 }
 
 // How many whole days an expired proposal waited before it expired (#876), the reason the Inbox shows; null otherwise.
@@ -270,6 +288,9 @@ export const inboxList = defineQuery({
         sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.as('anomaly_checks'),
         // The lines of an invoice proposal no rule matched (#2091), counted as countUnclassified counts them.
         sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' = 'unclassified' OR l ->> 'debitAccount' = ${UNCLASSIFIED_ACCOUNT_CODE})`.as('unclassified_lines'),
+        // The learned rules behind the lines' accounts and the lines no learned rule set (#2379), as ruleFields reads them.
+        sql<string[]>`(SELECT coalesce(array_agg(DISTINCT l #>> '{accountRule,ruleId}'), '{}') FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' = 'learned' AND l #>> '{accountRule,ruleId}' IS NOT NULL)`.as('learned_rule_ids'),
+        sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' IS DISTINCT FROM 'learned')`.as('other_rule_lines'),
         // As the approval decides (kernel.proposal.approve): an invoice read from XML whose signature is not verified is
         // unverified, one read before #674 (no verification stored) included.
         sql<string | null>`left(CASE WHEN payload ->> 'extractionMethod' = 'einvoice_xml' AND coalesce(payload #>> '{signature,status}', '') <> 'verified' THEN 'unverified' ELSE payload #>> '{signature,status}' END, 20)`.as('signature_status'),
@@ -303,6 +324,7 @@ export const inboxList = defineQuery({
       warnChecks: Number(row.warn_checks),
       anomalyChecks: Number(row.anomaly_checks),
       unclassifiedLines: Number(row.unclassified_lines),
+      ...listedRuleFields(row.learned_rule_ids, row.other_rule_lines),
       signatureStatus: row.kind === PURCHASE_KIND ? signatureStatusOf(row.signature_status) : null,
       duplicateOf: row.duplicate_of,
       createdAt: row.created_at.toISOString(),
