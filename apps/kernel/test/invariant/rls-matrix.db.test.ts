@@ -56,6 +56,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_campaign_draft',
   'crove_ads.ad_campaign_request',
+  'crove_finance.bank_party_rule',
   'crove_kernel.conversation_composing',
   'crove_kernel.member_availability',
   'crove_notes.link',
@@ -555,6 +556,23 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     make: (o) => ({
       row: { org_id: o.id, bank_account: '1121', import_id: randomUUID(), position: 1, value_date: '2026-10-01', description: 'RLS matrix', amount: '100' },
     }),
+  },
+  // #2402: a learned bank-line rule: the keyed hash of a statement line's words, the party it points at and the voucher whose approval
+  // taught it (one voucher with its entry, as the cash_voucher case seeds it). The entity is the org's default, by its trigger.
+  'crove_finance.bank_party_rule': {
+    make: (o) => {
+      const voucher = randomUUID();
+      const entry = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.cash_voucher', values: { org_id: o.id, id: voucher, voucher_type: 'cash_payment', voucher_date: '2026-10-01', cash_account: '1111', party_id: o.party, description: 'RLS matrix', amount: '100' } }],
+        row: { org_id: o.id, id: randomUUID(), kind: 'text', key_hash: `k1:${randomUUID().replaceAll('-', '')}${randomUUID().replaceAll('-', '')}`, party_id: o.party, source_voucher_id: voucher },
+        complete: [
+          { table: 'crove_finance.journal_entry', values: { ...journalEntry(o.id, entry).values, source_type: 'finance.cash_voucher', source_id: voucher } },
+          { table: 'crove_finance.journal_line', values: { org_id: o.id, entry_id: entry, line_no: 1, account_code: '331', debit: '100', credit: '0' } },
+          { table: 'crove_finance.journal_line', values: { org_id: o.id, entry_id: entry, line_no: 2, account_code: '1111', debit: '0', credit: '100' } },
+        ],
+      };
+    },
   },
   // Cash and bank vouchers (#327): append-only, numbered per org and type by the insert trigger (the row gives no
   // number). By commit a voucher must have its journal entry, on its date, moving the cash account by its amount, so
