@@ -569,6 +569,22 @@ export const zVoucherLine = z.object({
 });
 export type VoucherLine = z.infer<typeof zVoucherLine>;
 
+// Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
+// description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
+export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
+
+// How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
+// the deterministic matcher, never a model's read), or the person's own choice
+// (`manual`). The server checks a claimed `suggested` against the matcher before it keeps it. `reason` and the invoice are what
+// the matcher found, so the review page can say why in words.
+export const zBankMatchedBy = z.object({
+  kind: z.enum(['suggested', 'manual']),
+  reason: z.enum(BANK_MATCH_REASONS).optional(),
+  invoice: z.object({ series: z.string().max(50), number: z.string().max(50) }).optional(),
+});
+export type BankMatchedBy = z.infer<typeof zBankMatchedBy>;
+
 // The payload of a finance.cash_voucher proposal, built by the server from the request (the party as found, the total
 // computed). finance.voucher.record checks it all again when the proposal is approved.
 export const zCashVoucherProposal = z.object({
@@ -582,6 +598,9 @@ export const zCashVoucherProposal = z.object({
   total: zVoucherAmount,
   // The bank statement line the voucher settles (#326); absent on vouchers entered by hand.
   bankLineId: zId.optional(),
+  // How the voucher's party was found when it was made from a bank line (#2385): the matcher's suggestion or the person's
+  // own choice, as the server checked it when the voucher was asked for.
+  matchedBy: zBankMatchedBy.optional(),
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),

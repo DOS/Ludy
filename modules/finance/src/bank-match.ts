@@ -63,7 +63,7 @@ export interface StoredBankLine {
 }
 
 // The lines, as the org has them, in no particular order; ids of other orgs or of no line are left out.
-async function findBankLines(ctx: QueryContext, ids: readonly string[]): Promise<StoredBankLine[]> {
+export async function findBankLines(ctx: QueryContext, ids: readonly string[]): Promise<StoredBankLine[]> {
   if (ids.length === 0) return [];
   const rows = await ctx.trx
     .selectFrom('crove_finance.bank_line')
@@ -177,19 +177,25 @@ export async function checkBankLineVoucher(
 
 type PartyRow = { id: string; name: string; tax_code: string | null };
 
-const readParties = (ctx: QueryContext): Promise<PartyRow[]> =>
+export const readParties = (ctx: QueryContext): Promise<PartyRow[]> =>
   ctx.trx.selectFrom('crove_kernel.party').select(['id', 'name', 'tax_code']).where('org_id', '=', ctx.orgId).execute();
 
 // The voucher a line makes and the party it is probably about, given the org's parties. withBalances: false leaves out
 // the open-balance reason (its query is the costliest, and only finance.bank.line_voucher shows it). Invoices and
 // balances are read in the line's legal entity (#1280).
-async function lineVoucherFor(
+async function lineVoucherFor(ctx: QueryContext, line: StoredBankLine, state: BankLineState, parties: readonly PartyRow[], withBalances = true): Promise<BankLineVoucher> {
+  return (await lineMatchFor(ctx, line, state, parties, withBalances)).made;
+}
+
+// The same, with the invoices of the line's exact amount the matcher read (party, series, number), for the grouping of
+// open lines (finance.bank.match_groups): a clean line needs one of them for its party.
+export async function lineMatchFor(
   ctx: QueryContext,
   line: StoredBankLine,
   state: BankLineState,
   parties: readonly PartyRow[],
   withBalances = true,
-): Promise<BankLineVoucher> {
+): Promise<{ made: BankLineVoucher; invoices: Array<{ partyId: string; series: string; number: string }>; truncated: boolean }> {
   const amount = new Decimal(line.amount).abs();
   const type = bankVoucherType(line.amount);
   const inflow = type === 'bank_credit';
@@ -239,7 +245,7 @@ async function lineVoucherFor(
     return [{ party: { id: party.id, name: party.name, taxCode: party.tax_code }, reason: c.reason, ...(c.invoice ? { invoice: c.invoice } : {}) }];
   };
   const description = line.description.replace(/\s+/g, ' ').trim().slice(0, DESCRIPTION_MAX).trim();
-  return {
+  const made: BankLineVoucher = {
     bankAccount: line.bankAccount,
     line: bankLineView(line, state),
     // A voucher holds whole dong, at most 15 digits; a line with fractions of a dong (a foreign currency account) makes
@@ -257,6 +263,9 @@ async function lineVoucherFor(
     suggested: match.suggested ? (view(match.suggested)[0] ?? null) : null,
     candidates: match.candidates.flatMap(view),
   };
+  // The invoice read stops at CANDIDATE_ROWS: at that size a party's second invoice of the amount may lie past the cut, so a caller that
+  // counts a party's invoices must not trust the count.
+  return { made, invoices: invoices.map((i) => ({ partyId: i.party_id, series: i.invoice_series, number: i.invoice_number })), truncated: invoices.length >= CANDIDATE_ROWS };
 }
 
 // The voucher a line makes and the party it is probably about, for the voucher form. Reads only; the user confirms the

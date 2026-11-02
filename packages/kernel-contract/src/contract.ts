@@ -268,7 +268,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -1646,6 +1646,13 @@ export const contract = {
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
     // the voucher each makes (stage 2b); the SPA asks for them one by one with inbox.request. Owners, admins and members.
     suggestions: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(z.array(zBankLineVoucher)),
+    // The open lines of an account and period sorted into a clean group (one exact candidate, no warning: ask for and approve
+    // together) and lines that need a look, each with why (#2385). Deterministic; the SPA asks for the clean lines' vouchers
+    // with inbox.request and approves them with inbox.approveMany. Owners, admins and members.
+    matchGroups: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatchGroups),
+    // The lines a voucher settles in a period (all accounts, or one), with the voucher, who approved it and how its party
+    // was found (#2385). Every member.
+    matched: oc.input(z.object({ bankAccount: zAccountCode.optional(), period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatched),
     // The open lines per bank account, for the Inbox (stage 2b). Every member.
     openLines: oc.input(zLegalEntityChoice.optional()).output(zBankOpenLines),
   },
