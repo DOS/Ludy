@@ -15,6 +15,7 @@ export * from './proofread.ts';
 export * from './scheduling.ts';
 export * from './social.ts';
 export * from './summary.ts';
+export * from './today.ts';
 
 export interface AiConfig {
   baseURL: string;
