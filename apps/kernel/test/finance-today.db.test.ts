@@ -13,9 +13,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { nextVatDeadline, normalizeStatementAmount, vietnamToday, type BankStatementRow } from '@crove/kernel-contract';
+import { nextVatDeadline, normalizeStatementAmount, vietnamToday, zTodayItems, type BankStatementRow } from '@crove/kernel-contract';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries, type TodayItem } from '@crove/mod-finance';
+import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
 import type { ExtractClient } from '@crove/extract-contract';
 import type { ParsedInvoice } from '@crove/l10n-vn';
 import { inProcessExtract } from './extract-service.ts';
@@ -56,7 +56,9 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
   let branch = '';
   let defaultEntity = '';
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
-  const today = (who: string, org = orgId) => rt.query<TodayItem[]>('finance.today', {}, { actor: asUser(who), orgId: org });
+  // Every answer is checked against the shared TodayItem schema Home reads (#2394): a field it does not know, a title that is
+  // not a key, an href that is not an in-app path or a currency with no amount fails here.
+  const today = async (who: string, org = orgId) => zTodayItems.parse(await rt.query('finance.today', {}, { actor: asUser(who), orgId: org }));
   const real = inProcessExtract();
   const extract: ExtractClient = { extract: async (kind, bytes) => (kind === 'pdf_text' ? ({ ok: true, kind: 'pdf_text', text: 'x'.repeat(100), pages: 1 } as never) : real.extract(kind, bytes)) };
   const reader = (number: string, seller: string) => ({

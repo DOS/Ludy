@@ -45,7 +45,6 @@ export {
   type PortalListDeps,
 } from './portal-list.ts';
 export { vatPeriod } from './domain/vat-return.ts';
-export { type TodayItem } from './today.ts';
 export { defaultLegalEntityId, legalEntityError, resolveLegalEntity } from './legal-entity.ts';
 export {
   normalizePortalInvoices,

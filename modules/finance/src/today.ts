@@ -17,7 +17,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { ORIGINAL_FLAGGED, taxDuesOf } from '@crove/kernel';
-import type { VatFilingPeriod } from '@crove/kernel-contract';
+import type { TodayItem, VatFilingPeriod } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { closingPeriod } from './notifications.ts';
@@ -27,21 +27,6 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ACTORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 // The most vendor or customer groups of waiting proposals one read lists, the longest waiting first.
 export const TODAY_PROPOSAL_GROUPS_MAX = 30;
-
-// The item every line of Home exposes (#2383). The shared schema lives in the contract package once the Frontend line
-// lands it; this is the same shape.
-export interface TodayItem {
-  kind: 'proposal' | 'flag' | 'message' | 'deadline';
-  app: 'finance' | 'crm' | 'notes' | 'social' | 'ads';
-  id: string;
-  title: { key: string; params?: Record<string, string | number> };
-  count?: number;
-  amount?: string;
-  currency?: string;
-  dueAt?: string;
-  severity?: 'info' | 'warn' | 'block';
-  href: string;
-}
 
 type Link = (path: string, entity?: string) => string;
 
@@ -138,7 +123,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
       kind: 'proposal',
       app: 'finance',
       id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${r.party.toLowerCase()}`.slice(0, 200),
-      title: named ? { key: sale ? 'financeToday.proposalsCustomer' : 'financeToday.proposalsVendor', params: { count, party: r.party } } : { key: 'financeToday.proposalsOther', params: { count } },
+      title: named ? { key: sale ? 'financeToday.proposalsCustomer' : 'financeToday.proposalsVendor', params: { count, party: r.party.slice(0, 500) } } : { key: 'financeToday.proposalsOther', params: { count } },
       count,
       ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency } : {}) } : {}),
       // One proposal opens itself; a group opens the Inbox.
