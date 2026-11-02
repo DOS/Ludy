@@ -2344,6 +2344,14 @@ export function createRpcHandler(
       // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
       // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins.
       flags: os.ads.flags.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flags', {}, { actor, orgId }))),
+      // The thresholds of those flags (#2378): owners and admins read and set them.
+      flagSettings: os.ads.flagSettings.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flag_settings', {}, { actor, orgId }))),
+      setFlagSettings: os.ads.setFlagSettings.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.flag_settings_set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>

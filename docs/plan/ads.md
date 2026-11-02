@@ -150,6 +150,17 @@ Decisions taken in the build, on the owner's existing classic Meta app (section 
 - **The person who granted an account** is kept only as that keyed hash (`granted_by_hash`, set when the grant is finished, never the Meta user id), so a copy of the database says nothing about who the person is. An account linked before A3 has none, so a request cannot find it until it is connected again; a rotated app secret has the same effect. With a shared Meta app the callback erases the ad data only.
 - **Not in A3:** the write token of #2283 (W0), Google's and TikTok's callbacks (their own slices), and a notice before the 60 days end (the token's own `expires_at` is recorded; warning ahead of it can come with a need).
 
+### 5.6 The spend flags (#2378)
+
+Deterministic flags for owners and admins (they show spend), worked out from the stored figures and the caps in force with fixed rules, no model call, decimal arithmetic only, amounts of different currencies never added or compared. A flag moves no money and changes no campaign.
+
+- **Pace against the cap.** Month-to-date spend through yesterday (the account's own time zone), projected linearly (spent x days in the month / days over), flagged when above a monthly cap once enough days of the month are over. An org cap sums the accounts' projections in the cap's currency.
+- **A day over its share.** Yesterday's spend above a factor times the day's share of a cap (a daily cap is its own share, a monthly cap is spread over the month).
+- **Cost-per-result jump.** A campaign whose cost per result over the last 3 days is above a factor times the median of its daily cost per result over the 14 days before, with a least number of results and of days with results so small numbers do not flag.
+- An account that has not read through yesterday is not judged; an org flag says how many accounts it left out.
+- **Thresholds are an org setting** (`crove_ads.ad_flag_setting`, one row per org, written by owners and admins by row policy and by `ads.flag_settings_set`, R1): days over before the pace is judged (3), the day factor (1.5), the cost-per-result factor (1.5), the least results (5) and history days (5). A threshold left empty is the default in code, so a safer default reaches every org that never set one. The table is not a column of `ad_org_setting`, whose guard stamps `updated_at` on every update, which the unblock-launches proposal compares with the time of the block.
+- **Where they show.** `ads.flags` and the Ads screen ("Cảnh báo chi tiêu" with the numbers each flag is based on, and the thresholds form), and `ads.today`, the Ads line of Home's "Hôm nay cần bạn" (shared item shape of #2383, owners and admins only, titles `today.items.ads.*`, linking to the Ads screen; campaigns beyond the first 20 are one item with their count).
+
 ## 6. Where the money lands in Kế toán
 
 **Ads never posts.** It is a reading module. The ledger's one write path, proposals and four-eyes are unchanged. There are four places the same money appears, and Ads only reads or points:

@@ -17,7 +17,7 @@ import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel'
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { decideApproval, kernelCommands, kernelQueries } from '@crove/kernel';
-import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
+import { zTodayItems, type AdAccountView, type AdsSummary, type AdsSyncRunView, type TodayItem } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
@@ -1708,6 +1708,22 @@ suite('ads on PostgreSQL (#2217)', () => {
     describe('the spend flags (#2378)', () => {
       const NOW = '2026-11-10T05:00:00.000Z';
       const asOutsider = () => ({ type: 'user' as const, userId: outsider.userId, aal: 'aal1' as const, sessionId: outsider.session });
+      // Runs `text` ($1 the second org, $2 the account, $3 its owner) as the signed-in owner of the second org (the guard of the caps refuses every
+      // other context), committed.
+      const capsFor = async (adAccountId: string, text: string) => {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, token]);
+          await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
+          await c.query(text, [otherOrgId, adAccountId, outsider.userId]);
+          await c.query('COMMIT');
+        } finally {
+          await c.query('ROLLBACK').catch(() => undefined);
+          c.release();
+        }
+      };
       it('raises exactly the flags the seeded figures call for, for owners and admins only', async () => {
         // Members and viewers do not read what shows spend.
         for (const who of [member, viewer]) expect((await callAs(who, 'ads/flags', undefined)).status, who.email).toBe(403);
@@ -1739,20 +1755,7 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(before.map((f) => f.kind)).toEqual(['cpr']);
         expect(before[0]).toMatchObject({ campaignId: 'c1', campaignName: 'Chiến dịch A', currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio: '3.00', recentResults: '300', historyDays: 6 });
         // A monthly cap of 250 000 and a daily cap of 5 000 on the account (the signed-in owner sets them): the pace and the day flag, in decimal.
-        const caps = async (text: string) => {
-          const c = await pool.connect();
-          try {
-            await c.query('BEGIN');
-            const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
-            await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, token]);
-            await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
-            await c.query(text, [otherOrgId, mine, outsider.userId]);
-            await c.query('COMMIT');
-          } finally {
-            await c.query('ROLLBACK').catch(() => undefined);
-            c.release();
-          }
-        };
+        const caps = (text: string) => capsFor(mine, text);
         await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
         const after = await flagsOf();
         expect(after.map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
@@ -1771,6 +1774,111 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(firstOfMonth[0]).toMatchObject({ day: '2026-11-30', spend: '10000', ratio: '2.00' });
         // A flag moves nothing: the cap rows and the account's flags of running ads are as they were.
         expect(await row(`SELECT write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine])).toEqual([{ write_enabled: false }]);
+      });
+
+      // The thresholds are an org setting (#2378 slice 2): owners and admins read and set them, the contract and the database hold the bounds,
+      // and the row is written by owners and admins alone, whoever reaches it.
+      it('stores the thresholds an owner or admin sets, bounds them in the contract and in the database, and holds the row to owners and admins', async () => {
+        const nulls = { paceMinDays: null, dayFactor: null, cprFactor: null, cprMinResults: null, cprMinHistoryDays: null };
+        const defaults = { paceMinDays: 3, dayFactor: '1.5', cprFactor: '1.5', cprMinResults: 5, cprMinHistoryDays: 5 };
+        expect(await callAs(owner, 'ads/flagSettings', undefined)).toMatchObject({ status: 200, body: { set: nulls, defaults, setAt: null } });
+        for (const who of [member, viewer]) {
+          expect((await callAs(who, 'ads/flagSettings', undefined)).status, who.email).toBe(403);
+          expect((await callAs(who, 'ads/setFlagSettings', { ...nulls, idempotencyKey: key() })).status, who.email).toBe(403);
+        }
+        // An admin sets some of them; a null is the default.
+        const set = { paceMinDays: 4, dayFactor: '2.5', cprFactor: null, cprMinResults: 20, cprMinHistoryDays: null };
+        const saved = await callAs(adminAccount, 'ads/setFlagSettings', { ...set, idempotencyKey: key() });
+        expect(saved).toMatchObject({ status: 200, body: { set, defaults } });
+        expect(typeof saved.body.setAt).toBe('string');
+        expect(await callAs(owner, 'ads/flagSettings', undefined)).toMatchObject({ status: 200, body: { set, defaults } });
+        // One row for the org, stamped with who set it; the audit row names the change.
+        expect(await row(`SELECT count(*)::int AS n, bool_and(set_by = $2) AS mine FROM crove_ads.ad_flag_setting WHERE org_id = $1`, [orgId, adminAccount.userId])).toEqual([{ n: 1, mine: true }]);
+        const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.flag_settings_set' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+        expect(audit[0]?.detail).toMatchObject({ previous: nulls, set });
+        // The contract refuses what is out of range.
+        for (const bad of [{ paceMinDays: 0 }, { paceMinDays: 16 }, { dayFactor: '1' }, { dayFactor: '1.0' }, { cprFactor: '10.01' }, { cprFactor: '2.555' }, { cprMinResults: 0 }, { cprMinHistoryDays: 2 }, { cprMinHistoryDays: 15 }]) {
+          const refusedCall = await callAs(owner, 'ads/setFlagSettings', { ...set, ...bad, idempotencyKey: key() });
+          expect(refusedCall.status, JSON.stringify(bad)).toBeGreaterThanOrEqual(400);
+          expect(refusedCall.status, JSON.stringify(bad)).toBeLessThan(500);
+        }
+        // The database holds the same bounds, whoever writes.
+        for (const bad of ['pace_min_days = 0', 'pace_min_days = 16', 'day_factor = 1', 'day_factor = 10.01', 'day_factor = 1.555', 'cpr_factor = 2.555', 'cpr_factor = 0.5', 'cpr_min_results = 0', 'cpr_min_history_days = 2', 'cpr_min_history_days = 15']) {
+          await expect(row(`UPDATE crove_ads.ad_flag_setting SET ${bad} WHERE org_id = $1`, [orgId]), bad).rejects.toMatchObject({ code: '23514' });
+        }
+        // The row policies: a member and a viewer change and delete nothing, and insert nothing, in SQL as well; an owner's context writes it.
+        for (const who of [member, viewer]) {
+          await inContext(who, async (c) => {
+            expect((await c.query('UPDATE crove_ads.ad_flag_setting SET pace_min_days = 9 WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
+            expect((await c.query('DELETE FROM crove_ads.ad_flag_setting WHERE org_id = $1', [orgId])).rowCount, who.email).toBe(0);
+          });
+          await inContext(who, (c) => refused(c, 'INSERT INTO crove_ads.ad_flag_setting (org_id) VALUES ($1)', [orgId], 'row-level security'));
+        }
+        await inContext(owner, async (c) => {
+          expect((await c.query('UPDATE crove_ads.ad_flag_setting SET pace_min_days = 4 WHERE org_id = $1', [orgId])).rowCount).toBe(1);
+        });
+        expect((await callAs(owner, 'ads/flagSettings', undefined)).body.set).toEqual(set);
+        // Back to the defaults.
+        expect(await callAs(owner, 'ads/setFlagSettings', { ...nulls, idempotencyKey: key() })).toMatchObject({ status: 200, body: { set: nulls, defaults } });
+      });
+
+      it('applies the thresholds to the flags and to the items of Home, which only owners and admins get, and a threshold edit moves nothing else', async () => {
+        const made = await rpc('ads/connectSandbox', await tokenFor(outsider), { displayName: 'Ngưỡng cờ', idempotencyKey: randomUUID() }, otherSlug);
+        expect(made.status, JSON.stringify(made.body)).toBe(200);
+        const mine = made.body.adAccountId as string;
+        // Only this account is judged: the others of the org (the first test's) have not read yesterday.
+        await row(`UPDATE crove_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
+        await row(`UPDATE crove_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
+        for (let d = 1; d <= 9; d++) {
+          const day = `2026-11-${String(d).padStart(2, '0')}`;
+          await row(
+            `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+             VALUES ($1, $2, $3, 'account', 'acct', 'Ngưỡng cờ', $4, 'VND', '10000', 0, 0, '{}'::jsonb),
+                    ($1, $2, $3, 'campaign', 'c1', 'Chiến dịch A', $4, 'VND', $5, 0, 0, '{"purchase":"100"}'::jsonb)`,
+            [otherOrgId, mine, entity, day, d <= 6 ? '100000' : '300000'],
+          );
+        }
+        await capsFor(mine, `INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        const flags = async () => ((await api.query('ads.flags', { now: NOW }, { actor: asOutsider(), orgId: otherOrgId })) as Array<{ kind: string; adAccountId: string }>).filter((f) => f.adAccountId === mine);
+        const today = async (actor: Parameters<typeof api.query>[2]['actor'] = asOutsider()) => (await api.query('ads.today', { now: NOW }, { actor, orgId: otherOrgId })) as TodayItem[];
+        const mineOnly = async () => (await today()).filter((i) => i.id.includes(mine));
+        const setThresholds = (set: Record<string, unknown>) => api.execute('ads.flag_settings_set', set, { actor: asOutsider(), orgId: otherOrgId });
+        const nulls = { paceMinDays: null, dayFactor: null, cprFactor: null, cprMinResults: null, cprMinHistoryDays: null };
+        const switches = () => row(`SELECT write_enabled, launches_blocked, updated_at::text AS updated_at FROM crove_ads.ad_org_setting WHERE org_id = $1`, [otherOrgId]);
+        const switchesBefore = await switches();
+        // The defaults: the pace, the day and the cost per result are flagged, and Home lists them for the owner, the pace first.
+        expect((await flags()).map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
+        // (The org's own caps from the tests before raise org-level items too; the list is valid whole, and this account's items are the ones judged.)
+        expect(zTodayItems.safeParse(await today()).success).toBe(true);
+        const items = await mineOnly();
+        expect(items.map((i) => i.id)).toEqual([`pace:${mine}`, `day:${mine}:daily`, `cpr:${mine}:c1`]);
+        expect(items[0]).toMatchObject({ kind: 'flag', app: 'ads', title: { key: 'ads.paceAccount', params: { account: 'Ngưỡng cờ' } }, amount: '300000', currency: 'VND', severity: 'warn', href: '/ads' });
+        // The thresholds the org sets: 9 days over are not enough for a minimum of 10, a day at exactly 2.00 times its share and a cost per result at
+        // exactly 3.00 times its median are not above a factor of 2 and of 3. Nothing is flagged, in the Ads screen or in Home.
+        await setThresholds({ ...nulls, paceMinDays: 10, dayFactor: '2', cprFactor: '3' });
+        expect(await flags()).toEqual([]);
+        expect(await mineOnly()).toEqual([]);
+        // A factor a little under those flags them again; a minimum of results above the 300 of the last days holds the campaign back.
+        await setThresholds({ ...nulls, paceMinDays: 9, dayFactor: '1.99', cprFactor: '2.99' });
+        expect((await flags()).map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
+        await setThresholds({ ...nulls, cprMinResults: 400 });
+        expect((await flags()).map((f) => f.kind).sort()).toEqual(['day', 'pace']);
+        await setThresholds(nulls);
+        expect((await flags()).map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
+        // Members and viewers get an empty list, not a refusal, though the flags are there.
+        await row(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')`, [otherOrgId, member.userId, viewer.userId]);
+        try {
+          for (const who of [member, viewer]) {
+            // A first call in the org binds the session to it (the runtime checks that), then the read.
+            expect((await rpc('ads/accounts', await tokenFor(who), undefined, otherSlug)).status, who.email).toBe(200);
+            expect(await today({ type: 'user', userId: who.userId, aal: 'aal1', sessionId: who.session }), who.email).toEqual([]);
+          }
+        } finally {
+          await row(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = ANY ($2::uuid[])`, [otherOrgId, [member.userId, viewer.userId]]);
+        }
+        // Editing a threshold touches no switch: the switches' own record (and the proposal that unblocks launches reads it) is as it was.
+        expect(await switches()).toEqual(switchesBefore);
       });
     });
   });

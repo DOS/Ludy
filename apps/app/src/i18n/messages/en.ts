@@ -148,19 +148,6 @@ export const en = {
     support: 'Feedback / Support',
     status: 'System status',
   },
-  today: {
-    // The titles of the items each line's read returns, by the key the line gives: a line adds its keys here, in both languages, with the read.
-    items: {
-      social: {
-        review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
-        channels: '{count, plural, one {# channel needs} other {# channels need}} reconnecting',
-        attention: '{count, plural, one {# post failed or is paused} other {# posts failed or are paused}}',
-        due: 'A post scheduled in the next 24 hours is still waiting for approval',
-        dueTitled: '“{title}” is scheduled in the next 24 hours and is still waiting for approval',
-        dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled in the next 24 hours and still waiting for approval',
-      },
-    },
-  },
   overview: {
     title: 'Overview',
     subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',
@@ -197,6 +184,24 @@ export const en = {
   },
   today: {
     items: {
+      social: {
+        review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
+        channels: '{count, plural, one {# channel needs} other {# channels need}} reconnecting',
+        attention: '{count, plural, one {# post failed or is paused} other {# posts failed or are paused}}',
+        due: 'A post scheduled in the next 24 hours is still waiting for approval',
+        dueTitled: '“{title}” is scheduled in the next 24 hours and is still waiting for approval',
+        dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled in the next 24 hours and still waiting for approval',
+      },
+      ads: {
+        paceOrg: 'At this pace the org passes its monthly spend cap',
+        paceAccount: 'At this pace {account} passes its monthly spend cap',
+        dayOrgDaily: 'The org spent {ratio} times its share of the daily spend cap on {day}',
+        dayOrgMonthly: 'The org spent {ratio} times its share of the monthly spend cap on {day}',
+        dayAccountDaily: '{account} spent {ratio} times its share of the daily spend cap on {day}',
+        dayAccountMonthly: '{account} spent {ratio} times its share of the monthly spend cap on {day}',
+        cpr: '{campaign} ({account}): cost per result is {ratio} times its usual',
+        cprMore: '{count, plural, one {# more campaign has} other {# more campaigns have}} a jump in cost per result',
+      },
       financeProposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
       financeProposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
       financeProposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
@@ -1517,6 +1522,24 @@ export const en = {
       retry: 'Try again',
       periodDaily: 'daily',
       periodMonthly: 'monthly',
+    },
+    // The thresholds of those flags (#2378): an org setting, with the default of each when it is left empty.
+    flagSettings: {
+      title: 'Flag thresholds',
+      hint: 'When a flag is raised. Leave a field empty to use the default. Changing a threshold only changes which flags show: it moves no money and changes no campaign.',
+      fields: {
+        paceMinDays: 'Days of the month over before the pace is judged',
+        dayFactor: 'A day flags above this many times its share of a cap',
+        cprFactor: 'Cost per result flags above this many times its median',
+        cprMinResults: 'Least results in the last 3 days to judge a campaign',
+        cprMinHistoryDays: 'Least days with results before them (of 14) to judge a campaign',
+      },
+      default: 'Default: {value}',
+      invalid: 'A number inside the allowed range (a ratio is above 1 and at most 10)',
+      save: 'Save thresholds',
+      useDefaults: 'Use the defaults',
+      savedToast: 'Thresholds saved',
+      error: 'The flag thresholds could not be read.',
     },
     // An account whose connection stopped (#2219): why, since when, and what resumes it.
     paused: {
@@ -7045,6 +7068,8 @@ export const en = {
         prepare_set: 'Ask to set or raise an ad spend cap',
         set: 'Set or raise an ad spend cap (an approved request)',
       },
+      flag_settings: 'Read the thresholds of the spend flags',
+      flag_settings_set: 'Set the thresholds of the spend flags',
       flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
       launches: {
         prepare_unblock: 'Ask to open ad launches again',
@@ -7064,6 +7089,7 @@ export const en = {
         runs: 'List the recent ad syncs',
         target: 'Read the ad account a sync reads',
       },
+      today: 'Read what needs you in ads today',
       write: {
         disable: 'Turn off running ads for the org',
         enable: 'Turn on running ads for the org (an approved request)',
