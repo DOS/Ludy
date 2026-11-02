@@ -91,18 +91,18 @@ async function checkVoucher(ctx: QueryContext, voucher: { type: VoucherType; cas
   await assertUsableAccounts(ctx, [voucher.cashAccount, ...voucher.lines.map((l) => l.account)]);
 }
 
-// The match recorded on a voucher made from a bank line: `vy` only when the matcher, run now on the line, suggests this very
+// The match recorded on a voucher made from a bank line: `ly` only when the matcher, run now on the line, suggests this very
 // party for this very reason (the invoice kept only if it is one of the party's open invoices of the line's amount), so
 // a request cannot label its own choice as the suggestion; anything else is the person's own choice.
 async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId: string | null, claimed: BankMatchedBy | undefined): Promise<BankMatchedBy> {
-  if (claimed?.kind !== 'vy' || !partyId) return { kind: 'manual' };
+  if (claimed?.kind !== 'ly' || !partyId) return { kind: 'manual' };
   // The open-balance reason only decides when no stronger one exists, so its costly query runs only for a claim of it.
   const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, await readParties(ctx), claimed.reason === 'balance');
   const suggested = made.suggested;
   if (!suggested || suggested.party.id !== partyId || suggested.reason !== claimed.reason) return { kind: 'manual' };
   const named = claimed.invoice;
   const invoice = named && invoices.some((i) => i.partyId === partyId && i.series === named.series && i.number === named.number) ? named : undefined;
-  return { kind: 'vy', reason: suggested.reason, ...(invoice ? { invoice } : {}) };
+  return { kind: 'ly', reason: suggested.reason, ...(invoice ? { invoice } : {}) };
 }
 
 export const prepareVoucher = defineCommand({

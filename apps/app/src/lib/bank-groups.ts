@@ -20,7 +20,7 @@ export function voucherRequestOf(item: BankMatchLine, legalEntityId: string | un
     description: voucher.description,
     lines: [{ account: voucher.counterAccount, amount: voucher.amount }],
     bankLineId: item.line.id,
-    matchedBy: { kind: 'vy', reason: suggested.reason, ...(suggested.invoice ? { invoice: suggested.invoice } : {}) },
+    matchedBy: { kind: 'ly', reason: suggested.reason, ...(suggested.invoice ? { invoice: suggested.invoice } : {}) },
     ...(legalEntityId ? { legalEntityId } : {}),
   };
 }

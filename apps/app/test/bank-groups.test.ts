@@ -28,7 +28,7 @@ describe('voucherRequestOf', () => {
       description: 'TT HD 123',
       lines: [{ account: '331', amount: '1980000' }],
       bankLineId: '00000000-0000-4000-8000-000000000001',
-      matchedBy: { kind: 'vy', reason: 'tax_code', invoice: { series: 'C26TAA', number: '123' } },
+      matchedBy: { kind: 'ly', reason: 'tax_code', invoice: { series: 'C26TAA', number: '123' } },
       legalEntityId: 'entity-1',
     });
   });
@@ -37,7 +37,7 @@ describe('voucherRequestOf', () => {
     const request = voucherRequestOf(line({ suggested: { party: { id: '00000000-0000-4000-8000-000000000003', name: 'A', taxCode: null }, reason: 'invoice' } }), undefined);
     expect(request).not.toBeNull();
     expect(request).not.toHaveProperty('legalEntityId');
-    expect(request?.matchedBy).toEqual({ kind: 'vy', reason: 'invoice' });
+    expect(request?.matchedBy).toEqual({ kind: 'ly', reason: 'invoice' });
   });
 
   it('asks for nothing for a line that is not clean, has no voucher or no party', () => {
@@ -58,7 +58,7 @@ describe('reasonTag and matchedByTag', () => {
   });
 
   it('shows the matcher with its reason, the person\'s own choice, or nothing known', () => {
-    expect(matchedByTag({ kind: 'vy', reason: 'invoice', invoice: { series: 'C', number: '7' } })).toEqual({ tag: 'reason', reason: 'invoice', number: '7' });
+    expect(matchedByTag({ kind: 'ly', reason: 'invoice', invoice: { series: 'C', number: '7' } })).toEqual({ tag: 'reason', reason: 'invoice', number: '7' });
     expect(matchedByTag({ kind: 'manual' })).toEqual({ tag: 'manual', number: '' });
     expect(matchedByTag(null)).toEqual({ tag: 'unknown', number: '' });
   });
