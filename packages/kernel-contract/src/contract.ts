@@ -272,7 +272,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1698,6 +1698,8 @@ export const contract = {
     // way to spend (the org switch, an account's flag, a cap set or raised, launches opened again) is asked for with
     // requestChange: a proposal approved in the Inbox (P10, P11), never a direct change. Nothing here calls a platform yet.
     writeState: oc.output(zAdsWriteState),
+    // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins, read only.
+    flags: oc.output(z.array(zAdsFlag)),
     requestChange: oc.input(zAdsChangeRequest).output(z.object({ proposalId: zId })),
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),

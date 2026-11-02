@@ -1484,6 +1484,21 @@ export const en = {
       capFirst: 'No cap is set yet; this sets the first one: {amount}.',
       capFromTo: 'From {previous} to {amount}.',
     },
+    // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
+    flags: {
+      title: 'Spend flags',
+      hint: 'Worked out from the stored figures with fixed rules and no model. A flag changes nothing: it points at what to look at.',
+      paceOrg: 'At this pace the org spends {projected} this month, above its monthly cap of {cap}: {spent} in the first {elapsed} days of {days}.',
+      paceAccount: 'At this pace {account} spends {projected} this month, above its monthly cap of {cap}: {spent} in the first {elapsed} days of {days}.',
+      dayOrg: 'The org spent {spend} on {day}, {ratio} times its share of the {period} cap ({share} a day; cap {cap}).',
+      dayAccount: '{account} spent {spend} on {day}, {ratio} times its share of the {period} cap ({share} a day; cap {cap}).',
+      cpr: '{campaign} ({account}): the 3 days to {day} cost {recent} per result ({results} results), {ratio} times the median of {median} over the 14 days before.',
+      skipped: 'Not counted: accounts that have not read up to yesterday ({count}).',
+      error: 'The spend flags could not be read.',
+      retry: 'Try again',
+      periodDaily: 'daily',
+      periodMonthly: 'monthly',
+    },
     // An account whose connection stopped (#2219): why, since when, and what resumes it.
     paused: {
       token_expired: 'Since {since}, Meta no longer accepts this account’s access token, so Ludy paused its updates. No day is lost: once you reconnect, it reads on from the last day that was not final.',
@@ -6947,6 +6962,7 @@ export const en = {
         prepare_set: 'Ask to set or raise an ad spend cap',
         set: 'Set or raise an ad spend cap (an approved request)',
       },
+      flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
       launches: {
         prepare_unblock: 'Ask to open ad launches again',
         unblock: 'Open ad launches again (an approved request)',
