@@ -7235,6 +7235,7 @@ export const vi = {
         list: 'Xem danh sách lịch hẹn',
         live_target: 'Xem giờ cần kiểm tra trên lịch ngoài của người chủ trì trước khi quyết định lịch hẹn',
         mail_data: 'Lấy thông tin cho thư về lịch hẹn',
+        meeting_settle: 'Ghi kết quả tạo Google Meet cho một lịch hẹn',
         manage: 'Thực hiện yêu cầu đổi hoặc hủy lịch hẹn của khách',
         move: 'Dời lịch hẹn',
         next_slots: 'Xem các khung giờ trống sắp tới',

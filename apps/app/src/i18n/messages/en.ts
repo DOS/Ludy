@@ -7236,6 +7236,7 @@ export const en = {
         list: 'List bookings',
         live_target: "Read the time to check at the hosts' outside calendars before a booking is decided",
         mail_data: 'Read the details of a booking mail',
+        meeting_settle: 'Record the outcome of making a Google Meet for a booking',
         manage: "Carry out a visitor's change or cancellation of a booking",
         move: 'Move a booking',
         next_slots: 'Read the next free slots',
