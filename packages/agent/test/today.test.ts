@@ -17,7 +17,7 @@ const facts = (over: Partial<BriefFacts> = {}): BriefFacts => ({
 });
 const none = { flags: 0, blocking: 0, proposals: 0, messages: 0, deadlines: 0, dueDates: [] };
 const writer = (answer: string[] | null | Error) =>
-  new TodayWriter({ baseURL: 'http://model.invalid', model: 'stub' }, async () => {
+  new TodayWriter({ baseURL: 'http://model.invalid', model: 'stub', apiKey: 'unit-test' }, async () => {
     if (answer instanceof Error) throw answer;
     return answer === null ? null : { sentences: answer };
   });

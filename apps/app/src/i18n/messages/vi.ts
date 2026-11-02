@@ -198,6 +198,14 @@ export const vi = {
       financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
       financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
     },
+    // Vy's brief above the list (#2383).
+    brief: {
+      title: 'Tóm tắt hôm nay',
+      loading: 'Đang soạn tóm tắt',
+      aiBadge: 'Vy viết',
+      byVy: 'Vy, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
+      byTemplate: 'Tóm tắt tự động từ số liệu của danh sách bên dưới.',
+    },
   },
   overview: {
     title: 'Tổng quan',

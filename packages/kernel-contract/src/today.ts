@@ -108,3 +108,15 @@ export const zTodayList = z.object({
   failed: z.number().int().nonnegative(),
 });
 export type TodayList = z.infer<typeof zTodayList>;
+
+// Vy's daily brief (#2383): written from the same items, shown above the list. writtenBy says who wrote it ('vy': the
+// model, every number checked against the figures; 'template': built from the figures with no model); null with no
+// sentences when there is nothing to say (no items) or the AI budget of the month is spent (budgetSpent), when Home shows
+// the list alone. Nothing is stored.
+export const zTodayBriefInput = z.object({ language: z.enum(['vi', 'en']) });
+export const zTodayBrief = z.object({
+  writtenBy: z.enum(['vy', 'template']).nullable(),
+  sentences: z.array(z.string().max(300)).max(4),
+  budgetSpent: z.boolean(),
+});
+export type TodayBrief = z.infer<typeof zTodayBrief>;
