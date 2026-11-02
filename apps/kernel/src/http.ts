@@ -724,8 +724,10 @@ export function createHttpApp(deps: HttpDeps) {
   // The body is capped (a chunked one is cut at the cap) and the signature checked, which is one SHA-256 over at most 64 KiB. Every
   // refusal of the signature is the same 401. Zalo does not retry on an error status [S], so a verified notice is never refused for
   // rate: the per-address limit is charged only to REFUSED requests (a bad signature or a body that is no notice), so a flood of forged
-  // ones from the address Zalo also posts from cannot cost a real notice, whatever TRUSTED_PROXY_HOPS says. What a verified flood can do
-  // is bounded by the backlog cap of the provider (conversation_inbound_enqueue).
+  // ones from the address Zalo also posts from cannot cost a real notice, whatever TRUSTED_PROXY_HOPS says. That limit only shapes the
+  // answers (a 429 in place of a 401, for an address that sends many refused requests): it does not save the work of checking, so the
+  // CPU bound is the 64 KiB body cap above, one SHA-256 over at most that much per request. What a verified flood can do is bounded by
+  // the backlog cap of the provider (conversation_inbound_enqueue).
   const zaloWebhook = deps.zaloWebhook;
   if (zaloWebhook) {
     const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });

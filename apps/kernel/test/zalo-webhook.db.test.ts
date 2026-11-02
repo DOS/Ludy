@@ -340,7 +340,17 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
   });
 
   it("is not refused for the sandbox's backlog: the cap is per provider (#2348)", async () => {
-    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1001)");
+    // The sandbox is refused at its own cap of 1000 waiting notices, while the real platform is still accepted.
+    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1000)");
+    const client = new pg.Client({ connectionString: appConfig.DATABASE_URL });
+    await client.connect();
+    try {
+      await expect(client.query("SELECT crove_kernel.conversation_inbound_enqueue('sandbox', 'y'::bytea)")).rejects.toMatchObject({ code: '53400' });
+      await expect(client.query("SELECT crove_kernel.conversation_inbound_enqueue('zalo_oa', 'z'::bytea)")).resolves.toBeDefined();
+    } finally {
+      await client.end();
+    }
+    await rows("DELETE FROM crove_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'");
     const real = text('m-cap-1', 'Tin thật vẫn nhận', '1788300400000');
     expect((await post(app, real, signed(real, '1788300400000'))).status).toBe(200);
     expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'")).toHaveLength(1);
