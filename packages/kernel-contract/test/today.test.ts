@@ -2,7 +2,7 @@
 // The "Hôm nay cần bạn" item shape (#2383) every line's read returns.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { TODAY_APPS, TODAY_KINDS, todayCurrency, zTodayItem, zTodayItemBase, zTodayItems, type TodayItem } from '../src/today.ts';
+import { TODAY_APPS, TODAY_KINDS, sortTodayItems, todayCurrency, zTodayItem, zTodayItemBase, zTodayItems, zTodayList, type TodayItem } from '../src/today.ts';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -118,3 +118,41 @@ describe('TodayItem', () => {
     expect(zTodayItems.safeParse(Array.from({ length: 201 }, (_, i) => item({ id: String(i) }))).success).toBe(false);
   });
 });
+
+describe('sortTodayItems', () => {
+  const parsed = (over: Record<string, unknown>): TodayItem => zTodayItem.parse(item(over));
+  const order = (items: TodayItem[]) => sortTodayItems(items).map((i) => i.id);
+
+  it('groups by kind with flags first, then proposals, messages and deadlines', () => {
+    const items = [parsed({ id: 'd', kind: 'deadline' }), parsed({ id: 'm', kind: 'message' }), parsed({ id: 'p', kind: 'proposal' }), parsed({ id: 'f', kind: 'flag' })];
+    expect(order(items)).toEqual(['f', 'p', 'm', 'd']);
+  });
+
+  it('puts the more severe first in a group, then the nearer due date, then the larger count', () => {
+    const items = [
+      parsed({ id: 'info', kind: 'flag', severity: 'info' }),
+      parsed({ id: 'none', kind: 'flag' }),
+      parsed({ id: 'block', kind: 'flag', severity: 'block' }),
+      parsed({ id: 'warn', kind: 'flag', severity: 'warn' }),
+      parsed({ id: 'late', kind: 'deadline', dueAt: '2026-11-09T00:00:00Z' }),
+      parsed({ id: 'soon', kind: 'deadline', dueAt: '2026-11-03T00:00:00Z' }),
+      parsed({ id: 'undated', kind: 'deadline' }),
+      parsed({ id: 'big', kind: 'proposal', count: 9 }),
+      parsed({ id: 'small', kind: 'proposal', count: 2 }),
+    ];
+    expect(order(items)).toEqual(['block', 'warn', 'info', 'none', 'big', 'small', 'soon', 'late', 'undated']);
+  });
+
+  it('does not depend on the order the reads answered in, and does not change its input', () => {
+    const items = [parsed({ id: 'b', app: 'crm' }), parsed({ id: 'a', app: 'finance' }), parsed({ id: 'c', app: 'finance' })];
+    const copy = [...items];
+    expect(order(items)).toEqual(order([...items].reverse()));
+    expect(items).toEqual(copy);
+  });
+
+  it('is the shape of the list answer, with a count of dropped items', () => {
+    expect(zTodayList.safeParse({ items: [item()], dropped: 0 }).success).toBe(true);
+    expect(zTodayList.safeParse({ items: [], dropped: -1 }).success).toBe(false);
+  });
+});
+

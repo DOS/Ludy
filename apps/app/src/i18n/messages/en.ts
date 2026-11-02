@@ -148,6 +148,26 @@ export const en = {
     support: 'Feedback / Support',
     status: 'System status',
   },
+  today: {
+    title: 'Needs you today',
+    subtitle: 'What needs you across the apps, warnings first.',
+    empty: 'Nothing needs you today',
+    emptyHint: 'Warnings, proposals waiting for approval, unanswered messages and upcoming deadlines show up here when there are some.',
+    kinds: { flag: 'Warnings', proposal: 'Waiting for your approval', message: 'Unanswered messages', deadline: 'Coming up' },
+    severity: { block: 'Blocking', warn: 'Needs a look', info: 'Note' },
+    count: '{count, plural, one {# item} other {# items}}',
+    due: 'Due {when}',
+    open: 'Open',
+    fallback: {
+      flag: 'A warning needs your attention',
+      proposal: 'A proposal is waiting for your approval',
+      message: 'A message has not been answered',
+      deadline: 'Something is coming due',
+    },
+    // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
+    // line adds its keys here, in both languages, with the read.
+    items: {},
+  },
   overview: {
     title: 'Overview',
     subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',

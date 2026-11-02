@@ -146,6 +146,26 @@ export const vi = {
     support: 'Góp ý / Hỗ trợ',
     status: 'Trạng thái hệ thống',
   },
+  today: {
+    title: 'Hôm nay cần bạn',
+    subtitle: 'Việc cần bạn xem trong các ứng dụng, cảnh báo xếp trước.',
+    empty: 'Hôm nay chưa có việc nào cần bạn',
+    emptyHint: 'Cảnh báo, đề xuất chờ duyệt, tin nhắn chưa trả lời và hạn sắp đến sẽ hiện ở đây khi có.',
+    kinds: { flag: 'Cảnh báo', proposal: 'Chờ bạn duyệt', message: 'Tin nhắn chưa trả lời', deadline: 'Sắp đến hạn' },
+    severity: { block: 'Đang chặn', warn: 'Cần xem', info: 'Lưu ý' },
+    count: '{count, plural, other {# mục}}',
+    due: 'Hạn {when}',
+    open: 'Mở',
+    fallback: {
+      flag: 'Một cảnh báo cần bạn xem',
+      proposal: 'Một đề xuất đang chờ bạn duyệt',
+      message: 'Một tin nhắn chưa được trả lời',
+      deadline: 'Một việc sắp đến hạn',
+    },
+    // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
+    // line adds its keys here, in both languages, with the read.
+    items: {},
+  },
   overview: {
     title: 'Tổng quan',
     subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',

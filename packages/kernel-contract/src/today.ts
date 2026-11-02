@@ -73,3 +73,29 @@ export type TodayItem = z.infer<typeof zTodayItem>;
 export const zTodayItems = z.array(zTodayItem).max(200);
 
 export const todayCurrency = (item: Pick<TodayItem, 'currency'>): string => item.currency ?? TODAY_DEFAULT_CURRENCY;
+
+// Home lists the kinds in this order: what is wrong first, then what waits for a decision, then what waits for an answer,
+// then what is coming.
+export const TODAY_KIND_ORDER: readonly TodayKind[] = ['flag', 'proposal', 'message', 'deadline'];
+const SEVERITY_RANK: Record<TodaySeverity, number> = { block: 0, warn: 1, info: 2 };
+
+// The list as Home shows it: grouped by kind in TODAY_KIND_ORDER, inside a group the more severe first (an item with no
+// severity counts as info), then the nearer dueAt (none last), then the larger count, then app and id so the order never
+// depends on which read answered first. Returns a new array.
+export function sortTodayItems(items: readonly TodayItem[]): TodayItem[] {
+  const due = (item: TodayItem) => (item.dueAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(item.dueAt));
+  return [...items].sort(
+    (a, b) =>
+      TODAY_KIND_ORDER.indexOf(a.kind) - TODAY_KIND_ORDER.indexOf(b.kind) ||
+      SEVERITY_RANK[a.severity ?? 'info'] - SEVERITY_RANK[b.severity ?? 'info'] ||
+      (due(a) === due(b) ? 0 : due(a) < due(b) ? -1 : 1) ||
+      (b.count ?? 1) - (a.count ?? 1) ||
+      (a.app < b.app ? -1 : a.app > b.app ? 1 : 0) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+// The answer of the Home read: the merged, ordered items, and how many items a line sent that did not match the shape
+// (they are never shown; a count above 0 is a bug in that line's read).
+export const zTodayList = z.object({ items: zTodayItems, dropped: z.number().int().nonnegative() });
+export type TodayList = z.infer<typeof zTodayList>;
