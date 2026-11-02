@@ -146,6 +146,21 @@ export const vi = {
     support: 'Góp ý / Hỗ trợ',
     status: 'Trạng thái hệ thống',
   },
+  today: {
+    // The titles of the items each line's read returns, by the key the line gives: a line adds its keys here, in both languages, with the read.
+    items: {
+      ads: {
+        paceOrg: 'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
+        paceAccount: 'Với tốc độ này, {account} sẽ vượt hạn mức chi tiêu tháng',
+        dayOrgDaily: 'Tổ chức đã chi gấp {ratio} lần phần của một ngày theo hạn mức ngày vào {day}',
+        dayOrgMonthly: 'Tổ chức đã chi gấp {ratio} lần phần của một ngày theo hạn mức tháng vào {day}',
+        dayAccountDaily: '{account} đã chi gấp {ratio} lần phần của một ngày theo hạn mức ngày vào {day}',
+        dayAccountMonthly: '{account} đã chi gấp {ratio} lần phần của một ngày theo hạn mức tháng vào {day}',
+        cpr: '{campaign} ({account}): chi phí mỗi kết quả gấp {ratio} lần mức thường thấy',
+        cprMore: '{count, plural, other {# chiến dịch khác}} có chi phí mỗi kết quả tăng vọt',
+      },
+    },
+  },
   overview: {
     title: 'Tổng quan',
     subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',
@@ -1444,6 +1459,24 @@ export const vi = {
       retry: 'Thử lại',
       periodDaily: 'ngày',
       periodMonthly: 'tháng',
+    },
+    // The thresholds of those flags (#2378): an org setting, with the default of each when it is left empty.
+    flagSettings: {
+      title: 'Ngưỡng cảnh báo',
+      hint: 'Khi nào một cảnh báo được đưa ra. Để trống một ô là dùng mức mặc định. Đổi ngưỡng chỉ đổi những cảnh báo hiện ra: không chuyển tiền và không sửa chiến dịch nào.',
+      fields: {
+        paceMinDays: 'Số ngày của tháng đã qua trước khi xét tốc độ chi',
+        dayFactor: 'Một ngày bị cảnh báo khi chi quá bấy nhiêu lần phần của nó trong hạn mức',
+        cprFactor: 'Chi phí mỗi kết quả bị cảnh báo khi quá bấy nhiêu lần mức trung vị',
+        cprMinResults: 'Số kết quả tối thiểu trong 3 ngày gần nhất để xét một chiến dịch',
+        cprMinHistoryDays: 'Số ngày có kết quả tối thiểu trước đó (trong 14 ngày) để xét một chiến dịch',
+      },
+      default: 'Mặc định: {value}',
+      invalid: 'Nhập một số trong khoảng cho phép (tỷ lệ phải lớn hơn 1 và không quá 10)',
+      save: 'Lưu ngưỡng',
+      useDefaults: 'Dùng mức mặc định',
+      savedToast: 'Đã lưu ngưỡng cảnh báo',
+      error: 'Không đọc được các ngưỡng cảnh báo.',
     },
     // An account whose connection stopped (#2219): why, since when, and what resumes it.
     paused: {
@@ -6909,6 +6942,8 @@ export const vi = {
         prepare_set: 'Đề nghị đặt hoặc tăng hạn mức chi tiêu quảng cáo',
         set: 'Đặt hoặc tăng hạn mức chi tiêu quảng cáo (đề nghị đã duyệt)',
       },
+      flag_settings: 'Xem các ngưỡng của cảnh báo chi tiêu',
+      flag_settings_set: 'Đặt các ngưỡng của cảnh báo chi tiêu',
       flags: 'Xem các cảnh báo tốc độ chi tiêu và chi phí cho mỗi kết quả của tài khoản quảng cáo',
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',
@@ -6928,6 +6963,7 @@ export const vi = {
         runs: 'Xem các lần đồng bộ quảng cáo gần đây',
         target: 'Xem tài khoản quảng cáo cần đồng bộ',
       },
+      today: 'Xem việc quảng cáo cần bạn hôm nay',
       write: {
         disable: 'Tắt chạy quảng cáo cho tổ chức',
         enable: 'Bật chạy quảng cáo cho tổ chức (đề nghị đã duyệt)',
