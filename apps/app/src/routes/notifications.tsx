@@ -9,6 +9,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { TodayMailSetting } from '../components/today-mail-setting.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
 import { isKnownKind, kindKey, notificationKinds, notificationTarget, periodParts, type KnownNotificationKind } from '../lib/notifications.ts';
@@ -164,6 +165,8 @@ export function NotificationsPage() {
       )}
       {read.error && <ErrorText>{errorMessage(read.error)}</ErrorText>}
       {list.data && <Settings muted={list.data.muted} />}
+      {/* The daily "Hôm nay cần bạn" brief by email: the member's own opt-in (#2406). */}
+      <TodayMailSetting />
     </div>
   );
 }

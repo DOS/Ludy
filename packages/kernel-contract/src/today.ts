@@ -123,3 +123,8 @@ export const zTodayBrief = z.object({
   final: z.boolean(),
 });
 export type TodayBrief = z.infer<typeof zTodayBrief>;
+
+// The member's own opt-in to the daily brief by email (#2406): off by default, set from their own notification settings. The
+// server sends the mail only when it has SMTP; the app reads that from its config.
+export const zTodayMailSetting = z.object({ enabled: z.boolean() });
+export type TodayMailSetting = z.infer<typeof zTodayMailSetting>;

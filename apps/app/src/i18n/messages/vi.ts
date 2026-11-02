@@ -249,6 +249,15 @@ export const vi = {
     },
   },
   notifications: {
+    todayMail: {
+      title: 'Tóm tắt hằng ngày qua email',
+      hint: 'Mỗi sáng, một thư ngắn cho biết hôm nay có bao nhiêu việc cần bạn kèm liên kết về Trang chủ. Thư chỉ có số lượng và liên kết, không có số tiền hay nội dung.',
+      label: 'Gửi cho tôi tóm tắt hằng ngày qua email',
+      noMail: 'Máy chủ này chưa gửi được email, nên chưa có thư nào được gửi cho đến khi người cài đặt bật thư.',
+      turnOffAsked: 'Bạn đã chọn tắt thư tóm tắt hằng ngày.',
+      turnOff: 'Tắt',
+      turnedOff: 'Thư tóm tắt hằng ngày đã tắt.',
+    },
     title: 'Thông báo công việc',
     subtitle: 'Đề xuất chờ bạn duyệt, tệp không đọc được, sao kê và đối chiếu cổng thuế cần xem lại, kỳ sắp đến hạn nộp tờ khai mà chưa khóa sổ.',
     readAll: 'Đánh dấu đã đọc hết',

@@ -509,6 +509,10 @@ export function createRpcHandler(
       // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
       // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
       // spent: no brief, and Home shows the list alone. Nothing is stored.
+      mail: {
+        get: os.today.mail.get.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today_mail.get', {}, { actor, orgId }))),
+        set: os.today.mail.set.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.today_mail.set', input, { actor, orgId }))),
+      },
       brief: os.today.brief.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
           const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
