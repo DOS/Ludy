@@ -75,7 +75,7 @@ describe('brand on the landing page (#1683)', () => {
   });
 
   it('presents the AI assistant as Vy in both languages', () => {
-    expect(vi.hero.title).toBe('Hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn');
+    expect(vi.hero.title).toBe('Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn');
     expect(en.hero.title).toBe('The all-in-one business OS where AI agents are your coworkers');
     for (const dict of [vi, en]) {
       expect(dict.hero.lead, dict.lang).toMatch(/^Vy /);

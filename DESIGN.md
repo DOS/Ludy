@@ -492,7 +492,7 @@ Scale as shipped (rem at 16px root, measured 2026-11-02; new screens follow it):
 
 Weights: 400 body, 500 UI labels, 600 headings. 800 is not used; size and spacing make hierarchy, not extreme weight.
 
-Exception ([#2359](https://github.com/DOS/Ludy/issues/2359)): the home page's headline is a long sentence, so its H1 is 2 below 640px instead of 2.375; that keeps it to 4 lines at 360px in both languages (it is 5 lines at 2.375). From 640px up it follows the row above.
+Exception ([#2359](https://github.com/DOS/Ludy/issues/2359)): the home page's headline is a long sentence, so its H1 is 1.875 below 640px instead of 2.375; that keeps it to 4 lines at 360px to 390px in both languages (5 or more at 2.375), with the Vietnamese compounds (`Hệ điều hành`, `doanh nghiệp`, `trọn gói`, `AI agent`, `đồng nghiệp`) held together by non-breaking spaces in the copy. From 640px up it follows the row above.
 
 ### 3.3 Shape (radius)
 

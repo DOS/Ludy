@@ -26,8 +26,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
-    lead: 'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.',
+    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn',
+    lead: 'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',

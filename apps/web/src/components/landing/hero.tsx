@@ -11,7 +11,7 @@ export function Hero({ dict }: { dict: Dictionary }) {
     <section aria-labelledby="hero-title" className="pt-14 pb-16 sm:pt-20 sm:pb-24">
       <div className="wrap">
         <div className="mx-auto max-w-[880px] text-center">
-          <h1 id="hero-title" className="font-display text-[2rem] leading-[1.12] font-semibold tracking-[-0.025em] text-fg sm:text-5xl lg:text-[3.75rem]">
+          <h1 id="hero-title" className="font-display text-[1.875rem] leading-[1.12] font-semibold tracking-[-0.025em] text-fg sm:text-5xl lg:text-[3.75rem]">
             {hero.title}
           </h1>
           <p className="mx-auto mt-6 max-w-[62ch] text-base text-muted sm:text-lg">{hero.lead}</p>
