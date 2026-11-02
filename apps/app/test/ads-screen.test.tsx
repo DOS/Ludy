@@ -2,7 +2,9 @@
 // The Ads screen's parts (ADR-0040, #2217), rendered on the server with the API's answers seeded in the cache: what the
 // empty screen offers each role, the settings of an account, the totals with and without a result kind, the tables with
 // the marker of a day that is not final yet, and the books strip (shown only for an account in dong, with exact
-// differences). The page itself, which reads the address and the session, is covered end to end (e2e/tests/ads.spec.ts).
+// differences), and the connection that can run ads (W0b): the owner's button, the badge and the note per account, the line that says
+// whether an account can run ads or only reads, and the words of a closing. The page itself, which reads the address and the session,
+// is covered end to end (e2e/tests/ads.spec.ts).
 import { QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -76,6 +78,8 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   pausedSince: null,
   pausedReason: null,
   writeEnabled: false,
+  writeConnectionStatus: null,
+  canRunAds: false,
   extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',
@@ -121,6 +125,9 @@ const buttonBefore = (html: string, label: string): string | undefined => {
 };
 // An <option> of this value that is the selected one, whatever the order of its attributes.
 const selectedOption = (value: string) => new RegExp(`<option(?=[^>]*value="${value}")(?=[^>]*selected="")[^>]*>`);
+
+// A message as it reads once the product name is filled in (the catalogs name it {brand}; the default is Ludy).
+const filled = (text: string): string => text.replaceAll('{brand}', 'Ludy');
 
 beforeEach(() => client.current.clear());
 
@@ -298,6 +305,13 @@ describe('the settings of an ad account', () => {
     expect(html).not.toContain(en.ads.settings.disconnectHint);
     expect(html).toMatch(selectedOption('lead'));
     expect(buttonBefore(html, en.ads.settings.save)).toBeDefined();
+  });
+
+  it('keeps the way to disconnect while a connection that can run ads is still open, even when the account no longer reads', () => {
+    const html = settings(account({ connectionStatus: 'revoked', writeConnectionStatus: 'active', canRunAds: true }));
+    expect(buttonBefore(html, en.ads.settings.disconnect)).toContain('aria-haspopup="dialog"');
+    // A write connection that is closed too leaves nothing to disconnect.
+    expect(settings(account({ connectionStatus: 'revoked', writeConnectionStatus: 'revoked' }))).not.toContain(`>${en.ads.settings.disconnect}<`);
   });
 
   it.each(['active', 'expired', 'revoked', 'error'] as const)('offers to delete the stored history of a %s account, behind a confirmation that is not open yet', (connectionStatus) => {
@@ -592,6 +606,83 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
     for (const text of ['', '0', '0.00', '00', '-1', '1.234', '1,5', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
   });
 
+  describe('the connection that can run ads (W0b)', () => {
+    const both = { meta: true, sandbox: true } as const;
+    const on = stateOf({ writeEnabled: true });
+    const withOffer = (state: AdsWriteState, role: 'owner' | 'admin', accounts: AdAccountView[], offer: Parameters<typeof AdsWriteCard>[0]['offer'] = both, locale: 'en' | 'vi' = 'en') => {
+      client.current.setQueryData(['ads', 'writeState'], state);
+      return render(<AdsWriteCard role={role} accounts={accounts} slug="shop" offer={offer} />, locale);
+    };
+    const meta = (over: Partial<AdAccountView> = {}) => account({ id: 'a2', name: 'Meta cửa hàng', provider: 'meta_ads', ...over });
+    const live = (over: Partial<AdAccountView> = {}) => account({ id: 'a3', name: 'Tài khoản chạy được', writeEnabled: true, writeConnectionStatus: 'active', canRunAds: true, ...over });
+
+    it('offers the owner a button to connect each account that cannot run ads yet, and none for one that can', () => {
+      const html = withOffer(on, 'owner', [account(), meta(), live()]);
+      // The sandbox account and the Meta account each get one; the account with a live connection gets none.
+      expect(html.split(`>${en.ads.write.accountConnect}<`)).toHaveLength(3);
+      expect(buttonBefore(html, en.ads.write.accountConnect)).toBeDefined();
+      expect(buttonBefore(html, en.ads.write.accountConnect)).not.toContain('aria-haspopup');
+      expect(buttonBefore(html, en.ads.write.accountConnect)).not.toContain('disabled=""');
+      expect(html.split(`>${en.ads.write.accountCanRun}<`)).toHaveLength(2);
+      expect(withOffer(on, 'owner', [live()])).not.toContain(`>${en.ads.write.accountConnect}<`);
+    });
+
+    it('draws no button while the org switch is off: the account list is not drawn at all', () => {
+      const html = withOffer(stateOf({ writeEnabled: false }), 'owner', [account(), meta()]);
+      expect(html).not.toContain(en.ads.write.accounts);
+      expect(html).not.toContain(`>${en.ads.write.accountConnect}<`);
+      expect(html).not.toContain(`>${en.ads.write.accountCanRun}<`);
+    });
+
+    it('shows an admin the badge and the note and no button', () => {
+      const html = withOffer(on, 'admin', [account(), live(), meta({ writeConnectionStatus: 'expired' })]);
+      expect(html).not.toContain(`>${en.ads.write.accountConnect}<`);
+      expect(html).toContain(`>${en.ads.write.accountCanRun}<`);
+      expect(html).toContain(en.ads.write.accountStopped);
+    });
+
+    it('says an account can run ads with a badge, and says nothing of a connection for one that has none', () => {
+      const html = withOffer(on, 'owner', [account(), live()]);
+      expect(html.split(`>${en.ads.write.accountCanRun}<`)).toHaveLength(2);
+      expect(html).not.toContain(en.ads.write.accountStopped);
+      // The badge is the connection's; the flag of the account keeps its own words.
+      expect(html).toContain(`>${en.ads.write.accountOn}<`);
+      expect(html).toContain(`>${en.ads.write.accountOff}<`);
+    });
+
+    it.each(['expired', 'error', 'revoked'] as const)('says the connection to run ads stopped for a %s one, and lets the owner connect it again', (writeConnectionStatus) => {
+      const html = withOffer(on, 'owner', [account({ writeConnectionStatus })]);
+      expect(html).toContain(en.ads.write.accountStopped);
+      expect(html).not.toContain(`>${en.ads.write.accountCanRun}<`);
+      expect(buttonBefore(html, en.ads.write.accountConnect)).toBeDefined();
+    });
+
+    it('offers each platform its own way only where the deployment has it, and none by default', () => {
+      const accounts = [account(), meta()];
+      // Meta alone: the Meta account only. The sandbox alone: the sandbox account only.
+      expect(withOffer(on, 'owner', accounts, { meta: true, sandbox: false }).split(`>${en.ads.write.accountConnect}<`)).toHaveLength(2);
+      expect(withOffer(on, 'owner', accounts, { meta: false, sandbox: true }).split(`>${en.ads.write.accountConnect}<`)).toHaveLength(2);
+      expect(withOffer(on, 'owner', accounts, { meta: false, sandbox: false })).not.toContain(`>${en.ads.write.accountConnect}<`);
+      // The card as the Ads screen drew it before the server could offer anything: no offer, no button.
+      client.current.setQueryData(['ads', 'writeState'], on);
+      expect(render(<AdsWriteCard role="owner" accounts={accounts} slug="shop" />)).not.toContain(`>${en.ads.write.accountConnect}<`);
+    });
+
+    it('leaves a disconnected account to be connected for reading first, as the server asks', () => {
+      const html = withOffer(on, 'owner', [account({ connectionStatus: 'revoked' }), meta({ connectionStatus: 'expired' })]);
+      // Only the Meta account whose read connection merely expired is offered the button.
+      expect(html.split(`>${en.ads.write.accountConnect}<`)).toHaveLength(2);
+    });
+
+    it('words the badge, the note and the button in Vietnamese too', () => {
+      const html = withOffer(on, 'owner', [account(), live(), meta({ writeConnectionStatus: 'expired' })], both, 'vi');
+      expect(html).toContain(`>${viMessages.ads.write.accountConnect}<`);
+      expect(html).toContain(`>${viMessages.ads.write.accountCanRun}<`);
+      expect(html).toContain(viMessages.ads.write.accountStopped);
+      expect(viMessages.ads.write.accountConnect).toBe('Kết nối để chạy quảng cáo');
+    });
+  });
+
   it('has the same words in Vietnamese as in English for the card', () => {
     client.current.setQueryData(['ads', 'writeState'], stateOf({ writeEnabled: true, pending: [waiting('p1', { change: 'launches_unblock' })] }));
     const vi = render(<AdsWriteCard role="owner" accounts={[account({ writeEnabled: true }), a2()]} slug="shop" />, 'vi');
@@ -708,12 +799,35 @@ describe('the header of an ad account', () => {
   const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
   const anHourAgo = () => new Date(Date.now() - 3_600_000).toISOString();
 
-  it('says when the connection can do more than read ad reports, and says nothing when it cannot', () => {
+  it('says an account only reads when its connection can do nothing more, and says when it can do more than read ad reports', () => {
     const quiet = header(account({ provider: 'meta_ads' }));
     expect(quiet).not.toContain('can do more than read');
+    expect(quiet).toContain(filled(en.ads.readOnly));
+    expect(quiet).not.toContain(en.ads.canRunAds);
     const html = header(account({ provider: 'meta_ads', extraScopes: ['pages_manage_posts', 'pages_show_list'] }));
     expect(html).toContain('can do more than read ad reports');
     expect(html).toContain('pages_manage_posts, pages_show_list');
+    // The note about extra permissions takes the place of the read-only line, not its company.
+    expect(html).not.toContain(filled(en.ads.readOnly));
+  });
+
+  it('says an account can run ads when it has a live connection that can change campaigns, in place of the read-only line', () => {
+    const html = header(account({ provider: 'meta_ads', writeConnectionStatus: 'active', canRunAds: true }));
+    expect(html).toContain(en.ads.canRunAds);
+    expect(html).toContain('Every launch still needs a person to approve it, within the caps.');
+    expect(html).not.toContain(filled(en.ads.readOnly));
+    expect(html).not.toContain('can do more than read');
+    // The same line wins over the note about extra permissions: the account's own connection is what can change campaigns.
+    expect(header(account({ provider: 'meta_ads', canRunAds: true, extraScopes: ['pages_show_list'] }))).not.toContain('can do more than read');
+    // A connection that stopped can run nothing: the account reads only.
+    const stopped = header(account({ provider: 'meta_ads', writeConnectionStatus: 'expired', canRunAds: false }));
+    expect(stopped).toContain(filled(en.ads.readOnly));
+    expect(stopped).not.toContain(en.ads.canRunAds);
+  });
+
+  it('says the same two lines in Vietnamese', () => {
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads' })} canRefresh onRequested={() => undefined} />, 'vi')).toContain(filled(viMessages.ads.readOnly));
+    expect(render(<AccountHeader account={account({ provider: 'meta_ads', canRunAds: true })} canRefresh onRequested={() => undefined} />, 'vi')).toContain(viMessages.ads.canRunAds);
   });
 
   it('says the sandbox figures are made up, how far they run, and offers a refresh to those who may ask', () => {

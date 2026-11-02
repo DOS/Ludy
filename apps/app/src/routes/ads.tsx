@@ -5,7 +5,8 @@
 // count as a result. Read only: nothing here creates, edits or pauses a campaign, and no figure is converted from the
 // account's own currency. Owners and admins connect (the offline sandbox platform, and Meta through its sign-in dialog,
 // #2218) and set an account up; owners,
-// admins and members ask for a refresh; every role reads. Next to the books, where finance runs, the platform's monthly
+// admins and members ask for a refresh; every role reads. Each account says whether it can only read or can also run ads (a
+// second connection the owner makes while the org's switch of running ads is on, components/ads-write.tsx). Next to the books, where finance runs, the platform's monthly
 // spend sits beside the ledger's advertising expense (components/ads-books-strip.tsx). The server and the row policies
 // decide each rule; the screen only offers what can succeed and shows the server's reason otherwise.
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -24,7 +25,7 @@ import { AdsWriteCard } from '../components/ads-write.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import {
   ADS_RANGES,
   DEFAULT_ADS_RANGE,
@@ -32,8 +33,9 @@ import {
   FIRST_SYNC_POLL_MS,
   REFRESH_POLL_MS,
   REFRESH_WATCH_MS,
-  adOAuthProviders,
+  adReadOAuthProviders,
   adProviderName,
+  adWriteOffer,
   adsRange,
   awaitsFirstSync,
   configureChanges,
@@ -52,8 +54,9 @@ import {
   type AdsSearch,
   type KeyHolder,
 } from '../lib/ads.ts';
+import { useAdOAuthStart } from '../lib/ads-oauth.ts';
+import { disconnectConfirmText, hasOpenWriteConnection } from '../lib/ads-write.ts';
 import { getConfig } from '../lib/auth.ts';
-import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { monthLabel } from '../lib/period-lock.ts';
 import { toast } from '../lib/toast.ts';
 
@@ -181,13 +184,7 @@ export function ConnectSandboxForm({ entities, onConnected, onCancel }: { entiti
 export function ConnectMeta({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
   const t = useTranslations('ads');
   const headingId = useId();
-  const start = useMutation({
-    mutationFn: () => client.channels.oauthStart({ provider: 'meta_ads' }),
-    onSuccess: (attempt) => {
-      rememberOAuthAttempt(attempt.state, slug);
-      window.location.assign(attempt.authorizeUrl);
-    },
-  });
+  const start = useAdOAuthStart(slug, 'meta_ads');
   return (
     <div className="space-y-3" role="group" aria-labelledby={another ? undefined : headingId}>
       {!another && (
@@ -266,11 +263,18 @@ function SyncStatus({ account }: { account: AdAccountView }) {
     <div className="mt-3 space-y-1 text-sm">
       {account.syncedThrough && <p className="text-muted-foreground">{active ? t('syncedThrough', { day: f.date(account.syncedThrough) }) : t('storedThrough', { day: f.date(account.syncedThrough) })}</p>}
       {account.lastRunAt && <p className="text-xs text-subtle-foreground">{t('lastRun', { when: f.dateTime(account.lastRunAt) })}</p>}
-      {account.extraScopes.length > 0 && (
+      {account.canRunAds ? (
+        // A live connection that can change campaigns (W0b): said plainly, with what still stands between it and any spend.
+        <p className="text-muted-foreground" role="status">
+          {t('canRunAds')}
+        </p>
+      ) : account.extraScopes.length > 0 ? (
         // The token can do more than read reports (the app was shared with another use that the person granted): say what.
         <p className="text-warning" role="status">
           {t('extraScopes', { list: account.extraScopes.join(', ') })}
         </p>
+      ) : (
+        <p className="text-muted-foreground">{t('readOnly')}</p>
       )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
@@ -580,14 +584,17 @@ export function Breakdowns({ summary, currency }: { summary: AdsSummary; currenc
 // ---------------------------------------------------------------------------------------------------------------------
 // Settings (owners and admins)
 
-// Disconnecting the account's connection (kernel.channel.disconnect, owners and admins), asked first in a dialog: Ads is the
-// only place to do it, since the channels screen does not list ad accounts. The stored figures stay and the account stays
-// in the picker as "disconnected", read only; nothing is shown for one that already is.
+// Disconnecting the account (ads.disconnectAccount, owners and admins), asked first in a dialog: Ads is the only place to do it,
+// since the channels screen does not list ad accounts. It closes the connection that reads the account and the one that can run
+// ads, if it has one, and drops both sealed tokens; the dialog says so, with what the platform still holds. The stored figures
+// stay and the account stays in the picker as "disconnected", read only; nothing is shown for one that already is, unless a
+// connection that can run ads is still open on it.
 function DisconnectAction({ account }: { account: AdAccountView }) {
   const t = useTranslations('ads');
+  const root = useTranslations();
   const attempt = useRef<KeyHolder | null>(null);
   const disconnect = useMutation(
-    orpc.channels.disconnect.mutationOptions({
+    orpc.ads.disconnectAccount.mutationOptions({
       onSuccess: async () => {
         attempt.current = null;
         toast(t('settings.disconnected'));
@@ -595,7 +602,7 @@ function DisconnectAction({ account }: { account: AdAccountView }) {
       },
     }),
   );
-  if (account.connectionStatus === 'revoked') return null;
+  if (account.connectionStatus === 'revoked' && !hasOpenWriteConnection(account)) return null;
   return (
     <div className="space-y-2 border-t pt-4">
       <p className="text-sm text-muted-foreground">{t('settings.disconnectHint')}</p>
@@ -603,12 +610,12 @@ function DisconnectAction({ account }: { account: AdAccountView }) {
         render={<Button loading={disconnect.isPending} variant="outline" size="lg" />}
         destructive
         title={t('settings.disconnectTitle')}
-        description={t('settings.disconnectBody', { name: account.name })}
+        description={disconnectConfirmText(root, account)}
         confirm={t('settings.disconnect')}
         onConfirm={() => {
           // A retry after a lost answer is the same request.
-          attempt.current = keyFor(attempt.current, account.connectionId);
-          disconnect.mutate({ connectionId: account.connectionId, idempotencyKey: attempt.current.key });
+          attempt.current = keyFor(attempt.current, account.id);
+          disconnect.mutate({ adAccountId: account.id, idempotencyKey: attempt.current.key });
         }}
       >
         {t('settings.disconnect')}
@@ -857,7 +864,9 @@ export function AdsPage() {
   const search: AdsSearch = useSearch({ strict: false });
   const config = getConfig();
   const sandbox = Boolean(config.ads?.sandbox);
-  const metaOffered = adOAuthProviders(config).includes('meta_ads');
+  // Connecting an ad account for reading offers Meta alone; connecting one to run ads is offered apart, to the owner, on the card of running ads.
+  const metaOffered = adReadOAuthProviders(config).includes('meta_ads');
+  const writeOffer = adWriteOffer(config);
   const financeOn = config.modules.includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
@@ -918,7 +927,7 @@ export function AdsPage() {
             </Card>
           )}
           {canManage && metaOffered && <ConnectMeta slug={slug} another />}
-          {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} />}
+          {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (

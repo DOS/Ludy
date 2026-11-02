@@ -13,9 +13,10 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { ADS_REQUEST_MIN_SECONDS, isAdProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
+import { ADS_REQUEST_MIN_SECONDS, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { historyStart } from './domain.ts';
+import { closeWriteConnections } from './write-connection.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MEMBERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -61,7 +62,8 @@ export const adsAccountLink = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
-    if (!connection || !isAdProviderId(connection.provider)) throw new DomainError('ADS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối tài khoản quảng cáo');
+    // A write connection is never an account of its own: it hangs off the account the read connection linked (ads.account.link_write).
+    if (!connection || !isAdProviderId(connection.provider) || isAdWriteProviderId(connection.provider)) throw new DomainError('ADS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối tài khoản quảng cáo');
     if (connection.status !== 'active') throw new DomainError('ADS_CONNECTION_INACTIVE', 422, 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại');
     // Two links of one account at once: the second waits and finds the first's row (a FOR UPDATE of a row that does not
     // exist yet would lock nothing).
@@ -222,6 +224,8 @@ export const adsAccountDeleteHistory = defineCommand({
       .forUpdate('a')
       .executeTakeFirst();
     if (!row) throw notFound();
+    // The row goes with a closed connection: its write connection must not outlive it holding a sealed token.
+    if (row.status === 'revoked') await closeWriteConnections(ctx, { adAccountId: row.id });
     const done = await deleteHistory(ctx, row.id, row.status === 'revoked', ctx.now.toISOString().slice(0, 10));
     ctx.audit({ adAccountId: row.id, days: done.days, runs: done.runs, removed: done.removed });
     return { adAccountId: row.id, ...done };
@@ -239,6 +243,8 @@ export const adsAccountErase = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
+    // The account's write connection goes with it (the platform asked for the person's data to be deleted): closed, its sealed token dropped.
+    await closeWriteConnections(ctx, { adAccountId: input.adAccountId });
     const done = await deleteHistory(ctx, input.adAccountId, true, ctx.now.toISOString().slice(0, 10));
     ctx.audit({ adAccountId: input.adAccountId, days: done.days, runs: done.runs, source: 'platform_deletion' });
     return { adAccountId: input.adAccountId, ...done };
@@ -262,8 +268,10 @@ export const adsAccountList = defineQuery({
     const rows = await ctx.trx
       .selectFrom('crove_ads.ad_account as a')
       .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'a.org_id').onRef('c.id', '=', 'a.channel_connection_id'))
+      // The write connection, when the account has one (W0b): "can run ads" is a live one, anything else is read only.
+      .leftJoin('crove_kernel.channel_connection as w', (j) => j.onRef('w.org_id', '=', 'a.org_id').onRef('w.id', '=', 'a.write_connection_id'))
       .select([
-        'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
+        'w.status as write_status', 'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
         'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at', 'a.write_enabled',
       ])
       .where('a.org_id', '=', ctx.orgId)
@@ -278,6 +286,8 @@ export const adsAccountList = defineQuery({
       connectionId: r.channel_connection_id,
       connectionStatus: r.status as AdAccountView['connectionStatus'],
       writeEnabled: r.write_enabled,
+      writeConnectionStatus: r.write_status as AdAccountView['writeConnectionStatus'],
+      canRunAds: r.write_status === 'active',
       pausedSince: r.status === 'active' ? null : stamp(r.connection_updated_at),
       pausedReason: r.status === 'active' ? null : pausedReason(r.status_reason),
       // What the sealed token can do beyond reading ad reports (a Meta token holds every permission the person granted the

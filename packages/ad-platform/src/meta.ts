@@ -38,7 +38,7 @@ const META_CAPABILITIES: AdPlatformCapabilities = { revisionDays: META_REVISION_
 // The fields of the Insights read: the day's money and counts, and the actions the results come from.
 const INSIGHT_FIELDS = 'date_start,spend,impressions,clicks,reach,actions,campaign_id,campaign_name';
 const ACCOUNT_FIELDS = 'id,name,currency,timezone_name';
-const ACT_ID = /^act_\d{1,32}$/;
+export const ACT_ID = /^act_\d{1,32}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_ACCOUNTS_LISTED = 1000;
 const PAGE_LIMIT = '500';
@@ -234,9 +234,9 @@ export class MetaAdsPlatform implements AdPlatform {
   }
 }
 
-const accountName = (name: unknown, id: string): string => (typeof name === 'string' && name.trim() ? name.trim().slice(0, 200) : `Meta ad account ${id}`);
+export const accountName = (name: unknown, id: string): string => (typeof name === 'string' && name.trim() ? name.trim().slice(0, 200) : `Meta ad account ${id}`);
 
-async function listAdAccounts(graph: Graph, token: string): Promise<NonNullable<AccountsAnswer['data']>> {
+export async function listAdAccounts(graph: Graph, token: string): Promise<NonNullable<AccountsAnswer['data']>> {
   const out: NonNullable<AccountsAnswer['data']> = [];
   let after: string | null = null;
   while (out.length < MAX_ACCOUNTS_LISTED) {
@@ -277,7 +277,7 @@ function rowOf(row: InsightRow, level: 'account' | 'campaign', accountId: string
 }
 
 // A Meta user id as the app sees it (app-scoped, digits).
-const META_USER_ID = /^\d{1,32}$/;
+export const META_USER_ID = /^\d{1,32}$/;
 
 // The keyed hash a connection stores of the Meta user who granted it, and the data deletion callback looks it up by: HMAC-SHA256
 // under the app secret, with a label so the same key never hashes another thing to the same value. The id itself is kept

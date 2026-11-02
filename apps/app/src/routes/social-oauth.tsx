@@ -7,7 +7,7 @@ import { useTranslations } from 'use-intl';
 import { OAUTH_MAX_ACCOUNTS_PER_GRANT, type OAUTH_AD_PROVIDERS, type OAUTH_CHANNEL_PROVIDERS } from '@crove/kernel-contract';
 import { Card } from '@crove/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
-import { adProviderName, isAdOAuthProvider } from '../lib/ads.ts';
+import { adProviderName, isAdOAuthProvider, isAdWriteOAuthProvider } from '../lib/ads.ts';
 import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts';
 import { takeOAuthAttempt } from '../lib/oauth.ts';
 import { providerName } from '../lib/social.ts';
@@ -31,11 +31,14 @@ export function OAuthCallbackPage() {
   const { provider } = useParams({ strict: false }) as { provider: string };
   const t = useTranslations('social');
   const ta = useTranslations('ads');
-  // An ad platform (Meta ads, #2218) is connected from the Ads screen and goes back to it; Social keeps its own words.
+  // An ad platform (Meta ads, #2218) is connected from the Ads screen and goes back to it; Social keeps its own words. The
+  // connection that can run ads (ADR-0043, W0b) has its own words in the same place: it reads no figures, it can change campaigns.
   const ads = isAdOAuthProvider(provider);
+  const write = isAdWriteOAuthProvider(provider);
   const name = ads ? adProviderName(provider) : providerName(provider);
-  const title = ads ? ta('oauth.title') : t('oauthTitle');
-  const connectedText = (list: string) => (ads ? ta('oauth.connected', { list }) : t('oauthConnected', { list }));
+  const title = ads ? ta(write ? 'oauth.writeTitle' : 'oauth.title') : t('oauthTitle');
+  const connectedText = (list: string) => (ads ? ta(write ? 'oauth.writeConnected' : 'oauth.connected', { list }) : t('oauthConnected', { list }));
+  const failedText = (list: string) => (ads ? ta(write ? 'oauth.writeFailed' : 'oauth.failed', { list }) : t('oauthFailed', { list }));
   // Read in an effect, not during render: reading takes the entry out of sessionStorage and cleans the address bar.
   // The ref keeps the first read when Strict Mode runs the effect twice.
   const read = useRef<Callback | null>(null);
@@ -93,7 +96,7 @@ export function OAuthCallbackPage() {
           </div>
         )}
         {finish.data && <p className="text-sm text-foreground">{connectedText(finish.data.connections.map((c) => c.displayName).join(', '))}</p>}
-        {finish.data && (finish.data.failed?.length ?? 0) > 0 && <ErrorText>{ads ? ta('oauth.failed', { list: (finish.data.failed ?? []).map((c) => c.displayName).join(', ') }) : t('oauthFailed', { list: (finish.data.failed ?? []).map((c) => c.displayName).join(', ') })}</ErrorText>}
+        {finish.data && (finish.data.failed?.length ?? 0) > 0 && <ErrorText>{failedText((finish.data.failed ?? []).map((c) => c.displayName).join(', '))}</ErrorText>}
         {finish.data && (finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: String(finish.data.skipped), max: String(OAUTH_MAX_ACCOUNTS_PER_GRANT) }) : t('oauthSkipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
         {finish.error && <ErrorText>{errorMessage(finish.error)}</ErrorText>}
         {!busy && back}

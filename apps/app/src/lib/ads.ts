@@ -3,7 +3,7 @@
 // the ad account's own time zone, the comparison with the books as exact decimals, what the settings form changes, and
 // the few facts it reads from an account. The server decides every rule; these only choose what to show and what to send.
 // Money is a decimal string (AGENTS.md): the sums go through lib/decimal.ts, never through JS numbers.
-import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
+import { ACCOUNT_CODE_PATTERN, ADS_BACKFILL_MONTHS, OAUTH_AD_PROVIDERS, isAdWriteProviderId, normalizeAccountCode, zonedDate, type AdAccountView } from '@crove/kernel-contract';
 import { fromUnits, isZeroAmount, toUnits } from './decimal.ts';
 
 // The periods of the range control, in the order the control lists them.
@@ -97,21 +97,52 @@ export const REFRESH_WATCH_MS = 45_000;
 // The `sandbox_ads` platform makes up its figures, so the screen says so beside the account.
 export const isSandboxProvider = (provider: string): boolean => provider === 'sandbox_ads';
 
-// The ad platforms connected through their own OAuth dialog (ADR-0040, #2218): the Ads screen offers them, the Social
-// channels screen never does. `meta_ads` reads the ad accounts of a Meta user, read only (permission `ads_read`).
+// The ad platforms connected through their own OAuth dialog (ADR-0040, #2218; ADR-0043, #2294 W0b): the Ads screen offers
+// them, the Social channels screen never does, whichever of them it is. `meta_ads` reads the ad accounts of a Meta user,
+// read only (permission `ads_read`); `metawrite_ads` is the second connection of one of those accounts, the one that can
+// change campaigns, which the owner makes only while the org's switch of running ads is on.
 export const AD_OAUTH_PROVIDERS: readonly string[] = OAUTH_AD_PROVIDERS;
 export const isAdOAuthProvider = (provider: string): boolean => AD_OAUTH_PROVIDERS.includes(provider);
+// The two kinds apart: connecting an ad account for reading offers `meta_ads` alone, and connecting one to run ads offers
+// `metawrite_ads` alone. The Ads empty state and its "connect Meta" buttons use the first, the running-ads card the second.
+export const AD_READ_OAUTH_PROVIDERS: readonly string[] = OAUTH_AD_PROVIDERS.filter((p) => !isAdWriteProviderId(p));
+export const AD_WRITE_OAUTH_PROVIDERS: readonly string[] = OAUTH_AD_PROVIDERS.filter((p) => isAdWriteProviderId(p));
+export const isAdWriteOAuthProvider = (provider: string): boolean => AD_WRITE_OAUTH_PROVIDERS.includes(provider);
 
-// Which of them the deployment offers: the ones `/api/config` lists among the channels' OAuth providers (the server has
-// app credentials for them). A config without the list offers none.
-export function adOAuthProviders(config: { channels?: { oauth?: readonly string[] | undefined } | undefined } | null | undefined): string[] {
+// What `/api/config` says about the deployment, as far as the ad platforms are concerned.
+type AdsConfig = { channels?: { oauth?: readonly string[] | undefined } | undefined; ads?: { sandbox?: boolean | undefined } | undefined } | null | undefined;
+
+// Which of the OAuth providers the deployment offers: the ones `/api/config` lists among the channels' OAuth providers (the
+// server has app credentials for them). A config without the list offers none.
+export function adOAuthProviders(config: AdsConfig): string[] {
   const offered = config?.channels?.oauth;
   return Array.isArray(offered) ? AD_OAUTH_PROVIDERS.filter((p) => offered.includes(p)) : [];
+}
+// The offered providers that connect an ad account for reading, and those that connect one to run ads.
+export const adReadOAuthProviders = (config: AdsConfig): string[] => adOAuthProviders(config).filter((p) => AD_READ_OAUTH_PROVIDERS.includes(p));
+export const adWriteOAuthProviders = (config: AdsConfig): string[] => adOAuthProviders(config).filter((p) => AD_WRITE_OAUTH_PROVIDERS.includes(p));
+
+// What the deployment lets an owner connect to run ads: Meta's own dialog where the server has the app for it, and the
+// offline sandbox where the test ad platform is on.
+export interface AdWriteOffer {
+  meta: boolean;
+  sandbox: boolean;
+}
+export const NO_WRITE_OFFER: AdWriteOffer = { meta: false, sandbox: false };
+export const adWriteOffer = (config: AdsConfig): AdWriteOffer => ({ meta: adWriteOAuthProviders(config).includes('metawrite_ads'), sandbox: Boolean(config?.ads?.sandbox) });
+
+// How an account's connection to run ads is made, if the deployment offers a way for its platform: through Meta's dialog
+// (`meta`), or offline (`sandbox`).
+export type WriteConnectWay = 'meta' | 'sandbox';
+export function writeConnectWay(provider: string, offer: AdWriteOffer): WriteConnectWay | null {
+  if (provider === 'meta_ads') return offer.meta ? 'meta' : null;
+  if (provider === 'sandbox_ads') return offer.sandbox ? 'sandbox' : null;
+  return null;
 }
 
 // The platform's name where the screen says which platform an account or a connection belongs to; the sandbox keeps its
 // own badge, so it has no name here, and an unknown platform is shown by its id.
-const AD_PROVIDER_NAMES: Record<string, string> = { meta_ads: 'Meta' };
+const AD_PROVIDER_NAMES: Record<string, string> = { meta_ads: 'Meta', metawrite_ads: 'Meta' };
 export const adProviderName = (provider: string): string => AD_PROVIDER_NAMES[provider] ?? provider;
 
 // The result kinds the screen has its own words for; any other key is shown as the platform gives it.
