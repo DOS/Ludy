@@ -27,10 +27,13 @@ import { videoCoverOf } from './cover.ts';
 import { allowlistedFetch, ConnectorError, type AuthorizeInput, type ExchangeInput, type Fetch, type OAuthConnector } from './oauth.ts';
 import { platformLink, RECENT_PAGES_MAX, RECENT_POSTS_MAX, recentSince } from './recent.ts';
 import type { RecentPost, RecentPostsInput, RecentPostsResult } from './index.ts';
+import type { ConversationAdapter, ConversationCallResult, ConversationReplyInput } from './conversation.ts';
 
 export const ZALO_HOSTS = ['oauth.zaloapp.com', 'openapi.zalo.me'] as const;
 const TOKEN_URL = 'https://oauth.zaloapp.com/v4/oa/access_token';
 const API = 'https://openapi.zalo.me/v2.0';
+// Customer care messages (the conversation core's replies) are on v3.0 [S].
+const API_V3 = 'https://openapi.zalo.me/v3.0';
 // Zalo's error codes for a token it no longer accepts; -220 is "access_token is expired or removed" in the OA error
 // table (developers.zalo.me, "Mã lỗi Official Account API").
 const TOKEN_ERRORS = new Set([-216, -220, -124, -118]);
@@ -44,6 +47,8 @@ const INVALID_PARAM = -201;
 // Errors of the OA or the app themselves (the OA disabled or missing, the app inactive, removed or not granted the
 // API, the OA unverified or without the service package, the OA's type): the article's presence cannot be read
 // through them, so a takedown refused with one is never taken for an article already gone.
+// (-223 is read as a quota by the conversation replies [S] and as an access error by the publishing calls below: the live check of the
+// conversation core settles which it is, row 9 of docs/runbooks/zalo-conversations-live-check.md.)
 const ACCESS_ERRORS = new Set([-204, -205, -209, -212, -219, -221, -223, -224, -235]);
 // An article id as Zalo gives it.
 const ARTICLE_ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -158,8 +163,8 @@ class ZaloClient {
 
   // headers: more request headers (the video check's token); multipart: a form whose content type fetch sets with its
   // boundary (a video upload); timeoutMs: longer than the default, for an upload.
-  async api<T>(method: 'GET' | 'POST', path: string, token: string, options: { params?: Record<string, string>; json?: unknown; headers?: Record<string, string>; multipart?: FormData; timeoutMs?: number } = {}): Promise<T> {
-    const url = new URL(`${API}/${path}`);
+  async api<T>(method: 'GET' | 'POST', path: string, token: string, options: { params?: Record<string, string>; json?: unknown; headers?: Record<string, string>; multipart?: FormData; timeoutMs?: number; base?: string } = {}): Promise<T> {
+    const url = new URL(`${options.base ?? API}/${path}`);
     for (const [k, v] of Object.entries(options.params ?? {})) url.searchParams.set(k, v);
     const headers: Record<string, string> = { ...options.headers, access_token: token, accept: 'application/json' };
     let body: string | FormData | undefined;
@@ -374,8 +379,66 @@ function articleOf(input: ArticleInput, images: readonly ArticleImage[], default
   };
 }
 
+// The most characters one customer care message holds [S]; the conversation core checks it before it asks.
+export const ZALO_REPLY_MAX = 2000;
+
+// A reply to a customer who wrote to the OA, through the customer care message API (`oa/message/cs`, v3.0) [S]: the OA answers inside
+// 48 hours of the customer's last message, a window the core checks before it asks (CONVERSATION_PROVIDER_RULES), and Zalo's own
+// errors are mapped to a kind and a code the screen words. The call has no idempotency key, so it is made once: an unclear answer
+// (a timeout, a 5xx, no message id) is `unknown` and waits for a person. Not tried against a live OA yet: the shapes are marked
+// [S] and [U] in the plan and settled by docs/runbooks/zalo-conversations-live-check.md.
+export class ZaloConversations implements ConversationAdapter {
+  readonly provider = 'zalo_oa' as const;
+  private readonly client: ZaloClient;
+
+  constructor(app: ZaloAppConfig, fetchImpl?: Fetch) {
+    this.client = new ZaloClient(app, fetchImpl);
+  }
+
+  async reply(input: ConversationReplyInput): Promise<ConversationCallResult> {
+    const s = zaloSecretOf(input.secret);
+    if (!s) return { kind: 'rejected', error: 'token_expired', code: 'ZALO_NO_TOKEN' };
+    // Zalo has no comment API we found: only a private chat is answered here.
+    if (input.kind !== 'direct') return { kind: 'rejected', error: 'bad_request', code: 'ZALO_DIRECT_ONLY' };
+    if (input.text.length === 0 || input.text.length > ZALO_REPLY_MAX) return { kind: 'rejected', error: 'bad_request', code: 'ZALO_TEXT_LENGTH' };
+    try {
+      const data = await this.client.api<{ message_id?: unknown } | null>('POST', 'oa/message/cs', s.accessToken, {
+        base: API_V3,
+        json: { recipient: { user_id: input.contactId }, message: { text: input.text } },
+        timeoutMs: 15_000,
+      });
+      // Zalo took it but did not say what it is called: it went out, but the echo cannot be matched to it by id.
+      const id = typeof data?.message_id === 'string' && data.message_id ? data.message_id : null;
+      return id ? { kind: 'accepted', externalId: id } : { kind: 'unknown', code: 'ZALO_NO_MESSAGE_ID' };
+    } catch (error) {
+      return conversationError(error);
+    }
+  }
+}
+
+// Zalo's error codes of a customer care message [S], as the core's typed answers: a refused token, a quota or rate limit, a person who
+// does not follow or blocked the OA, an OA without the API or its plan, a bad request. A network failure or a 5xx may have gone through.
+function conversationError(error: unknown): ConversationCallResult {
+  if (!(error instanceof ZaloError)) return { kind: 'unknown', code: 'ZALO_UNREACHABLE' };
+  const code = error.code;
+  // No Zalo error code and no failure status: the answer could not be read (an HTML page from a proxy, an empty body, a body cut off by the
+  // timeout, a redirect) after the request was sent. Zalo may have taken the message, so it is unclear, never a refusal.
+  if (code === undefined && (error.status < 400 || error.status === 408)) return { kind: 'unknown', code: 'ZALO_BAD_ANSWER' };
+  if ((code !== undefined && TOKEN_ERRORS.has(code)) || error.status === 401) return { kind: 'rejected', error: 'token_expired', code: 'ZALO_TOKEN' };
+  if (code === -223) return { kind: 'rejected', error: 'rate_limited', code: 'ZALO_QUOTA' };
+  if (error.status === 429 || code === RATE_LIMITED) return { kind: 'rejected', error: 'rate_limited', code: 'ZALO_RATE_LIMIT' };
+  if (code === -213) return { kind: 'rejected', error: 'permission', code: 'ZALO_NOT_FOLLOWER' };
+  if (code === -232) return { kind: 'rejected', error: 'permission', code: 'ZALO_BLOCKED' };
+  if (code !== undefined && ACCESS_ERRORS.has(code)) return { kind: 'rejected', error: 'permission', code: 'ZALO_OA_ACCESS' };
+  if (code === INVALID_PARAM) return { kind: 'rejected', error: 'bad_request', code: 'ZALO_BAD_PARAM' };
+  if (error.status >= 500) return { kind: 'unknown', code: 'ZALO_5XX' };
+  return { kind: 'rejected', error: 'bad_request', code: code !== undefined ? `ZALO_E${Math.abs(code)}` : `ZALO_HTTP_${error.status}` };
+}
+
 export class ZaloOaPublisher implements Publisher {
   readonly provider = 'zalo_oa' as const;
+  // The OA's chats, answered through the conversation core.
+  readonly conversations: ZaloConversations;
   readonly publishSafety: RetrySafety = 'reconcile_only';
   // A video's upload and processing take minutes; within the job's stale limit (600 s).
   readonly callTimeoutMs = 420_000;
@@ -388,6 +451,7 @@ export class ZaloOaPublisher implements Publisher {
 
   constructor(app: ZaloAppConfig, fetchImpl?: Fetch, timing: { processingWaitMs?: number; pollMs?: number; budgetMs?: number; editWaitMs?: number } = {}) {
     this.client = new ZaloClient(app, fetchImpl);
+    this.conversations = new ZaloConversations(app, fetchImpl);
     this.defaultAuthor = app.defaultAuthor ?? 'Ludy';
     this.processingWaitMs = timing.processingWaitMs ?? PROCESSING_WAIT_MS;
     this.pollMs = timing.pollMs ?? 5000;

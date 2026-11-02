@@ -30,6 +30,10 @@ export interface PostRef {
 // The kernel's code of a refused call.
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
+// The codes a failed or unclear send is worded for; any other is shown as it is.
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST'] as const;
+const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
+
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
 
 export interface Member {
@@ -241,7 +245,9 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
               {t(`sendState.${m.sendState}`)}
             </Badge>
           )}
-          {m.sendErrorCode && (m.sendState === 'failed' || m.sendState === 'unknown') && <span className="text-muted-foreground">{m.sendErrorCode}</span>}
+          {m.sendErrorCode && (m.sendState === 'failed' || m.sendState === 'unknown') && (
+            <span className="text-muted-foreground">{isKnownSendError(m.sendErrorCode) ? t(`sendError.${m.sendErrorCode}`) : m.sendErrorCode}</span>
+          )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
               <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
