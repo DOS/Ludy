@@ -66,7 +66,15 @@ import {
   CONVERSATION_COMPOSING_SECONDS,
   zConversationComposing,
   zAvailabilitySet,
+  zConversationSetIntent,
+  zConversationIntentSuggest,
+  zConversationContactMatches,
+  CONVERSATION_CONTACT_MATCHES_MAX,
+  CONVERSATION_INTENT_CHARS,
+  CONVERSATION_INTENT_MESSAGES,
+  phoneKeysIn,
   type Availability,
+  type ConversationIntent,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationAttachmentView,
   type ConversationAutoDraft,
@@ -579,6 +587,8 @@ interface SummaryRow {
   read_seq: number | null;
   // The other members typing a reply now (CV3): markers not expired, never the viewer's own.
   composing: string[] | null;
+  // The intent a person applied (CV3, #2306), or null.
+  intent: string | null;
 }
 
 // The summary columns of a thread with its channel, customer, party, last message and the viewer's read mark. Row-level
@@ -586,7 +596,7 @@ interface SummaryRow {
 const summarySelect = (orgId: string, viewer: string | null) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          c.identity_id, i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
-         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until,
+         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent,
          (SELECT m.body FROM crove_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id ORDER BY m.seq DESC LIMIT 1) AS preview,
          r.last_read_seq AS read_seq,
@@ -618,6 +628,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
     preview: previewOf(row.preview ?? ''),
     unread: row.last_seq > (row.read_seq ?? 0),
     composing: row.composing ?? [],
+    intent: row.intent as ConversationIntent | null,
   };
 }
 
@@ -635,6 +646,8 @@ export const conversationList = defineQuery({
     if (input.connectionId) where.push(sql`c.channel_connection_id = ${input.connectionId}::uuid`);
     if (input.assignee === 'me') where.push(sql`c.assignee_user_id = ${me}::uuid`);
     if (input.assignee === 'none') where.push(sql`c.assignee_user_id IS NULL`);
+    if (input.intent === 'none') where.push(sql`c.intent IS NULL`);
+    else if (input.intent) where.push(sql`c.intent = ${input.intent}`);
     if (input.q) {
       // The customer's name, the contact's name, or any message of the thread, ignoring case, Vietnamese marks and punctuation (search_fold, as the
       // contacts' search does). Text that folds to nothing (only punctuation) is no search: every thread stays. The folded text is matched with LIKE's own
@@ -1454,6 +1467,136 @@ export const conversationLinkContact = defineCommand({
     }
     ctx.audit({ conversation_id: conversation.id, party_id: input.partyId });
     return { conversationId: conversation.id };
+  },
+});
+
+// A person applies an intent to a thread, changes it or clears it (CV3, #2306): their own decision, in their name. What the AI coworker suggests is read
+// apart (kernel.conversation.intent_source feeds it) and never stored; this label is the only thing kept, and the database refuses every writer but a
+// person. Nothing is routed, assigned, resolved or hidden by it. The audit row holds the label (one of five words), never a text.
+export const conversationSetIntent = defineCommand({
+  name: 'kernel.conversation.set_intent',
+  input: zConversationSetIntent,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<{ conversationId: string; intent: ConversationIntent | null }> => {
+    const me = requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    const row = await ctx.trx.selectFrom('crove_kernel.conversation').select('intent').where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).executeTakeFirstOrThrow();
+    const before = (row.intent as ConversationIntent | null) ?? null;
+    if (before !== input.intent) {
+      await ctx.trx
+        .updateTable('crove_kernel.conversation')
+        .set({ intent: input.intent, intent_set_by: input.intent ? me : null, intent_set_at: input.intent ? ctx.now : null, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', conversation.id)
+        .execute();
+    }
+    ctx.audit({ conversation_id: conversation.id, label: input.intent, before, ...(before === input.intent ? { unchanged: true } : {}) });
+    return { conversationId: conversation.id, intent: input.intent };
+  },
+});
+
+export interface IntentSource {
+  id: string;
+  lastSeq: number;
+  // The customer's last messages (tainted external text), oldest first, each cut short.
+  texts: string[];
+}
+
+// What the intent suggestion reads: for each of the threads the caller may read (row-level security decides, so a thread they may not read is not here),
+// the customer's last messages. Read only; the model call is made by the API's handler outside this transaction, through the AI meter.
+export const conversationIntentSource = defineQuery({
+  name: 'kernel.conversation.intent_source',
+  input: zConversationIntentSuggest,
+  access: WRITERS,
+  handler: async (ctx, input): Promise<IntentSource[]> => {
+    const { rows } = await sql<{ id: string; last_seq: number; texts: string[] | null }>`
+      SELECT c.id, c.last_seq,
+             (SELECT pg_catalog.array_agg(t.body ORDER BY t.seq) FROM (
+                SELECT pg_catalog.left(m.body, ${CONVERSATION_INTENT_CHARS}) AS body, m.seq FROM crove_kernel.conversation_message m
+                WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND pg_catalog.btrim(m.body) <> ''
+                ORDER BY m.seq DESC LIMIT ${CONVERSATION_INTENT_MESSAGES}) t) AS texts
+      FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ANY(${input.conversationIds}::uuid[])`.execute(ctx.trx);
+    const byId = new Map(rows.map((r) => [r.id, { id: r.id, lastSeq: r.last_seq, texts: r.texts ?? [] }]));
+    // In the order asked, each thread once.
+    return [...new Set(input.conversationIds)].flatMap((id) => {
+      const found = byId.get(id);
+      return found ? [found] : [];
+    });
+  },
+});
+
+export interface ContactCandidates {
+  // The name the platform gave the customer (tainted), when it gave one.
+  customerName: string | null;
+  // Contacts of the org that carry a phone number the customer wrote in this thread (deterministic: the phone key).
+  phone: Array<{ partyId: string; name: string }>;
+  // Contacts whose name resembles the customer's (the words they share, ignoring case and Vietnamese marks), the likeliest first.
+  names: Array<{ partyId: string; name: string }>;
+}
+
+// The contacts a thread's customer may be, for a person to link (CV3, #2306). A thread already linked has none to suggest. The phone match is
+// deterministic: a number the customer wrote, in the form of the party's own phone key. The name match is the words the two names share. Row-level
+// security applies to the thread and to the contacts, so a member sees only what they may. Nothing is linked here: link_contact is a person's click.
+export const conversationContactCandidates = defineQuery({
+  name: 'kernel.conversation.contact_candidates',
+  input: zConversationContactMatches,
+  access: WRITERS,
+  handler: async (ctx, input): Promise<ContactCandidates> => {
+    const { rows } = await sql<{ party_id: string | null; identity_name: string | null }>`
+      SELECT c.party_id, i.display_name AS identity_name
+      FROM crove_kernel.conversation c
+      LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
+    const thread = rows[0];
+    if (!thread) throw notFound();
+    const none: ContactCandidates = { customerName: thread.identity_name, phone: [], names: [] };
+    if (thread.party_id !== null) return none;
+    // The numbers the customer wrote in this thread, most recent messages first.
+    const written = await sql<{ body: string }>`
+      SELECT pg_catalog.left(m.body, 2000) AS body FROM crove_kernel.conversation_message m
+      WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = ${input.conversationId}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL
+      ORDER BY m.seq DESC LIMIT 20`.execute(ctx.trx);
+    const keys: string[] = [];
+    for (const { body } of written.rows) for (const key of phoneKeysIn(body)) if (!keys.includes(key) && keys.length < 3) keys.push(key);
+    const phone =
+      keys.length === 0
+        ? []
+        : (
+            await sql<{ id: string; name: string }>`
+              SELECT p.id, p.name FROM crove_kernel.party p
+              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.phone IS NOT NULL AND crove_kernel.phone_key(p.phone) = ANY(${keys}::text[])
+              ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
+          ).rows;
+    // Words of two letters or more, folded; a one-word name needs that word, a longer one needs two of its words, so "Nguyễn" alone does not match everyone.
+    // The stored search column (its GIN index) narrows the contacts to those with any of the words before a name is folded, so a big address book is not
+    // folded name by name.
+    const names =
+      thread.identity_name === null
+        ? []
+        : (
+            await sql<{ id: string; name: string }>`
+              WITH tok AS (
+                SELECT DISTINCT w FROM pg_catalog.unnest(pg_catalog.string_to_array(crove_kernel.search_fold(${thread.identity_name}), ' ')) AS w WHERE pg_catalog.length(w) >= 2
+              ), need AS (SELECT LEAST(2, pg_catalog.count(*))::int AS n FROM tok),
+              q AS (SELECT pg_catalog.to_tsquery('pg_catalog.simple', pg_catalog.string_agg(w, ' | ')) AS tsq FROM tok),
+              near AS (
+                SELECT p.id, p.name, crove_kernel.search_fold(p.name) AS folded FROM crove_kernel.party p, q
+                WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.search @@ q.tsq
+              )
+              SELECT near.id, near.name FROM near JOIN tok ON pg_catalog.strpos(' ' || near.folded || ' ', ' ' || tok.w || ' ') > 0
+              GROUP BY near.id, near.name HAVING pg_catalog.count(*) >= (SELECT n FROM need) AND (SELECT n FROM need) > 0
+              ORDER BY pg_catalog.count(*) DESC, near.name, near.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX + 3}`.execute(ctx.trx)
+          ).rows;
+    const phoneIds = new Set(phone.map((r) => r.id));
+    return {
+      customerName: thread.identity_name,
+      phone: phone.map((r) => ({ partyId: r.id, name: r.name })),
+      names: names.filter((r) => !phoneIds.has(r.id)).map((r) => ({ partyId: r.id, name: r.name })),
+    };
   },
 });
 
@@ -2516,6 +2659,7 @@ export const conversationCommands = [
   conversationReopen,
   conversationNoteAdd,
   conversationLinkContact,
+  conversationSetIntent,
   conversationMarkRead,
   conversationComposing,
   conversationSetAvailability,
@@ -2540,4 +2684,4 @@ export const conversationCommands = [
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationList, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];
+export const conversationQueries = [conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];

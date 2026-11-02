@@ -738,11 +738,16 @@ export type CrmImportRowTable = Refine<G.CrmImportRowTable, { kind: Generated<(t
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
 export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
+// The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
+export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
 export const MESSAGE_DIRECTIONS = ['in', 'out'] as const;
 export const MESSAGE_AUTHOR_KINDS = ['contact', 'member', 'system'] as const;
 export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
 export const MESSAGE_HIDE_REQUESTS = ['hide', 'unhide'] as const;
-export type ConversationTable = Refine<G.KernelConversationTable, { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]> }>;
+export type ConversationTable = Refine<
+  G.KernelConversationTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]>; intent: (typeof CONVERSATION_INTENTS)[number] | null }
+>;
 export type ConversationMessageTable = Refine<
   G.KernelConversationMessageTable,
   {
