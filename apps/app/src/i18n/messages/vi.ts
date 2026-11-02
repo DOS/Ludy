@@ -3351,6 +3351,7 @@ export const vi = {
       social_ideas: 'Gợi ý ý tưởng bài',
       social_summary: 'Tóm tắt kỳ báo cáo',
       crm_booking_schedule: 'Đọc lời nhắn để gợi ý giờ hẹn',
+      kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
   agents: {

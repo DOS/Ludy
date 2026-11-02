@@ -237,6 +237,9 @@ export const aiBudgetNotify = defineCommand({
       kind: AI_BUDGET_NOTICE,
       users: await ownersAndAdmins(ctx),
       key: `ai_budget:${b.scope}:${b.target}:${b.month}:${input.level}`,
+      // Not one a member can turn off: the sweep counts a notice as sent by its row, so a muted one would be asked for again
+      // every ten minutes, and the stop notice is the one an owner has to act on.
+      required: true,
       detail: {
         level: input.level,
         scope: b.scope,
@@ -348,12 +351,12 @@ export const aiUsageReport = defineQuery({
       output_tokens: string;
       cost: string;
     }>`
-      SELECT u.feature, coalesce(u.module, '') AS module, pg_catalog.count(*)::int AS calls,
+      SELECT coalesce(u.feature, 'kernel.unattributed') AS feature, coalesce(u.module, '') AS module, pg_catalog.count(*)::int AS calls,
              coalesce(pg_catalog.sum(u.input_tokens), 0)::text AS input_tokens, coalesce(pg_catalog.sum(u.output_tokens), 0)::text AS output_tokens,
              pg_catalog.sum(u.amount)::text AS cost
       FROM crove_kernel.org_usage u
-      WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.feature IS NOT NULL AND u.created_at >= ${MONTH_START}
-      GROUP BY u.feature, u.module ORDER BY pg_catalog.sum(u.amount) DESC, u.feature`.execute(
+      WHERE u.org_id = ${ctx.orgId}::uuid AND u.metric = 'ai_cost' AND u.created_at >= ${MONTH_START}
+      GROUP BY coalesce(u.feature, 'kernel.unattributed'), coalesce(u.module, '') ORDER BY pg_catalog.sum(u.amount) DESC, 1`.execute(
       ctx.trx,
     );
     const byAgent = await sql<{

@@ -494,11 +494,10 @@ export async function extractAndPropose(
   // someone asked for is recorded as failed with when to ask again, so the pending proposal is not held for a day.
   if (deps.limits) {
     const { extraction_pages, ai_cost } = deps.limits;
-    const over = await deps.runtime.query<{ metric: UsageMetric; retryAt: string } | null>(
-      'kernel.usage.over',
-      { metrics: ['extraction_pages', 'ai_cost'], limits: { extraction_pages, ai_cost } },
-      { actor, orgId },
-    );
+    // The day's AI cost is what extraction cost (#675), so it only holds back a read that needs the model: an e-invoice XML
+    // is read whatever the org spent.
+    const metrics: UsageMetric[] = deps.extractor && needsModel(file) ? ['extraction_pages', 'ai_cost'] : ['extraction_pages'];
+    const over = await deps.runtime.query<{ metric: UsageMetric; retryAt: string } | null>('kernel.usage.over', { metrics, limits: { extraction_pages, ai_cost } }, { actor, orgId });
     if (over && version !== undefined) {
       await recordExtractionFailure(deps.runtime, orgId, fileId, 'Tổ chức đã dùng hết hạn mức đọc chứng từ trong 24 giờ; hãy bấm Đọc lại vào ngày mai', version);
       return { proposalId: null };

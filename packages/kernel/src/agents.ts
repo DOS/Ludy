@@ -508,7 +508,9 @@ export const setAgentBudget = defineCommand({
   name: 'kernel.agent.budget.set',
   input: z.object({ scope: zScope, target: z.string().min(1).max(100), monthlyLimit: zAmount, warnPercent: z.number().int().min(1).max(100).optional(), hardStop: z.boolean().optional() }),
   risk: 'R3',
-  sideEffect: 'internal',
+  // External: a raised budget sends the documents that waited for the model to be read again, and the extract queue reaches the
+  // AI endpoint (the egress invariant counts the emitter's side effect, #1653, #2382).
+  sideEffect: 'external',
   access: OWNER,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);

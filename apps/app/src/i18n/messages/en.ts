@@ -3352,6 +3352,7 @@ export const en = {
       social_ideas: 'Post idea suggestions',
       social_summary: 'Report period summaries',
       crm_booking_schedule: 'Reading messages to suggest booking times',
+      kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
   agents: {
