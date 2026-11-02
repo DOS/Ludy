@@ -4,7 +4,7 @@
 // The kinds a member can turn off, by module, in the order the settings list them.
 export const NOTIFICATION_KINDS = {
   // A task that came to me because its holder can no longer read its legal entity (#1799).
-  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted'],
+  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.ai_budget'],
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
@@ -39,7 +39,8 @@ export type NotificationTarget =
   | { to: 'myWork' }
   | { to: 'task'; id: string }
   | { to: 'tasks' }
-  | { to: 'ads' };
+  | { to: 'ads' }
+  | { to: 'agents' };
 
 // What an item opens: the proposal waiting for approval, the Inbox (where a file that failed to read is listed), the
 // bank account with lines to look at, the tax-portal check, the ledger, where the period is locked, or My work, where
@@ -63,6 +64,9 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
       return { to: 'myWork' };
     case 'kernel.channel_expired':
       return { to: 'ads' };
+    // The AI budget's notice (#2382) opens the page with this month's use and the budgets, where an owner raises one.
+    case 'kernel.ai_budget':
+      return { to: 'agents' };
     default:
       return null;
   }

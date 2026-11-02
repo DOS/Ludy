@@ -67,6 +67,7 @@ import { roleCommands } from './roles.ts';
 import { calendarCommands } from './calendar.ts';
 import { proposalReminderCommands } from './proposal-reminders.ts';
 import { PROPOSAL_PREPARERS, REQUESTABLE, preparedEntity, resubmitProposal, zPreparedProposal } from './proposal-resubmit.ts';
+import { aiBudgetCommands } from './ai-budget.ts';
 import { usageCommands } from './usage-limits.ts';
 import { userStatusCommands } from './user-status.ts';
 import { taxCalendarCommands } from './tax-calendar.ts';
@@ -1140,6 +1141,7 @@ const otherKernelCommands = [
   ...taxCalendarCommands,
   ...auditLogCommands,
   ...usageCommands,
+  ...aiBudgetCommands,
   ...userStatusCommands,
   ...personalDataCommands,
 ];

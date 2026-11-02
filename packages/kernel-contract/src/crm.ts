@@ -156,7 +156,8 @@ export const zBookingSuggestInput = z.strictObject({ eventTypeId: zId, message: 
 export const zSuggestedWindow = z.object({ date: z.string(), from: z.number().int(), to: z.number().int() });
 export const zBookingSuggestion = z.object({
   // Whether the model read the message: false without a message, without an AI endpoint, or when the call failed.
-  ai: z.enum(['used', 'off', 'failed', 'skipped']),
+  // 'budget': the org's AI budget of the month is spent (#2382); the next free slots are still given.
+  ai: z.enum(['used', 'off', 'failed', 'skipped', 'budget']),
   asksForMeeting: z.boolean().nullable(),
   windows: z.array(zSuggestedWindow),
   eventType: z.object({ id: z.string(), slug: z.string(), title: z.string(), durationMin: z.number().int(), active: z.boolean() }),

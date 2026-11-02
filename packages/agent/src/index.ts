@@ -5,9 +5,11 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { normalizeNumber, normalizeSeries, type ParsedInvoice } from '@crove/l10n-vn';
+import { metered, type AiUsageSink } from './meter.ts';
 
 export * from './errors.ts';
 export * from './eval.ts';
+export * from './meter.ts';
 export * from './proofread.ts';
 export * from './scheduling.ts';
 export * from './social.ts';
@@ -75,18 +77,6 @@ export function chatModel(config: AiConfig) {
   return provider.chatModel(config.model);
 }
 
-// The tokens one model call used, as the provider reported them (0 when it reported none). The per-org AI cost limit
-// (#675) prices them.
-export interface AiUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
-export type AiUsageSink = (usage: AiUsage) => void;
-
-function reportUsage(sink: AiUsageSink | undefined, usage: { inputTokens: number | undefined; outputTokens: number | undefined }): void {
-  sink?.({ inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 });
-}
-
 export class InvoiceExtractor {
   private readonly config: AiConfig;
 
@@ -99,36 +89,44 @@ export class InvoiceExtractor {
   }
 
   async fromText(text: string, onUsage?: AiUsageSink): Promise<ParsedInvoice | null> {
-    const { output, usage } = await generateText({
-      model: this.model(),
-      output: Output.object({ schema: zExtracted }),
-      system: INSTRUCTIONS,
-      prompt: `Invoice text extracted from a PDF:\n\n${text.slice(0, 60_000)}`,
-      abortSignal: AbortSignal.timeout(this.config.timeoutMs ?? 120_000),
-      ...(this.config.maxRetries === undefined ? {} : { maxRetries: this.config.maxRetries }),
-    });
-    reportUsage(onUsage, usage);
+    const { output } = await metered(
+      'finance.invoice_extract',
+      () =>
+        generateText({
+          model: this.model(),
+          output: Output.object({ schema: zExtracted }),
+          system: INSTRUCTIONS,
+          prompt: `Invoice text extracted from a PDF:\n\n${text.slice(0, 60_000)}`,
+          abortSignal: AbortSignal.timeout(this.config.timeoutMs ?? 120_000),
+          ...(this.config.maxRetries === undefined ? {} : { maxRetries: this.config.maxRetries }),
+        }),
+      onUsage,
+    );
     return output ? toParsed(output) : null;
   }
 
   async fromImage(bytes: Uint8Array, mediaType: string, onUsage?: AiUsageSink): Promise<ParsedInvoice | null> {
-    const { output, usage } = await generateText({
-      model: this.model(),
-      output: Output.object({ schema: zExtracted }),
-      system: INSTRUCTIONS,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: 'Extract this invoice.' },
-            { type: 'file', mediaType, data: bytes },
+    const { output } = await metered(
+      'finance.invoice_extract',
+      () =>
+        generateText({
+          model: this.model(),
+          output: Output.object({ schema: zExtracted }),
+          system: INSTRUCTIONS,
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'Extract this invoice.' },
+                { type: 'file', mediaType, data: bytes },
+              ],
+            },
           ],
-        },
-      ],
-      abortSignal: AbortSignal.timeout(this.config.timeoutMs ?? 120_000),
-      ...(this.config.maxRetries === undefined ? {} : { maxRetries: this.config.maxRetries }),
-    });
-    reportUsage(onUsage, usage);
+          abortSignal: AbortSignal.timeout(this.config.timeoutMs ?? 120_000),
+          ...(this.config.maxRetries === undefined ? {} : { maxRetries: this.config.maxRetries }),
+        }),
+      onUsage,
+    );
     return output ? toParsed(output) : null;
   }
 }

@@ -267,6 +267,10 @@ const schema = z.object({
   ORG_LIMIT_AI_COST_PER_DAY: z.string().regex(/^\d{1,9}(\.\d{1,6})?$/).default('20'),
   AI_PRICE_INPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   AI_PRICE_OUTPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
+  // The monthly AI budget (#2382) an org with none of its own gets, in the unit of the AI_PRICE_* prices: at 100% new model
+  // calls are refused while the books keep working, and an owner can raise it for their org (an R3 command with a fresh
+  // second factor). Unset: no default budget, so an org has none until an owner sets one. It counts only with prices set.
+  AI_DEFAULT_MONTHLY_BUDGET: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? undefined : v), z.string().regex(/^\d{1,12}(\.\d{1,6})?$/).optional()),
   // Detective security alerts (#996): the worker alerts when one user acts in more than SECURITY_ALERT_ORG_THRESHOLD
   // orgs, or the deployment sees more than SECURITY_ALERT_REFUSAL_THRESHOLD refusals, within
   // SECURITY_ALERT_WINDOW_SECONDS, and on every owner or admin grant; a lasting signal repeats after

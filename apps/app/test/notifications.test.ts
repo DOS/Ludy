@@ -7,11 +7,11 @@ import { vi } from '../src/i18n/messages/vi.ts';
 
 describe('notificationKinds', () => {
   it("lists the kernel's kinds, and finance's where finance runs", () => {
-    expect(notificationKinds(['finance'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'finance.bank_attention', 'finance.portal_attention', 'finance.period_closing']);
-    expect(notificationKinds(['social'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted']);
-    expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'notes.todo_due']);
+    expect(notificationKinds(['finance'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.ai_budget', 'finance.bank_attention', 'finance.portal_attention', 'finance.period_closing']);
+    expect(notificationKinds(['social'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.ai_budget']);
+    expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.ai_budget', 'notes.todo_due']);
     // An ad account's paused connection is a kind of the Ads module (#2219).
-    expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.channel_expired']);
+    expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.ai_budget', 'kernel.channel_expired']);
   });
 
   it('has a label for every kind in both languages', () => {
