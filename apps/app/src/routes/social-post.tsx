@@ -21,6 +21,7 @@ import { DateTimeInput } from '../components/date-time-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
 import { CoverImageField, MediaField, MediaReplace, type MediaItem } from '../components/social-media.tsx';
 import { replaceInChannels, replaceInEditable, replaceMedia } from '../lib/social-image-fix.ts';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { AiPhotoPicker, aiDraftInput, useAiPhotos } from '../components/social-ai-photos.tsx';
 import { ChannelSetPicker } from '../components/social-channel-sets.tsx';
 import { PlatformPreview, useLinkPreview } from '../components/social-preview.tsx';
@@ -2990,6 +2991,7 @@ export function SocialComposePage() {
                   if (aiDraft.error) aiDraft.reset();
                 }} />
                 <p className="text-xs text-subtle-foreground">{t('aiDraftHint')}</p>
+                <AiMeter module="social" />
                 <Button
                   variant="outline"
                   size="sm"
