@@ -293,6 +293,33 @@ export const zAdsFlag = z.discriminatedUnion('kind', [
 ]);
 export type AdsFlag = z.infer<typeof zAdsFlag>;
 
+// The thresholds of those flags, an org setting (#2378, owners and admins). Each is `null` until the org sets it, and the default
+// applies then; the bounds are the database's own checks. A factor is a ratio above 1 and at most 10 with at most two decimals, a string
+// (decimal arithmetic compares it exactly, never as a JS number).
+export const ADS_FLAG_FACTOR = /^(?:1\.(?:0[1-9]|[1-9]\d?)|[2-9](?:\.\d{1,2})?|10(?:\.0{1,2})?)$/;
+const zFlagFactor = z.string().regex(ADS_FLAG_FACTOR, 'a ratio above 1 and at most 10');
+export const zAdsFlagSetting = z.strictObject({
+  // Days of the month that must be over before the pace is judged against a cap.
+  paceMinDays: z.number().int().min(1).max(15).nullable(),
+  // A day flags above this many times its share of a cap.
+  dayFactor: zFlagFactor.nullable(),
+  // A campaign's cost per result over the last 3 days flags above this many times its median of the 14 days before.
+  cprFactor: zFlagFactor.nullable(),
+  // The least results in the last 3 days, and the least days with results in the history, for that rule to judge a campaign.
+  cprMinResults: z.number().int().min(1).max(100000).nullable(),
+  cprMinHistoryDays: z.number().int().min(3).max(14).nullable(),
+});
+export type AdsFlagSetting = z.infer<typeof zAdsFlagSetting>;
+// The same with the idempotency key of the API call: every threshold is sent, and a `null` goes back to the default.
+export const zAdsFlagSettingCall = zAdsFlagSetting.extend({ idempotencyKey: zId });
+// What the org has set and the defaults it gets for the rest, so the screen shows both without carrying the numbers itself.
+export const zAdsFlagSettings = z.object({
+  set: zAdsFlagSetting,
+  defaults: z.object({ paceMinDays: z.number().int(), dayFactor: z.string(), cprFactor: z.string(), cprMinResults: z.number().int(), cprMinHistoryDays: z.number().int() }),
+  setAt: z.string().nullable(),
+});
+export type AdsFlagSettings = z.infer<typeof zAdsFlagSettings>;
+
 export const zAdsSummaryInput =z.strictObject({ adAccountId: zId, from: zLocalDate, to: zLocalDate });
 export type AdsSummaryInput = z.infer<typeof zAdsSummaryInput>;
 

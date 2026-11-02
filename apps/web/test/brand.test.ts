@@ -1,10 +1,11 @@
-// The landing page names the product Ludy and the AI assistant Vy (#1683): no copy, metadata or component text says
+// The landing page names the product Ludy and its AI coworkers, Vy the general manager (#1683, #2409): no copy, metadata or component text says
 // Crove, the old name, but the places listed below, each waiting for a step of #1682 that is not this one.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/content/en';
 import { vi } from '../src/content/vi';
+import { N, ROSTER, team } from '../src/content/roster';
 
 // Copy that may say Crove, by its path in the dictionary, with the reason.
 // None since the repository was renamed to DOS/Ludy (owner, 2026-10-28).
@@ -74,15 +75,53 @@ describe('brand on the landing page (#1683)', () => {
     }
   });
 
-  it('presents the AI assistant as Vy in both languages', () => {
-    expect(vi.hero.title).toBe('Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn');
-    expect(en.hero.title).toBe('The all-in-one business OS where AI agents are your coworkers');
+  it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
+    // The owner's final hero (2026-11-02, #2409): the names in the lead come from the roster, never from the copy.
+    const NB = String.fromCharCode(0xa0);
+    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI.');
+    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe(`${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt.`);
+    expect(en.hero.title).toBe('The all-in-one Business OS, with an AI team for every department.');
+    expect(en.hero.lead).toBe(`${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve.`);
+    expect(vi.meta.title).toBe('Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI');
+    expect(en.meta.title).toBe('Ludy: the all-in-one Business OS, with an AI team for every department');
+    for (const dict of [vi, en]) expect(dict.meta.description, dict.lang).toContain(dict.hero.lead.replaceAll(NB, ' '));
     for (const dict of [vi, en]) {
-      expect(dict.hero.lead, dict.lang).toMatch(/^Vy /);
-      expect(dict.trust.title, dict.lang).toMatch(/^Vy /);
-      expect(dict.faq.items[1]?.a, dict.lang).toMatch(/\bVy\b/);
-      expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bVy\b/);
+      expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
+      expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
+      expect(dict.modules.crm.suggest, dict.lang).toContain(N.crm);
+      expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
+      expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
+  });
+
+  it('keeps the roster by role and no name written in the copy', () => {
+    expect(Object.keys(ROSTER).sort()).toEqual(['crm', 'engage', 'finance', 'gm', 'system']);
+    // The copy reads names from content/roster.ts (`${N.finance}`): a name typed into a string is the edit a rename must not need.
+    const names = new RegExp(`\\b(${Object.values(ROSTER).map((c) => c.name).join('|')})\\b(?! work)`);
+    const written = sourceFiles(join(src, 'content'))
+      .filter((file) => !file.endsWith('roster.ts'))
+      .flatMap((file) =>
+        readFileSync(file, 'utf8')
+          .split('\n')
+          .flatMap((text, i) => (names.test(code(text)) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 90)}`] : [])),
+      );
+    expect(written).toEqual([]);
+  });
+
+  it('never calls the AI an assistant: no "assistant" or "trợ lý" in the copy or the pages that render it', () => {
+    // Every source file of the site, comments included, read as NFC so decomposed Vietnamese is caught (owner decision 2026-11-02, #2409).
+    const files = sourceFiles(src);
+    const found = files.flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .flatMap((text, i) => (/assistant|trợ lý/i.test(text.normalize('NFC')) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 100)}`] : [])),
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('names the Social app Ludy Engage', () => {
+    expect(vi.modules.social.name).toBe('Ludy Engage');
+    expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
   it('names the products Ludy Accounting and Ludy CRM', () => {

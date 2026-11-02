@@ -66,7 +66,7 @@ const FIRM_GUIDE: readonly FirmGuideStep[] = [
     title: 'Bước 5. Ngân hàng và tiền mặt',
     items: [
       `Mở ${q(vi.nav.bank)}, chọn ${q(vi.bank.account)}, rồi ở ${q(vi.bank.importTitle)} chọn file sao kê Excel hoặc CSV tải từ ngân hàng. Dòng đã nhập trước đó không bị nhập lại; dòng ${q(vi.bank.status.ambiguous)} được giữ để bạn kiểm tra.`,
-      `Dòng nào có nội dung chuyển khoản ghi rõ đối tượng thì bấm ${q(fill(vi.bank.proposeAll, { count: 'N' }))}; các dòng còn lại bấm ${q(vi.bank.makeVoucher)} để lập giấy báo Có hoặc giấy báo Nợ. Dòng chưa lập chứng từ cũng hiện trong ${q(vi.nav.inbox)}.`,
+      `Dòng nào có nội dung chuyển khoản ghi rõ đối tượng thì bấm ${q(fill(vi.bank.match.cleanApprove, { count: 'N' }))}; các dòng còn lại bấm ${q(vi.bank.makeVoucher)} để lập giấy báo Có hoặc giấy báo Nợ. Dòng chưa lập chứng từ cũng hiện trong ${q(vi.nav.inbox)}.`,
       `Phiếu thu, phiếu chi tiền mặt lập ở ${q(vi.nav.vouchers)} bằng nút ${q(vi.vouchers.new)}. Mọi chứng từ thu chi được ghi sổ khi chủ sở hữu hoặc quản trị duyệt.`,
     ],
   },

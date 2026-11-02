@@ -6,7 +6,7 @@ import { Chip, toneOf } from './ui';
 type Crm = Dictionary['modules']['crm'];
 
 // The pieces of Ludy CRM's booking side, drawn from the real screens with the sample company's data: the public page a
-// client picks a time on, the booking that reaches the host, the host's connected calendar, and Vy's suggestion for a
+// client picks a time on, the booking that reaches the host, the host's connected calendar, and the sales coworker's suggestion for a
 // client's message. Used by the home page's Ludy CRM card and by the Ludy CRM page.
 export function BookingSlots({ crm }: { crm: Crm }) {
   return (

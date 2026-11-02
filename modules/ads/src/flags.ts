@@ -21,6 +21,17 @@ export interface FlagThresholds {
 
 export const DEFAULT_FLAG_THRESHOLDS: FlagThresholds = { paceMinDays: 3, dayFactor: '1.5', cprFactor: '1.5', cprMinResults: 5, cprMinHistoryDays: 5 };
 
+// What the org has set: a threshold it never set is `null`, and the default applies (so a safer default reaches every org that left it).
+export type FlagSetting = { [K in keyof FlagThresholds]: FlagThresholds[K] | null };
+
+export const thresholdsFrom = (set: Partial<FlagSetting> | null | undefined): FlagThresholds => ({
+  paceMinDays: set?.paceMinDays ?? DEFAULT_FLAG_THRESHOLDS.paceMinDays,
+  dayFactor: set?.dayFactor ?? DEFAULT_FLAG_THRESHOLDS.dayFactor,
+  cprFactor: set?.cprFactor ?? DEFAULT_FLAG_THRESHOLDS.cprFactor,
+  cprMinResults: set?.cprMinResults ?? DEFAULT_FLAG_THRESHOLDS.cprMinResults,
+  cprMinHistoryDays: set?.cprMinHistoryDays ?? DEFAULT_FLAG_THRESHOLDS.cprMinHistoryDays,
+});
+
 // The last days that are judged and the days before them that make the trailing median.
 export const CPR_RECENT_DAYS = 3;
 export const CPR_HISTORY_DAYS = 14;
