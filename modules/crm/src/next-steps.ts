@@ -153,7 +153,7 @@ export const nextStepDone = defineCommand({
         .execute();
     }
     const skipped = input.nextStepIds.filter((id) => !open.includes(id));
-    ctx.audit({ nextStepIds: open, skipped: skipped.length });
+    ctx.audit({ nextStepIds: open, unchanged: skipped.length });
     return { changed: open, skipped };
   },
 });
@@ -178,7 +178,7 @@ export const nextStepSnooze = defineCommand({
         .execute();
     }
     const skipped = input.nextStepIds.filter((id) => !open.includes(id));
-    ctx.audit({ nextStepIds: open, skipped: skipped.length, days: input.days });
+    ctx.audit({ nextStepIds: open, unchanged: skipped.length, days: input.days });
     return { changed: open, skipped };
   },
 });
