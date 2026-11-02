@@ -330,6 +330,9 @@ describe('a paused ad account (#2219)', () => {
   it.each([
     ['token_expired', 'expired', 'no longer accepts this account’s access token'],
     ['owner_left', 'expired', 'is no longer an owner or admin'],
+    // Closed when running ads was switched off, because its token could also change campaigns: the screen asks for a read-only
+    // reconnect after the app is removed in Facebook (Business integrations).
+    ['spend_scopes', 'revoked', 'Connect it again for reading'],
   ] as const)('says why a %s account stopped and since when, and that no day is lost', (pausedReason, connectionStatus, words) => {
     const html = header(account({ connectionStatus, pausedReason, pausedSince: '2026-10-30T03:00:00.000Z' }));
     expect(html.replaceAll('&#x27;', '’')).toContain(words);

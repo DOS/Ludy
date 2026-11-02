@@ -312,9 +312,12 @@ export class MetaAdsConnector implements OAuthConnector {
     // 8, R1). A separate ads app keeps it to ads_read; the runbook and the config say so.
     const { token, granted } = await this.login.userToken(input);
     const scopes = granted;
-    // A token that can change campaigns or the business is refused: this connection reads reports, and a leaked token must not
-    // be able to spend. Pages permissions (pages_*, publish_*) are accepted and shown on the Ads screen.
-    if (granted.some((s) => META_FORBIDDEN_SCOPES.includes(s))) throw new ConnectorError('denied', `the token holds ${granted.filter((s) => META_FORBIDDEN_SCOPES.includes(s)).join(', ')}`, 'WRITE_PERMISSION_GRANTED');
+    // A token that can change campaigns or the business is refused while the org's switch for running ads is off: this connection
+    // reads reports, and a leaked token must not be able to spend. With the switch on (the owner has asked for running ads, and with
+    // the one Meta app that serves reading and writing, a person's every token for it holds what they granted), the token is accepted
+    // and the full set recorded; switching running ads off then closes every connection that holds one (ads.write.disable).
+    // Pages permissions (pages_*, publish_*) are accepted and shown on the Ads screen.
+    if (!input.spendScopesAllowed && granted.some((s) => META_FORBIDDEN_SCOPES.includes(s))) throw new ConnectorError('denied', `the token holds ${granted.filter((s) => META_FORBIDDEN_SCOPES.includes(s)).join(', ')}`, 'WRITE_PERMISSION_GRANTED');
     let rows: NonNullable<AccountsAnswer['data']>;
     let grantedByHash: string | undefined;
     try {

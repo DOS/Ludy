@@ -299,9 +299,10 @@ export const zAdAccountView = z.object({
   connectionStatus: z.enum(['active', 'expired', 'revoked', 'error']),
   // When the connection stopped being active, and why in one word: a paused account's screen says so and offers to connect it
   // again (null while the connection is active). The platform refused the token, or the member who connected it left, or an
-  // owner or admin disconnected it, or the platform asked for its data to be deleted.
+  // owner or admin disconnected it, or the platform asked for its data to be deleted, or running ads was switched off while the
+  // token could also change campaigns (`spend_scopes`: it was closed and dropped, and the owner reconnects it for reading).
   pausedSince: z.string().nullable(),
-  pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'other']).nullable(),
+  pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'spend_scopes', 'other']).nullable(),
   // An owner enabled this account for running ads (ADR-0043). It does not yet mean ads can run: the org switch and a token that
   // can change campaigns (the write connection below) are needed too.
   writeEnabled: z.boolean(),

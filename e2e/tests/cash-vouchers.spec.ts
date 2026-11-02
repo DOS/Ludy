@@ -83,7 +83,7 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
       expect(worksheet.rowCount).toBe(rows);
       if (rows === 2) {
         const cell = (header: string) => worksheet.getRow(2).getCell(headers.indexOf(header) + 1).value;
-        expect(cell('Số chứng từ (*)')).toBe('CRBN00001');
+        expect(String(cell('Số chứng từ (*)'))).toMatch(/^CRBN\d{4}00001$/); // CR, BN, the series' year, then 00001
         expect(cell('TK Nợ (*)')).toBe('6422');
         expect(cell('TK Có (*)')).toBe('1121');
         expect(Number(cell('Số tiền'))).toBe(22000);

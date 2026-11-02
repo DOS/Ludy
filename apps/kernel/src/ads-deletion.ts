@@ -139,8 +139,9 @@ export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }):
         // The erasure closes the account's write connection too.
         await deps.runtime.execute('ads.account.erase', { adAccountId: account.adAccountId }, options);
       }
+      // A write grant that is forgotten leaves its account, so it is not counted among the accounts the page says were deleted.
       for (const account of writeOnly) await deps.runtime.execute('ads.account.forget_write', { adAccountId: account.adAccountId }, { actor: SYSTEM, orgId: account.orgId });
-      await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length + writeOnly.length}::int)`.execute(deps.workerDb);
+      await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length}::int)`.execute(deps.workerDb);
       completed++;
     } catch (error) {
       // By code only: nothing of the request or the accounts goes to the log.
