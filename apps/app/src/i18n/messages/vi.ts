@@ -180,6 +180,22 @@ export const vi = {
       bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
     },
   },
+  today: {
+    items: {
+      financeProposalsVendor: '{count, plural, other {# hóa đơn}} của {party} chờ bạn duyệt',
+      financeProposalsCustomer: '{count, plural, other {# hóa đơn}} bán cho {party} chờ bạn duyệt',
+      financeProposalsOther: '{count, plural, other {# chứng từ}} chờ bạn duyệt',
+      financeProposalsMore: '{count, plural, other {# chứng từ}} khác của các nhà cung cấp còn lại chờ bạn duyệt',
+      financeChecksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
+      financeChecksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
+      financeOriginalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',
+      financeOriginalsFlagged: '{count, plural, other {# hóa đơn gốc}} khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
+      financeStatementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',
+      financeBankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
+      financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
+      financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
+    },
+  },
   notifications: {
     title: 'Thông báo công việc',
     subtitle: 'Đề xuất chờ bạn duyệt, tệp không đọc được, sao kê và đối chiếu cổng thuế cần xem lại, kỳ sắp đến hạn nộp tờ khai mà chưa khóa sổ.',
@@ -6281,6 +6297,13 @@ export const vi = {
     },
     source: { ai: 'Đọc bằng AI từ ảnh/PDF, cần người kiểm tra' },
     duplicate: { found: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' },
+    // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
+    anomaly_bank: { changed: 'Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước {previous}, lần này {current}). Hãy xác nhận với nhà cung cấp trước khi thanh toán.' },
+    anomaly_amount: {
+      high: 'Cảnh báo: số tiền {total} cao gấp {ratio} lần mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo từ 3 lần).',
+      low: 'Cảnh báo: số tiền {total} chỉ bằng {percent}% mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo khi dưới một phần ba).',
+    },
+    anomaly_price: { jump: 'Cảnh báo: đơn giá "{item}" tăng {percent}% so với mức thường ({usual}, trung vị tối đa 3 hóa đơn trước), lên {current}; cảnh báo từ 25%.' },
     accounts: {
       unclassified: 'Chưa phân loại {count} dòng (dòng {lines}): không khớp quy tắc tài khoản nào, hãy chọn tài khoản trước khi duyệt',
       classified: 'Mọi dòng đã có tài khoản hạch toán',
@@ -7014,6 +7037,7 @@ export const vi = {
       },
     },
     finance: {
+      today: 'Xem việc kế toán cần bạn hôm nay',
       account: {
         create: 'Thêm tài khoản kế toán',
         update: 'Sửa tài khoản kế toán',

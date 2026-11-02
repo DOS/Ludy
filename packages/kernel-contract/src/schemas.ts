@@ -89,8 +89,16 @@ export const INVOICE_CHECK_CODES = [
   // The account of every line (#2091): a warning naming the lines no rule matched, a pass once each has its account.
   'accounts.unclassified',
   'accounts.classified',
+  // Anomaly flags against the vendor's own history (#2380), warnings that never block: its bank account is not one it used
+  // before, its amount is far from its usual, a unit price jumped. The check ids are anomaly_bank, anomaly_amount and
+  // anomaly_price: a proposal with one of them is approved one by one, never in bulk.
+  'anomaly_bank.changed',
+  'anomaly_amount.unusual',
+  'anomaly_price.jump',
 ] as const;
 export type InvoiceCheckCode = (typeof INVOICE_CHECK_CODES)[number];
+// The ids of the anomaly flags start with this (#2380): a proposal that carries one is approved one by one.
+export const ANOMALY_CHECK_PREFIX = 'anomaly';
 
 export const zCheck = z.object({
   id: z.string().max(50),
@@ -102,12 +110,16 @@ export const zCheck = z.object({
 });
 export type Check = z.infer<typeof zCheck>;
 
+// The longest bank account a party reference carries; a longer one on an invoice is dropped, not refused (#2380).
+export const PARTY_BANK_ACCOUNT_MAX = 100;
 export const zPartyRef = z.object({
   name: z.string().max(500),
   taxCode: z.string().max(20).nullable(),
   address: z.string().max(1000).nullable(),
   email: z.string().max(320).nullable(),
   phone: z.string().max(50).nullable(),
+  // The bank account the invoice names for this party (#2380), the history the vendor's next invoice is compared with.
+  bankAccount: z.string().max(PARTY_BANK_ACCOUNT_MAX).nullable().optional(),
 });
 
 // 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
@@ -519,6 +531,8 @@ export const zInboxItem = z.object({
   issueDate: zLocalDate.nullable(),
   failedChecks: z.number().int(),
   warnChecks: z.number().int(),
+  // How many of its checks are anomaly flags against the vendor's history (#2380): such a proposal is not bulk approved.
+  anomalyChecks: z.number().int().nonnegative().optional(),
   // How many lines of an invoice proposal still wait for an account because no rule matched them (#2091); 0 for any
   // other kind. The Inbox's "Chưa phân loại" filter lists the proposals with at least one.
   unclassifiedLines: z.number().int().nonnegative(),
