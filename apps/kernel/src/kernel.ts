@@ -3,7 +3,7 @@
 // configuration (defaultAdapters); a Crove Cloud entrypoint wires its own adapters into the same factory.
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
-import { InvoiceExtractor, SchedulingReader, SocialWriter, type InvoiceReader } from '@crove/agent';
+import { ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TelegramPublisher,
@@ -136,6 +136,8 @@ export interface KernelAdapters {
   // Reads the days and times a client's message asks for (#1440) through the same endpoint; null: suggestions give
   // the next free slots only.
   scheduler?: Pick<SchedulingReader, 'read'> | null;
+  // Vy's reply drafts for the conversation core (CV8, #2310) through the same endpoint; null: no draft is made and "Vy soạn" says so.
+  conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -286,6 +288,14 @@ export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID
 
 // The ad platforms this deployment offers (ADR-0040): the offline sandbox when ADS_SANDBOX is on, Meta when the deployment
 // has its ad app (#2218). Each is bound to its own hosts; the worker reads through them, and the API only asks which exist.
+// Whether the deployment's write Meta app is the read ads app or the Pages app (the same id): with one app a person's reading tokens can
+// change campaigns once they grant the permission, so switching running ads off closes every Meta reading connection; with an app of its own
+// (a public deployment requires one) they cannot, and only the recorded scopes close. No write app means no write connection to make.
+export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_APP_ID'>): boolean {
+  const write = config.CHANNEL_META_ADS_WRITE_APP_ID;
+  return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID);
+}
+
 export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
   return adPlatforms({
     sandbox: config.ADS_SANDBOX === 'true',
@@ -396,6 +406,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     ai: adapters.ai,
     writer: adapters.writer ?? null,
     scheduler: adapters.scheduler ?? null,
+    conversationWriter: adapters.conversationWriter ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -515,7 +526,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', adsPlatforms: adPlatformsOf(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -553,6 +564,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             instance,
             store,
             extractor: resolved.ai,
+            conversationWriter: resolved.conversationWriter,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
@@ -697,6 +709,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     ai: aiConfig ? new InvoiceExtractor(aiConfig) : null,
     writer: aiConfig ? new SocialWriter(aiConfig) : null,
     scheduler: aiConfig ? new SchedulingReader(aiConfig) : null,
+    conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.
