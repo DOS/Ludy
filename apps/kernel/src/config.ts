@@ -346,7 +346,7 @@ const schema = z.object({
   // ads" on the Ads screen (it also needs the org's switch on); neither hides it. For now it is the same app as the read pair above (the
   // same id and secret; a classic app holds Facebook Login and the Marketing API together, and the owner's own account is served by one
   // app): Meta's data deletion request is checked with the read app's secret and finds a person's grants by a hash keyed with it, so a
-  // separate write app needs a deletion callback of its own first, and the config refuses a different one. The write login asks for
+  // separate write app needs the deletion callback to verify against the write app's secret too (#2366, wanted before Ludy Cloud serves other businesses), and the config refuses a different one until then. The write login asks for
   // ads_read and ads_management, and a token of a shared app holds every permission the person ever granted it, the read tokens of
   // the same person included. The app's valid OAuth redirect URI is APP_URL/channels/oauth/metawrite_ads/callback. The Graph version
   // is CHANNEL_META_GRAPH_VERSION.
