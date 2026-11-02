@@ -14,6 +14,7 @@ export type NotGranted = undefined;
 
 export interface CroveAdsSchema {
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
@@ -217,6 +218,19 @@ export interface AdsAdAccountTable {
   write_enabled: Generated<boolean>;
   write_connection_id: string | null;
   write_granted_by_hash: string | null;
+}
+
+/** crove_ads.ad_flag_setting */
+export interface AdsAdFlagSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  pace_min_days: number | null;
+  day_factor: string | null;
+  cpr_factor: string | null;
+  cpr_min_results: number | null;
+  cpr_min_history_days: number | null;
+  set_by: string | null;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_ads.ad_org_setting */
