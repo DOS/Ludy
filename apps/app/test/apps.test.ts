@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ALL_NAV, appOfPath, installedApps } from '../src/lib/apps.ts';
-import { screenInstalled } from '../src/lib/modules.ts';
+import { installedItems, screenInstalled } from '../src/lib/modules.ts';
 
 describe('apps of the shell (#1528)', () => {
   it('finds the app of a deep link from its screen', () => {
@@ -45,6 +46,19 @@ describe('apps of the shell (#1528)', () => {
       expect(screenInstalled(modules, '/o/acme/customers'), modules.join()).toBe(true);
       expect(screenInstalled(modules, '/o/acme/vendors'), modules.join()).toBe(true);
     }
+  });
+
+  // The reports item (#2435) is the social module's and shows where crm or ads runs alone, so a menu with an item of the social module does not mean
+  // Social runs: the shell polls Social's reads (reviews, attention, notifications) only where the module is installed, or they answer not installed.
+  it('keeps the reports item for the social module where social is off, so the shell asks the modules and not the menu', () => {
+    for (const modules of [['kernel', 'crm'], ['kernel', 'ads']]) {
+      const reports = installedItems(modules, ALL_NAV).find((item) => item.label === 'reports');
+      expect(reports?.module, modules.join()).toBe('social');
+      expect(modules.includes('social'), modules.join()).toBe(false);
+    }
+    const layout = readFileSync(new URL('../src/routes/org-layout.tsx', import.meta.url), 'utf8');
+    expect(layout).not.toMatch(/NAV\.some\(\(n\) => n\.module === 'social'\)/);
+    expect(layout).toContain("getConfig().modules.includes('social')");
   });
 
   it('keeps every screen in the palette, each in one place only', () => {

@@ -155,7 +155,7 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
               <section
                 key={group.id}
                 className={index === 0 ? '' : 'mt-3'}
-                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': t(`appNames.${current.id}`) })}
+                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
               >
                 {heading && (
                   // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").

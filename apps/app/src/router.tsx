@@ -482,7 +482,7 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
-// The reports of the Engage app (#2435), the last item of its menu: ?tab= is the area shown (the conversations, the sales, the posts or the ads).
+// The reports of the Engage app (#2435), the last item of its menu: ?area= is the tab shown (the conversations, the sales, the posts or the ads).
 const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'reports', validateSearch: parseReportsSearch, component: ReportsPage });
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
 

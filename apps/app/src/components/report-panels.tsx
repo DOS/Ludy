@@ -122,8 +122,8 @@ export function SalesPanel({ slug }: { slug: string }) {
             {columns.map((column) => (
               <TableRow key={column.stage.id}>
                 <TableCell className="px-4 text-sm">{column.stage.name}</TableCell>
-                <TableCell className="px-4 text-sm">{f.number(column.count)}</TableCell>
-                <TableCell className="px-4 text-sm">{f.money(column.total)}</TableCell>
+                <TableCell className="px-4 text-right text-sm tabular-nums">{f.number(column.count)}</TableCell>
+                <TableCell className="px-4 text-right text-sm tabular-nums">{f.money(column.total)}</TableCell>
               </TableRow>
             ))}
           </DataTable>
@@ -189,7 +189,7 @@ function AdsRow({ account }: { account: AdAccountView }) {
   const summary = useQuery({ ...orpc.ads.summary.queryOptions({ input: { adAccountId: account.id, from: days.from, to: days.to } }), enabled: ready });
   const currency = account.currency ?? '';
   const total = summary.data?.total;
-  const cell = (value: ReactNode) => <TableCell className="px-4 text-sm">{value}</TableCell>;
+  const cell = (value: ReactNode) => <TableCell className="px-4 text-right text-sm tabular-nums">{value}</TableCell>;
   return (
     <TableRow>
       <TableCell className="px-4 text-sm font-medium text-foreground">{account.name}</TableCell>

@@ -20,7 +20,7 @@ test('the Engage app holds the CRM screens in its groups, an old CRM link opens 
     for (const name of ['Người liên hệ', 'Cơ hội', 'Lịch hẹn']) await expect(sales.getByRole('link', { name, exact: true })).toBeVisible();
     const marketing = nav.getByRole('region', { name: 'Marketing' });
     for (const name of ['Bài đăng', 'Quảng cáo']) await expect(marketing.getByRole('link', { name, exact: true })).toBeVisible();
-    await expect(nav.getByRole('link', { name: 'Báo cáo', exact: true })).toBeVisible();
+    await expect(nav.getByRole('region', { name: 'Báo cáo' }).getByRole('link', { name: 'Báo cáo', exact: true })).toBeVisible();
   });
 
   await test.step('each group opens its screens and the Engage menu stays on', async () => {

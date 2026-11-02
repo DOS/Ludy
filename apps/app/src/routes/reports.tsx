@@ -24,7 +24,7 @@ export function ReportsPage() {
         <Empty title={t('none')} />
       ) : (
         <div className="space-y-6">
-          <Tabs value={tab} onValueChange={(value) => void navigate({ to: '/o/$slug/reports', params: { slug }, search: { area: value as ReportTab } })}>
+          <Tabs value={tab} onValueChange={(value) => void navigate({ to: '/o/$slug/reports', params: { slug }, search: { area: value as ReportTab }, replace: true })}>
             <TabsList aria-label={t('tabsLabel')}>
               {tabs.map((id) => (
                 <TabsTrigger key={id} value={id}>
