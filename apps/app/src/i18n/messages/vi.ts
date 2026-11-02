@@ -7812,6 +7812,11 @@ export const vi = {
         save: 'Lưu thông tin thuế',
       },
       today: 'Xem việc cần bạn hôm nay',
+      today_mail: {
+        get: 'Xem cài đặt thư tóm tắt hằng ngày',
+        send: 'Gửi thư tóm tắt hằng ngày của một tổ chức',
+        set: 'Bật hoặc tắt thư tóm tắt hằng ngày',
+      },
       usage: {
         defer: 'Hoãn việc vì vượt hạn mức',
         over: 'Kiểm tra hạn mức sử dụng',

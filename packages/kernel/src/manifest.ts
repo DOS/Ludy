@@ -103,6 +103,8 @@ export const kernelManifest = defineModule({
       tax_profile: columns(['org_id', 'id', 'obligations', 'pit_filing_period', 'fiscal_year_end_month', 'updated_by', 'created_at', 'updated_at']),
       tenant: columns(['org_id', 'slug', 'name', 'status', 'base_currency', 'created_by', 'created_at', 'vat_filing_period', 'missing_invoice_reminder_day', 'approval_preset', 'approval_policy_version'], { inbound_token: 'sensitive', tax_code: 'national_id_if_individual', address: 'contact', contact_email: 'contact' }),
       tenant_member: columns(['org_id', 'user_id', 'role', 'created_at']),
+      // The members who opted in to the daily brief by email (#2406); last_sent_day is the Vietnam day of the last mail.
+      today_mail: columns(['org_id', 'id', 'user_id', 'created_at', 'last_sent_day']),
       usage_deferral: columns(['org_id', 'id', 'metric', 'subject_type', 'subject_id', 'retry_at', 'notified', 'created_at']),
       worker_heartbeat: columns(['instance', 'beat_at', 'modules', 'build', 'build_time']),
     },

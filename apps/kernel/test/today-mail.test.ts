@@ -29,6 +29,14 @@ describe('the daily mail', () => {
     expect(MAIL_TEMPLATES['kernel.today_mail']).toBeDefined();
   });
 
+  it('lists work notifications and leaves the brief sentence out when there are some', async () => {
+    const mail = await render({ ...base, counts: { proposals: 1, notifications: 4, messages: 0 } });
+    expect(mail?.subject).toBe('Hôm nay có 5 việc cần bạn trên Ludy');
+    expect(mail?.text).toContain('- Thông báo công việc chưa đọc: 4');
+    expect(mail?.text).toContain('- Chờ bạn duyệt: 1');
+    expect(mail?.text).not.toContain('Hôm nay có 5 việc cần bạn:');
+  });
+
   it('says the counts in Vietnamese, with the product name and the links of the org', async () => {
     const mail = await render(base, 'Tên Mới');
     expect(mail?.subject).toBe('Hôm nay có 19 việc cần bạn trên Tên Mới');

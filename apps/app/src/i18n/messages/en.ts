@@ -7813,6 +7813,11 @@ export const en = {
         save: 'Save the tax profile',
       },
       today: 'Read what needs you today',
+      today_mail: {
+        get: 'Read the daily brief mail setting',
+        send: 'Send the daily brief mails of an org',
+        set: 'Turn the daily brief mail on or off',
+      },
       usage: {
         defer: 'Defer an item over a usage limit',
         over: 'Check the usage limits',

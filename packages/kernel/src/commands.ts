@@ -56,6 +56,7 @@ import { personalDataCommands } from './personal-data.ts';
 import { notificationCommands } from './notifications.ts';
 import { inboxItemCommands, raiseOriginalNeeded } from './inbox-items.ts';
 import { savedViewCommands } from './saved-views.ts';
+import { todayMailCommands } from './today-mail.ts';
 import { offboardingCommands } from './offboarding.ts';
 import { memberProfiles } from './profiles.ts';
 import { setAddress, setContactEmail } from './org-address.ts';
@@ -1129,6 +1130,7 @@ const otherKernelCommands = [
   ...notificationCommands,
   ...inboxItemCommands,
   ...savedViewCommands,
+  ...todayMailCommands,
   requestProposal,
   editProposal,
   approveProposal,
