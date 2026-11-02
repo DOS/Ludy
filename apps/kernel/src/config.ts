@@ -346,7 +346,7 @@ const schema = z.object({
   // ads" on the Ads screen (it also needs the org's switch on); neither hides it. For now it is the same app as the read pair above (the
   // same id and secret; a classic app holds Facebook Login and the Marketing API together, and the owner's own account is served by one
   // app): Meta's data deletion request is checked with the read app's secret and finds a person's grants by a hash keyed with it, so a
-  // separate write app needs a deletion callback of its own first, and the config refuses a different one. The write login asks for
+  // separate write app needs the deletion callback to verify against the write app's secret too (#2366, wanted before Ludy Cloud serves other businesses), and the config refuses a different one until then. The write login asks for
   // ads_read and ads_management, and a token of a shared app holds every permission the person ever granted it, the read tokens of
   // the same person included. The app's valid OAuth redirect URI is APP_URL/channels/oauth/metawrite_ads/callback. The Graph version
   // is CHANNEL_META_GRAPH_VERSION.
@@ -362,6 +362,9 @@ const schema = z.object({
   CHANNEL_ZALO_OA_SECRET_KEY: optional,
   // The key CHANNEL_ZALO_OA_SECRET_KEY replaces, kept while Zalo may still sign with it (a rotation in the console, then here).
   CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: optional,
+  // Read the OA's recent chats to fill what the webhook missed (conversation core CV5b, #2329): off until the live check has settled the
+  // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
+  CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
   // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,

@@ -2,7 +2,6 @@
 import { crmEn } from '../../content/crm-en';
 import { crmVi } from '../../content/crm-vi';
 import { en } from '../../content/en';
-import { APP_PAGES } from '../../content/site';
 import { vi } from '../../content/vi';
 import { AppPage } from './app-page';
 import { BookingVisual, CalendarVisual, ContactsVisual, CrmHero, DealsVisual } from './crm-visuals';
@@ -17,7 +16,6 @@ export function CrmPage({ lang }: { lang: 'vi' | 'en' }) {
     <AppPage
       dict={dict}
       copy={copy}
-      otherLangHref={APP_PAGES.crm[lang === 'vi' ? 'en' : 'vi']}
       hero={<CrmHero {...props} />}
       visuals={{
         [copy.groups.items[0]!.id]: <ContactsVisual {...props} />,

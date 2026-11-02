@@ -260,6 +260,8 @@ describe('configuration guards', () => {
     // The Pages pair may be the same app too: one app may serve reading, writing and publishing.
     const pages = { CHANNEL_META_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
     expect(() => loadConfig({ ...base, ...read, ...write, ...pages })).not.toThrow();
+    // A deployment others reach takes it too, over https: switching running ads off also closes the reading connections of the person who
+    // granted the write one (W0b-2, ADR-0043 point 4), so the shared app's reading tokens do not outlive the switch-off.
     expect(() => loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
     expect(loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
   });

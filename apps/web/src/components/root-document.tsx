@@ -23,21 +23,20 @@ export function landingMetadata(dict: Dictionary, path: string): Metadata {
     metadataBase: new URL(SITE_URL),
     title: dict.meta.title,
     description: dict.meta.description,
-    alternates: { canonical: path, languages: { vi: '/', en: '/en' } },
+    alternates: { canonical: path },
     icons: ICONS,
     openGraph: { title: dict.meta.title, description: dict.meta.description, type: 'website', url: path, locale: dict.lang === 'vi' ? 'vi_VN' : 'en_US' },
   };
 }
 
-// The metadata of an app page: its own title and description, its canonical address and the same page in the other
-// language (hreflang). The social preview image is the page's own opengraph-image file.
-export function appPageMetadata(copy: AppPageCopy, lang: 'vi' | 'en', paths: { vi: string; en: string }): Metadata {
-  const path = paths[lang];
+// The metadata of an app page: its own title and description and its canonical address, the same in both languages
+// (one URL per page, so no hreflang twin). The social preview image is the page's own opengraph-image file.
+export function appPageMetadata(copy: AppPageCopy, lang: 'vi' | 'en', path: string): Metadata {
   return {
     metadataBase: new URL(SITE_URL),
     title: copy.meta.title,
     description: copy.meta.description,
-    alternates: { canonical: path, languages: { vi: paths.vi, en: paths.en } },
+    alternates: { canonical: path },
     icons: ICONS,
     openGraph: { title: copy.meta.title, description: copy.meta.description, type: 'website', url: path, locale: lang === 'vi' ? 'vi_VN' : 'en_US' },
   };

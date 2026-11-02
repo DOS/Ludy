@@ -1561,13 +1561,16 @@ suite('ads on PostgreSQL (#2217)', () => {
         const onlyWrite = await withWrite('Chỉ quyền ghi của người xin xóa');
         await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId, platformUserHash(META_SECRET, '6102')]);
         await api.execute('ads.account.link_write', { connectionId: onlyWrite.writeConnectionId, grantedByHash: platformUserHash(META_SECRET, '6101') }, { actor: asOwner(), orgId });
+        // The account is allowed to run ads: the closing as the system must not touch the flag (the switch guard refuses a system update of it).
+        await open([onlyWrite.adAccountId]);
         await sync(onlyWrite.connectionId);
         const code = await requestDeletion('6101');
         // The write connection is closed and its token dropped, the account forgets it; the account, its read connection and its figures stay.
         expect(await status(onlyWrite.writeConnectionId)).toBe('revoked');
         expect(await sealed(onlyWrite.writeConnectionId)).toBe('0');
         expect(await attached(onlyWrite.adAccountId)).toBeNull();
-        expect(await row(`SELECT write_granted_by_hash, write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId])).toEqual([{ write_granted_by_hash: null, write_enabled: false }]);
+        // The flag stays (the owner withdraws it; nothing can run without a live write connection).
+        expect(await row(`SELECT write_granted_by_hash, write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId])).toEqual([{ write_granted_by_hash: null, write_enabled: true }]);
         expect(await view(owner, onlyWrite.adAccountId)).toMatchObject({ connectionStatus: 'active', canRunAds: false, writeConnectionStatus: null });
         expect(await sealed(onlyWrite.connectionId)).toBe('1');
         expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, onlyWrite.adAccountId]))[0]?.n)).toBeGreaterThan(0);

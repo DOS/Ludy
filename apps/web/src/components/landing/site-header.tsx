@@ -1,16 +1,19 @@
 import type { Dictionary } from '../../content/vi';
 import { DOCS_URL, SIGN_IN_URL } from '../../content/site';
+import { LANG_PARAM } from '../../lib/language';
 import { MobileMenu } from './mobile-menu';
 import { ThemeToggle } from './theme-toggle';
 import { LudyMark } from './ui';
 
-// `otherLangHref` is where the language switch goes: the other language's home page unless a page names its own
-// counterpart. On the home page the section links are anchors on the page itself; any other page
-// points them at the home page's sections (`linkToHome`).
-export function SiteHeader({ dict, otherLangHref = dict.nav.otherLangHref, linkToHome = false }: { dict: Dictionary; otherLangHref?: string; linkToHome?: boolean }) {
+// The language switch is a plain link to the same address with `?lang=<other>`: the proxy remembers the choice in a
+// cookie and sends the visitor back to the address without it, so both languages have one URL (#2360). On the home
+// page the section links are anchors on the page itself; any other page points them at the home page's sections
+// (`linkToHome`).
+export function SiteHeader({ dict, linkToHome = false }: { dict: Dictionary; linkToHome?: boolean }) {
   const { nav } = dict;
-  const home = dict.lang === 'vi' ? '/' : '/en';
+  const home = '/';
   const base = linkToHome ? home : '';
+  const otherLang = dict.lang === 'vi' ? 'en' : 'vi';
   const sections = [
     { label: nav.product, href: `${base}#san-pham` },
     { label: nav.openSource, href: `${base}#ma-nguon-mo` },
@@ -36,13 +39,13 @@ export function SiteHeader({ dict, otherLangHref = dict.nav.otherLangHref, linkT
         </nav>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <a
-            href={otherLangHref}
-            hrefLang={dict.lang === 'vi' ? 'en' : 'vi'}
+            href={`?${LANG_PARAM}=${otherLang}`}
+            rel="nofollow"
             title={nav.otherLangLabel}
             className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-fg"
           >
             {/* The accessible name starts with the visible text (WCAG 2.5.3, label in name). */}
-            {nav.otherLang}
+            <span lang={otherLang}>{nav.otherLang}</span>
             <span className="sr-only">, {nav.otherLangLabel}</span>
           </a>
           <ThemeToggle toLight={nav.toLight} toDark={nav.toDark} />

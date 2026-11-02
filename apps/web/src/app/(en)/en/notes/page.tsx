@@ -4,7 +4,7 @@ import { appPageMetadata } from '../../../../components/root-document';
 import { notesEn } from '../../../../content/notes-en';
 import { APP_PAGES } from '../../../../content/site';
 
-export const metadata = appPageMetadata(notesEn, 'en', APP_PAGES.notes);
+export const metadata = appPageMetadata(notesEn, 'en', APP_PAGES.notes.path);
 
 export default function NotesEnPage() {
   return <NotesPage lang="en" />;

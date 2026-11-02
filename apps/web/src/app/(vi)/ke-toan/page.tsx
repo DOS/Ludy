@@ -4,7 +4,7 @@ import { accountingVi } from '../../../content/accounting-vi';
 import { APP_PAGES } from '../../../content/site';
 import { appPageMetadata } from '../../../components/root-document';
 
-export const metadata = appPageMetadata(accountingVi, 'vi', APP_PAGES.accounting);
+export const metadata = appPageMetadata(accountingVi, 'vi', APP_PAGES.accounting.path);
 
 export default function AccountingViPage() {
   return <AccountingPage lang="vi" />;

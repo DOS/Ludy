@@ -166,7 +166,9 @@ export const adsAccountDisconnect = defineCommand({
 
 // The platform's data deletion request, for an account whose write connection the person granted but whose read connection somebody else
 // did (run by the worker): the write connection is closed as a platform's deletion closes it, its sealed token dropped, and the account
-// forgets it (and its grantor and its flag). The account itself stays, read by the grant that made it.
+// forgets it (and its grantor). The account itself stays, read by the grant that made it. Its flag is left as it is: the switch guard
+// lets only a signed-in user change it (a system update of it rolls the whole closing back), the owner withdraws it, and nothing can run
+// without a live write connection (W2 launches only with both).
 export const adsAccountForgetWrite = defineCommand({
   name: 'ads.account.forget_write',
   input: z.strictObject({ adAccountId: zId }),
@@ -181,7 +183,7 @@ export const adsAccountForgetWrite = defineCommand({
     const closed = await closeWriteConnections(ctx, { adAccountId: account.id });
     await ctx.trx
       .updateTable('crove_ads.ad_account')
-      .set({ write_connection_id: null, write_granted_by_hash: null, write_enabled: false, updated_at: ctx.now })
+      .set({ write_connection_id: null, write_granted_by_hash: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', account.id)
       .execute();

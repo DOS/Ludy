@@ -3,24 +3,36 @@
 // families, each self-hosted, subset and preloaded; raster images only as AVIF or WebP, small, with their dimensions in
 // the markup; and a cap on the client JavaScript the page loads. The numbers are in perf-budget.ts.
 import { expect, test } from '@playwright/test';
+import type { BrowserContext } from '@playwright/test';
 import { BUDGET, PROFILES } from './perf-budget';
 import { auditResources, measureVitals } from './perf-checks';
 
-for (const path of ['/', '/en', '/ke-toan', '/en/accounting', '/crm', '/en/crm', '/notes', '/en/notes']) {
+// Both languages share one URL per page (#2360): English is the visitor's cookie, set before the first request.
+const baseUrl = () => process.env.WEB_BASE_URL ?? 'http://localhost:3000';
+const chosen = (value: 'vi' | 'en') => (context: BrowserContext) => context.addCookies([{ name: 'ludy-lang', value, url: baseUrl() }]);
+const vietnamese = chosen('vi');
+const english = chosen('en');
+// Each visit names its language, so a machine whose browser language is English still measures the Vietnamese pages.
+const VISITS = ['/', '/ke-toan', '/crm', '/notes'].flatMap((path) => [
+  { path, label: path, setup: vietnamese },
+  { path, label: `${path} in English`, setup: english },
+]);
+
+for (const { path, label, setup } of VISITS) {
   for (const profile of PROFILES) {
-    test(`${path} on ${profile.name} keeps LCP, CLS and INP in budget`, async ({ browser }) => {
-      const { vitals, problems, summary } = await measureVitals(browser, path, profile, BUDGET.runs);
+    test(`${label} on ${profile.name} keeps LCP, CLS and INP in budget`, async ({ browser }) => {
+      const { vitals, problems, summary } = await measureVitals(browser, path, profile, BUDGET.runs, setup);
       // In the CI log too, so the margin left under the budget is seen on every run.
-      console.log(`${path} ${profile.name}: ${summary}`);
-      test.info().annotations.push({ type: 'vitals', description: `${path} ${profile.name}: ${summary}` });
+      console.log(`${label} ${profile.name}: ${summary}`);
+      test.info().annotations.push({ type: 'vitals', description: `${label} ${profile.name}: ${summary}` });
       expect(problems).toEqual([]);
       expect(vitals.clicks, 'no interactive piece was clicked').toBeGreaterThan(0);
     });
 
-    test(`${path} on ${profile.name} keeps its fonts, images and scripts in budget`, async ({ browser }) => {
-      const { problems, summary } = await auditResources(browser, path, profile);
-      console.log(`${path} ${profile.name}: ${summary}`);
-      test.info().annotations.push({ type: 'resources', description: `${path} ${profile.name}: ${summary}` });
+    test(`${label} on ${profile.name} keeps its fonts, images and scripts in budget`, async ({ browser }) => {
+      const { problems, summary } = await auditResources(browser, path, profile, setup);
+      console.log(`${label} ${profile.name}: ${summary}`);
+      test.info().annotations.push({ type: 'resources', description: `${label} ${profile.name}: ${summary}` });
       expect(problems).toEqual([]);
     });
   }

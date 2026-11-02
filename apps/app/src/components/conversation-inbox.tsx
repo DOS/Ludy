@@ -132,6 +132,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
 
 function ConversationThread({ conversationId, onGone }: { conversationId: string; onGone: () => void }) {
   const t = useTranslations('conversations');
+  const f = useFormat();
   const contactName = useContactName();
   const { userId, members, canWrite, isAdmin } = useMe();
   const detail = useQuery({ ...orpc.conversations.get.queryOptions({ input: { conversationId } }), refetchInterval: POLL_MS });
@@ -177,6 +178,11 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
           {isAdmin && <EraseContactButton conversation={c} onErased={onGone} />}
         </div>
       </header>
+      {data.gap && (
+        <p role="note" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid="conversation-gap">
+          {t('gap', { from: f.dateTime(data.gap.from), to: f.dateTime(data.gap.to) })}
+        </p>
+      )}
       {newer && (
         <div role="status" className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-sm" data-testid="conversation-newer">
           <span>{t('newer')}</span>
