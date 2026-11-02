@@ -27,7 +27,7 @@ export const vi = {
   },
   hero: {
     title: 'Cả doanh\u00a0nghiệp trong một bộ ứng\u00a0dụng, mỗi phòng\u00a0ban có một đồng\u00a0nghiệp AI.',
-    lead: 'Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt.',
+    lead: 'Vy điều phối cả đội: Ly lo tài\u00a0chính, My lo marketing, Thy lo bán\u00a0hàng, Duy lo khách\u00a0hàng. Bạn chỉ duyệt.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',

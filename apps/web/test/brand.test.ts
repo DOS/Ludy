@@ -77,7 +77,7 @@ describe('brand on the landing page (#1683)', () => {
   it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
     const NB = String.fromCharCode(0xa0);
     expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Cả doanh nghiệp trong một bộ ứng dụng, mỗi phòng ban có một đồng nghiệp AI.');
-    expect(vi.hero.lead).toBe('Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt.');
+    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe('Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt.');
     expect(en.hero.title).toBe('Your whole business in one suite, with an AI coworker in every department.');
     expect(en.hero.lead).toBe('Vy coordinates the whole team: Ly handles finance, My marketing, Thy sales and Duy customers. You only approve.');
     for (const dict of [vi, en]) {
