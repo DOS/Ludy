@@ -16,7 +16,7 @@ export function SiteFooter({ dict }: { dict: Dictionary }) {
         </div>
         <nav aria-label={footer.navLabel} className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
           {(Object.keys(APP_PAGES) as AppPageKey[]).map((key) => (
-            <a key={key} href={appPagePath(key, dict.lang)} className="text-muted hover:text-fg">
+            <a key={key} href={appPagePath(key)} className="text-muted hover:text-fg">
               {dict.modules[APP_PAGES[key].module].name}
             </a>
           ))}

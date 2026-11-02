@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { accountingEn } from '../../content/accounting-en';
 import { accountingVi } from '../../content/accounting-vi';
-import { APP_PAGES } from '../../content/site';
 import { en } from '../../content/en';
 import { vi } from '../../content/vi';
 import { AccountingHero, BooksVisual, IntakeVisual, PostingVisual, TaxVisual } from './accounting-visuals';
@@ -17,7 +16,6 @@ export function AccountingPage({ lang }: { lang: 'vi' | 'en' }) {
     <AppPage
       dict={dict}
       copy={copy}
-      otherLangHref={APP_PAGES.accounting[lang === 'vi' ? 'en' : 'vi']}
       hero={<AccountingHero {...props} />}
       visuals={{
         [copy.groups.items[0]!.id]: <IntakeVisual {...props} />,

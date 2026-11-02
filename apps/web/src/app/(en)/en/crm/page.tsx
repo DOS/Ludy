@@ -4,7 +4,7 @@ import { appPageMetadata } from '../../../../components/root-document';
 import { crmEn } from '../../../../content/crm-en';
 import { APP_PAGES } from '../../../../content/site';
 
-export const metadata = appPageMetadata(crmEn, 'en', APP_PAGES.crm);
+export const metadata = appPageMetadata(crmEn, 'en', APP_PAGES.crm.path);
 
 export default function CrmEnPage() {
   return <CrmPage lang="en" />;

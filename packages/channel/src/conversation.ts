@@ -75,11 +75,41 @@ export type ConversationHideResult =
   | { kind: 'rejected'; error: ConversationErrorKind; code?: string; retryAt?: Date }
   | { kind: 'unknown'; code?: string };
 
+// The name a platform gives a customer (CV5b, #2329). Read once per customer, never again once it is known or the platform has none.
+export interface ConversationProfileInput {
+  externalAccountId: string;
+  secret: string;
+  contactId: string;
+}
+export type ConversationProfileResult =
+  // `displayName` is null when the platform has no name for the person (a definitive answer: it is not asked again).
+  | { kind: 'ok'; displayName: string | null }
+  // `retry`: worth asking again later (a network failure, a rate limit); else a refusal that asking again will not change.
+  | { kind: 'failed'; retry: boolean; code?: string };
+
+// The recent history of the account's chats, read to fill what the webhook did not bring (CV5b, #2329).
+export interface ConversationHistoryInput {
+  externalAccountId: string;
+  secret: string;
+  // Nothing older than this is read or returned: a message of an erased customer must not come back (the erase tombstone lasts longer
+  // than this window), and the platform's own media and retries are shorter-lived than it.
+  since: Date;
+  // The most chats read in one pass.
+  maxChats: number;
+}
+export type ConversationHistoryResult =
+  // `complete`: every chat read reached back to `since` (or its beginning), so no gap is left; `oldest` is the date of the oldest
+  // message that was read (null when none).
+  | { kind: 'ok'; events: InboundConversationEvent[]; complete: boolean; oldest: string | null }
+  | { kind: 'failed'; retry: boolean; code?: string };
+
 // What a provider can do with a conversation. Hide is idempotent on the platforms that have it, so it may be repeated.
 export interface ConversationAdapter {
   readonly provider: string;
   reply(input: ConversationReplyInput): Promise<ConversationCallResult>;
   hide?(input: ConversationHideInput): Promise<ConversationHideResult>;
+  profile?(input: ConversationProfileInput): Promise<ConversationProfileResult>;
+  history?(input: ConversationHistoryInput): Promise<ConversationHistoryResult>;
 }
 
 const MAX_NOTICE_BYTES = 262_144;

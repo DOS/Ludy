@@ -4,7 +4,7 @@ import { appPageMetadata } from '../../../components/root-document';
 import { crmVi } from '../../../content/crm-vi';
 import { APP_PAGES } from '../../../content/site';
 
-export const metadata = appPageMetadata(crmVi, 'vi', APP_PAGES.crm);
+export const metadata = appPageMetadata(crmVi, 'vi', APP_PAGES.crm.path);
 
 export default function CrmViPage() {
   return <CrmPage lang="vi" />;
