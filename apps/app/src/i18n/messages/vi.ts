@@ -146,19 +146,6 @@ export const vi = {
     support: 'Góp ý / Hỗ trợ',
     status: 'Trạng thái hệ thống',
   },
-  today: {
-    // The titles of the items each line's read returns, by the key the line gives: a line adds its keys here, in both languages, with the read.
-    items: {
-      social: {
-        review: '{count, plural, other {# bài}} đang chờ bạn duyệt',
-        channels: '{count, plural, other {# kênh}} cần kết nối lại',
-        attention: '{count, plural, other {# bài}} đăng lỗi hoặc đang tạm dừng',
-        due: 'Một bài lên lịch trong 24 giờ tới vẫn chưa được duyệt',
-        dueTitled: '“{title}” lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
-        dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
-      },
-    },
-  },
   overview: {
     title: 'Tổng quan',
     subtitle: 'Những việc đang chờ bạn ở tổ chức này và các hạn thuế sắp tới.',
@@ -195,6 +182,14 @@ export const vi = {
   },
   today: {
     items: {
+      social: {
+        review: '{count, plural, other {# bài}} đang chờ bạn duyệt',
+        channels: '{count, plural, other {# kênh}} cần kết nối lại',
+        attention: '{count, plural, other {# bài}} đăng lỗi hoặc đang tạm dừng',
+        due: 'Một bài lên lịch trong 24 giờ tới vẫn chưa được duyệt',
+        dueTitled: '“{title}” lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
+        dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
+      },
       ads: {
         paceOrg: 'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
         paceAccount: 'Với tốc độ này, {account} sẽ vượt hạn mức chi tiêu tháng',
