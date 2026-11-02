@@ -958,13 +958,16 @@ export const approveProposals = defineCommand({
         await sql<{ id: string }>`
           SELECT p.id FROM crove_kernel.proposal p
           WHERE p.org_id = ${ctx.orgId} AND p.id = ANY(${input.items.map((i) => i.id)}::uuid[])
-            AND jsonb_typeof(p.payload -> 'checks') = 'array'
-            AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') c WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.execute(ctx.trx)
+            AND EXISTS (
+              SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'checks') = 'array' THEN p.payload -> 'checks' ELSE '[]'::jsonb END) c
+              WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.execute(ctx.trx)
       ).rows.map((p) => p.id),
     );
     const outcomes = new Map<string, BulkApproveResult>();
     for (const item of bulkApproveOrder(input.items, voucherTypes)) {
-      if (singleOnly.has(item.id) || flagged.has(item.id)) {
+      // Postgres hands ids back in lower case and zod's uuid accepts upper case: compare in lower case.
+      const key = item.id.toLowerCase();
+      if (singleOnly.has(key) || flagged.has(key)) {
         outcomes.set(item.id, { id: item.id, outcome: 'refused', code: 'BULK_NOT_ALLOWED', rule: null });
         continue;
       }

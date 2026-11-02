@@ -5,7 +5,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import type { ExtractClient, ExtractFailure } from '@crove/extract-contract';
 import type { UsageMetric } from '@crove/db';
-import { zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
+import { PARTY_BANK_ACCOUNT_MAX, zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
 import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { AiBudgetExhaustedError, AiNotConfiguredError, AmountFormatError, aiCost, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
 import { journalMemo } from './memo.ts';
@@ -660,9 +660,20 @@ export async function extractAndPropose(
   const classification = sale ? null : classificationCheck(lines);
   if (classification?.status === 'warn') checks.push(classification);
   // Anomaly flags against the vendor's own history (#2380): warnings a person sees before approving, never blocking.
-  if (!sale) checks.push(...anomalyChecks({ sellerBankAccount: invoice.seller.bankAccount, total: booked.total, lines }, lookup.history ?? null));
+  // The amount and price rules compare with history booked in dong: a foreign-currency invoice still waiting for its rate
+  // has no amount in dong to judge, so only the bank account is compared.
+  const inDong = converted !== null || booked.currency.toUpperCase() === BOOK_CURRENCY;
+  // A bank account longer than the proposal's field allows (several accounts or a bank name in one tag) is dropped, never
+  // allowed to make the whole reading invalid.
+  const { bankAccount: sellerAccount, ...sellerRest } = invoice.seller;
+  const bankAccount = sellerAccount && sellerAccount.length <= PARTY_BANK_ACCOUNT_MAX ? sellerAccount : undefined;
+  if (!sale) {
+    checks.push(
+      ...anomalyChecks({ sellerBankAccount: bankAccount, total: inDong ? booked.total : null, lines: inDong ? lines : [] }, lookup.history ?? null),
+    );
+  }
 
-  const seller = { ...invoice.seller, taxCode: sellerTaxCode ?? invoice.seller.taxCode };
+  const seller = { ...sellerRest, ...(bankAccount === undefined ? {} : { bankAccount }), taxCode: sellerTaxCode ?? invoice.seller.taxCode };
   const buyer = sale ? { ...invoice.buyer, taxCode: parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode } : invoice.buyer;
   const direction = sale ? { direction: 'sale' as const } : {};
   // The seller's lookup link and code printed on a PDF (#2267): the reader is deterministic and follows no link. Only a

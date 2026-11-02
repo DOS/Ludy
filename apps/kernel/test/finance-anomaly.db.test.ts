@@ -199,6 +199,31 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
     await approveOne(id);
   });
 
+  it('does not judge the amount of a foreign-currency invoice that still waits for its rate against history in dong', async () => {
+    // The same invoice in dollars: 1/5000 of the dong amounts, so judged against 1 980 000 dong it would read as far too low.
+    const id = await propose('8715', (invoice) => {
+      const scale = (value: string) => (Number(value) / 5000).toFixed(2);
+      invoice.currency = 'USD';
+      invoice.subtotal = scale(invoice.subtotal);
+      invoice.vatTotal = scale(invoice.vatTotal);
+      invoice.total = scale(invoice.total);
+      invoice.taxBreakdown = invoice.taxBreakdown.map((t) => ({ ...t, taxableAmount: scale(t.taxableAmount), vatAmount: scale(t.vatAmount) }));
+      for (const line of invoice.lines) {
+        line.amount = scale(line.amount);
+        if (line.unitPrice !== null) line.unitPrice = scale(line.unitPrice);
+      }
+      withBank(BANK)(invoice);
+    });
+    expect(await anomalies(id)).toEqual([]);
+  });
+
+  it('reads an invoice whose bank account is longer than the proposal keeps, with no flag and no account stored', async () => {
+    const id = await propose('8716', withBank(`${BANK}; ${'9'.repeat(300)}`));
+    expect(await anomalies(id)).toEqual([]);
+    const stored = await admin(async (c) => (await c.query<{ account: string | null }>(`SELECT payload #>> '{seller,bankAccount}' AS account FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id])).rows[0]?.account ?? null);
+    expect(stored).toBeNull();
+  });
+
   let flagged = '';
   let normal = '';
 
@@ -232,7 +257,6 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
   });
 
   it('never approves a flagged proposal in bulk, whatever the client sends, and approves its normal neighbour', async () => {
-    const items = [flagged, normal].map((id) => ({ id, revision: 1 }));
     const detailFlagged = await detailOf(users.approver, flagged);
     const detailNormal = await detailOf(users.approver, normal);
     const result = await rt.execute<{ results: Array<{ id: string; outcome: string; code?: string }> }>(
@@ -240,9 +264,20 @@ suite('anomaly flags on a purchase proposal (#2380)', () => {
       { items: [{ id: flagged, revision: detailFlagged.revision, acceptUnverifiedSignature: true }, { id: normal, revision: detailNormal.revision, acceptUnverifiedSignature: true }] },
       { actor: asMfa(users.approver), orgId },
     );
-    expect(items).toHaveLength(2);
     expect(result.results.find((r) => r.id === flagged)).toMatchObject({ outcome: 'refused', code: 'BULK_NOT_ALLOWED' });
     expect(result.results.find((r) => r.id === normal)).toMatchObject({ outcome: 'approved' });
+    expect((await proposals('8720'))[0]?.status).toBe('pending');
+  });
+
+  it('refuses the flagged proposal in bulk when its id is sent in upper case', async () => {
+    const detail = await detailOf(users.approver, flagged);
+    const upper = flagged.toUpperCase();
+    const result = await rt.execute<{ results: Array<{ id: string; outcome: string; code?: string }> }>(
+      'kernel.proposal.approve_many',
+      { items: [{ id: upper, revision: detail.revision, acceptUnverifiedSignature: true }] },
+      { actor: asMfa(users.approver), orgId },
+    );
+    expect(result.results).toEqual([{ id: upper, outcome: 'refused', code: 'BULK_NOT_ALLOWED', rule: null }]);
     expect((await proposals('8720'))[0]?.status).toBe('pending');
   });
 

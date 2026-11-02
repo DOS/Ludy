@@ -66,15 +66,16 @@ export function bankAccountCheck(account: string | null | undefined, earlier: re
     id: 'anomaly_bank',
     status: 'warn',
     code: 'anomaly_bank.changed',
-    message: `Ly cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${maskBankAccount(last)}, lần này ${maskBankAccount(now)}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
+    message: `Cảnh báo: tài khoản nhận tiền khác lần trước (lần trước ${maskBankAccount(last)}, lần này ${maskBankAccount(now)}); hãy xác nhận với nhà cung cấp trước khi thanh toán`,
     params: { previous: maskBankAccount(last), current: maskBankAccount(now) },
   };
 }
 
 // The invoice's total is at least AMOUNT_FACTOR times, or at most a third of, the median of the vendor's last invoices; judged
-// only with AMOUNT_MIN_HISTORY of them. Both are in VND as booked.
-export function amountCheck(total: string, earlier: readonly string[]): InvoiceCheck | null {
-  const now = positive(total);
+// only with AMOUNT_MIN_HISTORY of them. Both are in VND as booked; a null total (a foreign-currency invoice still waiting for
+// its rate) is judged by nothing, since its amount is not in dong.
+export function amountCheck(total: string | null, earlier: readonly string[]): InvoiceCheck | null {
+  const now = total === null ? null : positive(total);
   const history = earlier.map(positive).filter((d): d is DecimalValue => d !== null);
   if (now === null || history.length < AMOUNT_MIN_HISTORY) return null;
   const usual = median(history);
@@ -89,8 +90,8 @@ export function amountCheck(total: string, earlier: readonly string[]): InvoiceC
     status: 'warn',
     code: 'anomaly_amount.unusual',
     message: high
-      ? `Ly cảnh báo: số tiền ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
-      : `Ly cảnh báo: số tiền ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`,
+      ? `Cảnh báo: số tiền ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
+      : `Cảnh báo: số tiền ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`,
     params: { total: now.toFixed(0), usual: usual.toFixed(0), count: String(history.length), direction: high ? 'high' : 'low', ratio, percent },
   };
 }
@@ -125,14 +126,14 @@ export function priceCheck(lines: ReadonlyArray<{ description: string; unitPrice
     id: 'anomaly_price',
     status: 'warn',
     code: 'anomaly_price.jump',
-    message: `Ly cảnh báo: đơn giá "${worst.item}" tăng ${percent}% so với mức thường (${worst.usual.toFixed(0)} đ, trung vị tối đa ${PRICE_BASELINE_PRICES} hóa đơn trước) lên ${worst.now.toFixed(0)} đ; cảnh báo từ ${PRICE_RISE_PERCENT}%`,
+    message: `Cảnh báo: đơn giá "${worst.item}" tăng ${percent}% so với mức thường (${worst.usual.toFixed(0)} đ, trung vị tối đa ${PRICE_BASELINE_PRICES} hóa đơn trước) lên ${worst.now.toFixed(0)} đ; cảnh báo từ ${PRICE_RISE_PERCENT}%`,
     params: { item: worst.item, usual: worst.usual.toFixed(0), current: worst.now.toFixed(0), percent },
   };
 }
 
 // The flags of a purchase invoice, in a fixed order. `history` is null for a vendor the books do not know yet.
 export function anomalyChecks(
-  invoice: { sellerBankAccount: string | null | undefined; total: string; lines: ReadonlyArray<{ description: string; unitPrice: string | null }> },
+  invoice: { sellerBankAccount: string | null | undefined; total: string | null; lines: ReadonlyArray<{ description: string; unitPrice: string | null }> },
   history: VendorHistory | null,
 ): InvoiceCheck[] {
   if (history === null) return [];

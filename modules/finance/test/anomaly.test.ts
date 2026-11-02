@@ -10,7 +10,7 @@ describe('bank account', () => {
     const check = bankAccountCheck('0987654321', ['0011000000000', '0011000000000']);
     expect(check).toMatchObject({ id: 'anomaly_bank', status: 'warn', code: 'anomaly_bank.changed', params: { previous: '********0000', current: '******4321' } });
     // The Vietnamese sentence says so and never spells an account out.
-    expect(check?.message).toContain('Ly cảnh báo');
+    expect(check?.message).toContain('Cảnh báo');
     expect(check?.message).not.toContain('0987654321');
     expect(check?.message).not.toContain('0011000000000');
   });
@@ -103,6 +103,12 @@ describe('anomalyChecks', () => {
     const invoice = { sellerBankAccount: '0987654321', total: '5000000', lines: [{ description: 'Giấy A4', unitPrice: '90000' }] };
     expect(anomalyChecks(invoice, history).map((c) => c.id)).toEqual(['anomaly_bank', 'anomaly_amount', 'anomaly_price']);
     expect(anomalyChecks(invoice, null)).toEqual([]);
+  });
+
+  it('judges no amount or price of an invoice that is not in dong yet, but still compares its account', () => {
+    const invoice = { sellerBankAccount: '0987654321', total: null, lines: [] };
+    expect(anomalyChecks(invoice, history).map((c) => c.id)).toEqual(['anomaly_bank']);
+    expect(amountCheck(null, history.totals)).toBeNull();
   });
 
   it('raises nothing on a normal invoice', () => {

@@ -110,6 +110,8 @@ export const zCheck = z.object({
 });
 export type Check = z.infer<typeof zCheck>;
 
+// The longest bank account a party reference carries; a longer one on an invoice is dropped, not refused (#2380).
+export const PARTY_BANK_ACCOUNT_MAX = 100;
 export const zPartyRef = z.object({
   name: z.string().max(500),
   taxCode: z.string().max(20).nullable(),
@@ -117,7 +119,7 @@ export const zPartyRef = z.object({
   email: z.string().max(320).nullable(),
   phone: z.string().max(50).nullable(),
   // The bank account the invoice names for this party (#2380), the history the vendor's next invoice is compared with.
-  bankAccount: z.string().max(100).nullable().optional(),
+  bankAccount: z.string().max(PARTY_BANK_ACCOUNT_MAX).nullable().optional(),
 });
 
 // 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
