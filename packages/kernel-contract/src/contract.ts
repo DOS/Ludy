@@ -274,7 +274,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView } from './ads-campaign.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestCall, zAdsCampaignRequestView } from './ads-campaign.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1740,6 +1740,10 @@ export const contract = {
     campaignDraft: oc.input(z.strictObject({ draftId: zId })).output(zAdsCampaignDraftView),
     saveCampaignDraft: oc.input(zAdsCampaignDraftSaveCall).output(zAdsCampaignDraftView),
     discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
+    // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
+    // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
+    campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),
+    requestCampaignDraft: oc.input(zAdsCampaignRequestCall).output(zAdsCampaignRequestView),
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
     lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),

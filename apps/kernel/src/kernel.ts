@@ -4,7 +4,7 @@
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
 import { memberMeter } from './ai-meter.ts';
-import { ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TelegramPublisher,
@@ -141,6 +141,8 @@ export interface KernelAdapters {
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   // Vy's daily brief on Home (#2383) through the same endpoint; null: Home shows the plain template.
   today?: Pick<TodayWriter, 'brief'> | null;
+  // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
+  adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -411,6 +413,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     scheduler: adapters.scheduler ?? null,
     conversationWriter: adapters.conversationWriter ?? null,
     today: adapters.today ?? null,
+    adsCampaignWriter: adapters.adsCampaignWriter ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -570,6 +573,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             store,
             extractor: resolved.ai,
             conversationWriter: resolved.conversationWriter,
+            adsCampaignWriter: resolved.adsCampaignWriter,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
             revoker: resolved.identity.revoker,
@@ -716,6 +720,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     scheduler: aiConfig ? new SchedulingReader(aiConfig) : null,
     conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
     today: aiConfig ? new TodayWriter(aiConfig) : null,
+    adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

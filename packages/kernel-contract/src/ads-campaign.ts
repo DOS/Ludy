@@ -154,3 +154,61 @@ export const zAdsCampaignLaunchPayload = z.strictObject({
   plan: zAdsCampaignPlan,
 });
 export type AdsCampaignLaunchPayload = z.infer<typeof zAdsCampaignLaunchPayload>;
+
+// ---- W1b: asking the AI coworker for a draft ----
+
+// A member asks for a draft of one ad account: the objective and what to promote, in their own words (a Social post's text may be pasted by the
+// builder; the post's id is kept). The answer is a draft a person reads, edits and submits like one they wrote.
+export const ADS_REQUEST_BRIEF_MAX = 1000;
+export const ADS_REQUEST_STATES = ['requested', 'written', 'none'] as const;
+export type AdsRequestState = (typeof ADS_REQUEST_STATES)[number];
+export const zAdsCampaignRequest = z.strictObject({
+  adAccountId: zId,
+  objective: z.enum(ADS_OBJECTIVES),
+  brief: z.string().trim().min(1).max(ADS_REQUEST_BRIEF_MAX),
+  sourcePostId: zId.nullable().optional(),
+});
+export type AdsCampaignRequest = z.infer<typeof zAdsCampaignRequest>;
+export const zAdsCampaignRequestCall = zAdsCampaignRequest.extend({ idempotencyKey: zId });
+
+// A request as the builder shows it. `code` is why there is no draft when the state is `none` (AI_OFF, AI_BUDGET, RATE_LIMITED, AI_ERROR,
+// INVALID, EMPTY, FIGURES, LINK, EXPIRED); the screen words it in the reader's language, so a refusal is never silent.
+export const zAdsCampaignRequestView = z.object({
+  id: zId,
+  adAccountId: zId,
+  adAccountName: z.string(),
+  objective: z.enum(ADS_OBJECTIVES),
+  brief: z.string(),
+  sourcePostId: zId.nullable(),
+  state: z.enum(ADS_REQUEST_STATES),
+  code: z.string().nullable(),
+  draftId: zId.nullable(),
+  requestedAt: z.string(),
+  settledAt: z.string().nullable(),
+});
+export type AdsCampaignRequestView = z.infer<typeof zAdsCampaignRequestView>;
+
+// What the draft job reads (system only): the request, the account's facts and the caps in force, in the account's own currency. Never a customer's text.
+export const zAdsCampaignDraftSource = z.strictObject({
+  requestId: zId,
+  adAccountId: zId,
+  objective: z.enum(ADS_OBJECTIVES),
+  brief: z.string(),
+  sourcePostId: zId.nullable(),
+  currency: zCurrency.nullable(),
+  timeZone: z.string().nullable(),
+  // The account's own today, so the dates of the plan are never the model's arithmetic.
+  today: zLocalDate,
+  // The caps in force that apply to this account (its own and the org's), each a decimal in the account's currency.
+  dailyCaps: z.array(z.string().regex(/^\d{1,16}(\.\d{1,2})?$/)),
+  monthlyCaps: z.array(z.string().regex(/^\d{1,16}(\.\d{1,2})?$/)),
+});
+export type AdsCampaignDraftSource = z.infer<typeof zAdsCampaignDraftSource>;
+
+// What the job records (system only): a draft written, or why there is none. The plan is the draft's columns; `aiFields` names the ones the AI
+// coworker or its deterministic defaults filled, so the builder marks them as drafted.
+export const zAdsCampaignDraftRecord = z.discriminatedUnion('outcome', [
+  z.strictObject({ requestId: zId, outcome: z.literal('written'), plan: zAdsCampaignPlanDraft, aiFields: z.array(z.string().max(64)).max(20) }),
+  z.strictObject({ requestId: zId, outcome: z.literal('none'), code: z.string().regex(/^[A-Z][A-Z0-9_]{1,39}$/) }),
+]);
+export type AdsCampaignDraftRecord = z.infer<typeof zAdsCampaignDraftRecord>;

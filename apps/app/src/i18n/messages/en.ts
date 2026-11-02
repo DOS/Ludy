@@ -6820,6 +6820,8 @@ export const en = {
       ADS_DRAFT_INVALID: 'This draft does not pass the checks yet (budget, dates, caps or running ads). See the list of what to fix.',
       ADS_DRAFT_CHANGED: 'The draft changed after this request was made. Reject the request and make a new one.',
       ADS_DRAFT_STALE: 'Someone saved this draft since you opened it. Reload it, then edit again.',
+      ADS_DRAFT_REQUEST_NOT_FOUND: 'This request for a draft was not found.',
+      ADS_DRAFT_REQUEST_OPEN: 'You already have a request for a draft waiting for an answer. Wait for it, then ask again.',
       ACCOUNT_CODE_TAKEN: 'This account code is already in the chart of accounts.',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'The account still has sub-accounts in use. Stop using them first.',
       ACCOUNT_INACTIVE: 'The account is no longer in use. Choose another account.',
@@ -7185,10 +7187,14 @@ export const en = {
       campaign: {
         draft: 'Read a campaign draft',
         draft_discard: 'Discard a campaign draft',
+        draft_record: 'Record a campaign draft written by the AI coworker',
+        draft_request: 'Ask the AI coworker to draft a campaign',
         draft_save: 'Save a campaign draft',
+        draft_source: 'Read what the AI coworker needs to draft a campaign',
         drafts: 'List the campaign drafts of an ad account',
         launch: 'Run a drafted campaign (an approved request)',
         prepare_launch: 'Ask for approval to run a drafted campaign',
+        requests: 'List the requests for campaign drafts',
       },
       cap: {
         lower: 'Lower an ad spend cap',

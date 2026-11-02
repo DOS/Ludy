@@ -30,6 +30,8 @@ export const AI_FEATURES = {
   'conversation.draft': 'conversation',
   // Vy's daily brief on Home (#2383): it spans the apps, so it counts against the kernel's own budget line.
   'today.brief': 'kernel',
+  // The AI coworker's campaign drafts for running ads (W1b, #2295): the creative part only, never money.
+  'ads.campaign_draft': 'ads',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];

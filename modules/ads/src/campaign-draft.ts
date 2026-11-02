@@ -96,12 +96,12 @@ function planOf(row: DraftRow): AdsCampaignPlanDraft {
 
 // What local validation needs about an account and the org that does not depend on a draft: the switches and the caps in force, read now, in the
 // caller's transaction (a list of drafts reads them once per account).
-interface ContextBase {
+export interface ContextBase {
   writeEnabled: boolean;
   launchesBlocked: boolean;
   caps: PlanContext['caps'];
 }
-async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
+export async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
   const setting = await currentSetting(ctx);
   const capRows = await ctx.trx
     .selectFrom('crove_ads.ad_spend_cap')
@@ -135,7 +135,7 @@ async function planContext(ctx: Db, account: { id: string; currency: string | nu
   };
 }
 
-async function accountOf(ctx: Db, adAccountId: string, lock = false) {
+export async function accountOf(ctx: Db, adAccountId: string, lock = false) {
   let q = ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'name', 'currency', 'time_zone', 'write_enabled', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', adAccountId);
   if (lock) q = q.forShare();
   const account = await q.executeTakeFirst();
@@ -192,7 +192,7 @@ async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now
 }
 
 // The columns a plan writes. `undefined` leaves a column as it is, `null` clears it.
-function columnsOf(plan: AdsCampaignPlanDraft) {
+export function columnsOf(plan: AdsCampaignPlanDraft) {
   const days = flightDays(plan.startOn, plan.endOn);
   return {
     name: plan.name,
