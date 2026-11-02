@@ -96,7 +96,8 @@ async function checkVoucher(ctx: QueryContext, voucher: { type: VoucherType; cas
 // a request cannot label its own choice as the suggestion; anything else is the person's own choice.
 async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId: string | null, claimed: BankMatchedBy | undefined): Promise<BankMatchedBy> {
   if (claimed?.kind !== 'vy' || !partyId) return { kind: 'manual' };
-  const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, await readParties(ctx), true);
+  // The open-balance reason only decides when no stronger one exists, so its costly query runs only for a claim of it.
+  const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, await readParties(ctx), claimed.reason === 'balance');
   const suggested = made.suggested;
   if (!suggested || suggested.party.id !== partyId || suggested.reason !== claimed.reason) return { kind: 'manual' };
   const named = claimed.invoice;

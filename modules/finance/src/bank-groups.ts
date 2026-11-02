@@ -12,10 +12,10 @@
 //   an edit of a posting.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@crove/kernel-contract';
+import { voucherCode, zAccountCode, zId, zLedgerPeriod, zBankMatchedBy, type BankLookWhy, type BankMatchGroups, type BankMatched, type BankMatchLine, type VoucherType } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { Decimal } from '@crove/l10n-vn';
+import { Decimal, type DecimalValue } from '@crove/l10n-vn';
 import { BANK_SUGGESTIONS_MAX, bankLineStates, bankLineView, findBankLines, lineMatchFor, readParties } from './bank-match.ts';
 import { classifyLine, invoiceKey, sharedInvoices, type Classified } from './domain/bank-groups.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
@@ -28,22 +28,37 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most matched lines one read lists.
 export const BANK_MATCHED_MAX = 500;
 
-// Whether the party's open balance on the line's side (receivable 131 for money in, payable 331 for money out) covers the
-// amount as the books stand now: an invoice already settled by a voucher leaves no balance for this line, and one whose
-// voucher was reversed has it back (the reversal may be dated after the line, so no date cut-off is applied).
-async function balanceCovers(ctx: QueryContext, line: { legalEntityId: string; amount: string }, partyId: string): Promise<boolean> {
-  const amount = new Decimal(line.amount).abs();
-  const inflow = new Decimal(line.amount).isPositive();
+// The party's open balance on a side (receivable 131 for money in, payable 331 for money out) as the books stand now: an
+// invoice already settled by a voucher leaves no balance for a line, and one whose voucher was reversed has it back (the
+// reversal may be dated after the line, so no date cut-off is applied). Null when the party has no entry on that side.
+async function openBalance(ctx: QueryContext, legalEntityId: string, inflow: boolean, partyId: string): Promise<DecimalValue | null> {
   const side = inflow ? sql<string>`pg_catalog.sum(l.debit) - pg_catalog.sum(l.credit)` : sql<string>`pg_catalog.sum(l.credit) - pg_catalog.sum(l.debit)`;
   const row = await ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .select(side.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
-    .where('l.legal_entity_id', '=', line.legalEntityId)
+    .where('l.legal_entity_id', '=', legalEntityId)
     .where('l.party_id', '=', partyId)
     .where('l.account_code', 'like', inflow ? '131%' : '331%')
     .executeTakeFirst();
-  return row?.balance != null && new Decimal(row.balance).greaterThanOrEqualTo(amount);
+  return row?.balance == null ? null : new Decimal(row.balance);
+}
+
+// Whether a voucher this screen's clean group made, and not reversed since, already settles this invoice of the party: its
+// proposal recorded the invoice in `matchedBy`. The books keep no link between an invoice and its payment, so this catches
+// a second payment of an invoice paid through a clean group, which the party's balance alone would let through when
+// another invoice of the party is still open.
+async function settledThroughGroup(ctx: QueryContext, partyId: string, invoice: { series: string; number: string }): Promise<boolean> {
+  const { rows } = await sql<{ n: string }>`
+    SELECT pg_catalog.count(*)::text AS n
+    FROM crove_finance.cash_voucher v
+    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    JOIN crove_kernel.proposal p ON p.org_id = v.org_id AND p.id = v.proposal_id
+    WHERE v.org_id = ${ctx.orgId} AND v.party_id = ${partyId}
+      AND p.payload #>> '{matchedBy,invoice,number}' = ${invoice.number}
+      AND p.payload #>> '{matchedBy,invoice,series}' = ${invoice.series}
+      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)`.execute(ctx.trx);
+  return Number(rows[0]?.n ?? 0) > 0;
 }
 
 export const bankMatchGroups = defineQuery({
@@ -70,36 +85,65 @@ export const bankMatchGroups = defineQuery({
     const open = await findBankLines(ctx, ids.filter((r) => states.get(r.id)?.status === 'open').map((r) => r.id));
     const byId = new Map(open.map((l) => [l.id, l]));
     const parties = await readParties(ctx);
-    const rows: Array<{ id: string; made: BankMatchLine; partyId: string | null; classified: Classified }> = [];
+    const rows: Array<{ id: string; made: BankMatchLine; partyId: string | null; classified: Classified; amount: DecimalValue; inflow: boolean }> = [];
+    const balances = new Map<string, DecimalValue | null>();
     for (const { id } of ids) {
       const line = byId.get(id);
       if (!line) continue;
-      const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, parties, false);
+      const { made, invoices, truncated } = await lineMatchFor(ctx, line, { status: 'open' }, parties, false);
       // A line with no voucher to make (fractions of a dong) or no party in sight stays an Inbox exception.
       if (!made.voucher || made.candidates.length === 0) continue;
       const partyId = made.suggested?.party.id ?? null;
       const exactInvoices = partyId ? invoices.filter((i) => i.partyId === partyId).map((i) => ({ series: i.series, number: i.number })) : [];
       const strong = made.suggested !== null && (made.suggested.reason === 'tax_code' || made.suggested.reason === 'invoice');
-      const covers = partyId && strong && exactInvoices.length === 1 && made.candidates.length === 1 && !line.ambiguous ? await balanceCovers(ctx, line, partyId) : null;
-      const classified = classifyLine({
-        suggested: made.suggested ? { reason: made.suggested.reason } : null,
-        candidates: made.candidates.length,
-        flaggedAtImport: line.ambiguous,
-        exactInvoices,
-        balanceCovers: covers,
-      });
-      rows.push({ id, made: { ...made, group: classified.group, why: classified.why }, partyId, classified });
+      const amount = new Decimal(line.amount).abs();
+      const inflow = new Decimal(line.amount).isPositive();
+      const only = exactInvoices.length === 1 ? exactInvoices[0] : undefined;
+      let covers: boolean | null = null;
+      if (partyId && strong && only && made.candidates.length === 1 && !line.ambiguous) {
+        const key = `${partyId}:${inflow}`;
+        if (!balances.has(key)) balances.set(key, await openBalance(ctx, line.legalEntityId, inflow, partyId));
+        const balance = balances.get(key) ?? null;
+        covers = balance !== null && balance.greaterThanOrEqualTo(amount) && !(await settledThroughGroup(ctx, partyId, only));
+      }
+      // At the size of the invoice read's cut, a party's second invoice of the amount may have been left out: not clean.
+      const classified = truncated
+        ? ({ group: 'look', why: 'several' } as const)
+        : classifyLine({
+            suggested: made.suggested ? { reason: made.suggested.reason } : null,
+            candidates: made.candidates.length,
+            flaggedAtImport: line.ambiguous,
+            exactInvoices,
+            balanceCovers: covers,
+          });
+      rows.push({ id, made: { ...made, group: classified.group, why: classified.why }, partyId, classified, amount, inflow });
     }
+    const demote = (r: (typeof rows)[number], why: BankLookWhy) => {
+      r.classified = { group: 'look', why };
+      r.made = { ...r.made, group: 'look', why };
+    };
     // Two clean lines naming one invoice are a double payment: both leave the clean group.
     const shared = sharedInvoices(rows.flatMap((r) => (r.classified.group === 'clean' && r.partyId ? ([[r.id, invoiceKey(r.partyId, r.classified.invoice)]] as const) : [])));
+    for (const r of rows) if (shared.has(r.id)) demote(r, 'duplicate');
+    // The clean lines of one party, taken in statement order, must together fit its open balance: the first lines stay clean
+    // and a line past the balance needs a look.
+    const taken = new Map<string, DecimalValue>();
+    for (const r of rows) {
+      if (r.classified.group !== 'clean' || !r.partyId) continue;
+      const key = `${r.partyId}:${r.inflow}`;
+      const balance = balances.get(key) ?? null;
+      const sum = (taken.get(key) ?? new Decimal(0)).plus(r.amount);
+      if (balance === null || sum.greaterThan(balance)) demote(r, 'no_invoice');
+      else taken.set(key, sum);
+    }
     const out: BankMatchGroups = { clean: [], look: [], more: ids.length >= BANK_SUGGESTIONS_MAX };
     for (const r of rows) {
-      if (r.classified.group === 'clean' && !shared.has(r.id)) {
+      if (r.classified.group === 'clean') {
         // The clean line shows the invoice it settles, whatever reason found its party.
         const suggested = r.made.suggested ? { ...r.made.suggested, invoice: r.classified.invoice } : null;
         out.clean.push({ ...r.made, suggested });
       } else {
-        out.look.push(r.classified.group === 'clean' ? { ...r.made, group: 'look', why: 'duplicate' } : r.made);
+        out.look.push(r.made);
       }
     }
     return out;

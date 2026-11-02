@@ -23,6 +23,7 @@ const LINES = [`05/11/2026;GR001;TT HD ${NUMBER} MST ${SELLER_TAX_CODE};1.980.00
 
 test('a clean bank match is asked for and approved in one action, then listed with its approver and reason', async ({ page }) => {
   let secret = '';
+  let usedStep = -1;
   const slug = await test.step('sign up, create an org and approve the e-invoice the line will pay', async () => {
     await page.goto('/');
     await signUp(page, newEmail('match'));
@@ -40,7 +41,9 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await expect(page.getByText('Đang chờ: duyệt và ghi sổ 1 đề xuất.')).toBeVisible();
     await page.getByRole('button', { name: 'Bật xác thực hai lớp' }).click();
     secret = (await page.getByLabel('Khóa thiết lập').textContent())?.trim() ?? '';
-    await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
+    const first = await nextTotp(secret);
+    usedStep = first.step;
+    await page.getByLabel('Mã xác thực').fill(first.code);
     await page.getByRole('button', { name: 'Xác nhận' }).click();
     await expect(page.getByText('Đã duyệt và ghi sổ 1 đề xuất.')).toBeVisible();
     return created;
@@ -69,11 +72,14 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await page.getByTestId('match-clean-action').click();
     // The step-up of the invoice's approval may have gone stale; if so the page asks again and sends the batch by itself.
     const prompt = page.getByRole('button', { name: 'Xác nhận' });
-    if (await prompt.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await page.getByLabel('Mã xác thực').fill((await nextTotp(secret)).code);
+    const summary = page.getByTestId('match-summary');
+    await expect(summary.or(prompt)).toBeVisible({ timeout: 60_000 });
+    if (await prompt.isVisible()) {
+      // A code is never submitted twice: the next time step's.
+      await page.getByLabel('Mã xác thực').fill((await nextTotp(secret, usedStep)).code);
       await prompt.click();
     }
-    await expect(page.getByTestId('match-summary')).toHaveText('Đã lập 1 đề xuất; đã duyệt và ghi sổ 1.', { timeout: 60_000 });
+    await expect(summary).toHaveText('Đã lập 1 đề xuất; đã duyệt và ghi sổ 1.', { timeout: 60_000 });
   });
 
   await test.step('the review page lists the matched line with its voucher, approver and reason', async () => {

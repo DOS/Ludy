@@ -398,4 +398,41 @@ suite('bank match groups and the matched lines (#2385)', () => {
     // The line is open again and, with the invoice's payable back, is in the clean group once more.
     expect(((await groups()).body.clean as any[]).map((l) => l.line.reference)).toEqual(['GR1']);
   });
+
+  it('never keeps two lines that pay one invoice in the clean group, nor a line for an invoice already settled', async () => {
+    // A second transfer for the same invoice and amount: both lines name it, so neither is clean.
+    const imported = await rpc('bank/import', await tokenFor(member), {
+      bankAccount: '1121',
+      filename: 'sao-ke-11b.xlsx',
+      rows: [row('11/11/2026', '', '1.980.000', 'GR6', `TT LAN 2 HD ${seller.number} MST ${seller.taxCode}`)],
+      idempotencyKey: randomUUID(),
+    });
+    expect(imported.status).toBe(200);
+    const twice = (await groups()).body;
+    expect(twice.clean).toEqual([]);
+    expect((twice.look as any[]).filter((l) => ['GR1', 'GR6'].includes(l.line.reference)).map((l) => [l.line.reference, l.why])).toEqual([
+      ['GR1', 'duplicate'],
+      ['GR6', 'duplicate'],
+    ]);
+    // GR1 is matched again (asked for by the member, approved by the owner): the seller's payable is settled, so the second
+    // transfer is no longer a clean match for an open invoice.
+    const asked = await rpc('inbox/request', await tokenFor(member), {
+      command: 'finance.voucher.record',
+      input: {
+        type: 'bank_debit',
+        date: '2026-11-05',
+        cashAccount: '1121',
+        partyId: vendor,
+        description: `TT HD ${seller.number} MST ${seller.taxCode}`,
+        lines: [{ account: '331', amount: '1980000' }],
+        bankLineId: refByRef.get('GR1'),
+      },
+      idempotencyKey: randomUUID(),
+    });
+    expect(asked.status).toBe(200);
+    expect((await approve(owner, String(asked.body.proposalId))).status).toBe(200);
+    const settled = (await groups()).body;
+    expect(settled.clean).toEqual([]);
+    expect((settled.look as any[]).find((l) => l.line.reference === 'GR6')).toMatchObject({ group: 'look', why: 'no_invoice' });
+  });
 });

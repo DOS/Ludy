@@ -195,7 +195,7 @@ export async function lineMatchFor(
   state: BankLineState,
   parties: readonly PartyRow[],
   withBalances = true,
-): Promise<{ made: BankLineVoucher; invoices: Array<{ partyId: string; series: string; number: string }> }> {
+): Promise<{ made: BankLineVoucher; invoices: Array<{ partyId: string; series: string; number: string }>; truncated: boolean }> {
   const amount = new Decimal(line.amount).abs();
   const type = bankVoucherType(line.amount);
   const inflow = type === 'bank_credit';
@@ -263,7 +263,9 @@ export async function lineMatchFor(
     suggested: match.suggested ? (view(match.suggested)[0] ?? null) : null,
     candidates: match.candidates.flatMap(view),
   };
-  return { made, invoices: invoices.map((i) => ({ partyId: i.party_id, series: i.invoice_series, number: i.invoice_number })) };
+  // The invoice read stops at CANDIDATE_ROWS: at that size a party's second invoice of the amount may lie past the cut, so a caller that
+  // counts a party's invoices must not trust the count.
+  return { made, invoices: invoices.map((i) => ({ partyId: i.party_id, series: i.invoice_series, number: i.invoice_number })), truncated: invoices.length >= CANDIDATE_ROWS };
 }
 
 // The voucher a line makes and the party it is probably about, for the voucher form. Reads only; the user confirms the
