@@ -56,6 +56,7 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_campaign_draft',
   'crove_ads.ad_campaign_request',
+  'crove_kernel.today_mail',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -1254,6 +1255,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   'crove_kernel.tenant_member': { make: (o) => ({ row: { org_id: o.id, user_id: o.freshUser(), role: 'member' } }) },
   // An item kept for an org's next daily budget (#675): append-only, tenants read and insert.
+  // A member's opt-in to the daily brief by email (#2406): one row per member, shown to its owner alone, like notification mail-off.
+  'crove_kernel.today_mail': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner } }) },
   'crove_kernel.usage_deferral': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), metric: 'extraction_pages', subject_type: 'file', subject_id: randomUUID(), retry_at: '2099-01-01T00:00:00Z' } }),
   },
