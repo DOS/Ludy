@@ -28,21 +28,20 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 // The most matched lines one read lists.
 export const BANK_MATCHED_MAX = 500;
 
-// Whether the party's open balance on the line's side (receivable 131 for money in, payable 331 for money out) on the
-// line's date covers the amount: an invoice already settled by an earlier voucher leaves no balance for this line.
-async function balanceCovers(ctx: QueryContext, line: { legalEntityId: string; date: string; amount: string }, partyId: string): Promise<boolean> {
+// Whether the party's open balance on the line's side (receivable 131 for money in, payable 331 for money out) covers the
+// amount as the books stand now: an invoice already settled by a voucher leaves no balance for this line, and one whose
+// voucher was reversed has it back (the reversal may be dated after the line, so no date cut-off is applied).
+async function balanceCovers(ctx: QueryContext, line: { legalEntityId: string; amount: string }, partyId: string): Promise<boolean> {
   const amount = new Decimal(line.amount).abs();
   const inflow = new Decimal(line.amount).isPositive();
   const side = inflow ? sql<string>`pg_catalog.sum(l.debit) - pg_catalog.sum(l.credit)` : sql<string>`pg_catalog.sum(l.credit) - pg_catalog.sum(l.debit)`;
   const row = await ctx.trx
     .selectFrom('crove_finance.journal_line as l')
-    .innerJoin('crove_finance.journal_entry as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.entry_id'))
     .select(side.as('balance'))
     .where('l.org_id', '=', ctx.orgId)
     .where('l.legal_entity_id', '=', line.legalEntityId)
     .where('l.party_id', '=', partyId)
     .where('l.account_code', 'like', inflow ? '131%' : '331%')
-    .where('e.entry_date', '<=', line.date)
     .executeTakeFirst();
   return row?.balance != null && new Decimal(row.balance).greaterThanOrEqualTo(amount);
 }
