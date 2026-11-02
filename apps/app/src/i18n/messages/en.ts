@@ -6280,6 +6280,13 @@ export const en = {
     },
     source: { ai: 'Read by AI from a photo or PDF; a person must check it' },
     duplicate: { found: 'This invoice is already in the Inbox or in the books' },
+    // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
+    anomaly_bank: { changed: "Warning: the receiving bank account differs from last time (before {previous}, now {current}). Confirm it with the vendor before paying." },
+    anomaly_amount: {
+      high: 'Warning: the amount {total} is {ratio} times this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged from 3 times).',
+      low: 'Warning: the amount {total} is only {percent}% of this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged below a third).',
+    },
+    anomaly_price: { jump: 'Warning: the unit price of "{item}" rose {percent}% above its usual ({usual}, the median of up to 3 earlier invoices), now {current}; flagged from 25%.' },
     accounts: {
       unclassified: 'No account rule matched {count} line(s) (line {lines}): choose their accounts before approving',
       classified: 'Every line has its account',
