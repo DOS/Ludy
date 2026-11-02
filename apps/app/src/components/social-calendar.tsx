@@ -551,7 +551,7 @@ export function DayDialog({
       onClose={onClose}
       // A click on the backdrop lands on the dialog element itself.
       onClick={(e) => e.target === dialog.current && onClose()}
-      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(40rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border bg-popover p-0 text-popover-foreground shadow-2xl backdrop:bg-background/70"
+      className="m-auto max-h-[calc(100dvh-2rem)] w-[min(40rem,calc(100vw-2rem))] overflow-y-auto rounded-xl border bg-popover p-0 text-popover-foreground backdrop:bg-background/70"
     >
       <div className="sticky top-0 z-10 flex items-center justify-between gap-2 border-b bg-popover px-4 py-3">
         <h3 ref={heading} id={headingId} tabIndex={-1} className="text-sm font-medium text-foreground outline-none first-letter:uppercase">

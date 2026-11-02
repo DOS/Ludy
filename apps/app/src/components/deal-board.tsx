@@ -65,7 +65,7 @@ function Card({
       }}
       onDragEnd={onDragEnd}
       onDragOver={onDragOver}
-      className={`rounded-lg border border-border bg-card p-3 text-sm shadow-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
+      className={`rounded-lg border border-border bg-card p-3 text-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
     >
       <p className="font-medium text-foreground">{deal.title}</p>
       <p className="text-xs text-muted-foreground">{deal.partyName}</p>
