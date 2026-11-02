@@ -4,7 +4,7 @@
 // does with each, so a correction from a real event changes one line and one expectation.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { ConversationNoticeError, ZALO_MAX_NOTICE_BYTES, ZaloConversations, ZaloOaPublisher, parseZaloNotice, zaloSignatureOk, type Fetch } from '../src/index.ts';
+import { ConversationNoticeError, ZALO_MAX_NOTICE_BYTES, ZaloConversations, ZaloOaPublisher, mediaHostAllowed, parseZaloNotice, zaloSignatureOk, type Fetch } from '../src/index.ts';
 
 const APP = { appId: '4318000000000000001', appSecret: 'test-zalo-secret-not-real' };
 const OA_KEY = 'test-oa-secret-key-not-real';
@@ -93,7 +93,7 @@ describe('the events of a Zalo notice', () => {
     });
   });
 
-  it('names an attachment by its kind and never keeps its address', () => {
+  it('names an attachment by its kind and keeps no address except the image of an image message', () => {
     for (const [event, label] of [
       ['user_send_image', '[Khách gửi ảnh]'],
       ['user_send_file', '[Khách gửi tệp]'],
@@ -103,8 +103,46 @@ describe('the events of a Zalo notice', () => {
     ] as const) {
       const parsed = parseZaloNotice(bytes({ ...TEXT, event_name: event, message: { msg_id: 'm-2', attachments: [{ type: 'image', payload: { url: 'https://zalo.test/secret-photo.jpg' } }] } }));
       expect(parsed.events[0]?.text).toBe(label);
-      expect(JSON.stringify(parsed)).not.toContain('secret-photo');
+      // The address is never in the text; only an image message carries it, as an attachment for the worker to fetch (CV5c, #2357).
+      expect(parsed.events[0]?.text).not.toContain('secret-photo');
+      if (event === 'user_send_image') expect(parsed.events[0]?.attachments).toEqual([{ kind: 'image', url: 'https://zalo.test/secret-photo.jpg' }]);
+      else expect(JSON.stringify(parsed)).not.toContain('secret-photo');
     }
+  });
+
+  it('takes the images of an image message, https addresses only, at most five, and no other message’s', () => {
+    const attachments = [
+      { type: 'image', payload: { url: 'https://cdn.zdn.vn/a.jpg', thumbnail: 'https://cdn.zdn.vn/a-small.jpg' } },
+      { type: 'image', payload: { url: 'http://cdn.zdn.vn/plain.jpg' } },
+      { type: 'file', payload: { url: 'https://cdn.zdn.vn/doc.pdf' } },
+      { type: 'image', payload: {} },
+      { type: 'image', payload: { url: `https://cdn.zdn.vn/${'x'.repeat(2000)}` } },
+      { type: 'image', payload: { url: 'https://cdn.zdn.vn/nul .jpg' } },
+      ...Array.from({ length: 8 }, (_, i) => ({ type: 'image', payload: { url: `https://cdn.zdn.vn/${i}.jpg` } })),
+    ];
+    const parsed = parseZaloNotice(bytes({ ...TEXT, event_name: 'user_send_image', message: { msg_id: 'm-img', attachments } }));
+    expect(parsed.events[0]?.attachments).toEqual([
+      { kind: 'image', url: 'https://cdn.zdn.vn/a.jpg' },
+      ...Array.from({ length: 4 }, (_, i) => ({ kind: 'image', url: `https://cdn.zdn.vn/${i}.jpg` })),
+    ]);
+    // Not an array, or no usable address: the message is the placeholder alone.
+    for (const message of [{ msg_id: 'm-x', attachments: 'https://cdn.zdn.vn/a.jpg' }, { msg_id: 'm-y', attachments: [{ type: 'image', payload: { url: 'ftp://x/a.jpg' } }] }, { msg_id: 'm-z' }]) {
+      const none = parseZaloNotice(bytes({ ...TEXT, event_name: 'user_send_image', message }));
+      expect(none.events[0]?.text).toBe('[Khách gửi ảnh]');
+      expect(none.events[0]).not.toHaveProperty('attachments');
+    }
+    // A text message with attachments, a gif and a file are never images here.
+    for (const event_name of ['user_send_text', 'user_send_gif', 'user_send_file']) {
+      expect(parseZaloNotice(bytes({ ...TEXT, event_name, message: { msg_id: 'm-t', text: 'x', attachments } })).events[0]).not.toHaveProperty('attachments');
+    }
+  });
+
+  it('allows a media host by its domain or a subdomain of it, on a label boundary, in any case', () => {
+    const hosts = ['zdn.vn', '.Zalo.me'];
+    for (const host of ['zdn.vn', 'photo-stal.zdn.vn', 'A.B.ZDN.VN', 'zalo.me', 'x.zalo.me', 'zdn.vn.']) expect(mediaHostAllowed(host, hosts), host).toBe(true);
+    for (const host of ['notzdn.vn', 'zdn.vn.evil.test', 'zalo.me.evil.test', 'evil-zalo.me', '127.0.0.1', 'localhost', '']) expect(mediaHostAllowed(host, hosts), host).toBe(false);
+    expect(mediaHostAllowed('zdn.vn', [])).toBe(false);
+    expect(mediaHostAllowed('zdn.vn', [''])).toBe(false);
   });
 
   it("takes the OA's own message, seen from its inbox, as an echo of the thread of its customer", () => {

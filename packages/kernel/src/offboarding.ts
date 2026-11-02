@@ -51,6 +51,9 @@ export const EXPORT_TABLES = {
   'kernel.conversation_identity': { from: 'crove_kernel.conversation_identity', omit: [] },
   'kernel.conversation': { from: 'crove_kernel.conversation', omit: [] },
   'kernel.conversation_message': { from: 'crove_kernel.conversation_message', omit: [] },
+  // A customer's image: its metadata only (the bytes stay in the store under conversation/<org_id>/, which an export never copies, and the
+  // platform's address is personal data that is gone once the bytes are stored).
+  'kernel.conversation_attachment': { from: 'crove_kernel.conversation_attachment', omit: ['source_url'] },
   'kernel.conversation_note': { from: 'crove_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment.

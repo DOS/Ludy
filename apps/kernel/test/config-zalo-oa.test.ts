@@ -22,6 +22,18 @@ describe('CHANNEL_ZALO_OA_SECRET_KEY', () => {
     expect(() => loadConfig({ ...base, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'oa-secret-key-not-real' })).toThrow(/same as/);
   });
 
+  it('takes the media hosts of a customer’s image as domain names, up to twenty, or none', async () => {
+    const { zaloMediaHostsOf } = await import('../src/config.ts');
+    expect(loadConfig({ ...BASE }).CHANNEL_ZALO_MEDIA_HOSTS).toBeUndefined();
+    expect(loadConfig({ ...BASE, CHANNEL_ZALO_MEDIA_HOSTS: '  ' }).CHANNEL_ZALO_MEDIA_HOSTS).toBeUndefined();
+    const set = loadConfig({ ...BASE, CHANNEL_ZALO_MEDIA_HOSTS: 'Zdn.vn, zadn.vn ,cdn.example.com' });
+    expect(zaloMediaHostsOf(set.CHANNEL_ZALO_MEDIA_HOSTS)).toEqual(['zdn.vn', 'zadn.vn', 'cdn.example.com']);
+    expect(zaloMediaHostsOf(undefined)).toEqual([]);
+    for (const bad of [',', 'localhost', '127.0.0.1', 'https://zdn.vn', 'zdn.vn/path', '*.zdn.vn', 'a b.vn', Array.from({ length: 21 }, (_, i) => `h${i}.vn`).join(',')]) {
+      expect(() => loadConfig({ ...BASE, CHANNEL_ZALO_MEDIA_HOSTS: bad }), bad).toThrow(/CHANNEL_ZALO_MEDIA_HOSTS/);
+    }
+  });
+
   it('turns the history read on only by the word true, off by default', () => {
     expect(loadConfig({ ...BASE }).CHANNEL_ZALO_HISTORY).toBe('false');
     expect(loadConfig({ ...BASE, CHANNEL_ZALO_HISTORY: 'true' }).CHANNEL_ZALO_HISTORY).toBe('true');
