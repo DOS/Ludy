@@ -50,7 +50,7 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
       return has('previous', 'current') ? t('invoiceChecks.anomaly_bank.changed', { previous: p.previous ?? '', current: p.current ?? '' }) : check.message;
     case 'anomaly_amount.unusual':
       return has('total', 'usual', 'count')
-        ? t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '' })
+        ? t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '', ratio: p.ratio ?? '', percent: p.percent ?? '' })
         : check.message;
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')

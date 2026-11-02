@@ -29,7 +29,6 @@ export const PRICE_BASELINE_PRICES = 3;
 // The longest item name a check carries.
 const ITEM_MAX = 60;
 
-export const ANOMALY_CHECK_IDS = ['anomaly_bank', 'anomaly_amount', 'anomaly_price'] as const;
 
 // An account number as compared: letters and digits only, upper case, so spaces, dots and dashes do not make one account
 // two.
@@ -82,12 +81,17 @@ export function amountCheck(total: string, earlier: readonly string[]): InvoiceC
   const high = now.greaterThanOrEqualTo(usual.times(AMOUNT_FACTOR));
   const low = now.lessThanOrEqualTo(usual.dividedBy(AMOUNT_FACTOR));
   if (!high && !low) return null;
+  // How far from the usual: how many times it, and the share of it, as the sentence says them.
+  const ratio = now.dividedBy(usual).toFixed(1);
+  const percent = now.dividedBy(usual).times(100).toFixed(0);
   return {
     id: 'anomaly_amount',
     status: 'warn',
     code: 'anomaly_amount.unusual',
-    message: `Ly cảnh báo: số tiền ${now.toFixed(0)} đ ${high ? 'cao' : 'thấp'} bất thường so với các hóa đơn trước của nhà cung cấp này (thường khoảng ${usual.toFixed(0)} đ, theo ${history.length} hóa đơn gần nhất)`,
-    params: { total: now.toFixed(0), usual: usual.toFixed(0), count: String(history.length), direction: high ? 'high' : 'low' },
+    message: high
+      ? `Ly cảnh báo: số tiền ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
+      : `Ly cảnh báo: số tiền ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`,
+    params: { total: now.toFixed(0), usual: usual.toFixed(0), count: String(history.length), direction: high ? 'high' : 'low', ratio, percent },
   };
 }
 
@@ -121,7 +125,7 @@ export function priceCheck(lines: ReadonlyArray<{ description: string; unitPrice
     id: 'anomaly_price',
     status: 'warn',
     code: 'anomaly_price.jump',
-    message: `Ly cảnh báo: đơn giá "${worst.item}" tăng ${percent}% so với các hóa đơn trước (từ ${worst.usual.toFixed(0)} đ lên ${worst.now.toFixed(0)} đ)`,
+    message: `Ly cảnh báo: đơn giá "${worst.item}" tăng ${percent}% so với mức thường (${worst.usual.toFixed(0)} đ, trung vị tối đa ${PRICE_BASELINE_PRICES} hóa đơn trước) lên ${worst.now.toFixed(0)} đ; cảnh báo từ ${PRICE_RISE_PERCENT}%`,
     params: { item: worst.item, usual: worst.usual.toFixed(0), current: worst.now.toFixed(0), percent },
   };
 }

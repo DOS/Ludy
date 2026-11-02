@@ -35,7 +35,10 @@ describe('amount', () => {
   const usual = ['1000000', '1200000', '900000', '1100000', '1000000', '950000'];
 
   it('flags an amount three times the usual or a third of it, judged on the median of the last invoices', () => {
-    expect(amountCheck('4000000', usual)).toMatchObject({ id: 'anomaly_amount', status: 'warn', code: 'anomaly_amount.unusual', params: { total: '4000000', usual: '1000000', count: '6', direction: 'high' } });
+    expect(amountCheck('4000000', usual)).toMatchObject({ id: 'anomaly_amount', status: 'warn', code: 'anomaly_amount.unusual', params: { total: '4000000', usual: '1000000', count: '6', direction: 'high', ratio: '4.0', percent: '400' } });
+    // The sentence states the rule it applied.
+    expect(amountCheck('4000000', usual)?.message).toContain('cao gấp 4.0 lần mức thường');
+    expect(amountCheck('4000000', usual)?.message).toContain('cảnh báo từ 3 lần');
     expect(amountCheck('300000', usual)).toMatchObject({ params: { total: '300000', direction: 'low' } });
     expect(amountCheck('3000000', usual)?.params?.direction).toBe('high');
   });
