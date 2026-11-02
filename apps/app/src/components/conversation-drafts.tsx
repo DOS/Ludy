@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Vy's reply drafts and the saved replies in the conversation screens (CV8, #2310, plan docs/plan/conversations.md section 5.6). The draft is
+// The sales and customer-care coworker's reply drafts and the saved replies in the conversation screens (CV8, #2310, plan docs/plan/conversations.md section 5.6). The draft is
 // tainted text a model wrote from a customer's message: the screen says so, shows it beside the reply box, and a person takes it into the box,
-// edits it and sends it. Nothing is sent by Vy. Without a model, or when it gave none, the reply box works as it always did and says nothing
+// edits it and sends it. Nothing is sent by the coworker. Without a model, or when it gave none, the reply box works as it always did and says nothing
 // alarming. The saved replies are the org's own text, matched to the customer's words and offered next to the draft.
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -174,7 +174,7 @@ export function SavedRepliesManager({ canWrite }: { canWrite: boolean }) {
   );
 }
 
-// Whether Vy drafts when a new conversation arrives: every member sees the switch, owners and admins change it. A customer's message goes to the
+// Whether the coworker drafts when a new conversation arrives: every member sees the switch, owners and admins change it. A customer's message goes to the
 // deployment's AI endpoint for a draft, which the hint says.
 export function AutoDraftSetting({ isAdmin }: { isAdmin: boolean }) {
   const t = useTranslations('conversations');
