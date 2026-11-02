@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AiBudgetExhaustedError, metered, withAiScope, type InvoiceReader } from '@crove/agent';
+import { AiBudgetExhaustedError, metered, withAiScope, type AiMeter, type InvoiceReader } from '@crove/agent';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { WAITING_FOR_AI_BUDGET, createOrg, kernelCommands, kernelQueries, runAgentWake, upsertIdentity } from '@crove/kernel';
@@ -329,6 +329,41 @@ suite('the AI budget meter on PostgreSQL (#2382)', () => {
     expect(await ledger(o.orgId)).toHaveLength(spentBefore + 1);
     const after = await rt.query<Array<{ id: string; status: string }>>('kernel.files.recent', {}, { actor: asUser(o.owner), orgId: o.orgId });
     expect(after.find((f) => f.id === photo)?.status).not.toBe('waiting');
+  });
+
+  it('counts no pages for a read the budget stopped between the check and the call, so rechecks never add to the 24-hour cap', async () => {
+    const o = await org();
+    await setBudget(o, '0.0045');
+    await call(o.orgId);
+    const bytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 9, 9, 9]);
+    const sha256 = sha256Hex(bytes);
+    const storageKey = fileKey(o.orgId, sha256);
+    const generation = await store.put(storageKey, bytes);
+    const { fileId } = await rt.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'hd-race.png', contentType: 'image/png', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+    // The check before the read lets it through (the budget had room a moment ago); the call's own admission finds it spent.
+    const real = systemMeter(worker, { price: PRICE });
+    let asked = 0;
+    const racing: AiMeter = { admit: async (c) => (++asked === 1 ? undefined : real.admit(c)), record: (c, u) => real.record(c, u) };
+    let modelCalls = 0;
+    const reader: InvoiceReader = {
+      fromText: async () => null,
+      fromImage: async () => {
+        await metered('finance.invoice_extract', async () => {
+          modelCalls += 1;
+          return { usage };
+        });
+        return null;
+      },
+    };
+    const done = await extractAndPropose({ runtime: worker, store, extractor: reader, extract, today: () => '2026-10-13', meter: racing }, o.orgId, fileId);
+    expect(done).toEqual({ proposalId: null, deferred: expect.any(String) });
+    expect(modelCalls).toBe(0);
+    const pages = await admin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'extraction_pages'", [o.orgId])).rowCount);
+    expect(pages).toBe(0);
   });
 
   it('gives an org with no budget of its own the deployment default, never over an owner\'s', async () => {

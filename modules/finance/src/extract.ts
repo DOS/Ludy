@@ -541,7 +541,11 @@ export async function extractAndPropose(
     read = deps.meter ? await withAiScope({ orgId, meter: deps.meter }, () => readInvoice(deps, file, bytes, used)) : await readInvoice(deps, file, bytes, used);
   } catch (error) {
     // The budget ran out between the check and the call (a read in flight finishes, a new one does not start).
-    if (error instanceof AiBudgetExhaustedError) return waitForBudget(error.retryAt);
+    if (error instanceof AiBudgetExhaustedError) {
+      // The read never happened: its pages do not count, or every recheck would add to the 24-hour cap (#675).
+      used.pages = 0;
+      return waitForBudget(error.retryAt);
+    }
     throw error;
   } finally {
     // The pages count against the org's limits even when the job fails after the read and is retried. Best effort: a
