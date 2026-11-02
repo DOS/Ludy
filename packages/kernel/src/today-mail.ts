@@ -185,7 +185,7 @@ export const todayMailSend = defineCommand({
     const counts = await countsFor(ctx, roles);
     let mails = 0;
     let suppressed = 0;
-    let skipped = 0;
+    let unwritten = 0;
     for (const m of roles) {
       const email = emails.get(m.user_id);
       const c = counts.get(m.user_id);
@@ -216,12 +216,12 @@ export const todayMailSend = defineCommand({
       } catch (error) {
         await sql`ROLLBACK TO SAVEPOINT today_mail`.execute(ctx.trx);
         await sql`RELEASE SAVEPOINT today_mail`.execute(ctx.trx);
-        skipped += 1;
+        unwritten += 1;
         console.warn(`[today-mail] org ${ctx.orgId.slice(0, 8)}: a member's mail was skipped`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');
       }
     }
     // Counts only: no address, no member.
-    ctx.audit({ members: claimed.length, mails, suppressed, unwritten: skipped });
+    ctx.audit({ members: claimed.length, mails, suppressed, unwritten });
     return { state: 'sent', day: now.day, members: claimed.length, mails, suppressed };
   },
 });
