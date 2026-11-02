@@ -95,6 +95,11 @@ export interface CashVoucher {
   type: VoucherType;
   /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
+  /**
+   * The key of the number series' period the code was taken in (#1401): `2026` for a yearly reset (the default),
+   * `2026-10` for a monthly one, `-` for a series that never resets. PT00001 of 2026 and of 2027 are two vouchers.
+   */
+  numberPeriod: string;
   /** Voucher date, which is its journal entry's date. */
   date: string;
   /** The account the money moves on: 111x for a cash voucher, 112x for a bank voucher. */
@@ -298,15 +303,27 @@ export interface CashRow {
 }
 
 /**
- * Cash and bank vouchers keep Crove's own number behind this prefix (CRPT00001, CRPC00001, CRBC00001, CRBN00001): the
- * firm's MISA numbers its own vouchers PT00001, PC00001 ..., so the bare code could collide with one of them. Same
- * number on every export.
+ * Cash and bank vouchers keep Crove's own number behind this prefix: the firm's MISA numbers its own vouchers PT00001,
+ * PC00001 ..., so the bare code could collide with one of them. Same number on every export.
  */
 export const CASH_VOUCHER_PREFIX = 'CR';
 
+/**
+ * "Số chứng từ (*)" of a cash or bank voucher: `CR`, the two letters of the code, the digits of the number series' period
+ * (#2346), then the code's number: `CRBN202700001` for BN00001 of 2027 under a yearly reset, `CRBN20271000001` for
+ * October 2027 under a monthly one, `CRBN00001` for a series that never resets. A series restarts at 1 in each period,
+ * and MISA groups rows by this number, so two vouchers of one type from two periods must not share it. The period is in
+ * the number whatever range is exported, so a voucher keeps its number from one export to the next. At most 20
+ * characters for a number of up to 12 digits (10 under a monthly reset).
+ */
+export function cashVoucherNo(voucher: Pick<CashVoucher, 'code' | 'numberPeriod'>): string {
+  const period = voucher.numberPeriod.replace(/\D/g, '');
+  return `${CASH_VOUCHER_PREFIX}${voucher.code.slice(0, 2)}${period}${voucher.code.slice(2)}`;
+}
+
 /** One row per voucher line: the cash account on one side, the line's account on the other. */
 export function cashRows(voucher: CashVoucher): CashRow[] {
-  const voucherNo = `${CASH_VOUCHER_PREFIX}${voucher.code}`;
+  const voucherNo = cashVoucherNo(voucher);
   return voucher.lines.map((line) => ({ voucher, line, voucherNo }));
 }
 

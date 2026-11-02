@@ -12,6 +12,7 @@ import {
   allocateVat,
   buildMisaWorkbook,
   cashRows,
+  cashVoucherNo,
   goodsPurchaseRows,
   misaVatRate,
   misaVoucherNo,
@@ -705,6 +706,7 @@ function cashVoucher(overrides: Partial<CashVoucher> = {}): CashVoucher {
   return {
     type: 'cash_payment',
     code: 'PC00012',
+    numberPeriod: '2026',
     date: '2026-10-07',
     cashAccount: '1111',
     party: { name: 'Công ty TNHH ABC', taxCode: '0101234564', address: '1 Láng Hạ, Hà Nội' },
@@ -732,14 +734,14 @@ describe('MISA SME cash vouchers (#657)', () => {
 
   it('writes a phiếu chi as one row per line: Dr the line, Cr the cash account, under one voucher number', async () => {
     const rows = cashRows(cashVoucher());
-    expect(rows.map((r) => r.voucherNo)).toEqual(['CRPC00012', 'CRPC00012']);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRPC202600012', 'CRPC202600012']);
     const sheet = await readBack(MISA_SME_CASH_PAYMENT, rows);
     expect(sheet.rowCount).toBe(3);
     expect(rowValues(sheet, 2, PAYMENT_HEADERS)).toMatchObject({
       'Hiển thị trên sổ': null,
       'Ngày hạch toán (*)': new Date(Date.UTC(2026, 9, 7)),
       'Ngày chứng từ (*)': new Date(Date.UTC(2026, 9, 7)),
-      'Số chứng từ (*)': 'CRPC00012',
+      'Số chứng từ (*)': 'CRPC202600012',
       'Mã đối tượng': null,
       'Tên đối tượng': 'Công ty TNHH ABC',
       'Địa chỉ': '1 Láng Hạ, Hà Nội',
@@ -756,7 +758,7 @@ describe('MISA SME cash vouchers (#657)', () => {
       'Mã số thuế nhà cung cấp': null,
     });
     // A line without its own memo takes the voucher's reason; fractional amounts stay exact.
-    expect(rowValues(sheet, 3, PAYMENT_HEADERS)).toMatchObject({ 'Số chứng từ (*)': 'CRPC00012', 'Diễn giải': 'Trả tiền hóa đơn tháng 9', 'TK Nợ (*)': '6422', 'TK Có (*)': '1111', 'Số tiền': 35000.5 });
+    expect(rowValues(sheet, 3, PAYMENT_HEADERS)).toMatchObject({ 'Số chứng từ (*)': 'CRPC202600012', 'Diễn giải': 'Trả tiền hóa đơn tháng 9', 'TK Nợ (*)': '6422', 'TK Có (*)': '1111', 'Số tiền': 35000.5 });
   });
 
   it('writes a phiếu thu with the cash account debited, and a voucher with no party or person', async () => {
@@ -764,7 +766,7 @@ describe('MISA SME cash vouchers (#657)', () => {
     const sheet = await readBack(MISA_SME_CASH_RECEIPT, cashRows(receipt));
     expect(sheet.rowCount).toBe(2);
     expect(rowValues(sheet, 2, RECEIPT_HEADERS)).toMatchObject({
-      'Số chứng từ (*)': 'CRPT00003',
+      'Số chứng từ (*)': 'CRPT202600003',
       'Tên đối tượng': null,
       'Địa chỉ': null,
       'Lý do nộp': null,
@@ -777,8 +779,47 @@ describe('MISA SME cash vouchers (#657)', () => {
     });
   });
 
+  // #2346: a series restarts at 1 in every period, and MISA groups rows by voucher number.
+  it('numbers the same code of two years differently, and the same voucher alike on every export', async () => {
+    for (const [type, code] of [
+      ['cash_receipt', 'PT00001'],
+      ['cash_payment', 'PC00001'],
+      ['bank_credit', 'BC00001'],
+      ['bank_debit', 'BN00001'],
+    ] as const) {
+      const y2026 = cashVoucher({ type, code, numberPeriod: '2026', date: '2026-12-31' });
+      const y2027 = cashVoucher({ type, code, numberPeriod: '2027', date: '2027-01-02' });
+      const prefix = code.slice(0, 2);
+      expect(cashRows(y2026).map((r) => r.voucherNo)).toEqual([`CR${prefix}202600001`, `CR${prefix}202600001`]);
+      expect(cashRows(y2027).map((r) => r.voucherNo)).toEqual([`CR${prefix}202700001`, `CR${prefix}202700001`]);
+      // The number does not depend on what else the export holds.
+      expect(cashRows(y2027)[0]?.voucherNo).toBe(cashVoucherNo(y2027));
+    }
+    // A monthly series carries the month, a series that never resets keeps the bare number.
+    expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '2027-03' })).toBe('CRBN20270300007');
+    expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '-' })).toBe('CRBN00007');
+    expect(cashVoucherNo({ code: 'BN123456789012', numberPeriod: '2027' }).length).toBeLessThanOrEqual(20);
+  });
+
+  it.each([
+    ['cash_receipt', 'PT', MISA_SME_CASH_RECEIPT, RECEIPT_HEADERS],
+    ['cash_payment', 'PC', MISA_SME_CASH_PAYMENT, PAYMENT_HEADERS],
+    ['bank_credit', 'BC', MISA_SME_BANK_CREDIT, BANK_CREDIT_HEADERS],
+    ['bank_debit', 'BN', MISA_SME_BANK_DEBIT, BANK_DEBIT_HEADERS],
+  ] as const)('keeps the vouchers of two years apart in one %s file, each grouped under its own number', async (type, prefix, template, headers) => {
+    const rows = [
+      ...cashRows(cashVoucher({ type, code: `${prefix}00001`, numberPeriod: '2026', date: '2026-12-30' })),
+      ...cashRows(cashVoucher({ type, code: `${prefix}00001`, numberPeriod: '2027', date: '2027-01-04' })),
+    ];
+    const sheet = await readBack(template, rows);
+    expect(sheet.rowCount).toBe(5);
+    const numbers = [2, 3, 4, 5].map((row) => rowValues(sheet, row, headers)['Số chứng từ (*)']);
+    expect(numbers).toEqual([`CR${prefix}202600001`, `CR${prefix}202600001`, `CR${prefix}202700001`, `CR${prefix}202700001`]);
+    expect(new Set(numbers).size).toBe(2);
+  });
+
   it('keeps voucher numbers within 20 characters and formula-like text inert', async () => {
-    const rows = cashRows(cashVoucher({ code: 'PC1234567890123', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
+    const rows = cashRows(cashVoucher({ code: 'PC123456789012', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
     expect(rows[0]?.voucherNo.length).toBeLessThanOrEqual(20);
     const sheet = await readBack(MISA_SME_CASH_PAYMENT, rows);
     const values = rowValues(sheet, 2, PAYMENT_HEADERS);
@@ -894,14 +935,14 @@ describe('MISA SME bank vouchers (#657)', () => {
       ],
     });
     const rows = cashRows(credit);
-    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBC00004', 'CRBC00004']);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBC202600004', 'CRBC202600004']);
     const sheet = await readBack(MISA_SME_BANK_CREDIT, rows);
     expect(sheet.rowCount).toBe(3);
     expect(rowValues(sheet, 2, BANK_CREDIT_HEADERS)).toMatchObject({
       'Hiển thị trên sổ': null,
       'Ngày hạch toán (*)': new Date(Date.UTC(2026, 9, 7)),
       'Ngày chứng từ (*)': new Date(Date.UTC(2026, 9, 7)),
-      'Số chứng từ (*)': 'CRBC00004',
+      'Số chứng từ (*)': 'CRBC202600004',
       'Tên đối tượng': 'Công ty TNHH ABC',
       'Địa chỉ': '1 Láng Hạ, Hà Nội',
       'Nộp vào TK': null,
@@ -920,12 +961,12 @@ describe('MISA SME bank vouchers (#657)', () => {
   it('writes a báo Nợ with the bank account credited, the payee as Người lĩnh tiền and the VAT and invoice columns blank', async () => {
     const debit = cashVoucher({ type: 'bank_debit', code: 'BN00009', cashAccount: '1121.VCB' });
     const rows = cashRows(debit);
-    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBN00009', 'CRBN00009']);
+    expect(rows.map((r) => r.voucherNo)).toEqual(['CRBN202600009', 'CRBN202600009']);
     const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
     expect(sheet.rowCount).toBe(3);
     const first = rowValues(sheet, 2, BANK_DEBIT_HEADERS);
     expect(first).toMatchObject({
-      'Số chứng từ (*)': 'CRBN00009',
+      'Số chứng từ (*)': 'CRBN202600009',
       'Tên đối tượng': 'Công ty TNHH ABC',
       'Diễn giải nội dung thanh toán': 'Trả tiền hóa đơn tháng 9',
       'Người lĩnh tiền': 'Nguyễn Văn An',
@@ -942,7 +983,7 @@ describe('MISA SME bank vouchers (#657)', () => {
   });
 
   it('keeps voucher numbers within 20 characters, long text cut at the template limit, and formula-like text inert', async () => {
-    const rows = cashRows(cashVoucher({ type: 'bank_debit', code: 'BN1234567890123', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
+    const rows = cashRows(cashVoucher({ type: 'bank_debit', code: 'BN123456789012', description: '=HYPERLINK("http://x")', personName: 'x'.repeat(300) }));
     expect(rows[0]?.voucherNo.length).toBeLessThanOrEqual(20);
     const sheet = await readBack(MISA_SME_BANK_DEBIT, rows);
     const values = rowValues(sheet, 2, BANK_DEBIT_HEADERS);

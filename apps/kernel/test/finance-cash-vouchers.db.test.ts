@@ -15,7 +15,7 @@ import type { ExtractClient } from '@crove/extract-contract';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { extractAndPropose, financeCommands, financeQueries } from '@crove/mod-finance';
+import { cashRows, extractAndPropose, financeCommands, financeQueries, type CashVoucher } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
@@ -755,5 +755,33 @@ suite('cash and bank vouchers (#327)', () => {
     for (const type of ['bank_credit', 'bank_debit']) {
       expect(await runtime.query<any[]>('finance.vouchers.cash', { type }, { actor: asUser(outsider.userId), orgId: other.orgId })).toEqual([]);
     }
+  });
+
+  // #2346: the series reset every year (#1401), so a range over New Year holds two vouchers with the same code. MISA groups
+  // the rows of its import by voucher number, so the two must not share one.
+  it('exports a range over two years with a different voucher number for each year (#2346)', async () => {
+    const posted = async (input: Record<string, unknown>) => {
+      const asked = await ask(member, input);
+      expect(asked.status).toBe(200);
+      expect((await approve(owner, String(asked.body.proposalId))).status).toBe(200);
+    };
+    // The test above posted a báo Có of 2026 (its number 1 of that year); the first of 2027 is number 1 again.
+    await posted({ type: 'bank_credit', date: '2027-01-04', cashAccount: '1121', partyId: customer, personName: 'Trần Thị Bình', description: 'Khách chuyển khoản tháng 1', lines: [{ account: '131', amount: '700000', memo: 'HĐ 91' }] });
+    const asViewer = { actor: asUser(viewer.userId), orgId: org.orgId };
+    const vouchers = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { from: '2026-12-01', to: '2027-01-31', type: 'bank_credit' }, asViewer);
+    expect(vouchers.map((v) => [v.date, v.numberPeriod])).toEqual([
+      ['2026-12-02', '2026'],
+      ['2027-01-04', '2027'],
+    ]);
+    // The case the issue describes: one code in two years.
+    expect(vouchers[0]?.code).toBe(vouchers[1]?.code);
+    const rows = vouchers.flatMap(cashRows);
+    expect(rows.map((r) => r.voucherNo)).toEqual([`CR${vouchers[0]?.code.slice(0, 2)}2026${vouchers[0]?.code.slice(2)}`, `CR${vouchers[1]?.code.slice(0, 2)}2027${vouchers[1]?.code.slice(2)}`]);
+    expect(new Set(rows.map((r) => r.voucherNo)).size).toBe(2);
+    // The download of that range works, and a voucher keeps its number when the range shrinks to its own year.
+    const response = await app.request('/api/export/misa/bank-receipts.xlsx?from=2026-12-01&to=2027-01-31', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
+    expect(response.status).toBe(200);
+    const only2027 = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { from: '2027-01-01', to: '2027-01-31', type: 'bank_credit' }, asViewer);
+    expect(only2027.flatMap(cashRows).map((r) => r.voucherNo)).toEqual([rows[1]?.voucherNo]);
   });
 });
