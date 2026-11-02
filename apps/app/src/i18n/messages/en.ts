@@ -186,6 +186,7 @@ export const en = {
     proposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
     proposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
     proposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
+    proposalsMore: '{count, plural, one {# more document} other {# more documents}} from other vendors waiting for your approval',
     checksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
     checksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
     originalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',

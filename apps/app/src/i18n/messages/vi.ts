@@ -184,6 +184,7 @@ export const vi = {
     proposalsVendor: '{count, plural, other {# hóa đơn}} của {party} chờ bạn duyệt',
     proposalsCustomer: '{count, plural, other {# hóa đơn}} bán cho {party} chờ bạn duyệt',
     proposalsOther: '{count, plural, other {# chứng từ}} chờ bạn duyệt',
+    proposalsMore: '{count, plural, other {# chứng từ}} khác của các nhà cung cấp còn lại chờ bạn duyệt',
     checksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
     checksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
     originalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',

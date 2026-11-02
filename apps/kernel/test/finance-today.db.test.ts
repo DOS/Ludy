@@ -298,6 +298,65 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     await admin((c) => c.query(`UPDATE crove_kernel.tenant SET vat_filing_period = NULL WHERE org_id = $1`, [orgId]));
   });
 
+  // A pending purchase proposal written directly, with the payload fields finance.today reads.
+  const insertPending = (parties: { seller: string; direction?: string }, invoice: Record<string, unknown>, eligible: string[], authors: string[]) =>
+    admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+         VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'pending', 'HĐ', $2, 1, $3::uuid[], $4, $5)`,
+        [
+          orgId,
+          JSON.stringify({ seller: { name: parties.seller }, buyer: { name: 'Công ty có việc hôm nay' }, ...(parties.direction ? { direction: parties.direction } : {}), invoice, checks: [] }),
+          eligible,
+          JSON.stringify(authors.map((id) => ({ type: 'user', id }))),
+          defaultEntity,
+        ],
+      ),
+    );
+
+  it('never adds two currencies: a foreign invoice booked in VND counts as VND, one waiting for its rate stays in its own', async () => {
+    await insertPending({ seller: 'Foreign Co' }, { total: '24500000', currency: 'USD', foreign: { currency: 'USD', rate: '24500', source: 'entered', subtotal: '900', vatTotal: '100', total: '1000' } }, [users.owner], [users.admin]);
+    await insertPending({ seller: 'Foreign Co' }, { total: '2000000', currency: 'VND' }, [users.owner], [users.admin]);
+    await insertPending({ seller: 'Foreign Co' }, { total: '500', currency: 'USD' }, [users.owner], [users.admin]);
+    await insertPending({ seller: 'Foreign Co' }, { total: '250', currency: 'USD' }, [users.owner], [users.admin]);
+    const groups = (await today(users.owner)).filter((i) => i.title.params?.party === 'Foreign Co');
+    expect(groups).toHaveLength(2);
+    const vnd = groups.find((g) => g.currency === undefined);
+    const usd = groups.find((g) => g.currency === 'USD');
+    // The booked one and the plain VND one together; the two unrated USD ones apart, in dollars.
+    expect(vnd).toMatchObject({ count: 2 });
+    expect(Number(vnd?.amount)).toBe(26500000);
+    expect(usd).toMatchObject({ count: 2, currency: 'USD' });
+    expect(Number(usd?.amount)).toBe(750);
+  });
+
+  it('groups a vendor once whatever its letter case, and shows no total for a voucher', async () => {
+    await insertPending({ seller: 'ACME Trading' }, { total: '1000000', currency: 'VND' }, [users.owner], [users.admin]);
+    await insertPending({ seller: 'Acme Trading' }, { total: '2000000', currency: 'VND' }, [users.owner], [users.admin]);
+    await admin((c) =>
+      c.query(
+        `INSERT INTO crove_kernel.proposal (org_id, kind, command, status, title, payload, revision, eligible_approvers, authors, legal_entity_id)
+         VALUES ($1, 'finance.cash_voucher', 'finance.voucher.record', 'pending', 'Phiếu chi', '{"total":"500000","type":"cash_payment"}', 1, ARRAY[$2::uuid], $3, $4)`,
+        [orgId, users.owner, JSON.stringify([{ type: 'user', id: users.admin }]), defaultEntity],
+      ),
+    );
+    const items = (await today(users.owner)).filter((i) => i.kind === 'proposal');
+    const acme = items.filter((i) => (i.title.params?.party as string | undefined)?.toLowerCase() === 'acme trading');
+    expect(acme).toHaveLength(1);
+    expect(acme[0]).toMatchObject({ count: 2 });
+    expect(Number(acme[0]?.amount)).toBe(3000000);
+    const voucher = items.find((i) => i.title.key === 'financeToday.proposalsOther');
+    expect(voucher).toMatchObject({ count: 1 });
+    expect(voucher?.amount).toBeUndefined();
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+  });
+
+  it('lets a writer of every approver decide only as an owner: an admin among the writers is not shown it', async () => {
+    await insertPending({ seller: 'Four Eyes Co' }, { total: '100', currency: 'VND' }, [users.owner, users.admin], [users.owner, users.admin]);
+    expect((await today(users.owner)).some((i) => i.title.params?.party === 'Four Eyes Co')).toBe(true);
+    expect((await today(users.admin)).some((i) => i.title.params?.party === 'Four Eyes Co')).toBe(false);
+  });
+
   it('reads 1,000 pending proposals in one grouped pass', async () => {
     await admin((c) =>
       c.query(
@@ -313,9 +372,16 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     const items = await today(users.owner);
     const elapsed = Date.now() - started;
     const groups = items.filter((i) => i.kind === 'proposal');
-    // Listed groups are capped; the 40 vendors of the load are among them, and the counts add up to what the groups hold.
-    expect(groups.length).toBeLessThanOrEqual(30);
+    // The listed groups are capped at 30 and one more item says how many proposals the rest hold: every proposal waiting
+    // for the owner is counted once, in a group or in the rest.
+    const rest = groups.find((g) => g.id === 'proposals-more');
+    expect(groups.length - 1).toBe(30);
+    expect(rest?.count).toBeGreaterThan(0);
     expect(groups.filter((g) => g.title.params?.party?.toString().startsWith('Nhà cung cấp ')).every((g) => g.count === 25)).toBe(true);
-    expect(elapsed).toBeLessThan(3000);
+    const waiting = await admin(async (c) => Number((await c.query<{ n: string }>(`SELECT count(*) AS n FROM crove_kernel.proposal WHERE org_id = $1 AND status = 'pending' AND command LIKE 'finance.%' AND eligible_approvers @> ARRAY[$2::uuid]`, [orgId, users.owner])).rows[0]?.n));
+    // The owner wrote none of these (the admin did), so all wait for the owner except those the owner wrote with the others.
+    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeLessThanOrEqual(waiting);
+    expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
+    expect(elapsed).toBeLessThan(5000);
   });
 });

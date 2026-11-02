@@ -16,7 +16,7 @@
 // the acting screen opens in the right books.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { taxDuesOf } from '@crove/kernel';
+import { ORIGINAL_FLAGGED, taxDuesOf } from '@crove/kernel';
 import type { VatFilingPeriod } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
@@ -54,6 +54,7 @@ interface GroupRow {
   n: string;
   amount: string | null;
   first_id: string;
+  waiting: string;
 }
 
 interface FlagRow {
@@ -92,40 +93,51 @@ export const financeToday = defineQuery({
 
 // The finance proposals waiting for the caller's own decision, one item per party, direction and currency in each
 // entity, with the exact total of their invoices. "Waiting for me": the caller is in the proposal's approver snapshot,
-// and either did not write it or every approver in the snapshot did (the four-eyes rule then lets the owner decide,
-// P10). A total in a foreign currency stays in it: never converted.
+// and either did not write it or, when every approver in the snapshot wrote it, is an owner (the four-eyes rule then lets
+// only the owner decide, P10). Money: a purchase invoice's total in its own currency, never converted. A foreign-currency
+// invoice booked in VND (#918) has its amounts in VND already, so it counts as VND; one still waiting for its rate has
+// the invoice's own amounts, so it is a group of its own currency. Vouchers and other proposals have no invoice total
+// and show no amount. A group list is capped, and the rest is one more item that says how many.
 async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Promise<TodayItem[]> {
   const author = (who: ReturnType<typeof sql>) => sql`p.authors @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('type', 'user', 'id', ${who}))`;
+  const everyApproverWrote = sql`NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)})`;
   const { rows } = await sql<GroupRow>`
-    SELECT p.legal_entity_id::text AS entity,
-           p.kind,
-           CASE WHEN p.kind = 'finance.purchase' THEN coalesce(p.payload ->> 'direction', '') ELSE '' END AS direction,
-           CASE WHEN p.kind = 'finance.purchase'
-                THEN coalesce(nullif(pg_catalog.btrim(CASE WHEN p.payload ->> 'direction' = 'sale' THEN p.payload #>> '{buyer,name}' ELSE p.payload #>> '{seller,name}' END), ''), '')
-                ELSE '' END AS party,
-           CASE WHEN p.kind = 'finance.purchase' THEN coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') ELSE 'VND' END AS currency,
+    WITH w AS (
+      SELECT p.legal_entity_id::text AS entity,
+             p.kind,
+             p.id,
+             p.created_at,
+             CASE WHEN p.kind = 'finance.purchase' THEN coalesce(p.payload ->> 'direction', '') ELSE '' END AS direction,
+             CASE WHEN p.kind = 'finance.purchase'
+                  THEN coalesce(nullif(pg_catalog.btrim(CASE WHEN p.payload ->> 'direction' = 'sale' THEN p.payload #>> '{buyer,name}' ELSE p.payload #>> '{seller,name}' END), ''), '')
+                  ELSE '' END AS party,
+             CASE WHEN p.kind <> 'finance.purchase' OR (p.payload #> '{invoice,foreign}') IS NOT NULL THEN 'VND'
+                  ELSE coalesce(nullif(p.payload #>> '{invoice,currency}', ''), 'VND') END AS currency,
+             CASE WHEN p.kind = 'finance.purchase' AND (p.payload #>> '{invoice,total}') ~ ${MONEY} THEN (p.payload #>> '{invoice,total}')::numeric END AS total
+      FROM crove_kernel.proposal p
+      WHERE p.org_id = ${ctx.orgId}
+        AND p.status = 'pending'
+        AND p.command LIKE 'finance.%'
+        AND p.eligible_approvers @> ARRAY[${userId}::uuid]
+        AND (NOT ${author(sql`${userId}::text`)} OR ${ctx.role === 'owner' ? everyApproverWrote : sql`false`})
+    )
+    SELECT entity, kind, direction, pg_catalog.min(party) AS party, currency,
            pg_catalog.count(*)::text AS n,
-           pg_catalog.sum(CASE WHEN coalesce(p.payload #>> '{invoice,total}', p.payload ->> 'total') ~ ${MONEY}
-                               THEN coalesce(p.payload #>> '{invoice,total}', p.payload ->> 'total')::numeric END)::text AS amount,
-           (pg_catalog.array_agg(p.id ORDER BY p.created_at, p.id))[1]::text AS first_id
-    FROM crove_kernel.proposal p
-    WHERE p.org_id = ${ctx.orgId}
-      AND p.status = 'pending'
-      AND p.command LIKE 'finance.%'
-      AND p.eligible_approvers @> ARRAY[${userId}::uuid]
-      AND (NOT ${author(sql`${userId}::text`)}
-           OR NOT EXISTS (SELECT 1 FROM pg_catalog.unnest(p.eligible_approvers) e(u) WHERE NOT ${author(sql`e.u::text`)}))
-    GROUP BY 1, 2, 3, 4, 5
-    ORDER BY pg_catalog.min(p.created_at), first_id
+           pg_catalog.sum(total)::text AS amount,
+           (pg_catalog.array_agg(id ORDER BY created_at, id))[1]::text AS first_id,
+           pg_catalog.sum(pg_catalog.count(*)) OVER ()::text AS waiting
+    FROM w
+    GROUP BY entity, kind, direction, pg_catalog.lower(party), currency
+    ORDER BY pg_catalog.min(created_at), first_id
     LIMIT ${TODAY_PROPOSAL_GROUPS_MAX}`.execute(ctx.trx);
-  return rows.map((r) => {
+  const items = rows.map((r): TodayItem => {
     const count = Number(r.n);
     const sale = r.direction === 'sale';
     const named = r.party !== '';
     return {
-      kind: 'proposal' as const,
-      app: 'finance' as const,
-      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${named ? r.party.toLowerCase() : ''}`.slice(0, 200),
+      kind: 'proposal',
+      app: 'finance',
+      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${r.party.toLowerCase()}`.slice(0, 200),
       title: named ? { key: sale ? 'financeToday.proposalsCustomer' : 'financeToday.proposalsVendor', params: { count, party: r.party } } : { key: 'financeToday.proposalsOther', params: { count } },
       count,
       ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency } : {}) } : {}),
@@ -133,6 +145,12 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
       href: count === 1 ? to(`/inbox/${r.first_id}`, r.entity) : to('/inbox', r.entity),
     };
   });
+  const waiting = Number(rows[0]?.waiting ?? 0);
+  const listed = items.reduce((n, i) => n + (i.count ?? 0), 0);
+  if (waiting > listed) {
+    items.push({ kind: 'proposal', app: 'finance', id: 'proposals-more', title: { key: 'financeToday.proposalsMore', params: { count: waiting - listed } }, count: waiting - listed, href: '/inbox' });
+  }
+  return items;
 }
 
 // Pending finance proposals with a failed check (block) or a warning (warn), by entity: what to fix before approving.
@@ -167,7 +185,7 @@ async function originalItems(ctx: QueryContext): Promise<TodayItem[]> {
   }
   const notices = await ctx.query<{ items: Array<{ kind: string; subjectId: string | null; read: boolean }> }>('kernel.notification.list', {});
   if (notices.status === 'ok') {
-    const flagged = notices.value.items.filter((n) => n.kind === 'kernel.original_flagged' && !n.read);
+    const flagged = notices.value.items.filter((n) => n.kind === ORIGINAL_FLAGGED && !n.read);
     const only = flagged.length === 1 ? flagged[0]?.subjectId : null;
     if (flagged.length > 0) {
       items.push({ kind: 'flag', app: 'finance', id: 'originals-flagged', title: { key: 'financeToday.originalsFlagged', params: { count: flagged.length } }, count: flagged.length, severity: 'warn', href: only ? `/inbox/${only}` : '/inbox' });
