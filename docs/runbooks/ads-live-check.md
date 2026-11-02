@@ -47,7 +47,7 @@ In the Meta app (developers.facebook.com, the app's dashboard): Facebook Login, 
 
 In the same app, Settings, Advanced, Security: turn on **"Require App Secret"**. Ludy sends the proof of the app secret (`appsecret_proof`) with every Graph request it makes, so a leaked token alone cannot call the API once this is on; with it off, the proof is sent but not required. **[CHECK]** after turning it on, connecting (step 4) still works; if Meta then refuses, record the error.
 
-The connection also **refuses a token that holds `ads_management` or `business_management`** (a person who granted them to this app before): the screen says so and connects nothing. Pages permissions (`pages_*`, `publish_*`) are accepted, recorded on the connection and shown on the Ads screen as permissions beyond reading reports; a separate Meta app for ads avoids both (step 2).
+While running ads is off, the connection also **refuses a token that holds `ads_management` or `business_management`** (a person who granted them to this app before): the screen says so and connects nothing. While running ads is on, the owner's reading connection accepts such a token and records the permission (step 13). Pages permissions (`pages_*`, `publish_*`) are accepted, recorded on the connection and shown on the Ads screen as permissions beyond reading reports; a separate Meta app for ads avoids both (step 2).
 
 ### 2. Give the server the app **[PERSON]**
 
