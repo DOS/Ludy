@@ -21,6 +21,7 @@ import type { MemberRole } from '@crove/db';
 import {
   ADS_ACCOUNT_ENABLE_COMMAND,
   ADS_ACCOUNT_ENABLE_KIND,
+  ADS_CAMPAIGN_LAUNCH_KIND,
   ADS_CAP_SET_COMMAND,
   ADS_CAP_SET_KIND,
   ADS_LAUNCHES_UNBLOCK_COMMAND,
@@ -30,6 +31,7 @@ import {
   zAdsAccountEnablePayload,
   zAdsCapLower,
   zAdsCapRequest,
+  zAdsCampaignLaunchPayload,
   zAdsCapSetPayload,
   zAdsLaunchesUnblockPayload,
   zAdsWriteEnablePayload,
@@ -45,8 +47,8 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
 const notFound = () => new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo này');
-const writeOff = () => new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
-const onlyApproved = () => new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
+export const writeOff = () => new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
+export const onlyApproved = () => new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
 
 interface Setting {
   id: string;
@@ -57,7 +59,7 @@ interface Setting {
 // The org's row of switches, made on first use and locked for the rest of the command, so two commands' changes queue. The
 // database keeps it to one row per org (UNIQUE (org_id)); the advisory lock makes the first use of two commands at once wait for
 // each other instead of one of them failing on the key.
-async function lockedSetting(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<Setting> {
+export async function lockedSetting(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promise<Setting> {
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
   const read = () =>
     ctx.trx.selectFrom('crove_ads.ad_org_setting').select(['id', 'write_enabled', 'launches_blocked']).where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forUpdate().executeTakeFirst();
@@ -70,7 +72,7 @@ async function lockedSetting(ctx: Pick<CommandContext, 'trx' | 'orgId'>): Promis
 // The org's switches as they stand, without making the row or locking it (the preparers only look).
 // `updated_at_text` is the moment of the last change of any switch, as text with its microseconds: a request to open launches
 // again carries it, and the approval refuses when the switches changed since (a stop in between is not undone).
-const currentSetting = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) =>
+export const currentSetting = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) =>
   ctx.trx
     .selectFrom('crove_ads.ad_org_setting')
     .select(['write_enabled', 'launches_blocked', sql<string>`updated_at::text`.as('updated_at_text')])
@@ -81,7 +83,7 @@ const currentSetting = (ctx: Pick<CommandContext, 'trx' | 'orgId'>) =>
 
 // One question at a time: a request is refused while a pending proposal of the same command (and, where the change names a
 // target, for the same target: an account, or a cap's scope, account and period) waits in the Inbox.
-async function refuseOpenRequest(ctx: Pick<CommandContext, 'trx' | 'orgId'>, command: string, match: Record<string, string> | null): Promise<void> {
+export async function refuseOpenRequest(ctx: Pick<CommandContext, 'trx' | 'orgId'>, command: string, match: Record<string, string> | null): Promise<void> {
   // The org's lock, held to the end of the request, which inserts the proposal: two identical requests at once queue here, so
   // the second sees the first's.
   await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads.setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
@@ -472,12 +474,16 @@ function changeOf(kind: string, raw: unknown): AdsChange | null {
     }
     case ADS_LAUNCHES_UNBLOCK_KIND:
       return zAdsLaunchesUnblockPayload.safeParse(raw).success ? { change: 'launches_unblock' } : null;
+    case ADS_CAMPAIGN_LAUNCH_KIND: {
+      const p = zAdsCampaignLaunchPayload.safeParse(raw);
+      return p.success ? { change: 'campaign_launch', draftId: p.data.draftId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, amount: p.data.amount, currency: p.data.currency, days: p.data.days, plan: p.data.plan } : null;
+    }
     default:
       return null;
   }
 }
 
-const ADS_KINDS = [ADS_WRITE_ENABLE_KIND, ADS_ACCOUNT_ENABLE_KIND, ADS_CAP_SET_KIND, ADS_LAUNCHES_UNBLOCK_KIND];
+const ADS_KINDS = [ADS_WRITE_ENABLE_KIND, ADS_ACCOUNT_ENABLE_KIND, ADS_CAP_SET_KIND, ADS_LAUNCHES_UNBLOCK_KIND, ADS_CAMPAIGN_LAUNCH_KIND];
 
 // What one Inbox item of an ads kind changes (the approval card shows it). Another org's id and a kind that is not an ads one
 // read as nothing.
