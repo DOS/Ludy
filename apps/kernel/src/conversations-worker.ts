@@ -15,7 +15,10 @@ import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type Conv
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { AttachmentSource, HideWork, HistoryWork, ProfileWork, ReplyWork } from '@crove/kernel';
+import type { AiUsage, ConversationWriter, ReplyDraftResult } from '@crove/agent';
+import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
+import { aiCost } from '@crove/mod-finance';
+import type { DraftBudget } from './ai-draft-limit.ts';
 import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
@@ -524,4 +527,117 @@ export async function runConversationDeletions(deps: { runtime: Runtime; workerD
     }
   }
   return completed;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Vy's drafts (CV8, #2310). The relay asks crove_kernel.conversation_draft_due which new conversations to draft for, and hands each through
+// kernel.conversation.draft_enqueue (a row requested and the event the draft queue takes, ids only); a member's "Vy soạn" makes the same event. The job
+// reads the end of the thread (customer text: tainted), calls the model in packages/agent and records the answer as a system command, so the draft is the
+// system's text, always tainted, and no org-chart agent writes anything. Nothing the customer or Vy wrote is logged or put in a job: ids and codes only.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type ConversationDraftJob = { orgId: string; draftId: string; conversationId: string };
+
+export interface DraftDeps {
+  runtime: Runtime;
+  writer: Pick<ConversationWriter, 'draft'>;
+  // The org's daily limits and the model's price (the extraction's): over the AI cost limit a draft is not asked for.
+  limits?: UsageLimits | undefined;
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+  // The existing per-minute budget of AI drafting (ai-draft-limit.ts): a model call is made only when it allows one for the org; no counter of this job's own.
+  budget?: DraftBudget | undefined;
+}
+
+// Half of a decimal amount ("20" is "10", "0.000003" is "0.000002"), by integer arithmetic on six decimals: an amount of money is never a JS number.
+export function halfOf(amount: string): string {
+  const [whole = '0', fraction = ''] = amount.split('.');
+  const micro = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0').slice(0, 6));
+  const half = micro / 2n;
+  return `${half / 1_000_000n}.${String(half % 1_000_000n).padStart(6, '0')}`;
+}
+
+// Writes one requested draft: what became of it, as a short word for the log ('written', 'none', 'limit', 'error', or 'gone' when the draft was decided
+// or went stale while the job waited). A failure of the model call, a refusal and a draft the checks refused leave no draft (the person writes the reply
+// or asks again): they are not retried, so a failing endpoint costs one call per message, not a loop.
+export async function runConversationDraft(deps: DraftDeps, job: ConversationDraftJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const none = (code: string) => deps.runtime.execute('kernel.conversation.draft_record', { outcome: 'none', draftId: job.draftId, code }, options);
+  const source = await deps.runtime.query<DraftSource | null>('kernel.conversation.draft_source', { draftId: job.draftId }, options);
+  if (!source) return 'gone';
+  if (deps.limits) {
+    // Drafts stop at half the org's daily AI cost limit, so a customer who writes a lot cannot use up what the org's invoice reading needs.
+    const over = await deps.runtime.query<{ metric: string } | null>('kernel.usage.over', { metrics: ['ai_cost'], limits: { ai_cost: halfOf(deps.limits.ai_cost) } }, options);
+    if (over) {
+      await none('AI_LIMIT');
+      return 'limit';
+    }
+  }
+  // The org's per-minute budget of AI drafts (a draft a member asked for was already rationed per member by the API): over it, no draft now, and the
+  // person can ask again. The ticket is per draft, so the per-member part never refuses an automatic draft.
+  const ticket = deps.budget?.take(job.orgId, `vy:${job.draftId}`);
+  if (ticket && !ticket.allowed) {
+    await none('RATE_LIMITED');
+    return 'rate';
+  }
+  const used: AiUsage[] = [];
+  let result: ReplyDraftResult | null = null;
+  try {
+    result = await deps.writer.draft(
+      { messages: source.messages, customerName: source.customerName, language: 'vi', maxChars: source.maxChars, savedReplies: source.savedReplies, orgName: source.orgName },
+      (usage) => used.push(usage),
+    );
+  } catch {
+    // The model, the endpoint or the network failed: nothing of the error (it may quote the prompt) goes to the log.
+  } finally {
+    // What the call used counts against the org's AI cost limit even when it failed after answering. Best effort.
+    const cost = aiCost(used, deps.aiPrice);
+    ticket?.release();
+    if (/[1-9]/.test(cost)) await deps.runtime.execute('kernel.usage.record', { entries: [{ metric: 'ai_cost', amount: cost }] }, options).catch(() => undefined);
+  }
+  if (!result) {
+    await none('AI_ERROR');
+    return 'error';
+  }
+  if (result.kind === 'none') {
+    await none(result.code);
+    return 'none';
+  }
+  const done = await deps.runtime.execute<{ recorded: boolean }>('kernel.conversation.draft_record', { outcome: 'written', draftId: job.draftId, body: result.body }, options);
+  return done.recorded ? 'written' : 'gone';
+}
+
+// A draft asked for where this worker has no model (no AI endpoint is configured): settled at once as none, so the thread shows no waiting draft and
+// nothing stays requested with no job.
+export async function failUndraftable(runtime: Runtime, job: ConversationDraftJob): Promise<void> {
+  await runtime.execute('kernel.conversation.draft_record', { outcome: 'none', draftId: job.draftId, code: 'AI_OFF' }, { actor: SYSTEM, orgId: job.orgId });
+}
+
+// Drafts that outlived their time (crove_kernel.conversation_draft_sweep, the worker login's): a request the job never answered is settled after 15
+// minutes, and a live draft nobody opened loses its text after 7 days. The relay runs it whether or not a model is configured: the text of a draft is
+// customer-derived, and it must not outlive its week in a deployment that switched the model off (ADR-0041). Not more often than every ten seconds.
+export async function sweepConversationDrafts(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<{ settled: number; expired: number }> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastDraftSweep < DRAFT_DUE_MS) return { settled: 0, expired: 0 };
+  lastDraftSweep = now;
+  const { rows } = await sql<{ settled: number; expired: number }>`SELECT settled, expired FROM crove_kernel.conversation_draft_sweep()`.execute(deps.workerDb);
+  return rows[0] ?? { settled: 0, expired: 0 };
+}
+
+// The new conversations to draft for (crove_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
+// ten seconds: each costs a model call.
+const DRAFT_DUE_MS = 10_000;
+let lastDraftSweep = 0;
+const DRAFT_BATCH = 5;
+let lastDraftDue = 0;
+export async function requestDueConversationDrafts(deps: { runtime: Runtime; workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastDraftDue < DRAFT_DUE_MS) return 0;
+  lastDraftDue = now;
+  const { rows } = await sql<{ org_id: string; conversation_id: string }>`SELECT org_id, conversation_id FROM crove_kernel.conversation_draft_due(${DRAFT_BATCH}::int)`.execute(deps.workerDb);
+  let queued = 0;
+  for (const row of rows) {
+    const result = await deps.runtime.execute<{ queued: boolean }>('kernel.conversation.draft_enqueue', { conversationId: row.conversation_id }, { actor: SYSTEM, orgId: row.org_id });
+    if (result.queued) queued++;
+  }
+  return queued;
 }
