@@ -1225,6 +1225,9 @@ export interface KernelConversationTable {
   resolved_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  intent: string | null;
+  intent_set_by: string | null;
+  intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.currency */
