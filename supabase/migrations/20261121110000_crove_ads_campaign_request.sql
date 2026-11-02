@@ -86,8 +86,9 @@ BEGIN
       RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a request is born waiting';
     END IF;
     NEW.requested_by := COALESCE(v_user, NEW.requested_by);
-    -- Whoever writes it, it is in the name of a member of the org (a member's own id is stamped above; the system's must name one).
-    IF v_user IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = NEW.org_id AND m.user_id = NEW.requested_by) THEN
+    -- In the name of a member of the org: a member's own id is stamped above, and the system's insert must name one (the database owner's own statement
+    -- has no context and no org to check against, so it is held only to being born waiting).
+    IF v_actor = 'system' AND NOT EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = NEW.org_id AND m.user_id = NEW.requested_by) THEN
       RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a request is made in the name of a member of the org';
     END IF;
     NEW.requested_at := pg_catalog.clock_timestamp();
