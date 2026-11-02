@@ -8,8 +8,8 @@ import { useTranslations } from 'use-intl';
 import { Card } from '@crove/ui/components/card';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeText } from '../lib/ads-change.ts';
-import { errorMessage, orpc } from '../lib/api.ts';
-import { CardSkeleton, ErrorText } from './ui.tsx';
+import { orpc } from '../lib/api.ts';
+import { CardSkeleton } from './ui.tsx';
 
 export function AdsProposalCard({ id, title, slug }: { id: string; title: string; slug: string }) {
   const t = useTranslations('inboxDetail');
@@ -23,11 +23,6 @@ export function AdsProposalCard({ id, title, slug }: { id: string; title: string
       <p className="text-sm font-medium text-muted-foreground">{t('adsChange')}</p>
       {view.isLoading ? (
         <CardSkeleton />
-      ) : view.error ? (
-        <>
-          <ErrorText>{errorMessage(view.error)}</ErrorText>
-          <p className="text-sm text-foreground">{title}</p>
-        </>
       ) : text ? (
         <div className="space-y-1">
           <p className="text-base font-semibold text-foreground">{text.title}</p>

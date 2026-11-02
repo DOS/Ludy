@@ -1751,9 +1751,10 @@ export function createRpcHandler(
       reject: os.inbox.reject.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.proposal.reject', input, { actor, orgId })),
       ),
-      // Every proposal it makes is a finance proposal, like inbox.request.
+      // Asking again for an expired proposal: a finance one (the books' module is on wherever one exists) or an Ads one (#2294;
+      // Ads depends on the kernel alone, so it can run without Finance).
       resubmit: os.inbox.resubmit.handler(({ context, input }) =>
-        inFinance(context, (orgId, actor) => {
+        inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('kernel.proposal.resubmit', rest, { actor, orgId, idempotencyKey });
         }),

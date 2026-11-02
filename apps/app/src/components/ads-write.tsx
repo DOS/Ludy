@@ -250,16 +250,19 @@ export function CapForm({
   caps: readonly AdsCapView[];
   pending: readonly Pending[];
   orgCurrency: string;
-  initial?: { mode?: CapMode; scope?: (typeof ADS_CAP_SCOPES)[number]; amount?: string };
+  initial?: { mode?: CapMode; scope?: (typeof ADS_CAP_SCOPES)[number]; period?: (typeof ADS_CAP_PERIODS)[number]; amount?: string };
 }) {
   const t = useTranslations('ads.write');
   const f = useFormat();
   const [mode, setMode] = useState<CapMode>(initial.mode ?? 'raise');
   const [scope, setScope] = useState<(typeof ADS_CAP_SCOPES)[number]>(initial.scope ?? 'org');
   const [adAccountId, setAdAccountId] = useState('');
-  const [period, setPeriod] = useState<(typeof ADS_CAP_PERIODS)[number]>('daily');
+  const [period, setPeriod] = useState<(typeof ADS_CAP_PERIODS)[number]>(initial.period ?? 'daily');
   const [amount, setAmount] = useState(initial.amount ?? '');
-  const [orgCurrencyInput, setOrgCurrencyInput] = useState(orgCurrency);
+  // The currency of an org cap starts from the org cap of the period chosen (each period's cap has its own currency), else from
+  // `orgCurrency`; whatever the owner types stands until the form is left.
+  const [orgCurrencyTyped, setOrgCurrencyTyped] = useState<string | null>(null);
+  const orgCurrencyInput = orgCurrencyTyped ?? caps.find((c) => c.scope === 'org' && c.period === period)?.currency ?? orgCurrency;
   const lowering = owner && mode === 'lower';
   // To raise, an account needs a known currency; to lower, any account (the cap in force has its own).
   const choosable = lowering ? accounts : accounts.filter((a) => a.currency !== null);
@@ -347,7 +350,7 @@ export function CapForm({
           </Field>
           {!lowering && scope === 'org' && (
             <Field label={t('capCurrency')} hint={t('capCurrencyHint')}>
-              {(control) => <Input {...control} maxLength={3} value={orgCurrencyInput} disabled={busy} onChange={(e) => setOrgCurrencyInput(e.target.value)} />}
+              {(control) => <Input {...control} maxLength={3} value={orgCurrencyInput} disabled={busy} onChange={(e) => setOrgCurrencyTyped(e.target.value)} />}
             </Field>
           )}
           {!lowering && scope === 'account' && account && <p className="self-end text-sm text-muted-foreground">{t('capAccountCurrency', { currency: account.currency ?? '' })}</p>}

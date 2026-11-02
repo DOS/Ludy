@@ -558,6 +558,14 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
       expect(form({ initial: { mode: 'lower', amount: '5000000' } }, 'vi')).toContain(viMessages.ads.write.capNotBelow);
     });
 
+    it('starts the currency of an org cap from the org cap of the period chosen, not from another period’s', () => {
+      // A daily cap in VND and a monthly one in USD: each period opens on its own currency; none opens on the default.
+      const caps = [cap({}), cap({ period: 'monthly', amount: '100', currency: 'USD' })];
+      expect(form({ caps, initial: { period: 'monthly' } })).toContain('value="USD"');
+      expect(form({ caps, initial: { period: 'daily' } })).toContain('value="VND"');
+      expect(form({ caps: [cap({ period: 'monthly', currency: 'USD' })], initial: { period: 'daily' } })).toContain('value="VND"');
+    });
+
     it('says there is no cap in force to lower, or to compare with, where none is set', () => {
       expect(form({ caps: [], initial: { mode: 'lower' } })).toContain(en.ads.write.capNoneYet);
       expect(form({ caps: [] })).toContain(en.ads.write.capNoneYet);

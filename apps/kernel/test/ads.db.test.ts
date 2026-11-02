@@ -1083,6 +1083,24 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect((await reject(adminAccount, unblock)).status).toBe(200);
       });
 
+      it('lowers a cap even when the database clock is behind the newest cap id, and the lowered cap is the latest', async () => {
+        await open();
+        const account = await connect('Đồng hồ lùi');
+        await sync(account.connectionId);
+        // A cap whose id is far ahead of the clock (as after a clock that stepped back), put in by the database owner outside
+        // any session, where the guard does not stamp it.
+        await row(
+          `INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000000', 'account', $2, 'daily', '100', 'VND', $3)`,
+          [orgId, account.adAccountId, owner.userId],
+        );
+        const lowered = await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'account', adAccountId: account.adAccountId, period: 'daily', amount: '50' });
+        expect(lowered).toMatchObject({ status: 200, body: { previous: '100' } });
+        const current = (await state()).caps.find((c) => c.adAccountId === account.adAccountId && c.period === 'daily');
+        expect(current).toMatchObject({ amount: '50' });
+        // And the next one still follows it.
+        expect(await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'account', adAccountId: account.adAccountId, period: 'daily', amount: '40' })).toMatchObject({ status: 200, body: { previous: '50' } });
+      });
+
       it('never approves them in a batch, whatever the screen offers: each is refused item by item and nothing changes', async () => {
         await closed();
         const id = proposalId(await ask(owner, { change: 'write_enable' }));

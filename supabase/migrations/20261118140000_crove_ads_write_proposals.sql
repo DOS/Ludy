@@ -97,6 +97,9 @@ DECLARE
   v_user uuid := CASE WHEN crove_kernel.ctx_actor_type() = 'user' THEN crove_kernel.ctx_user_id() END;
   v_role text;
   v_match jsonb;
+  v_newest uuid;
+  v_ms bigint;
+  v_hex text;
 BEGIN
   IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
     RETURN NEW;
@@ -114,15 +117,21 @@ BEGIN
     END IF;
   END IF;
   -- "The latest cap" is the newest id, so the id is made strictly above every id the org has (two ids made in the same
-  -- millisecond may sort either way, and a clock that stepped back would give an older one): wait for the next millisecond
-  -- until it is. The commands insert under the org's lock, so no other insert is in flight; a clock that stays behind refuses.
-  FOR i IN 1 .. 50 LOOP
+  -- millisecond may sort either way). Wait for the next millisecond a few times; if the database clock is behind the newest id
+  -- (it stepped back), continue from that id instead: its millisecond plus one, so a stop (a lowering) is never refused or held
+  -- by the clock and the order of the caps still follows the order they were made in. The commands insert under the org's lock.
+  FOR i IN 1 .. 5 LOOP
     NEW.id := crove_kernel.uuid_v7();
     EXIT WHEN NOT EXISTS (SELECT 1 FROM crove_ads.ad_spend_cap c WHERE c.org_id = NEW.org_id AND c.id >= NEW.id);
-    IF i = 50 THEN
-      RAISE EXCEPTION 'ADS_CAP_CLOCK' USING ERRCODE = '55000';
+    IF i = 5 THEN
+      SELECT c.id INTO v_newest FROM crove_ads.ad_spend_cap c WHERE c.org_id = NEW.org_id ORDER BY c.id DESC LIMIT 1;
+      -- A uuid v7 begins with a 48-bit millisecond count, its first twelve hex digits.
+      v_ms := ('x' || pg_catalog.substr(pg_catalog.replace(v_newest::text, '-', ''), 1, 12))::bit(48)::bigint + 1;
+      v_hex := pg_catalog.lpad(pg_catalog.to_hex(v_ms), 12, '0') || pg_catalog.substr(pg_catalog.replace(NEW.id::text, '-', ''), 13);
+      NEW.id := (pg_catalog.substr(v_hex, 1, 8) || '-' || pg_catalog.substr(v_hex, 9, 4) || '-' || pg_catalog.substr(v_hex, 13, 4) || '-' || pg_catalog.substr(v_hex, 17, 4) || '-' || pg_catalog.substr(v_hex, 21, 12))::uuid;
+    ELSE
+      PERFORM pg_catalog.pg_sleep(0.002);
     END IF;
-    PERFORM pg_catalog.pg_sleep(0.002);
   END LOOP;
   NEW.set_by := COALESCE(v_user, NEW.set_by);
   NEW.set_at := pg_catalog.clock_timestamp();

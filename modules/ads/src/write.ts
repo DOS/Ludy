@@ -195,13 +195,15 @@ export const adsCapPrepareSet = defineCommand({
       accountName = account.name.slice(0, 200);
       legalEntityId = account.legal_entity_id;
     }
+    // The org's lock first (refuseOpenRequest takes it), then the cap in force: a lowering that commits between the two would
+    // leave this request with a stale `previous`, which the approval refuses.
+    await refuseOpenRequest(ctx, ADS_CAP_SET_COMMAND, { scope: input.scope, period: input.period, ...(adAccountId ? { adAccountId } : {}) });
     const previous = await currentCap(ctx, { ...input, adAccountId });
     // Lowering a cap is the owner's direct command (ads.cap.lower): this proposal sets one or raises one. A cap in another
     // currency than the one in force is a new cap, not a comparison.
     if (previous && previous.currency === input.currency && previous.not_above) {
       throw new DomainError('ADS_CAP_NOT_RAISED', 422, 'Hạn mức này không cao hơn hạn mức đang có; hãy dùng Giảm hạn mức, không cần duyệt');
     }
-    await refuseOpenRequest(ctx, ADS_CAP_SET_COMMAND, { scope: input.scope, period: input.period, ...(adAccountId ? { adAccountId } : {}) });
     const where = input.scope === 'org' ? 'của cả tổ chức' : `của tài khoản ${accountName}`;
     return {
       kind: ADS_CAP_SET_KIND,
@@ -499,7 +501,8 @@ export const adsWriteState = defineQuery({
       .where('status', '=', 'pending')
       .where('kind', 'in', ADS_KINDS)
       .orderBy('created_at', 'desc')
-      .limit(50)
+      // One open request per target keeps this short; 200 is the Inbox's own page.
+      .limit(200)
       .execute();
     const pending = waiting.flatMap((p) => {
       const change = changeOf(p.kind, p.payload);
