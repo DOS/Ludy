@@ -169,7 +169,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
                         </Chip>
                       ) : i === 0 && done ? (
                         <Chip tone="ok">
-                          <Check className="size-3" aria-hidden="true" />
+                          <Check className="size-3" strokeWidth={3} aria-hidden="true" />
                           {shell.approved}
                         </Chip>
                       ) : (
@@ -245,7 +245,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
               <ul className="grid gap-x-4 gap-y-0.5 sm:grid-cols-2">
                 {d.checks.map((c) => (
                   <li key={c} className="flex items-center gap-1.5 text-muted">
-                    <Check className="size-3.5 shrink-0 text-ok" aria-hidden="true" />
+                    <Check className="size-3.5 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
                     {c}
                   </li>
                 ))}
@@ -273,7 +273,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
             </div>
             {done ? (
               <div className="flex items-start gap-2 rounded-md bg-ok-soft px-3 py-2 text-ok">
-                <Check className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                <Check className="mt-0.5 size-4 shrink-0" strokeWidth={2.5} aria-hidden="true" />
                 <span>{d.postedNote}</span>
               </div>
             ) : (
@@ -312,7 +312,7 @@ export function AppShell({ dict }: { dict: Dictionary }) {
                   <ul className="px-1.5 pb-1.5">
                     {shell.palette.commands.map((cmd, i) => (
                       <li key={cmd.label} className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 ${i === 0 ? 'bg-accent-soft text-accent-ink' : ''}`}>
-                        {i === 0 ? <Check className="size-3.5" /> : i === 1 ? <Table2 className="size-3.5 text-subtle" /> : <FileText className="size-3.5 text-subtle" />}
+                        {i === 0 ? <Check className="size-3.5" strokeWidth={2.5} /> : i === 1 ? <Table2 className="size-3.5 text-subtle" /> : <FileText className="size-3.5 text-subtle" />}
                         <span className="font-medium">{cmd.label}</span>
                         <span className="ml-auto text-xs text-subtle">{i === 0 ? <Kbd small>{cmd.meta}</Kbd> : cmd.meta}</span>
                       </li>

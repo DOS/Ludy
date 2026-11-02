@@ -144,6 +144,12 @@
   h3 {
     text-wrap: balance;
   }
+  /* DESIGN.md 3.7: lucide icons draw at stroke 1.5. An icon that names no width gets stroke-width="2" from lucide, and a
+     stylesheet rule beats that attribute, so this one rule is the default for the whole site without a client provider
+     (the sections ship no client JavaScript). An icon that names its own width, the check marks at 2.5 and 3, keeps it. */
+  svg.lucide[stroke-width='2'] {
+    stroke-width: 1.5;
+  }
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;

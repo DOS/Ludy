@@ -81,7 +81,7 @@ export function CommandPalette({
       onClose={() => onOpenChange(false)}
       // A click on the backdrop lands on the dialog element itself.
       onClick={(event) => event.target === dialog.current && onOpenChange(false)}
-      className="m-auto mt-[12vh] w-[min(36rem,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground shadow-2xl backdrop:bg-background/70"
+      className="m-auto mt-[12vh] w-[min(36rem,calc(100vw-2rem))] overflow-hidden rounded-xl border bg-popover p-0 text-popover-foreground backdrop:bg-background/70"
     >
       <div className="border-b px-4 py-3">
         <input

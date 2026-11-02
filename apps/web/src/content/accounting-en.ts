@@ -17,7 +17,7 @@ export const accountingEn: AccountingCopy = {
     lead: 'Ludy Accounting reads e-invoices, checks every number with fixed rules and proposes a journal entry under Circular 133. An entry reaches the books only when a person with the authority approves it with a two-factor code.',
     primary: 'Self-host for free',
     secondary: 'Sign in',
-    note: 'Open source under the AGPL. Runs on your own server with docker compose. Ludy Cloud is coming soon.',
+    note: 'Open source under the AGPL. Ludy Accounting is in the self-hosted edition. On Ludy Cloud: coming soon.',
   },
   how: {
     title: 'Four steps from the inbox to the ledger',

@@ -45,7 +45,7 @@ export function EmojiPicker({ targetId, value, onChange, disabled }: { targetId:
         😊
       </Button>
       {open && (
-        <div role="listbox" aria-label={t('emoji')} className="absolute left-0 z-20 mt-1 grid w-72 grid-cols-8 gap-1 rounded-lg border bg-popover p-2 shadow-md">
+        <div role="listbox" aria-label={t('emoji')} className="absolute left-0 z-20 mt-1 grid w-72 grid-cols-8 gap-1 rounded-lg border bg-popover p-2">
           {EMOJI.map((e) => (
             <button key={e} type="button" role="option" aria-selected={false} className="rounded p-1 text-lg hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none" onClick={() => pick(e)}>
               {e}

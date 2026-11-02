@@ -111,7 +111,7 @@ function Marker({ pin, onClick, label, className, style }: { pin: BoardPin | nul
       tabIndex={pin ? undefined : -1}
       data-testid={pin ? 'pin-marker' : 'pin-draft'}
       className={cn(
-        'absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background text-xs font-semibold shadow-md ring-offset-2 ring-offset-background focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
+        'absolute flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-background text-xs font-semibold ring-offset-2 ring-offset-background focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
         pin ? 'bg-primary text-primary-foreground' : 'bg-warning text-foreground',
         className,
       )}

@@ -45,7 +45,7 @@ export function CopyCommand({ command, copy, copied, copyFail }: { command: stri
           onClick={onCopy}
           className="inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg"
         >
-          {state === 'copied' ? <Check className="size-3.5 text-ok" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+          {state === 'copied' ? <Check className="size-3.5 text-ok" strokeWidth={2.5} aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
           {state === 'copied' ? copied : copy}
         </button>
       </div>

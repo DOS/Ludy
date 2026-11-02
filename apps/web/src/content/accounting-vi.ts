@@ -20,7 +20,7 @@ export const accountingVi = {
     lead: 'Ludy Kế toán đọc hoá đơn điện tử, kiểm tra từng con số bằng quy tắc cố định và đề xuất bút toán theo Thông tư 133. Chỉ khi người có thẩm quyền duyệt bằng mã hai lớp, bút toán mới vào sổ.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Đăng nhập',
-    note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',
+    note: 'Mã nguồn mở AGPL. Ludy Kế toán có trong bản tự cài đặt. Trên Ludy Cloud: sắp ra mắt.',
   },
   how: {
     title: 'Bốn bước từ hộp thư đến sổ cái',
