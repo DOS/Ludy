@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_setting (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
   -- Months a thread is kept after its last message; NULL keeps it until a person deletes it.
-  retention_months smallint DEFAULT 24 CHECK (retention_months IS NULL OR retention_months IN (6, 12, 24)),
+  -- Written as a chain of equalities: the numbers are the product's (CONVERSATION_RETENTION_MONTHS), not a text set schema.ts refines.
+  retention_months smallint DEFAULT 24 CHECK (retention_months IS NULL OR retention_months = 6 OR retention_months = 12 OR retention_months = 24),
   set_by uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
