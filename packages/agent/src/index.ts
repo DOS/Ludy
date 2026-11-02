@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { normalizeNumber, normalizeSeries, type ParsedInvoice } from '@crove/l10n-vn';
 import { metered, type AiUsageSink } from './meter.ts';
 
+export * from './ads-campaign.ts';
 export * from './conversation.ts';
 export * from './errors.ts';
 export * from './eval.ts';

@@ -2372,6 +2372,25 @@ export function createRpcHandler(
           return runtime.execute('ads.campaign.draft_discard', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Asking the AI coworker for a draft (W1b): rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since
+      // each ask leads to a paid model call in the worker; no counter of its own. The answer, or why there is none, comes back through campaignRequests.
+      campaignRequests: os.ads.campaignRequests.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.requests', input, { actor, orgId }))),
+      requestCampaignDraft: os.ads.requestCampaignDraft.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const ticket = drafts.take(orgId, actor.type === 'user' ? actor.userId : 'system');
+          if (!ticket.allowed) {
+            throw new DomainError('RATE_LIMITED', 429, ticket.reason === 'busy' ? 'Đang chờ AI trả lời, hãy đợi xong rồi thử tiếp' : 'Đã dùng AI nhiều lần trong phút này, hãy thử lại sau ít phút', {
+              retryAfterSeconds: ticket.retryAfterSeconds,
+            });
+          }
+          try {
+            const { idempotencyKey, ...rest } = input;
+            return await runtime.execute('ads.campaign.draft_request', rest, { actor, orgId, idempotencyKey });
+          } finally {
+            ticket.release();
+          }
+        }),
+      ),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>

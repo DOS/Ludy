@@ -15,6 +15,7 @@ export type NotGranted = undefined;
 export interface CroveAdsSchema {
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
+  'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
@@ -247,6 +248,23 @@ export interface AdsAdCampaignDraftTable {
   updated_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_ads.ad_campaign_request */
+export interface AdsAdCampaignRequestTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  objective: ColumnType<string, string, NotGranted>;
+  brief: ColumnType<string, string, NotGranted>;
+  source_post_id: ColumnType<string | null, string | null, NotGranted>;
+  state: Generated<string>;
+  code: string | null;
+  draft_id: string | null;
+  requested_by: ColumnType<string, string, NotGranted>;
+  requested_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  settled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_ads.ad_flag_setting */

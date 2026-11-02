@@ -28,6 +28,8 @@ export const AI_FEATURES = {
   'crm.booking_schedule': 'crm',
   // Vy's reply drafts of the conversation core (CV8, #2310).
   'conversation.draft': 'conversation',
+  // The AI coworker's campaign drafts for running ads (W1b, #2295): the creative part only, never money.
+  'ads.campaign_draft': 'ads',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];
