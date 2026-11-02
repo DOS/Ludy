@@ -345,7 +345,9 @@ export const adsLaunchesUnblock = defineCommand({
 
 export const adsWriteDisable = defineCommand({
   name: 'ads.write.disable',
-  input: z.strictObject({}),
+  // `sharedApp`: the deployment's write Meta app is the read ads app or the Pages app (the API says so, from its config); false means an
+  // app of its own, where no reading token can hold the permission. Left out, the close fails safe.
+  input: z.strictObject({ sharedApp: z.boolean().optional() }),
   // Closes the path: every account's flag off, launches blocked, and every write connection of the org closed with its sealed token
   // dropped (W0b). The platform's own copy of a token is revoked by the write queue of W2, which cannot merge without it; until
   // then the screen tells the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an
@@ -353,7 +355,7 @@ export const adsWriteDisable = defineCommand({
   risk: 'R2',
   sideEffect: 'external',
   access: OWNERS,
-  handler: async (ctx): Promise<{ writeEnabled: false; accountsDisabled: number; connectionsClosed: number; readConnectionsClosed: number }> => {
+  handler: async (ctx, input): Promise<{ writeEnabled: false; accountsDisabled: number; connectionsClosed: number; readConnectionsClosed: number }> => {
     const setting = await lockedSetting(ctx);
     // Launches are blocked with it, so nothing queued or launched goes on spending while the owner decides what to do;
     // opening them again is a proposal, on purpose (the stricter way back).
@@ -361,10 +363,10 @@ export const adsWriteDisable = defineCommand({
     const closed = await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false }).where('org_id', '=', ctx.orgId).where('write_enabled', '=', true).returning('id').execute();
     // No sealed token that can change campaigns stays: each write connection is closed by the kernel's own command (one audit row each).
     const connectionsClosed = await closeWriteConnections(ctx, {});
-    // And no reading connection whose token can change campaigns either (W0b-2): by its recorded scopes, and every Meta reading
-    // connection once running ads was on or the org has made a Meta write connection, since a Meta permission is the person's for the
-    // app and a consent at Meta may never have reached Ludy.
-    const readConnectionsClosed = await closeSpendCapableReadConnections(ctx, { switchWasOn: setting.write_enabled });
+    // And no reading connection whose token can change campaigns either (W0b-2): by its recorded scopes, and, when the write app is the
+    // read or Pages app, every Meta reading connection once running ads was on or the org has made a Meta write connection, since a Meta
+    // permission is the person's for the app and a consent at Meta may never have reached Ludy.
+    const readConnectionsClosed = await closeSpendCapableReadConnections(ctx, { switchWasOn: setting.write_enabled, ...(input.sharedApp === undefined ? {} : { sharedApp: input.sharedApp }) });
     ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed, wasEnabled: setting.write_enabled });
     return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed };
   },
