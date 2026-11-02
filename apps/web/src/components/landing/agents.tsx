@@ -2,7 +2,7 @@ import { Lock } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { Section, SectionHead } from './ui';
 
-// The AI team (Vy and the department coworkers with their roles), then what an agent may do (the org chart itself is
+// The AI team (the general manager and the department coworkers with their roles, from content/roster.ts), then what an agent may do (the org chart itself is
 // the hero): which risk levels it handles alone and which go to a person, plus what agents can never touch.
 export function Agents({ dict }: { dict: Dictionary }) {
   const a = dict.agents;

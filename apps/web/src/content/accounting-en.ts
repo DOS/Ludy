@@ -2,6 +2,7 @@
 // English copy of the Ludy Accounting page (/en/accounting), in the shape of accounting-vi.ts. The example company, its
 // vendors, people, amounts and document numbers are the home page's and stay as they are in Vietnamese.
 import type { AccountingCopy } from './accounting-vi';
+import { N } from './roster';
 
 export const accountingEn: AccountingCopy = {
   appName: 'Ludy Accounting',
@@ -23,7 +24,7 @@ export const accountingEn: AccountingCopy = {
     title: 'Four steps from the inbox to the ledger',
     lead: 'Ludy does the first three steps and records each one. The last step is always approved by a person with the authority, with a two-factor code.',
     steps: [
-      { name: 'Receive', body: 'Upload, or forward an email. XML is read directly; PDFs and photos are read by Ly.', outcome: 'Received', tone: 'neutral' },
+      { name: 'Receive', body: `Upload, or forward an email. XML is read directly; PDFs and photos are read by ${N.finance}.`, outcome: 'Received', tone: 'neutral' },
       { name: 'Check', body: 'Fixed rules compare the totals, the VAT, the tax code and duplicates. An error in the totals stops the invoice.', outcome: 'Passed or held', tone: 'ok' },
       { name: 'Propose', body: 'A TT133 entry lands in the inbox of documents to approve, with the reason for the accounts. Nothing is posted yet.', outcome: 'Proposed, not posted', tone: 'accent' },
       { name: 'Approve', body: 'The approver looks, changes an account if needed and enters the two-factor code. Only then does the entry reach the books.', outcome: 'Posted', tone: 'ok' },
@@ -96,15 +97,15 @@ export const accountingEn: AccountingCopy = {
     ],
   },
   coworker: {
-    title: 'What Ly does in Ludy Accounting',
-    lead: 'Ly is the AI CFO, your coworker in accounting, working under Vy’s coordination. Ly does the reading; whether a number is right is decided by fixed rules and by people.',
-    doesTitle: 'Ly does',
+    title: `What ${N.finance} does in Ludy Accounting`,
+    lead: `${N.finance} is the AI CFO, your coworker in accounting, working under ${N.gm}’s coordination. ${N.finance} does the reading; whether a number is right is decided by fixed rules and by people.`,
+    doesTitle: `${N.finance} does`,
     does: [
       'Reads PDF and photo invoices into structured data',
       'Puts the result in the inbox of documents to approve, marked as read by AI and needing a person’s check',
       'An owner presses "Stop AI", with a two-factor code, to switch off all AI work of the company; new PDF and photo reads wait until it is turned back on',
     ],
-    doesNotTitle: 'Ly does not',
+    doesNotTitle: `${N.finance} does not`,
     doesNot: [
       'Post to the books or approve in place of a person',
       'Decide whether an invoice is right: fixed rules do that',

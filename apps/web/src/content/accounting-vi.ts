@@ -3,6 +3,7 @@
 // merged and usable on main today; the PR lists the PR or route behind each one. Company names, amounts and document
 // numbers are example data and stay the same in both languages (the sample company is the home page's).
 import type { AppPageCopy } from './app-page';
+import { N } from './roster';
 
 type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 
@@ -26,7 +27,7 @@ export const accountingVi = {
     title: 'Bốn bước từ hộp thư đến sổ cái',
     lead: 'Ludy làm ba bước đầu và ghi lại từng bước. Bước cuối luôn do người có thẩm quyền duyệt bằng mã xác thực hai lớp.',
     steps: [
-      { name: 'Nhận', body: 'Tải lên hoặc chuyển tiếp email. XML được đọc trực tiếp; PDF và ảnh chụp do Ly đọc.', outcome: 'Đã nhận', tone: 'neutral' },
+      { name: 'Nhận', body: `Tải lên hoặc chuyển tiếp email. XML được đọc trực tiếp; PDF và ảnh chụp do ${N.finance} đọc.`, outcome: 'Đã nhận', tone: 'neutral' },
       { name: 'Kiểm tra', body: 'Quy tắc cố định đối chiếu tổng tiền, thuế, mã số thuế và hoá đơn trùng. Lỗi tổng tiền thì hoá đơn dừng lại.', outcome: 'Đạt hoặc giữ lại', tone: 'ok' },
       { name: 'Đề xuất', body: 'Bút toán theo TT133 vào hộp chứng từ chờ duyệt, kèm lý do chọn tài khoản. Chưa vào sổ.', outcome: 'Đề xuất, chưa ghi sổ', tone: 'accent' },
       { name: 'Duyệt', body: 'Người duyệt xem, sửa tài khoản nếu cần, nhập mã hai lớp. Lúc đó bút toán mới vào sổ.', outcome: 'Đã ghi sổ', tone: 'ok' },
@@ -99,15 +100,15 @@ export const accountingVi = {
     ],
   },
   coworker: {
-    title: 'Ly làm gì trong Ludy Kế toán',
-    lead: 'Ly là giám đốc tài chính AI, đồng nghiệp của bạn trong kế toán, làm việc dưới sự điều phối của Vy. Ly làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.',
-    doesTitle: 'Ly làm',
+    title: `${N.finance} làm gì trong Ludy Kế toán`,
+    lead: `${N.finance} là giám đốc tài chính AI, đồng nghiệp của bạn trong kế toán, làm việc dưới sự điều phối của ${N.gm}. ${N.finance} làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.`,
+    doesTitle: `${N.finance} làm`,
     does: [
       'Đọc PDF và ảnh chụp hoá đơn thành số liệu có cấu trúc',
       'Đưa kết quả vào hộp chứng từ chờ duyệt, ghi rõ là đọc bằng AI và cần người kiểm tra',
       'Chủ sở hữu bấm nút "Dừng AI", cần mã hai lớp, để tắt mọi việc AI của công ty; các lần đọc PDF và ảnh mới chờ đến khi bật lại',
     ],
-    doesNotTitle: 'Ly không làm',
+    doesNotTitle: `${N.finance} không làm`,
     doesNot: [
       'Không ghi sổ và không duyệt thay người',
       'Không quyết định hoá đơn đúng hay sai: việc đó do quy tắc cố định',

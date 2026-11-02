@@ -192,7 +192,7 @@ export function BookingVisual({ dict, copy }: Props) {
   );
 }
 
-// Calendar and Vy: the host's connected Google Calendar and Vy's suggestion for a client's message.
+// Calendar and the sales coworker: the host's connected Google Calendar and the coworker's suggestion for a client's message.
 export function CalendarVisual({ dict, copy }: Props) {
   const { crm } = dict.modules;
   return (

@@ -5,6 +5,7 @@ import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/content/en';
 import { vi } from '../src/content/vi';
+import { N, ROSTER, team } from '../src/content/roster';
 
 // Copy that may say Crove, by its path in the dictionary, with the reason.
 // None since the repository was renamed to DOS/Ludy (owner, 2026-10-28).
@@ -77,11 +78,26 @@ describe('brand on the landing page (#1683)', () => {
   it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
     // The home hero line is held until the owner picks it (#2409), so it is not asserted here.
     for (const dict of [vi, en]) {
-      expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(['Vy', 'Ly', 'My', 'Thy', 'Duy', 'Hy']);
-      expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bThy\b/);
-      expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toMatch(/\bLy\b/);
+      expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
+      expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
+      expect(dict.modules.crm.suggest, dict.lang).toContain(N.sales);
+      expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
       expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
+  });
+
+  it('keeps the roster by role and no name written in the copy', () => {
+    expect(Object.keys(ROSTER).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
+    // The copy reads names from content/roster.ts (`${N.finance}`): a name typed into a string is the edit a rename must not need.
+    const names = new RegExp(`\\b(${Object.values(ROSTER).map((c) => c.name).join('|')})\\b(?! work)`);
+    const written = sourceFiles(join(src, 'content'))
+      .filter((file) => !file.endsWith('roster.ts'))
+      .flatMap((file) =>
+        readFileSync(file, 'utf8')
+          .split('\n')
+          .flatMap((text, i) => (names.test(code(text)) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 90)}`] : [])),
+      );
+    expect(written).toEqual([]);
   });
 
   it('never calls the AI an assistant: no "assistant" or "trợ lý" in the copy or the pages that render it', () => {
