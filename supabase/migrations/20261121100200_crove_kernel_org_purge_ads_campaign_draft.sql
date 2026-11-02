@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2295, ads W1): the org purge deletes the org's ad_campaign_draft too. Idempotent; applied files stay untouched.
--- This is the body of 20261119210000 (the newest) with crove_ads.ad_campaign_draft added to the first list, before the ad account it hangs on, with its signature,
+-- This is the body of 20261121090100 (the newest) with crove_ads.ad_campaign_draft added to the first list, before the ad account it hangs on, with its signature,
 -- owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
@@ -30,7 +30,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
-    'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
+    'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
@@ -41,7 +41,7 @@ DECLARE
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
     'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.calendar_credential',
     'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
-    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
+    'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[
     'crove_social.account_snapshot', 'crove_social.bio_click', 'crove_social.bio_page', 'crove_social.brand_voice',
     'crove_social.calendar_feed', 'crove_social.calendar_note', 'crove_social.channel_policy',
