@@ -2439,6 +2439,7 @@ export const en = {
       approving: 'Approving batch {done, number} of {total, number}',
       doneApproved: '{asked, plural, one {# voucher proposal} other {# voucher proposals}} created; {approved, number} approved and posted.',
       doneAsked: '{asked, plural, one {# voucher proposal} other {# voucher proposals}} created; each waits in the Inbox for someone who may approve it.',
+      aloneOnly: 'This voucher has a warning (an unusual payment amount), so it is approved on its own: open it and approve it by itself. It is still waiting in the Inbox.',
       secondApprover: "The org's approval policy needs someone else to approve (or you may not approve). The refused vouchers are not posted and wait in the Inbox.",
       refused: '{count, plural, one {# voucher is} other {# vouchers are}} not posted:',
       proposal: 'Proposal',

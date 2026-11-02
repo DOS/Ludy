@@ -2437,6 +2437,7 @@ export const vi = {
       approving: 'Đang duyệt lô {done, number} trên {total, number}',
       doneApproved: 'Đã lập {asked, number} đề xuất; đã duyệt và ghi sổ {approved, number}.',
       doneAsked: 'Đã lập {asked, number} đề xuất; mỗi chứng từ chờ người có quyền duyệt trong Hộp thư.',
+      aloneOnly: 'Chứng từ này có cảnh báo (số tiền chi bất thường) nên phải duyệt riêng: hãy mở và duyệt nó từng cái một. Nó vẫn đang chờ trong Hộp thư.',
       secondApprover: 'Chính sách duyệt của tổ chức cần một người khác duyệt (hoặc bạn không có quyền duyệt). Các chứng từ bị từ chối chưa được ghi sổ và đang chờ trong Hộp thư.',
       refused: '{count, number} chứng từ chưa được ghi sổ:',
       proposal: 'Đề xuất',

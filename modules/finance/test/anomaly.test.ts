@@ -60,6 +60,10 @@ describe('amount', () => {
     // The invoice wording and params are unchanged: no subject param.
     expect(amountCheck('4000000', earlier)?.params).not.toHaveProperty('subject');
     expect(amountCheck('2900000', earlier, 'payment')).toBeNull();
+    // Exactly three times and exactly a third are flagged for a payment as for an invoice; a hair inside is not.
+    expect(amountCheck('3000000', earlier, 'payment')?.params).toMatchObject({ direction: 'high' });
+    expect(amountCheck('333333.33', ['1000000', '1000000', '1000000', '1000000', '1000000'], 'payment')?.params).toMatchObject({ direction: 'low' });
+    expect(amountCheck('333334', earlier, 'payment')).toBeNull();
   });
 
   it('ignores earlier totals that are not amounts', () => {

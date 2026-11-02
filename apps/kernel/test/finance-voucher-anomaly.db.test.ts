@@ -242,6 +242,32 @@ suite('unusual payment amounts (#2419)', () => {
     expect((await detailOf(high)).status).toBe('executed');
   });
 
+  it('counts bank debits as payments in the history and leaves receipts out of it', async () => {
+    // A party paid twice a month: five bank debits of 500 000 and a receipt of 80 million from it.
+    const twice = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Chuyển Khoản')`, [org.orgId, twice]);
+    });
+    for (let n = 0; n < 5; n++) {
+      const id = await ask({ type: 'bank_debit', date: '2026-09-22', cashAccount: '1121', partyId: twice, description: 'Chuyển khoản tháng', lines: [{ account: '331', amount: '500000' }] });
+      expect((await approve(id)).status).toBe(200);
+    }
+    const receipt = await ask({ type: 'cash_receipt', date: '2026-09-22', cashAccount: '1111', partyId: twice, description: 'Hoàn tiền', lines: [{ account: '131', amount: '80000000' }] });
+    expect((await approve(receipt)).status).toBe(200);
+    // Five bank debits make the history: 1 500 000 is exactly three times their median, and the receipt is not part of it.
+    expect((await flagsOf(await ask(pay(twice, '1500000'))))[0]).toMatchObject({ code: 'anomaly_amount.unusual', params: { usual: '500000', count: '5', direction: 'high' } });
+    expect(await flagsOf(await ask(pay(twice, '1400000')))).toEqual([]);
+  });
+
+  it('judges a payment only against the payments of its own legal entity', async () => {
+    const branch = await rpc('legalEntities/create', await tokenFor(owner, { mfa: true }), { name: 'Chi nhánh Đà Nẵng', kind: 'branch', taxCode: null, parentId: null });
+    expect(branch.status).toBe(200);
+    // The owner reads every entity. Payments to the party were all made in the default entity (the history above): the
+    // same large amount is flagged there and not in the branch, whose books hold no payment to the party yet.
+    expect(await flagsOf(await ask(pay(often, '90000000')))).toHaveLength(1);
+    expect(await flagsOf(await ask(pay(often, '90000000', { legalEntityId: String(branch.body.id) })))).toEqual([]);
+  });
+
   it('leaves a reversed payment out of the history', async () => {
     // The payments in force are 1, 1, 1, 1, 90, 1.1, 1.2 and 4 million: the median is 1.05 million, so 3.15 million is the
     // threshold. Reversing the 90 million payment leaves seven, with a median of 1 million: the threshold is 3 million.
