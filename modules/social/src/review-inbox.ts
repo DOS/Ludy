@@ -4,7 +4,7 @@
 // Members and viewers decide nothing, so they get an empty list.
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { defineQuery } from '@crove/kernel-runtime';
+import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { approvalsInRound } from './domain/approval.ts';
 import { decisionsOf, fourEyesOn } from './policy.ts';
 
@@ -34,50 +34,53 @@ const excerptOf = (text: string) => {
   return chars.length > EXCERPT ? `${chars.slice(0, EXCERPT - 1).join('')}…` : flat;
 };
 
+// The posts waiting for the caller's review, what social.review.inbox lists and Home counts (social.today).
+export async function reviewWaiting(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>): Promise<{ items: ReviewInboxItem[]; total: number }> {
+  if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { items: [], total: 0 };
+  const userId = ctx.actor.userId;
+  const rows = await ctx.trx
+    .selectFrom('crove_social.post_variant as v')
+    .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
+    .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
+    .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.revision', 'v.content_hash', 'v.channel_connection_id', 'v.scheduled_at', 'v.updated_at', 'v.body as variant_body', 'c.display_name', 'p.body', 'p.title', 'p.scheduled_at as post_scheduled_at', 'p.author_user_id'])
+    .where('v.org_id', '=', ctx.orgId)
+    .where('v.status', '=', 'in_review')
+    // Nothing of an archived post (#1299) waits for a review.
+    .where('p.archived_at', 'is', null)
+    .orderBy('v.updated_at', 'asc')
+    .orderBy('v.id', 'asc')
+    .limit(REVIEW_SCAN_MAX)
+    .execute();
+  const decisions = await decisionsOf(ctx.trx, ctx.orgId, rows.map((r) => r.variant_id));
+  const ownChannels = [...new Set(rows.filter((r) => r.author_user_id === userId).map((r) => r.channel_connection_id))];
+  const fourEyes = await fourEyesOn(ctx.trx, ctx.orgId, ownChannels);
+  const posts = new Map<string, ReviewInboxItem>();
+  for (const r of rows) {
+    if (r.author_user_id === userId && fourEyes.has(r.channel_connection_id)) continue;
+    if (approvalsInRound(decisions.get(r.variant_id) ?? [], { revision: r.revision, contentHash: r.content_hash }).includes(userId)) continue;
+    const at = r.scheduled_at ?? r.post_scheduled_at;
+    const item = posts.get(r.post_id) ?? {
+      postId: r.post_id,
+      title: r.title,
+      // The text the reviewer approves: the channel's own text where it has one (null inherits the post's).
+      excerpt: excerptOf(r.variant_body ?? r.body ?? ''),
+      channels: [],
+      at: null,
+      submittedAt: r.updated_at.toISOString(),
+    };
+    item.channels.push({ variantId: r.variant_id, provider: r.provider, displayName: r.display_name });
+    if (at && (!item.at || at.toISOString() < item.at)) item.at = at.toISOString();
+    posts.set(r.post_id, item);
+  }
+  const items = [...posts.values()];
+  return { items: items.slice(0, REVIEW_INBOX_MAX), total: items.length };
+}
+
 export const reviewInbox = defineQuery({
   name: 'social.review.inbox',
   input: z.object({}),
   access: ALL,
-  handler: async (ctx): Promise<{ items: ReviewInboxItem[]; total: number }> => {
-    if (ctx.actor.type !== 'user' || (ctx.role !== 'owner' && ctx.role !== 'admin')) return { items: [], total: 0 };
-    const userId = ctx.actor.userId;
-    const rows = await ctx.trx
-      .selectFrom('crove_social.post_variant as v')
-      .innerJoin('crove_social.post as p', (j) => j.onRef('p.org_id', '=', 'v.org_id').onRef('p.id', '=', 'v.post_id'))
-      .innerJoin('crove_kernel.channel_connection as c', (j) => j.onRef('c.org_id', '=', 'v.org_id').onRef('c.id', '=', 'v.channel_connection_id'))
-      .select(['v.id as variant_id', 'v.post_id', 'v.provider', 'v.revision', 'v.content_hash', 'v.channel_connection_id', 'v.scheduled_at', 'v.updated_at', 'v.body as variant_body', 'c.display_name', 'p.body', 'p.title', 'p.scheduled_at as post_scheduled_at', 'p.author_user_id'])
-      .where('v.org_id', '=', ctx.orgId)
-      .where('v.status', '=', 'in_review')
-      // Nothing of an archived post (#1299) waits for a review.
-      .where('p.archived_at', 'is', null)
-      .orderBy('v.updated_at', 'asc')
-      .orderBy('v.id', 'asc')
-      .limit(REVIEW_SCAN_MAX)
-      .execute();
-    const decisions = await decisionsOf(ctx.trx, ctx.orgId, rows.map((r) => r.variant_id));
-    const ownChannels = [...new Set(rows.filter((r) => r.author_user_id === userId).map((r) => r.channel_connection_id))];
-    const fourEyes = await fourEyesOn(ctx.trx, ctx.orgId, ownChannels);
-    const posts = new Map<string, ReviewInboxItem>();
-    for (const r of rows) {
-      if (r.author_user_id === userId && fourEyes.has(r.channel_connection_id)) continue;
-      if (approvalsInRound(decisions.get(r.variant_id) ?? [], { revision: r.revision, contentHash: r.content_hash }).includes(userId)) continue;
-      const at = r.scheduled_at ?? r.post_scheduled_at;
-      const item = posts.get(r.post_id) ?? {
-        postId: r.post_id,
-        title: r.title,
-        // The text the reviewer approves: the channel's own text where it has one (null inherits the post's).
-        excerpt: excerptOf(r.variant_body ?? r.body ?? ''),
-        channels: [],
-        at: null,
-        submittedAt: r.updated_at.toISOString(),
-      };
-      item.channels.push({ variantId: r.variant_id, provider: r.provider, displayName: r.display_name });
-      if (at && (!item.at || at.toISOString() < item.at)) item.at = at.toISOString();
-      posts.set(r.post_id, item);
-    }
-    const items = [...posts.values()];
-    return { items: items.slice(0, REVIEW_INBOX_MAX), total: items.length };
-  },
+  handler: async (ctx): Promise<{ items: ReviewInboxItem[]; total: number }> => reviewWaiting(ctx),
 });
 
 export const reviewInboxQueries = [reviewInbox];
