@@ -10,6 +10,8 @@ import { isArchiveType } from './files.ts';
 
 // What a document kept for the org's next daily budget (#675) shows as its error.
 export const WAITING_FOR_BUDGET = 'Tổ chức đã dùng hết hạn mức đọc chứng từ trong 24 giờ; tệp được giữ lại và sẽ được đọc khi có hạn mức mới';
+// What a document that needs the model keeps for the org's AI budget of the month shows (#2382). XML e-invoices never wait.
+export const WAITING_FOR_AI_BUDGET = 'Vy đã hết ngân sách tháng này; tệp được giữ lại và sẽ được đọc khi ngân sách được nâng hoặc sang tháng mới';
 
 // What kernel.file.archive.record keeps in the archive's extraction result, one item per entry.
 export const zStoredArchiveEntry = z.object({
@@ -216,6 +218,11 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
         SELECT 1 FROM crove_kernel.usage_deferral d
         WHERE d.org_id = f.org_id AND d.subject_type = 'file' AND d.subject_id = f.id::text AND d.retry_at > pg_catalog.now()
       )`.as('waiting'),
+      // Waiting for the AI budget of the month, not the day's limit (#2382).
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM crove_kernel.usage_deferral d
+        WHERE d.org_id = f.org_id AND d.subject_type = 'file' AND d.subject_id = f.id::text AND d.retry_at > pg_catalog.now() AND d.metric = 'ai_budget'
+      )`.as('waiting_ai_budget'),
     ])
     .where('f.org_id', '=', ctx.orgId)
     // Images of Social posts (#372) and import spreadsheets (#465) are not documents, unless the same bytes were also
@@ -285,7 +292,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
         contentType: r.content_type,
         status,
         error: waiting
-          ? WAITING_FOR_BUDGET
+          ? r.waiting_ai_budget
+            ? WAITING_FOR_AI_BUDGET
+            : WAITING_FOR_BUDGET
           : r.extraction_status === 'failed'
             ? r.error
             : r.extraction_status === 'pending' && !r.in_flight

@@ -7,7 +7,7 @@ import { appendFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { formatDocumentEvalReport, InvoiceExtractor, summarizeDocumentEval, type DocumentScore } from '../src/index.ts';
 import { inProcessExtract, loadDocumentSet, scoreDocument, SYNTHETIC_DOCUMENTS } from './documents.ts';
-import { aiConfigFromEnv, SKIP_NOTICE } from './support.ts';
+import { aiConfigFromEnv, SKIP_NOTICE, unmetered } from './support.ts';
 
 const privateDir = process.env.AI_EVAL_DIR?.trim() || null;
 const documents = loadDocumentSet(privateDir ?? SYNTHETIC_DOCUMENTS);
@@ -24,7 +24,7 @@ describe('document eval', () => {
 
   for (const document of documents) {
     it.skipIf(!run.includes(document))(`reads ${document.id} (${document.kind})`, async () => {
-      scores.push(await scoreDocument(document, { extract, reader }));
+      scores.push(await unmetered(() => scoreDocument(document, { extract, reader })));
     });
   }
 

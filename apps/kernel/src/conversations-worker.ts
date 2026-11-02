@@ -15,9 +15,8 @@ import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type Conv
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { AiUsage, ConversationWriter, ReplyDraftResult } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type ConversationWriter, type ReplyDraftResult } from '@crove/agent';
 import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
-import { aiCost } from '@crove/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
@@ -543,7 +542,8 @@ export interface DraftDeps {
   writer: Pick<ConversationWriter, 'draft'>;
   // The org's daily limits and the model's price (the extraction's): over the AI cost limit a draft is not asked for.
   limits?: UsageLimits | undefined;
-  aiPrice?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+  // The AI budget meter (#2382) the draft's model call counts against, as the system: the meter records each call, so this job records no cost of its own.
+  meter?: AiMeter | undefined;
   // The existing per-minute budget of AI drafting (ai-draft-limit.ts): a model call is made only when it allows one for the org; no counter of this job's own.
   budget?: DraftBudget | undefined;
 }
@@ -579,20 +579,22 @@ export async function runConversationDraft(deps: DraftDeps, job: ConversationDra
     await none('RATE_LIMITED');
     return 'rate';
   }
-  const used: AiUsage[] = [];
   let result: ReplyDraftResult | null = null;
+  let budgetSpent = false;
   try {
-    result = await deps.writer.draft(
-      { messages: source.messages, customerName: source.customerName, language: 'vi', maxChars: source.maxChars, savedReplies: source.savedReplies, orgName: source.orgName },
-      (usage) => used.push(usage),
-    );
-  } catch {
-    // The model, the endpoint or the network failed: nothing of the error (it may quote the prompt) goes to the log.
+    const request = { messages: source.messages, customerName: source.customerName, language: 'vi' as const, maxChars: source.maxChars, savedReplies: source.savedReplies, orgName: source.orgName };
+    // The call counts against the org's AI budget of the month (the meter records its cost, so it still counts toward the daily cost limit above).
+    result = deps.meter ? await withAiScope({ orgId: job.orgId, meter: deps.meter }, () => deps.writer.draft(request)) : await deps.writer.draft(request);
+  } catch (error) {
+    // The org's budget is spent (#2382): no draft now; the person writes the reply, and the books and everything that needs no AI go on.
+    budgetSpent = error instanceof AiBudgetExhaustedError;
+    // Any other failure (the model, the endpoint, the network): nothing of the error (it may quote the prompt) goes to the log.
   } finally {
-    // What the call used counts against the org's AI cost limit even when it failed after answering. Best effort.
-    const cost = aiCost(used, deps.aiPrice);
     ticket?.release();
-    if (/[1-9]/.test(cost)) await deps.runtime.execute('kernel.usage.record', { entries: [{ metric: 'ai_cost', amount: cost }] }, options).catch(() => undefined);
+  }
+  if (budgetSpent) {
+    await none('AI_BUDGET');
+    return 'budget';
   }
   if (!result) {
     await none('AI_ERROR');
