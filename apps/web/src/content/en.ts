@@ -5,9 +5,9 @@ import type { Dictionary } from './vi';
 export const en: Dictionary = {
   lang: 'en',
   meta: {
-    title: 'Ludy: your whole business in one suite, with an AI coworker in every department',
+    title: 'Ludy: the all-in-one business OS where AI agents are your coworkers',
     description:
-      'Vy coordinates the whole team: Ly handles finance, My marketing, Thy sales and Duy customers. You only approve. Ludy is an open-source business OS you run on your own server.',
+      'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters. Ludy is an open-source business OS you run on your own server.',
   },
   nav: {
     label: 'Main navigation',
@@ -26,8 +26,8 @@ export const en: Dictionary = {
     closeMenu: 'Close menu',
   },
   hero: {
-    title: 'Your whole business in one suite, with an AI coworker in every department.',
-    lead: 'Vy coordinates the whole team: Ly handles finance, My marketing, Thy sales and Duy customers. You only approve.',
+    title: 'The all-in-one business OS where AI agents are your coworkers',
+    lead: 'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters.',
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',
     note: 'Open source under the AGPL. Runs on your own server with docker compose. Ludy Cloud is coming soon.',
@@ -283,7 +283,7 @@ export const en: Dictionary = {
       ],
     },
     matrix: {
-      title: 'What an agent may and may not do',
+      title: 'What an AI coworker may and may not do',
       lead: 'Every action has a risk level. An agent acts on its own up to its limit; above it, the action goes to its manager in the org chart.',
       selfLabel: 'Agent acts alone (limit R1)',
       humanLabel: 'Goes to a person',

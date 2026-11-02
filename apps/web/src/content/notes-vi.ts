@@ -79,7 +79,7 @@ export const notesVi = {
   },
   coworker: {
     title: 'Vy và ghi chú',
-    lead: 'Ghi chú của bạn ở lại với bạn. Ludy Notes chưa có đồng nghiệp AI riêng.',
+    lead: 'Ghi chú của bạn ở lại với bạn. Ludy Notes không có đồng nghiệp AI riêng.',
     doesTitle: 'Vy và các đồng nghiệp AI làm',
     does: ['Nhận một việc bạn giao cho vị trí do đồng nghiệp AI giữ, sau khi bạn sửa tên và mô tả'],
     doesNotTitle: 'Vy và các đồng nghiệp AI không',

@@ -70,7 +70,7 @@ export const crmEn: CrmCopy = {
         ],
       },
       {
-        id: 'calendar-and-vy',
+        id: 'calendar-and-thy',
         title: 'Google Calendar and Thy',
         lead: 'Connect your calendar so busy times are never double booked.',
         points: [
@@ -88,7 +88,7 @@ export const crmEn: CrmCopy = {
     doesTitle: 'Thy does',
     does: [
       'Suggests meeting times from a client’s message and drafts the reply',
-      'When a client cancels, the appointment scheduler agent (if you add it to the org chart) writes the 3 nearest free times into a task and passes it to the person in charge',
+      'When a client cancels, the appointment scheduler agent (a separate position, if you add it to the org chart) writes the 3 nearest free times into a task and passes it to the person in charge',
     ],
     doesNotTitle: 'Thy does not',
     doesNot: ['Book a meeting or send an email on its own', 'Write to the contact list or the deals'],

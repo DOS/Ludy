@@ -5,9 +5,9 @@ export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const vi = {
   lang: 'vi',
   meta: {
-    title: 'Ludy: cả doanh nghiệp trong một bộ ứng dụng, mỗi phòng ban có một đồng nghiệp AI',
+    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
     description:
-      'Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.',
+      'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.',
   },
   nav: {
     label: 'Điều hướng chính',
@@ -26,8 +26,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Cả doanh\u00a0nghiệp trong một bộ ứng\u00a0dụng, mỗi phòng\u00a0ban có một đồng\u00a0nghiệp AI.',
-    lead: 'Vy điều phối cả đội: Ly lo tài\u00a0chính, My lo marketing, Thy lo bán\u00a0hàng, Duy lo khách\u00a0hàng. Bạn chỉ duyệt.',
+    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn',
+    lead: 'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',
@@ -283,7 +283,7 @@ export const vi = {
       ],
     },
     matrix: {
-      title: 'Agent làm được gì, không được làm gì',
+      title: 'Đồng nghiệp AI làm được gì, không được làm gì',
       lead: 'Mỗi việc có một mức rủi ro. Agent chỉ được tự làm trong giới hạn của mình; việc vượt giới hạn được chuyển cho người quản lý trực tiếp.',
       selfLabel: 'Agent tự làm (giới hạn R1)',
       humanLabel: 'Chuyển cho người',

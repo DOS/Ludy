@@ -124,8 +124,8 @@ export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
         ) : null}
 
         {coworker ? (
-          <Section id="vy" labelledBy="vy-title" tinted={!soon}>
-            <SectionHead id="vy-title" title={coworker.title} lead={coworker.lead} />
+          <Section id="coworker" labelledBy="coworker-title" tinted={!soon}>
+            <SectionHead id="coworker-title" title={coworker.title} lead={coworker.lead} />
             <div className="grid gap-8 md:grid-cols-2 md:gap-12">
               <div className="min-w-0">
                 <h3 className="font-display text-lg font-semibold">{coworker.doesTitle}</h3>

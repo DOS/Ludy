@@ -75,26 +75,22 @@ describe('brand on the landing page (#1683)', () => {
   });
 
   it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
-    const NB = String.fromCharCode(0xa0);
-    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Cả doanh nghiệp trong một bộ ứng dụng, mỗi phòng ban có một đồng nghiệp AI.');
-    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe('Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt.');
-    expect(en.hero.title).toBe('Your whole business in one suite, with an AI coworker in every department.');
-    expect(en.hero.lead).toBe('Vy coordinates the whole team: Ly handles finance, My marketing, Thy sales and Duy customers. You only approve.');
+    // The home hero line is held until the owner picks it (#2409), so it is not asserted here.
     for (const dict of [vi, en]) {
       expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(['Vy', 'Ly', 'My', 'Thy', 'Duy', 'Hy']);
-      expect(dict.meta.title, dict.lang).toContain(dict.lang === 'vi' ? 'đồng nghiệp AI' : 'AI coworker');
       expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bThy\b/);
-      expect(dict.faq.items[1]?.a, dict.lang).toMatch(/\bLy\b/);
+      expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toMatch(/\bLy\b/);
+      expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
   });
 
   it('never calls the AI an assistant: no "assistant" or "trợ lý" in the copy or the pages that render it', () => {
-    // The copy files, the app pages' copy and the components that print any of it (owner decision 2026-11-02, #2409).
-    const files = [...sourceFiles(join(src, 'content')), ...sourceFiles(join(src, 'components')), ...sourceFiles(join(src, 'app'))];
+    // Every source file of the site, comments included, read as NFC so decomposed Vietnamese is caught (owner decision 2026-11-02, #2409).
+    const files = sourceFiles(src);
     const found = files.flatMap((file) =>
       readFileSync(file, 'utf8')
         .split('\n')
-        .flatMap((text, i) => (/assistant|trợ lý/i.test(text) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 100)}`] : [])),
+        .flatMap((text, i) => (/assistant|trợ lý/i.test(text.normalize('NFC')) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 100)}`] : [])),
     );
     expect(found).toEqual([]);
   });

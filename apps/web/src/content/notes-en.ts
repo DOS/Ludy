@@ -78,7 +78,7 @@ export const notesEn: NotesCopy = {
   },
   coworker: {
     title: 'Vy and your notes',
-    lead: 'Your notes stay with you. Ludy Notes has no AI coworker of its own yet.',
+    lead: 'Your notes stay with you. Ludy Notes has no AI coworker of its own.',
     doesTitle: 'Vy and the AI coworkers do',
     does: ['Take a to-do you hand to a position held by an AI coworker, after you have edited its title and description'],
     doesNotTitle: 'Vy and the AI coworkers do not',

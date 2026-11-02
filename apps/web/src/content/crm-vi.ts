@@ -73,7 +73,7 @@ export const crmVi = {
         ],
       },
       {
-        id: 'lich-va-vy',
+        id: 'lich-va-thy',
         title: 'Lịch Google và Thy',
         lead: 'Nối lịch của bạn để giờ bận không bị hẹn trùng.',
         points: [
@@ -91,7 +91,7 @@ export const crmVi = {
     doesTitle: 'Thy làm',
     does: [
       'Gợi ý giờ hẹn từ tin nhắn của khách và soạn sẵn thư trả lời',
-      'Khi khách huỷ hẹn, Agent Điều phối lịch hẹn (nếu bạn thêm vào sơ đồ tổ chức) ghi 3 giờ trống gần nhất vào một việc và chuyển cho người phụ trách',
+      'Khi khách huỷ hẹn, agent Điều phối lịch hẹn (một vị trí riêng, nếu bạn thêm vào sơ đồ tổ chức) ghi 3 giờ trống gần nhất vào một việc và chuyển cho người phụ trách',
     ],
     doesNotTitle: 'Thy không làm',
     doesNot: ['Không tự đặt lịch và không tự gửi thư', 'Không ghi vào danh sách liên hệ hay cơ hội'],
