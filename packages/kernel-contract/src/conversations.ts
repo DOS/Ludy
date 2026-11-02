@@ -12,6 +12,10 @@ export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
+// The intent a person applies to a conversation (CV3, #2306): the same five as the database's check and the AI reader's labels (a test compares the
+// three). What the AI coworker suggests is never stored; only a person's decision is.
+export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
+export type ConversationIntent = (typeof CONVERSATION_INTENTS)[number];
 // An outbound message: queued (a member wrote it), sending (the worker is making the call), sent, failed (the platform
 // refused it, nothing went out) or unknown (the call may have gone through; never sent again blindly).
 export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
@@ -62,6 +66,7 @@ const zText = (max: number) => z.string().max(max).refine(noNul, 'NUL character'
 const zThreadId = z.string().min(1).max(300).refine(noNul, 'NUL character');
 export const zConversationKind = z.enum(CONVERSATION_KINDS);
 export const zConversationStatus = z.enum(CONVERSATION_STATUSES);
+export const zConversationIntent = z.enum(CONVERSATION_INTENTS);
 
 // An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
 // at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
@@ -125,6 +130,8 @@ export const zConversationSummary = z.strictObject({
   unread: z.boolean(),
   // The other members who are typing a reply to this thread now (CV3, #2306): their markers have not expired. Never the reader's own.
   composing: z.array(zId),
+  // The intent a person applied (CV3, #2306), or null. Never what the AI coworker suggests: that is read apart and shown as a suggestion.
+  intent: zConversationIntent.nullable(),
 });
 export type ConversationSummary = z.infer<typeof zConversationSummary>;
 
@@ -223,6 +230,8 @@ export const zConversationList = z.strictObject({
   // The threads under these posts (a post page lists the threads of all its channels).
   posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POSTS_MAX).optional(),
   assignee: z.enum(['me', 'none']).optional(),
+  // The threads a person labelled with this intent, or those with no label (CV3, #2306).
+  intent: z.union([zConversationIntent, z.literal('none')]).optional(),
   // A search over the customer's name, the contact's name and the words of the thread, ignoring case, Vietnamese marks and punctuation (CV3).
   q: z.string().trim().min(1).max(CONVERSATION_SEARCH_MAX).refine(noNul, 'NUL character').optional(),
   limit: z.number().int().min(1).max(CONVERSATION_LIST_MAX).default(50),
@@ -266,6 +275,34 @@ export const zConversationAssign = z.strictObject({ conversationId: zId, assigne
 export const zConversationId = z.strictObject({ conversationId: zId });
 export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
+// A person applies an intent to a thread, changes it, or clears it (null) (CV3, #2306).
+export const zConversationSetIntent = z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() });
+
+// The AI coworker's suggestions, read apart from the thread and never stored (CV3, #2306). A suggestion only shows; a person applies it.
+// ai: used (the answer came from the model or from what it answered a moment ago), off (the deployment has no model), budget (the org's AI budget of the
+// month is spent), busy (too many AI calls just now) or failed (the model gave nothing usable). In every case but used the Inbox works as it did, with
+// no suggestion and no error.
+export const CONVERSATION_AI_STATES = ['used', 'off', 'budget', 'busy', 'failed'] as const;
+// What one suggestion reads of a thread: the customer's last messages, each cut to this many characters (the agent package's bounds, which a test compares).
+export const CONVERSATION_INTENT_BATCH_MAX = 10;
+export const CONVERSATION_INTENT_MESSAGES = 3;
+export const CONVERSATION_INTENT_CHARS = 300;
+export const zConversationIntentSuggest = z.strictObject({ conversationIds: z.array(zId).min(1).max(CONVERSATION_INTENT_BATCH_MAX) });
+export const zConversationIntentSuggested = z.strictObject({
+  ai: z.enum(CONVERSATION_AI_STATES),
+  // One entry for each of the threads the reader may read, in the order asked; the intent is null where the model has no suggestion.
+  suggestions: z.array(z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() })),
+});
+export type ConversationIntentSuggested = z.infer<typeof zConversationIntentSuggested>;
+// The contacts a thread's customer may be (a person links one): a contact with the phone number the customer wrote first, then the contacts whose name
+// resembles the customer's, ranked by the AI coworker when it is on.
+export const CONVERSATION_CONTACT_MATCHES_MAX = 5;
+export const zConversationContactMatches = z.strictObject({ conversationId: zId });
+export const zConversationContactMatched = z.strictObject({
+  ai: z.enum(CONVERSATION_AI_STATES),
+  candidates: z.array(z.strictObject({ partyId: zId, name: z.string(), reason: z.enum(['phone', 'name']) })).max(CONVERSATION_CONTACT_MATCHES_MAX),
+});
+export type ConversationContactMatched = z.infer<typeof zConversationContactMatched>;
 export const zConversationMarkRead = z.strictObject({ conversationId: zId, seq: z.number().int().min(0) });
 export const zConversationDone = z.strictObject({ conversationId: zId });
 // A demo comment on a post of a sandbox connection (a thread of its own, or a follow-up in one).

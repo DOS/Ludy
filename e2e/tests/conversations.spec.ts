@@ -86,6 +86,16 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await panel.getByRole('button', { name: 'Tạo và gắn' }).click();
   await expect(panel.getByTestId('contact-name')).toHaveText('Chị Mai Hương');
   expect(sql<{ name: string }>(`SELECT p.name FROM crove_kernel.conversation c JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
+  // The intent (CV3, #2306): the stack has no model, so there is no suggestion; a person applies a label, and the list shows it and filters by it.
+  await expect(page.getByTestId('intent-suggested')).toHaveCount(0);
+  await page.getByTestId('intent-select').selectOption('complaint');
+  await expect(page.getByTestId('conversation-item').getByTestId('intent-applied')).toHaveText('Phàn nàn');
+  await page.getByTestId('inbox-intent').selectOption('spam');
+  await expect(page.getByTestId('conversation-item')).toHaveCount(0);
+  await page.getByTestId('inbox-intent').selectOption('complaint');
+  await expect(page.getByTestId('conversation-item')).toHaveCount(1);
+  await page.getByTestId('inbox-intent').selectOption('');
+  await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await page.getByTestId('conversation-reopen').click();
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');
