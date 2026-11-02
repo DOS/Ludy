@@ -26,8 +26,9 @@ describe('the words of a flag', () => {
     expect(flagText(inEn, f, day)).toBe('Cửa hàng spent 10000 VND on 2026-11-09, 2.00 times its share of the daily cap (5000 VND a day; cap 5000 VND).');
     expect(flagText(inVi, f, day)).toContain('gấp 2.00 lần phần của một ngày theo hạn mức ngày');
     expect(flagText(inEn, f, { ...day, scope: 'org', adAccountId: null, accountName: null, period: 'monthly' })).toContain('The org spent 10000 VND on 2026-11-09, 2.00 times its share of the monthly cap');
-    expect(flagText(inEn, f, cpr)).toBe('Chiến dịch A (Cửa hàng): the last 3 days cost 3000 VND per result (300 results), 3.00 times the median of 1000 VND over the 14 days before.');
-    expect(flagText(inVi, f, cpr)).toContain('3 ngày gần nhất tốn 3000 VND cho mỗi kết quả (300 kết quả), gấp 3.00 lần mức trung vị 1000 VND');
+    // The text names the last day of the 3 days, so a flag still on screen after midnight is not read as the current days.
+    expect(flagText(inEn, f, cpr)).toBe('Chiến dịch A (Cửa hàng): the 3 days to 2026-11-09 cost 3000 VND per result (300 results), 3.00 times the median of 1000 VND over the 14 days before.');
+    expect(flagText(inVi, f, cpr)).toContain('3 ngày tính đến 2026-11-09 tốn 3000 VND cho mỗi kết quả (300 kết quả), gấp 3.00 lần mức trung vị 1000 VND');
   });
 
   it('says how many accounts an org flag leaves out, because they have not read up to yesterday', () => {

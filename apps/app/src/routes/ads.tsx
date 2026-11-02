@@ -67,8 +67,13 @@ type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 const RESULT_KIND_FIELD = 'ads-result-kind';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() });
+// The spend flags are worked out from the same figures and caps, so they follow them.
 const refreshFigures = () =>
-  Promise.all([queryClient.invalidateQueries({ queryKey: orpc.ads.summary.key() }), queryClient.invalidateQueries({ queryKey: orpc.ads.syncRuns.key() })]);
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: orpc.ads.summary.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.syncRuns.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+  ]);
 
 // The name of a result kind: our own words for the kinds the sandbox offers, the platform's key for any other.
 function useKindName(): (kind: string) => string {

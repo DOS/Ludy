@@ -45,6 +45,8 @@ export function flagText(t: Translate, f: FlagFormat, flag: AdsFlag): string {
         ratio: flag.ratio,
         median: f.money(flag.medianCost, flag.currency),
         results: flag.recentResults,
+        // The last day of the 3 days judged, so a flag kept on screen across midnight does not read as the current days.
+        day: f.date(flag.day),
       });
   }
 }
