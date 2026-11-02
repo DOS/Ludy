@@ -127,6 +127,7 @@ export interface CroveKernelSchema {
   'crove_kernel.tax_profile': KernelTaxProfileTable;
   'crove_kernel.tenant': KernelTenantTable;
   'crove_kernel.tenant_member': KernelTenantMemberTable;
+  'crove_kernel.today_mail': KernelTodayMailTable;
   'crove_kernel.usage_deferral': KernelUsageDeferralTable;
 }
 
@@ -1791,6 +1792,15 @@ export interface KernelTenantTable {
   missing_invoice_reminder_day: number | null;
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
+}
+
+/** crove_kernel.today_mail */
+export interface KernelTodayMailTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  last_sent_day: string | null;
 }
 
 /** crove_kernel.usage_deferral */
