@@ -21,6 +21,7 @@ import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from 
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
 import { SM_UP, useMediaQuery } from '../lib/media.ts';
+import { browserCodec, needsShrink, preparePhoto } from '../lib/photo.ts';
 import { useReviewShortcuts } from '../lib/review-shortcuts.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
@@ -45,6 +46,10 @@ import {
   type InboxTab,
 } from '../lib/review.ts';
 import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
+
+// What the upload takes, and what a photo of a receipt is taken as.
+const PHOTO_ACCEPT = 'image/jpeg,image/png,image/webp';
+const UPLOAD_ACCEPT = `.xml,.pdf,.zip,.xlsx,.csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,${PHOTO_ACCEPT}`;
 
 // One bulk approval (issue #315): the batches planned when it started, how far it got, and the names to report.
 interface BulkRun {
@@ -271,6 +276,7 @@ export function InboxPage() {
   const setTab = (next: InboxTab) => void navigate({ to: '/o/$slug/inbox', params: { slug }, search: next === 'pending' ? {} : { status: next } });
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [preparing, setPreparing] = useState(false);
   const config = getConfig();
 
   const org = useQuery(orpc.org.get.queryOptions());
@@ -293,11 +299,42 @@ export function InboxPage() {
   // Reads a file that could not be read again (for example after AI was configured).
   const reextract = useMutation(orpc.files.reextract.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries() }));
 
+  // Opens the one file input as the file picker, or as the phone's rear camera for a receipt (#2384): `capture` is set for
+  // the photo and removed for the picker, so the same input, and the same upload below, serve both. A photo is one file
+  // at a time; a desktop browser ignores `capture` and opens its picker either way.
+  function openPicker(camera: boolean) {
+    const input = inputRef.current;
+    if (!input) return;
+    if (camera) {
+      input.setAttribute('capture', 'environment');
+      input.accept = PHOTO_ACCEPT;
+      input.multiple = false;
+    } else {
+      input.removeAttribute('capture');
+      input.accept = UPLOAD_ACCEPT;
+      input.multiple = true;
+    }
+    input.click();
+  }
+
+  // Hands the chosen files to the intake. A photo larger than the direct upload limit is shrunk on the device first, still
+  // readable (lib/photo.ts); anything else goes as it is, at once.
+  function startFiles(chosen: File[]) {
+    if (chosen.length === 0) return;
+    if (!chosen.some(needsShrink)) {
+      intake.start(chosen);
+      return;
+    }
+    setPreparing(true);
+    void Promise.all(chosen.map((file) => preparePhoto(file, browserCodec)))
+      .then((prepared) => intake.start(prepared))
+      .finally(() => setPreparing(false));
+  }
+
   function onDrop(event: DragEvent) {
     event.preventDefault();
     setDragging(false);
-    const dropped = [...event.dataTransfer.files];
-    if (dropped.length) intake.start(dropped);
+    startFiles([...event.dataTransfer.files]);
   }
 
   const processing = (files.data ?? []).filter((f) => f.status === 'processing').length;
@@ -419,8 +456,13 @@ export function InboxPage() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <UploadEntityPicker slug={slug} />
-            <Button loading={intake.uploading} size="lg" onClick={() => inputRef.current?.click()}>
+            <Button loading={intake.uploading || preparing} size="lg" onClick={() => openPicker(false)}>
               {t('upload')}
+            </Button>
+            {/* On a phone this opens the rear camera; a desktop browser ignores `capture` and opens the file picker. A stack
+                of receipts is one photo after another: each is its own file, read and proposed on its own (#2384). */}
+            <Button variant="outline" size="lg" loading={preparing} data-testid="capture-button" onClick={() => openPicker(true)}>
+              {t('capture')}
             </Button>
           </div>
         }
@@ -430,10 +472,9 @@ export function InboxPage() {
         type="file"
         multiple
         hidden
-        accept=".xml,.pdf,.zip,.xlsx,.csv,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,image/jpeg,image/png,image/webp"
+        accept={UPLOAD_ACCEPT}
         onChange={(e) => {
-          const chosen = [...(e.target.files ?? [])];
-          if (chosen.length) intake.start(chosen);
+          startFiles([...(e.target.files ?? [])]);
           e.target.value = '';
         }}
       />
