@@ -53,7 +53,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { failUndraftable, requestDueConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -2139,6 +2139,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
         await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));
       }
+      // Drafts that outlived their time (CV8): in every deployment, with a model or without, since a live draft's text is customer-derived and
+      // does not outlive its 7 days (ADR-0041).
+      await sweepConversationDrafts({ workerDb: deps.workerDb });
       // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
       if (deps.conversationWriter) await requestDueConversationDrafts({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.

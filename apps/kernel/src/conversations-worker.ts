@@ -612,9 +612,21 @@ export async function failUndraftable(runtime: Runtime, job: ConversationDraftJo
   await runtime.execute('kernel.conversation.draft_record', { outcome: 'none', draftId: job.draftId, code: 'AI_OFF' }, { actor: SYSTEM, orgId: job.orgId });
 }
 
+// Drafts that outlived their time (crove_kernel.conversation_draft_sweep, the worker login's): a request the job never answered is settled after 15
+// minutes, and a live draft nobody opened loses its text after 7 days. The relay runs it whether or not a model is configured: the text of a draft is
+// customer-derived, and it must not outlive its week in a deployment that switched the model off (ADR-0041). Not more often than every ten seconds.
+export async function sweepConversationDrafts(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<{ settled: number; expired: number }> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastDraftSweep < DRAFT_DUE_MS) return { settled: 0, expired: 0 };
+  lastDraftSweep = now;
+  const { rows } = await sql<{ settled: number; expired: number }>`SELECT settled, expired FROM crove_kernel.conversation_draft_sweep()`.execute(deps.workerDb);
+  return rows[0] ?? { settled: 0, expired: 0 };
+}
+
 // The new conversations to draft for (crove_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
 // ten seconds: each costs a model call.
 const DRAFT_DUE_MS = 10_000;
+let lastDraftSweep = 0;
 const DRAFT_BATCH = 5;
 let lastDraftDue = 0;
 export async function requestDueConversationDrafts(deps: { runtime: Runtime; workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {

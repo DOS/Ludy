@@ -14,7 +14,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { ConversationDetail, ConversationEvent, SavedReplyListed } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
-import { failUndraftable, requestDueConversationDrafts, runConversationDraft, type ConversationDraftJob } from '../src/conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, runConversationDraft, sweepConversationDrafts, type ConversationDraftJob } from '../src/conversations-worker.ts';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
@@ -513,10 +513,38 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       const id = await threadOf(o, 'lost');
       const asked = await request(o, id);
       await asOwnerSql("UPDATE crove_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, asked.draftId]);
+      // The list of conversations to draft for no longer settles anything (it is asked only where a model is configured); the sweep does.
       await requestDueConversationDrafts({ runtime: worker, workerDb, force: true });
+      expect((await drafts(o)).map((d) => d.state)).toEqual(['requested']);
+      expect((await sweepConversationDrafts({ workerDb, force: true })).settled).toBeGreaterThanOrEqual(1);
       expect((await drafts(o)).map((d) => d.state)).toEqual(['discarded']);
       // The same message is not drafted for again by the relay, but a person can ask.
       expect((await request(o, id)).queued).toBe(true);
+    });
+
+    it('is swept with no model configured: a live draft older than seven days loses its text and goes stale, and a request older than fifteen minutes is settled (ADR-0041)', async () => {
+      // The relay runs sweepConversationDrafts whether or not the worker has a writer; here nothing but the sweep runs, as in a deployment with the model off.
+      const o = await org();
+      await ingest(o, [event('old-live'), event('old-ask'), event('fresh-live')]);
+      const [oldLive, oldAsk, freshLive] = [await threadOf(o, 'old-live'), await threadOf(o, 'old-ask'), await threadOf(o, 'fresh-live')];
+      const live = await request(o, oldLive);
+      const ask = await request(o, oldAsk);
+      const fresh = await request(o, freshLive);
+      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2", [o.orgId, live.draftId, DRAFT_TEXT]);
+      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET created_at = now() - interval '20 minutes' WHERE org_id = $1 AND id = $2", [o.orgId, ask.draftId]);
+      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '6 days' WHERE org_id = $1 AND id = $2", [o.orgId, fresh.draftId, DRAFT_TEXT]);
+      // (The sweep is across orgs, so rows other tests aged count too: at least ours.)
+      const swept = await sweepConversationDrafts({ workerDb, force: true });
+      expect(swept.settled).toBeGreaterThanOrEqual(1);
+      expect(swept.expired).toBeGreaterThanOrEqual(1);
+      const states = Object.fromEntries((await drafts(o)).map((d) => [d.id, [d.state, d.body]]));
+      expect(states[live.draftId]).toEqual(['stale', null]);
+      expect(states[ask.draftId]).toEqual(['discarded', null]);
+      // Six days old: still there.
+      expect(states[fresh.draftId]).toEqual(['live', DRAFT_TEXT]);
+      // Nothing left to do on a second pass, and the API login cannot run it.
+      expect(await sweepConversationDrafts({ workerDb, force: true })).toEqual({ settled: 0, expired: 0 });
+      await expect(pool.query('SELECT * FROM crove_kernel.conversation_draft_sweep()')).rejects.toMatchObject({ code: '42501' });
     });
 
     it('waits for the customer to stop typing, drafts at most three times an hour for one conversation, skips a closed reply window, and lets a live draft nobody opened go stale after a week', async () => {
@@ -543,7 +571,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
       // A live draft nobody opened in a week goes stale, its text with it (the quiet thread's draft, asked for above, is made live and old).
       await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND conversation_id = $2 AND state = 'requested'", [o.orgId, quiet, DRAFT_TEXT]);
-      await requestDueConversationDrafts({ runtime: worker, workerDb, force: true });
+      await sweepConversationDrafts({ workerDb, force: true });
       expect((await drafts(o)).filter((d) => d.basis_seq === 1 && d.body !== null)).toEqual([]);
       expect((await rows<{ state: string; body: string | null }>('SELECT state, body FROM crove_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [o.orgId, quiet])).map((d) => [d.state, d.body])).toEqual([['stale', null]]);
     });

@@ -17,8 +17,9 @@
 --                                  customer message arrived. The body exists only while the draft is live, so a retention purge or an erasure has
 --                                  little to delete, and ON DELETE CASCADE from the thread takes the rest.
 -- crove_kernel.conversation_setting.auto_draft   whether Vy drafts when a new conversation arrives (default on; owners and admins change it).
--- crove_kernel.conversation_draft_due            the worker's list of new conversations to draft for (worker login only); it also settles a request the job
---                                  never answered.
+-- crove_kernel.conversation_draft_due            the worker's list of new conversations to draft for (worker login only).
+-- crove_kernel.conversation_draft_sweep          settles a request the job never answered and drops the text of a live draft after 7 days (worker login only;
+--                                  the worker runs it with or without a model).
 -- Queue kernel-conversation-draft: the draft job, ids only in its data.
 SET LOCAL lock_timeout = '2s';
 
@@ -184,10 +185,31 @@ CREATE TRIGGER conversation_draft_guard BEFORE INSERT OR UPDATE ON crove_kernel.
 -- ---------------------------------------------------------------------------
 -- The list is found by the new threads' last customer message, across orgs: a partial index keeps it from scanning every thread of every org.
 CREATE INDEX IF NOT EXISTS conversation_new_inbound_idx ON crove_kernel.conversation (last_inbound_at) WHERE status = 'new';
--- First a request the job never answered (older than 15 minutes) is settled as discarded, so the conversation can be asked about again. Then the
--- conversations of active orgs on an active connection that are new (the customer wrote last), whose org has not turned drafting off, whose last
+-- The sweep of drafts that outlived their time, run by the worker whether or not a model is configured (a deployment that switched the model off must
+-- still drop the customer-derived text of a live draft after 7 days, as ADR-0041 says). A request the job never answered (older than 15 minutes) is
+-- settled as discarded, so the conversation can be asked about again; a live draft nobody opened in a week goes stale and its text with it, since a
+-- draft is not kept for the retention period. Answers how many of each.
+CREATE OR REPLACE FUNCTION crove_kernel.conversation_draft_sweep()
+RETURNS TABLE (settled integer, expired integer)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'CONVERSATION_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  UPDATE crove_kernel.conversation_draft d SET state = 'discarded', decided_at = pg_catalog.now()
+  WHERE d.state = 'requested' AND d.created_at < pg_catalog.now() - pg_catalog.make_interval(mins => 15);
+  GET DIAGNOSTICS settled = ROW_COUNT;
+  UPDATE crove_kernel.conversation_draft d SET state = 'stale', body = NULL, decided_at = pg_catalog.now()
+  WHERE d.state = 'live' AND d.written_at < pg_catalog.now() - pg_catalog.make_interval(days => 7);
+  GET DIAGNOSTICS expired = ROW_COUNT;
+  RETURN NEXT;
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.conversation_draft_sweep() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.conversation_draft_sweep() TO crove_worker;
+
+-- The conversations of active orgs on an active connection that are new (the customer wrote last), whose org has not turned drafting off, whose last
 -- customer message is less than 48 hours old and is not removed, and which have no draft in play and no draft decided for that very message (a
--- dismissed or failed draft is not made again until the customer writes again). The oldest first, at most p_limit.
+-- dismissed or failed draft is not made again until the customer writes again). The oldest first, at most p_limit. Only a worker with a model asks.
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_draft_due(p_limit integer)
 RETURNS TABLE (org_id uuid, conversation_id uuid)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -196,11 +218,6 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'CONVERSATION_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  UPDATE crove_kernel.conversation_draft d SET state = 'discarded', decided_at = pg_catalog.now()
-  WHERE d.state = 'requested' AND d.created_at < pg_catalog.now() - pg_catalog.make_interval(mins => 15);
-  -- A live draft nobody opened in a week goes stale and its text with it: a draft is not kept for the retention period.
-  UPDATE crove_kernel.conversation_draft d SET state = 'stale', body = NULL, decided_at = pg_catalog.now()
-  WHERE d.state = 'live' AND d.written_at < pg_catalog.now() - pg_catalog.make_interval(days => 7);
   RETURN QUERY
   SELECT c.org_id, c.id
   FROM crove_kernel.conversation c
