@@ -204,6 +204,10 @@ import {
   zConversationNoteAdd,
   zConversationReplied,
   zConversationReply,
+  zConversationRetention,
+  zConversationRetentionSet,
+  zConversationEraseContact,
+  zConversationErased,
   zConversationSandboxComment,
   zConversationSandboxQueued,
   zConversationSettle,
@@ -1409,6 +1413,11 @@ export const contract = {
     markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
     // A demo comment on a post of a sandbox connection (owners and admins): it goes through the same intake a platform's notice takes.
     sandboxComment: oc.input(zConversationSandboxComment).output(zConversationSandboxQueued),
+    // The retention of the org's threads (every member reads it; owners and admins set it), and the erasure of one customer (owners and
+    // admins, with a fresh second factor).
+    retention: oc.input(z.strictObject({})).output(zConversationRetention),
+    setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
+    eraseContact: oc.input(zConversationEraseContact).output(zConversationErased),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.

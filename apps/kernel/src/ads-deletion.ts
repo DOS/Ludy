@@ -136,18 +136,3 @@ export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }):
   }
   return completed;
 }
-
-// The status page's words, in Vietnamese and English (the person is a Meta user, in any language the app speaks).
-export function renderAdsDeletionStatus(status: AdsDeletionStatus | null): string {
-  const text = !status
-    ? { vi: 'Không tìm thấy yêu cầu xóa dữ liệu này.', en: 'No such data deletion request was found.' }
-    : status.completedAt
-      ? status.accounts && status.accounts > 0
-        ? {
-            vi: 'Số liệu quảng cáo, nhật ký cập nhật và các tài khoản quảng cáo bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của chúng đã bị hủy.',
-            en: 'The ad figures, update logs and ad accounts you granted to Ludy have been deleted, and their access tokens destroyed.',
-          }
-        : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản quảng cáo nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no ad account you granted is left in Ludy.' }
-      : { vi: 'Yêu cầu đã được nhận và đang được xử lý, thường trong vòng một giờ.', en: 'The request was received and is being handled, usually within the hour.' };
-  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Ludy</title></head><body><p>${text.vi}</p><p lang="en">${text.en}</p></body></html>`;
-}
