@@ -12,16 +12,28 @@ export interface AdsChangeText {
   detail: string;
 }
 
-// The plan fields the AI coworker may have drafted, in words (an unknown one is shown as it is).
-const AI_FIELD_KEYS: Readonly<Record<string, string>> = {
-  name: 'ads.change.aiField.name',
-  dailyBudget: 'ads.change.aiField.dailyBudget',
-  startOn: 'ads.change.aiField.startOn',
-  endOn: 'ads.change.aiField.endOn',
-  targeting: 'ads.change.aiField.targeting',
-  linkUrl: 'ads.change.aiField.linkUrl',
-  variants: 'ads.change.aiField.variants',
-};
+// The plan fields the AI coworker may have drafted, in words (an unknown one is shown as it is). Each key is spelled out: a computed key would make the
+// typed translator's key type unmanageable for the compiler.
+function aiFieldText(field: string, t: Translate): string {
+  switch (field) {
+    case 'name':
+      return t('ads.change.aiField.name');
+    case 'dailyBudget':
+      return t('ads.change.aiField.dailyBudget');
+    case 'startOn':
+      return t('ads.change.aiField.startOn');
+    case 'endOn':
+      return t('ads.change.aiField.endOn');
+    case 'targeting':
+      return t('ads.change.aiField.targeting');
+    case 'linkUrl':
+      return t('ads.change.aiField.linkUrl');
+    case 'variants':
+      return t('ads.change.aiField.variants');
+    default:
+      return field;
+  }
+}
 
 export function adsChangeText(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string): AdsChangeText {
   switch (change.change) {
@@ -43,7 +55,7 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
       // The plan's name and account, and what the approver signs: the largest amount, the days and the daily budget, in the account's currency.
       // A plan the AI coworker drafted says so, with the fields it drafted that nobody has changed since (AI output is tainted: DESIGN.md 2).
       const spend = t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency) });
-      const drafted = change.aiFields.map((field) => (field in AI_FIELD_KEYS ? t(AI_FIELD_KEYS[field] as string) : field));
+      const drafted = change.aiFields.map((field) => aiFieldText(field, t));
       const ai = change.origin === 'ai' ? (drafted.length > 0 ? t('ads.change.campaignAi', { fields: drafted.join(', ') }) : t('ads.change.campaignAiEdited')) : '';
       return {
         title: t('ads.change.campaignLaunch', { name: change.plan.name, account: change.adAccountName }),
