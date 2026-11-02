@@ -350,6 +350,8 @@ const schema = z.object({
   // route POST /api/channels/zalo/webhook exists and customers' messages to the connected OAs are taken in. A credential: it is read from
   // the environment only, never logged, stored or put in an answer; rotate it by changing it in the Zalo app and here together.
   CHANNEL_ZALO_OA_SECRET_KEY: optional,
+  // The key CHANNEL_ZALO_OA_SECRET_KEY replaces, kept while Zalo may still sign with it (a rotation in the console, then here).
+  CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
   // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
@@ -658,6 +660,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   if (Boolean(config.CHANNEL_ZALO_APP_ID) !== Boolean(config.CHANNEL_ZALO_APP_SECRET)) throw new Error('set both CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET, or neither');
   if (config.CHANNEL_ZALO_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_ZALO_APP_ID)) throw new Error('CHANNEL_ZALO_APP_ID is the numeric id of the Zalo app');
+  if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS !== undefined) {
+    if (config.CHANNEL_ZALO_OA_SECRET_KEY === undefined) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is set without CHANNEL_ZALO_OA_SECRET_KEY');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is an OA secret key: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS === config.CHANNEL_ZALO_OA_SECRET_KEY) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is the same as CHANNEL_ZALO_OA_SECRET_KEY: remove it');
+  }
   if (config.CHANNEL_ZALO_OA_SECRET_KEY !== undefined) {
     if (!config.CHANNEL_ZALO_APP_ID) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY needs CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY is the OA secret key of the Zalo app: 8 to 200 characters, no spaces');

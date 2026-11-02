@@ -376,7 +376,8 @@ const AUTH_PUBLIC_PATHS =
 const STATUS_CACHE_MS = 5_000;
 // Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
-const ZALO_WEBHOOKS_PER_MINUTE = 600;
+// Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
+const ZALO_WEBHOOKS_PER_MINUTE = 120;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
@@ -720,23 +721,29 @@ export function createHttpApp(deps: HttpDeps) {
 
   // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
   // body is capped before it is read, and a verified message is only parked for the worker (the org comes from the stored connection).
-  // The body is capped (a chunked one is cut at the cap), then rate limited per client address, which reads nothing more. Every refusal
-  // of the signature is the same 401. Zalo does not retry on an error status [S], so a wrong TRUSTED_PROXY_HOPS (one shared bucket behind
-  // a proxy) would cost real notices: set it as for every other public route.
+  // The body is capped (a chunked one is cut at the cap) and the signature checked, which is one SHA-256 over at most 64 KiB. Every
+  // refusal of the signature is the same 401. Zalo does not retry on an error status [S], so a verified notice is never refused for
+  // rate: the per-address limit is charged only to REFUSED requests (a bad signature or a body that is no notice), so a flood of forged
+  // ones from the address Zalo also posts from cannot cost a real notice, whatever TRUSTED_PROXY_HOPS says. That limit only shapes the
+  // answers (a 429 in place of a 401, for an address that sends many refused requests): it does not save the work of checking, so the
+  // CPU bound is the 64 KiB body cap above, one SHA-256 over at most that much per request. What a verified flood can do is bounded by
+  // the backlog cap of the provider (conversation_inbound_enqueue).
   const zaloWebhook = deps.zaloWebhook;
   if (zaloWebhook) {
     const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });
     const zaloReplays = deps.zaloReplays ?? new ZaloReplayCache();
     app.post(ZALO_WEBHOOK_PATH, bodyLimit({ maxSize: ZALO_MAX_NOTICE_BYTES }), async (c) => {
-      const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
-      if (!decision.allowed) {
-        warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
-        c.header('retry-after', String(decision.retryAfterSeconds));
-        return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
-      }
       try {
         const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, zaloReplays);
         if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+        }
         return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {
         return problem(c, error);
