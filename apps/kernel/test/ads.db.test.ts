@@ -1803,7 +1803,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(refusedCall.status, JSON.stringify(bad)).toBeLessThan(500);
         }
         // The database holds the same bounds, whoever writes.
-        for (const bad of ['pace_min_days = 0', 'pace_min_days = 16', 'day_factor = 1', 'day_factor = 10.01', 'cpr_factor = 0.5', 'cpr_min_results = 0', 'cpr_min_history_days = 2', 'cpr_min_history_days = 15']) {
+        for (const bad of ['pace_min_days = 0', 'pace_min_days = 16', 'day_factor = 1', 'day_factor = 10.01', 'day_factor = 1.555', 'cpr_factor = 2.555', 'cpr_factor = 0.5', 'cpr_min_results = 0', 'cpr_min_history_days = 2', 'cpr_min_history_days = 15']) {
           await expect(row(`UPDATE crove_ads.ad_flag_setting SET ${bad} WHERE org_id = $1`, [orgId]), bad).rejects.toMatchObject({ code: '23514' });
         }
         // The row policies: a member and a viewer change and delete nothing, and insert nothing, in SQL as well; an owner's context writes it.

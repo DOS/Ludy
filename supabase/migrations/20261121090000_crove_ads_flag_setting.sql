@@ -20,10 +20,11 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_flag_setting (
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
   -- Days of the month that must be over before the pace is judged against a cap.
   pace_min_days smallint CHECK (pace_min_days IS NULL OR (pace_min_days >= 1 AND pace_min_days <= 15)),
-  -- A day's spend flags above this many times its share of a cap; a ratio, above 1 and at most 10, decimal arithmetic in the code.
-  day_factor numeric CHECK (day_factor IS NULL OR (day_factor > 1 AND day_factor <= 10)),
+  -- A day's spend flags above this many times its share of a cap; a ratio, above 1 and at most 10, with at most two decimals (as the contract and
+  -- the form), decimal arithmetic in the code.
+  day_factor numeric CHECK (day_factor IS NULL OR (day_factor > 1 AND day_factor <= 10 AND pg_catalog.scale(day_factor) <= 2)),
   -- A campaign's cost per result over the last 3 days flags above this many times its median of the 14 days before.
-  cpr_factor numeric CHECK (cpr_factor IS NULL OR (cpr_factor > 1 AND cpr_factor <= 10)),
+  cpr_factor numeric CHECK (cpr_factor IS NULL OR (cpr_factor > 1 AND cpr_factor <= 10 AND pg_catalog.scale(cpr_factor) <= 2)),
   -- The least results in the last 3 days, and the least days with results in the history, for that rule to judge a campaign.
   cpr_min_results integer CHECK (cpr_min_results IS NULL OR (cpr_min_results >= 1 AND cpr_min_results <= 100000)),
   cpr_min_history_days smallint CHECK (cpr_min_history_days IS NULL OR (cpr_min_history_days >= 3 AND cpr_min_history_days <= 14)),
