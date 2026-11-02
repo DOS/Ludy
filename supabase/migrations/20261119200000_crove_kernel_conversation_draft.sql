@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_draft (
 );
 -- At most one draft in play per conversation.
 CREATE UNIQUE INDEX IF NOT EXISTS conversation_draft_open_uq ON crove_kernel.conversation_draft (org_id, conversation_id) WHERE state IN ('requested', 'live');
-CREATE INDEX IF NOT EXISTS conversation_draft_thread_idx ON crove_kernel.conversation_draft (org_id, conversation_id, basis_seq);
+-- Backs the thread's foreign key (led by the same columns) and the due list's lookup by conversation and basis.
+CREATE INDEX IF NOT EXISTS conversation_draft_thread_idx ON crove_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq);
 CREATE INDEX IF NOT EXISTS conversation_draft_requester_idx ON crove_kernel.conversation_draft (org_id, requested_by) WHERE requested_by IS NOT NULL;
 SELECT crove_kernel.apply_tenant_rls('crove_kernel.conversation_draft');
 REVOKE UPDATE ON crove_kernel.conversation_draft FROM crove_tenant;
@@ -118,13 +119,14 @@ CREATE POLICY conversation_draft_delete ON crove_kernel.conversation_draft AS RE
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system');
 
 -- What a person and what the system may write of a draft. A person asks (a row requested, no text, theirs) and decides (a live draft becomes used,
--- with its lengths, or discarded; a request they made may be discarded); the system writes the text (requested to live), settles what the job
+-- with its lengths, or discarded or stale; a request they made may be discarded); the system writes the text (requested to live), settles what the job
 -- could not answer and marks a draft stale. Nothing else, and a decided draft is final. A database owner's own statement has no context and is
 -- not held to it.
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_draft_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_actor text := crove_kernel.ctx_actor_type();
+  v_same crove_kernel.conversation_draft;
 BEGIN
   IF TG_OP = 'INSERT' THEN
     -- A row for another org is the tenant policy's to refuse (its own message), not this guard's.
@@ -137,6 +139,14 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
+  -- The foreign key's own action when a member who asked is removed (ON DELETE SET NULL): the name goes, nothing else changes, whatever the draft's state.
+  IF OLD.requested_by IS NOT NULL AND NEW.requested_by IS NULL THEN
+    v_same := NEW;
+    v_same.requested_by := OLD.requested_by;
+    IF v_same IS NOT DISTINCT FROM OLD THEN
+      RETURN NEW;
+    END IF;
+  END IF;
   IF (NEW.org_id, NEW.id, NEW.conversation_id, NEW.channel_connection_id, NEW.kind, NEW.basis_seq, NEW.source, NEW.requested_by, NEW.tainted, NEW.created_at)
      IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.conversation_id, OLD.channel_connection_id, OLD.kind, OLD.basis_seq, OLD.source, OLD.requested_by, OLD.tainted, OLD.created_at) THEN
     RAISE EXCEPTION 'DRAFT_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'a draft keeps its thread, its basis and its taint';
@@ -148,9 +158,10 @@ BEGIN
     RAISE EXCEPTION 'DRAFT_IMMUTABLE' USING ERRCODE = '42501', DETAIL = 'a decided draft never changes';
   END IF;
   IF v_actor IS NOT DISTINCT FROM 'user' THEN
-    -- A person decides: a live draft is used (with its lengths) or discarded, a request is discarded; never text, never live.
-    IF NEW.state NOT IN ('used', 'discarded') OR NEW.body IS NOT NULL OR NEW.written_at IS DISTINCT FROM OLD.written_at
-       OR (NEW.state = 'discarded' AND (NEW.draft_length IS NOT NULL OR NEW.final_length IS NOT NULL OR NEW.edit_size IS NOT NULL))
+    -- A person decides: a live draft is used (with its lengths) or discarded, a request is discarded, a draft whose source is gone is made stale; never
+    -- text, never live.
+    IF NEW.state NOT IN ('used', 'discarded', 'stale') OR NEW.body IS NOT NULL OR NEW.written_at IS DISTINCT FROM OLD.written_at
+       OR (NEW.state IN ('discarded', 'stale') AND (NEW.draft_length IS NOT NULL OR NEW.final_length IS NOT NULL OR NEW.edit_size IS NOT NULL))
        OR (NEW.state = 'used' AND OLD.state <> 'live') THEN
       RAISE EXCEPTION 'DRAFT_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a member decides about a draft; the text is the system''s';
     END IF;
@@ -171,6 +182,8 @@ CREATE TRIGGER conversation_draft_guard BEFORE INSERT OR UPDATE ON crove_kernel.
 -- ---------------------------------------------------------------------------
 -- The new conversations to draft for (worker login only)
 -- ---------------------------------------------------------------------------
+-- The list is found by the new threads' last customer message, across orgs: a partial index keeps it from scanning every thread of every org.
+CREATE INDEX IF NOT EXISTS conversation_new_inbound_idx ON crove_kernel.conversation (last_inbound_at) WHERE status = 'new';
 -- First a request the job never answered (older than 15 minutes) is settled as discarded, so the conversation can be asked about again. Then the
 -- conversations of active orgs on an active connection that are new (the customer wrote last), whose org has not turned drafting off, whose last
 -- customer message is less than 48 hours old and is not removed, and which have no draft in play and no draft decided for that very message (a
@@ -185,6 +198,9 @@ BEGIN
   END IF;
   UPDATE crove_kernel.conversation_draft d SET state = 'discarded', decided_at = pg_catalog.now()
   WHERE d.state = 'requested' AND d.created_at < pg_catalog.now() - pg_catalog.make_interval(mins => 15);
+  -- A live draft nobody opened in a week goes stale and its text with it: a draft is not kept for the retention period.
+  UPDATE crove_kernel.conversation_draft d SET state = 'stale', body = NULL, decided_at = pg_catalog.now()
+  WHERE d.state = 'live' AND d.written_at < pg_catalog.now() - pg_catalog.make_interval(days => 7);
   RETURN QUERY
   SELECT c.org_id, c.id
   FROM crove_kernel.conversation c
@@ -192,7 +208,14 @@ BEGIN
   JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id AND ch.status = 'active'
   LEFT JOIN crove_kernel.conversation_setting s ON s.org_id = c.org_id
   WHERE c.status = 'new' AND c.last_seq >= 1 AND COALESCE(s.auto_draft, true)
+    -- The customer has stopped typing for 20 seconds (one draft for a burst of messages, not one for each), wrote less than 48 hours ago, and the
+    -- platform's reply window is still open.
     AND c.last_inbound_at > pg_catalog.now() - pg_catalog.make_interval(hours => 48)
+    AND c.last_inbound_at < pg_catalog.now() - pg_catalog.make_interval(secs => 20)
+    AND (c.reply_window_until IS NULL OR c.reply_window_until > pg_catalog.now())
+    -- At most three automatic drafts for one conversation in an hour, so one chatty customer is not a paid model call for each message.
+    AND (SELECT pg_catalog.count(*) FROM crove_kernel.conversation_draft a
+         WHERE a.org_id = c.org_id AND a.conversation_id = c.id AND a.source = 'auto' AND a.created_at > pg_catalog.now() - pg_catalog.make_interval(hours => 1)) < 3
     AND EXISTS (SELECT 1 FROM crove_kernel.conversation_message m
                 WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.seq = c.last_seq AND m.direction = 'in' AND m.platform_removed_at IS NULL)
     AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_draft d

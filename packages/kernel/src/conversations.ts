@@ -238,6 +238,19 @@ export const conversationIngest = defineCommand({
   },
 });
 
+// The drafts in play of a thread go stale and drop their text: what they answered has changed or gone (CV8, #2310).
+async function staleDrafts(ctx: CommandContext, conversationId: string | readonly string[]): Promise<void> {
+  const ids = typeof conversationId === 'string' ? [conversationId] : [...conversationId];
+  if (ids.length === 0) return;
+  await ctx.trx
+    .updateTable('crove_kernel.conversation_draft')
+    .set({ state: 'stale', body: null, decided_at: ctx.now })
+    .where('org_id', '=', ctx.orgId)
+    .where('conversation_id', 'in', ids)
+    .where('state', 'in', ['requested', 'live'])
+    .execute();
+}
+
 // The pending rows of a message's images (CV5c, #2357), each with a blob key of its own reserved now.
 async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string }>): Promise<void> {
   await ctx.trx
@@ -262,7 +275,7 @@ const customerLock = (ctx: CommandContext, provider: string, externalUserId: str
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
-    .select(['id', 'body', 'direction', 'platform_removed_at'])
+    .select(['id', 'conversation_id', 'body', 'direction', 'platform_removed_at'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
     .where('external_message_id', '=', event.messageId)
@@ -278,6 +291,8 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .execute();
       // The images go with the body (their blobs are queued for deletion by the delete trigger).
       await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
+      // A draft Vy wrote from what the person has now removed goes stale with its text.
+      await staleDrafts(ctx, existing.conversation_id);
     } else if (!event.removed && !existing.platform_removed_at && existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
       // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
       // the message has none, so a redelivery does not add them again.
@@ -495,16 +510,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
   // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
   if (event.direction === 'in' && event.attachments && event.attachments.length > 0) await addAttachments(ctx, stored.id, connectionId, event.kind, event.attachments);
-  // A draft answers the message that was last when it was asked for: a newer customer message makes it stale, its text dropped (a new draft may be made).
-  if (event.direction === 'in') {
-    await ctx.trx
-      .updateTable('crove_kernel.conversation_draft')
-      .set({ state: 'stale', body: null, decided_at: ctx.now })
-      .where('org_id', '=', ctx.orgId)
-      .where('conversation_id', '=', conversation.id)
-      .where('state', 'in', ['requested', 'live'])
-      .execute();
-  }
+  // A draft answers the message that was last when it was asked for: a newer message of the thread (a customer's, or the org's own written in the platform's
+  // inbox, which answers it) makes it stale, its text dropped (a new draft may be made).
+  await staleDrafts(ctx, conversation.id);
 
   const inbound = event.direction === 'in';
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
@@ -1541,10 +1549,11 @@ export const conversationEraseContact = defineCommand({
     if (subject) {
       // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
       // its author).
-      const others = await sql<{ n: string }>`
-        WITH gone AS (DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING 1)
-        SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
-      erased.messages += Number(others.rows[0]?.n ?? 0);
+      const others = await sql<{ conversation_id: string }>`
+        DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING m.conversation_id`.execute(ctx.trx);
+      erased.messages += others.rows.length;
+      // A draft Vy wrote in one of those threads read what the customer wrote: it goes stale with its text.
+      await staleDrafts(ctx, [...new Set(others.rows.map((r) => r.conversation_id))]);
       // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises
       // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
       const who = subjectRow;
@@ -2093,6 +2102,13 @@ async function openDraft(ctx: CommandContext, conversation: ConversationRow, sou
     .where('seq', '=', conversation.last_seq)
     .executeTakeFirst();
   if (!last || last.direction !== 'in' || last.platform_removed_at) throw new DomainError('DRAFT_NOT_NEEDED', 409, 'Chưa có tin nhắn mới của khách để soạn câu trả lời');
+  // A draft nobody can send is not made: the channel does not take replies here, or the platform's reply window has closed.
+  const connection = await connectionOf(ctx, conversation.channel_connection_id);
+  const rules = connection ? conversationRules(connection.provider) : null;
+  if (!rules || !rules.kinds.includes(conversation.kind)) throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
+  if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
+    throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
+  }
   const open = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select(['id', 'basis_seq']).where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('state', 'in', ['requested', 'live']).executeTakeFirst();
   if (open && open.basis_seq === conversation.last_seq) return { draftId: open.id, queued: false };
   if (open) {
@@ -2149,7 +2165,7 @@ export const conversationDraftEnqueue = defineCommand({
     try {
       return await openDraft(ctx, conversation, 'auto', null);
     } catch (error) {
-      if (error instanceof DomainError && error.code === 'DRAFT_NOT_NEEDED') return { draftId: null, queued: false };
+      if (error instanceof DomainError && ['DRAFT_NOT_NEEDED', 'REPLY_NOT_SUPPORTED', 'REPLY_WINDOW_CLOSED'].includes(error.code)) return { draftId: null, queued: false };
       throw error;
     }
   },

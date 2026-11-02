@@ -15,6 +15,7 @@ import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIde
 import type { ConversationDetail, ConversationEvent, SavedReplyListed } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { failUndraftable, requestDueConversationDrafts, runConversationDraft, type ConversationDraftJob } from '../src/conversations-worker.ts';
+import { DraftBudget } from '../src/ai-draft-limit.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -89,7 +90,8 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     direction: 'in',
     contact: { id: `u-${threadId}`, name: `Khách ${threadId}` },
     text,
-    at: new Date(Date.now() - 60_000 + tick * 1000).toISOString(),
+    // Ten minutes ago: past the relay's quiet period of 20 seconds, within the reply window.
+    at: new Date(Date.now() - 600_000 + tick * 100).toISOString(),
     ...extra,
   });
   const ingest = (o: Org, events: ConversationEvent[]) => worker.execute('kernel.conversation.ingest', { connectionId: o.connectionId, events }, { actor: SYSTEM, orgId: o.orgId });
@@ -279,6 +281,27 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'AI_LIMIT' });
     });
 
+    it('is rationed by the existing per-minute draft budget of the org (ai-draft-limit.ts): over it no model call is made and the person can ask again', async () => {
+      const o = await org();
+      const budget = new DraftBudget({ perOrgPerMinute: 1 });
+      const m = model(written);
+      const make = async (thread: string) => {
+        await ingest(o, [event(thread)]);
+        const id = await threadOf(o, thread);
+        return { id, asked: await request(o, id) };
+      };
+      const one = await make('r1');
+      expect(await runConversationDraft({ runtime: worker, writer: m.writer, aiPrice: PRICE, budget }, jobOf(o, one.asked.draftId, one.id))).toBe('written');
+      const two = await make('r2');
+      expect(await runConversationDraft({ runtime: worker, writer: m.writer, aiPrice: PRICE, budget }, jobOf(o, two.asked.draftId, two.id))).toBe('rate');
+      // One call was made; the refused draft is discarded with its code, and the thread can be asked about again (the member's own ask is rationed in the API).
+      expect(m.asked).toHaveLength(1);
+      expect((await drafts(o)).map((d) => d.state)).toEqual(['live', 'discarded']);
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'RATE_LIMITED'", [o.orgId]);
+      expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'RATE_LIMITED' });
+      expect((await request(o, two.id)).queued).toBe(true);
+    });
+
     it('settles a draft asked for where this worker has no model as none, so nothing waits for a job that will never exist', async () => {
       const o = await org();
       await ingest(o, [event('off')]);
@@ -289,6 +312,42 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect((await detail(o, id)).draft).toBeNull();
       // Asked again, it can be.
       expect((await request(o, id)).queued).toBe(true);
+    });
+
+    it('goes stale, its text dropped, when the platform removes the message it answered or the page answers from its own inbox', async () => {
+      const o = await org();
+      const removable = event('rm');
+      await ingest(o, [removable]);
+      const rm = await threadOf(o, 'rm');
+      const a = await request(o, rm);
+      expect(await run(o, model(written).writer, a.draftId, rm)).toBe('written');
+      // The customer deletes the message: its body goes, and the draft Vy wrote from it with it.
+      await ingest(o, [{ ...removable, removed: true, text: '' }]);
+      expect((await drafts(o)).map((d) => [d.state, d.body])).toEqual([['stale', null]]);
+      // The page answers from its own inbox (an echo that is not a reply of ours): the message is answered, so the draft is stale.
+      await ingest(o, [event('echo')]);
+      const echo = await threadOf(o, 'echo');
+      const b = await request(o, echo);
+      expect(await run(o, model(written).writer, b.draftId, echo)).toBe('written');
+      await ingest(o, [event('echo', 'Dạ shop trả lời ở Zalo rồi ạ', { direction: 'out' })]);
+      expect((await drafts(o)).map((d) => [d.state, d.body])).toEqual([['stale', null], ['stale', null]]);
+    });
+
+    it('does not stop the removal of a member who asked for a draft: the name goes, the draft stays whatever its state', async () => {
+      const o = await org();
+      const asker = await person('asker');
+      await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')", [o.orgId, asker]);
+      await ingest(o, [event('gone1'), event('gone2')]);
+      const [g1, g2] = [await threadOf(o, 'gone1'), await threadOf(o, 'gone2')];
+      const asked = await request(o, g1, asker);
+      expect(await run(o, model(written).writer, asked.draftId, g1)).toBe('written');
+      const used = await request(o, g2, asker);
+      expect(await run(o, model(written).writer, used.draftId, g2)).toBe('written');
+      await rt.execute('kernel.conversation.reply', { conversationId: g2, body: 'Dạ vâng ạ', lastSeenSeq: 1, draftId: used.draftId }, { actor: asUser(o.owner), orgId: o.orgId });
+      // The member is removed: the foreign key clears who asked, on a live draft and on a decided one, and nothing else of them changes.
+      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, asker]);
+      const after = await rows<{ state: string; requested_by: string | null; body: string | null }>('SELECT state, requested_by, body FROM crove_kernel.conversation_draft WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+      expect(after).toEqual([{ state: 'live', requested_by: null, body: DRAFT_TEXT }, { state: 'used', requested_by: null, body: null }]);
     });
 
     it('goes stale, its text dropped, when the customer writes again, and a job that outlived it writes nothing', async () => {
@@ -458,6 +517,35 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect((await drafts(o)).map((d) => d.state)).toEqual(['discarded']);
       // The same message is not drafted for again by the relay, but a person can ask.
       expect((await request(o, id)).queued).toBe(true);
+    });
+
+    it('waits for the customer to stop typing, drafts at most three times an hour for one conversation, skips a closed reply window, and lets a live draft nobody opened go stale after a week', async () => {
+      const o = await org();
+      // A message from a few seconds ago is not drafted for yet: a burst of messages is one draft, not one for each.
+      await ingest(o, [event('quiet', CUSTOMER_TEXT, { at: new Date(Date.now() - 5_000).toISOString() })]);
+      expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
+      const quiet = await threadOf(o, 'quiet');
+      await asOwnerSql("UPDATE crove_kernel.conversation SET last_inbound_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2", [o.orgId, quiet]);
+      expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(1);
+      // A window the platform closed: nothing to draft for, by the relay or by a person.
+      await ingest(o, [event('closed')]);
+      const closed = await threadOf(o, 'closed');
+      await asOwnerSql("UPDATE crove_kernel.conversation SET reply_window_until = now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, closed]);
+      expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
+      await expect(request(o, closed)).rejects.toMatchObject({ code: 'REPLY_WINDOW_CLOSED' });
+      // Three automatic drafts in the last hour for one conversation: no fourth, however many messages the customer sends.
+      await ingest(o, [event('chatty')]);
+      const chatty = await threadOf(o, 'chatty');
+      for (let i = 0; i < 3; i++) {
+        await asOwnerSql("INSERT INTO crove_kernel.conversation_draft (org_id, conversation_id, channel_connection_id, kind, basis_seq, source, state) SELECT org_id, id, channel_connection_id, kind, 1, 'auto', 'discarded' FROM crove_kernel.conversation WHERE org_id = $1 AND id = $2", [o.orgId, chatty]);
+      }
+      await ingest(o, [event('chatty', 'Còn nữa nè')]);
+      expect(await requestDueConversationDrafts({ runtime: worker, workerDb, force: true })).toBe(0);
+      // A live draft nobody opened in a week goes stale, its text with it (the quiet thread's draft, asked for above, is made live and old).
+      await asOwnerSql("UPDATE crove_kernel.conversation_draft SET state = 'live', body = $3, written_at = now() - interval '8 days' WHERE org_id = $1 AND conversation_id = $2 AND state = 'requested'", [o.orgId, quiet, DRAFT_TEXT]);
+      await requestDueConversationDrafts({ runtime: worker, workerDb, force: true });
+      expect((await drafts(o)).filter((d) => d.basis_seq === 1 && d.body !== null)).toEqual([]);
+      expect((await rows<{ state: string; body: string | null }>('SELECT state, body FROM crove_kernel.conversation_draft WHERE org_id = $1 AND conversation_id = $2', [o.orgId, quiet])).map((d) => [d.state, d.body])).toEqual([['stale', null]]);
     });
 
     it('keeps the due list and the worker’s functions out of the API login’s reach', async () => {

@@ -49,6 +49,7 @@ import {
 } from './worm.ts';
 import type { SessionRevoker, SignOutTarget } from './sessions.ts';
 import { withJobLogContext } from './log.ts';
+import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
@@ -1106,10 +1107,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // Vy's reply drafts (CV8, #2310): the model reads a thread's text and a system command records the draft. Only where an AI endpoint is configured;
   // elsewhere a draft asked for is settled as none by the relay below.
   const draftWriter = deps.conversationWriter;
+  const draftBudget = new DraftBudget();
   if (draftWriter) {
     await boss.work<ConversationDraftJob>(QUEUES.conversationsDraft, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, aiPrice: deps.aiPrice }, job.data);
+      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, aiPrice: deps.aiPrice, budget: draftBudget }, job.data);
       console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
     });
   }

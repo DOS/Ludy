@@ -18,6 +18,7 @@ import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, typ
 import type { AiUsage, ConversationWriter, ReplyDraftResult } from '@crove/agent';
 import type { AttachmentSource, DraftSource, HideWork, HistoryWork, ProfileWork, ReplyWork, UsageLimits } from '@crove/kernel';
 import { aiCost } from '@crove/mod-finance';
+import type { DraftBudget } from './ai-draft-limit.ts';
 import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
@@ -543,6 +544,16 @@ export interface DraftDeps {
   // The org's daily limits and the model's price (the extraction's): over the AI cost limit a draft is not asked for.
   limits?: UsageLimits | undefined;
   aiPrice?: { inputPerMTok: string; outputPerMTok: string } | undefined;
+  // The existing per-minute budget of AI drafting (ai-draft-limit.ts): a model call is made only when it allows one for the org; no counter of this job's own.
+  budget?: DraftBudget | undefined;
+}
+
+// Half of a decimal amount ("20" is "10", "0.000003" is "0.000002"), by integer arithmetic on six decimals: an amount of money is never a JS number.
+export function halfOf(amount: string): string {
+  const [whole = '0', fraction = ''] = amount.split('.');
+  const micro = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0').slice(0, 6));
+  const half = micro / 2n;
+  return `${half / 1_000_000n}.${String(half % 1_000_000n).padStart(6, '0')}`;
 }
 
 // Writes one requested draft: what became of it, as a short word for the log ('written', 'none', 'limit', 'error', or 'gone' when the draft was decided
@@ -554,11 +565,19 @@ export async function runConversationDraft(deps: DraftDeps, job: ConversationDra
   const source = await deps.runtime.query<DraftSource | null>('kernel.conversation.draft_source', { draftId: job.draftId }, options);
   if (!source) return 'gone';
   if (deps.limits) {
-    const over = await deps.runtime.query<{ metric: string } | null>('kernel.usage.over', { metrics: ['ai_cost'], limits: { ai_cost: deps.limits.ai_cost } }, options);
+    // Drafts stop at half the org's daily AI cost limit, so a customer who writes a lot cannot use up what the org's invoice reading needs.
+    const over = await deps.runtime.query<{ metric: string } | null>('kernel.usage.over', { metrics: ['ai_cost'], limits: { ai_cost: halfOf(deps.limits.ai_cost) } }, options);
     if (over) {
       await none('AI_LIMIT');
       return 'limit';
     }
+  }
+  // The org's per-minute budget of AI drafts (a draft a member asked for was already rationed per member by the API): over it, no draft now, and the
+  // person can ask again. The ticket is per draft, so the per-member part never refuses an automatic draft.
+  const ticket = deps.budget?.take(job.orgId, `vy:${job.draftId}`);
+  if (ticket && !ticket.allowed) {
+    await none('RATE_LIMITED');
+    return 'rate';
   }
   const used: AiUsage[] = [];
   let result: ReplyDraftResult | null = null;
@@ -572,6 +591,7 @@ export async function runConversationDraft(deps: DraftDeps, job: ConversationDra
   } finally {
     // What the call used counts against the org's AI cost limit even when it failed after answering. Best effort.
     const cost = aiCost(used, deps.aiPrice);
+    ticket?.release();
     if (/[1-9]/.test(cost)) await deps.runtime.execute('kernel.usage.record', { entries: [{ metric: 'ai_cost', amount: cost }] }, options).catch(() => undefined);
   }
   if (!result) {

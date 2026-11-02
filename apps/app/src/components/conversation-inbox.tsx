@@ -490,7 +490,8 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         }}
         onUseSaved={(reply) => {
           setText(reply.body);
-          setFrom((prev) => ({ ...prev, savedReplyId: reply.id }));
+          // The text is now the saved reply's, so it no longer began from a draft.
+          setFrom({ savedReplyId: reply.id });
         }}
       />
       <Textarea
