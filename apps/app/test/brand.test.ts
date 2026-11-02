@@ -131,23 +131,24 @@ describe('brand name (#1040)', () => {
       messages(SOURCE_CATALOGS[locale])
         .filter(([, text]) => text.includes(`{${key}}`))
         .map(([path]) => path);
-    // Where each coworker is named: the top-level parts of the catalog its app owns.
-    const APP_OF: Record<string, readonly string[]> = {
-      ly: ['auth', 'inbox', 'inboxDetail'],
-      thy: ['bookings'],
-      my: ['social', 'kernelErrors', 'inbox'],
-      duy: ['conversations', 'kernelErrors', 'commands'],
+    // Where each coworker is named: the messages of the screens its app owns. Vy and Hy are reserved: no message works
+    // across apps or in settings yet (Vy names the Home brief when it lands, #2383).
+    const APP_OF: Record<string, RegExp> = {
+      ly: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
+      thy: /^bookings\./,
+      my: /^(social\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
+      duy: /^(conversations\.|commands\.)/,
     };
-    for (const [key, parts] of Object.entries(APP_OF)) {
+    for (const [key, where] of Object.entries(APP_OF)) {
       expect(named('vi', key).length, key).toBeGreaterThan(0);
       expect(named('en', key), key).toEqual(named('vi', key));
-      for (const path of named('en', key)) expect(parts, `${key}: ${path}`).toContain(path.split('.')[0]);
+      for (const path of named('en', key)) expect(path, `${key}: ${path}`).toMatch(where);
     }
     setBrandName('Tên Mới');
     for (const locale of LOCALES) {
       const filled = Object.fromEntries(messages(catalog(locale)));
       for (const [key, name] of Object.entries(COWORKERS)) {
-        for (const path of named(locale, key)) expect(filled[path], `${locale} ${path}`).toContain(name);
+        for (const path of named(locale, key)) expect(filled[path], `${locale} ${path}`).toMatch(new RegExp(`\\b${name}\\b`));
         expect(Object.values(filled).join('\n'), locale).not.toContain(`{${key}}`);
       }
     }

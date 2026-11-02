@@ -389,13 +389,21 @@ export const installAgentTemplate = defineCommand({
       throw new DomainError('MODULE_DISABLED', 409, 'Phân hệ của mẫu tác tử AI này chưa được bật', { module: template.module });
     }
     if (input.reportsTo) await lockPosition(ctx.trx, ctx.orgId, input.reportsTo);
+    // The module's AI coworker (Ly, My, Thy, Duy, Hy) names the agent when the installer gives no name (#2410). The screens
+    // tell agents apart by name, so a second agent of the same module (two finance templates both give Ly) gets the
+    // template's title next to it instead of sharing the name.
+    let displayName = input.displayName;
+    if (displayName === undefined) {
+      const coworker = defaultCoworkerName(template.module);
+      const taken = coworker === null ? undefined : await ctx.trx.selectFrom('crove_kernel.agent').select('id').where('org_id', '=', ctx.orgId).where('display_name', '=', coworker).limit(1).executeTakeFirst();
+      displayName = coworker === null ? template.title : taken ? `${coworker} (${template.title})` : coworker;
+    }
     const agent = await ctx.trx
       .insertInto('crove_kernel.agent')
       .values({
         org_id: ctx.orgId,
         template_key: template.key,
-        // The module's AI coworker (Ly, My, Thy, Duy, Hy) when the installer gives no name (#2410); the position keeps the title.
-        display_name: input.displayName ?? defaultCoworkerName(template.module) ?? template.title,
+        display_name: displayName,
         max_risk: template.max_risk,
         daily_run_cap: template.daily_run_cap,
         created_by: userId,
