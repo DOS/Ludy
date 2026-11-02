@@ -280,6 +280,25 @@ describe('the Meta ad connection', () => {
     expect(accounts).toHaveLength(1);
   });
 
+  it('accepts a token that can change campaigns only when the caller says running ads is on, and records its full set', async () => {
+    const answers = () => [
+      { body: { access_token: 'short' } },
+      { body: { access_token: 'long' } },
+      { body: { data: [{ permission: 'ads_read', status: 'granted' }, { permission: 'ads_management', status: 'granted' }, { permission: 'business_management', status: 'granted' }, { permission: 'pages_manage_posts', status: 'granted' }] } },
+      { body: { id: '4242' } },
+      { body: { data: [{ id: 'act_1001', name: 'A', currency: 'VND', timezone_name: 'Asia/Ho_Chi_Minh' }] } },
+    ];
+    // Not said, or said false: refused, as before.
+    for (const flag of [{}, { spendScopesAllowed: false }]) {
+      await expect(new MetaAdsConnector(app, { fetch: recorded(answers()).fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null, ...flag })).rejects.toMatchObject({ kind: 'denied', code: 'WRITE_PERMISSION_GRANTED' });
+    }
+    // Said true: the account is connected and every permission the token holds is recorded (the screen shows them, and the switch-off
+    // of running ads closes a connection that holds one).
+    const accounts = await new MetaAdsConnector(app, { fetch: recorded(answers()).fetch, now: () => NOW }).exchange({ code: 'c', redirectUri, codeVerifier: null, spendScopesAllowed: true });
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.scopes).toEqual(['ads_management', 'ads_read', 'business_management', 'pages_manage_posts']);
+  });
+
   it('records every permission the token holds, so an app shared with Pages publishing shows what the ads token can also do', async () => {
     const { fetch } = recorded([
       { body: { access_token: 'short' } },

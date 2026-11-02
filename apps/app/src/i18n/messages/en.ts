@@ -197,6 +197,7 @@ export const en = {
       kernel_approval_waiting: 'Proposals waiting for my approval',
       kernel_file_unreadable: 'Files that could not be read',
       kernel_task_rerouted: 'Tasks moved to me because their holder can no longer read them',
+      kernel_original_flagged: 'Original e-invoices that differ from the posted invoice or are not verified',
       finance_bank_attention: 'Bank statement lines to look at',
       finance_portal_attention: 'Tax portal checks to look at',
       finance_period_closing: 'VAT returns due on a period that is not locked',
@@ -206,6 +207,8 @@ export const en = {
     text: {
       approval_waiting: 'Waiting for your approval: {title}',
       file_unreadable: 'Could not read the file {filename}',
+      original_differs: 'The original e-invoice attached to {title} differs from the posted invoice. Please check it; the ledger was not changed.',
+      original_unverified: 'The original e-invoice attached to {title} has no digital signature that could be verified. Please check it before relying on it.',
       task_rerouted: 'A task moved to you: {title}',
       tasks_rerouted: '{count, plural, one {# task} other {# tasks}} moved to you',
       bank_attention: 'The statement of account {account} has {lines, plural, one {# line} other {# lines}} to look at',
@@ -1376,6 +1379,9 @@ export const en = {
       accountCanRun: 'Can run ads',
       accountStopped: 'The connection to run ads on this account has stopped.',
       disableClosesConnections: 'Each connection that can run ads is closed, and {brand} drops its token at once.',
+      // With the one Meta app that serves reading and writing, the person's reading token holds the same permission (it belongs to the app and the person).
+      disableClosesReads: 'The connections that read figures from Meta are closed too, because with one Meta app their token can also change campaigns, and {brand} drops it. Connect them again for reading; whoever granted the permission to run ads removes the app in Facebook first.',
+      readsClosedToast: 'Closed the Meta connections that read figures ({count}), because their token could also change campaigns. Connect them again for reading; whoever granted the permission to run ads removes the app in Facebook first.',
       // Said wherever such a connection is closed: dropping the token from here does not remove the permission at the platform.
       platformNote:
         'Also remove {brand}’s app in your Facebook settings (Settings, Business integrations); until then Meta still honours the permission, and a read-only reconnect works only after you have.',
@@ -1427,6 +1433,7 @@ export const en = {
       token_expired: 'Since {since}, Meta no longer accepts this account’s access token, so Ludy paused its updates. No day is lost: once you reconnect, it reads on from the last day that was not final.',
       owner_left: 'Since {since}, the member who connected this account is no longer an owner or admin, so Ludy paused its updates. An owner or admin reconnects it and it reads on, with no day lost.',
       other: 'Since {since}, this account’s connection has stopped, so Ludy paused its updates. Reconnect it and it reads on, with no day lost.',
+      spend_scopes: 'Since {since}, running ads was switched off, and this account’s Meta token could also change campaigns, so Ludy closed it and dropped it. Connect it again for reading. If you granted the permission to run ads, first remove the app in your Facebook settings (Business integrations; this also removes the other permissions you gave it, such as Pages): until you do, Meta hands back the same permission and the connection is refused.',
       platform_deletion: 'Since {since}, Meta asked for the data of the person who granted this account to be deleted, so the connection is closed and the data deleted.',
       noReconnect: 'An owner or admin must reconnect this account.',
     },
@@ -6542,6 +6549,7 @@ export const en = {
       EXPORT_EXPIRED: 'The data export has expired. Request a new one.',
       EXPORT_PENDING: 'Data is being exported. Wait for the current export to finish, then try again.',
       EXPORT_TOO_LARGE: 'Too many journal entries to export at once. Choose a shorter date range.',
+      EXPORT_VOUCHER_NUMBER_TOO_LONG: 'A voucher number is too long for the MISA file (20 characters at most). Narrow the date range to leave that voucher out.',
       AUDIT_EXPORT_TOO_LARGE: 'More than 10,000 log rows match the filters. Narrow the filters and export again.',
       AUDIT_RANGE: 'The start date must be on or before the end date.',
       PERIOD_TOO_LARGE: 'This period has too many invoices or entries to report at once; choose a shorter period.',
@@ -6792,7 +6800,7 @@ export const en = {
       OAUTH_STATE_USED: 'This connect attempt was already used; start again',
       OAUTH_STATE_EXPIRED: 'This connect attempt expired; start again',
       OAUTH_CODE_REJECTED: 'The platform refused the authorization code (used or expired); connect again',
-      OAUTH_WRITE_PERMISSION: 'This Meta app holds a permission to change ads (ads_management or business_management) that you granted it before. Use a Meta app of its own with only ads_read, or remove that permission in your Facebook settings (Apps and Websites), then connect again',
+      OAUTH_WRITE_PERMISSION: 'This Meta app holds a permission to change ads (ads_management or business_management) that you granted it before. Remove this app in your Facebook settings (Business integrations), then connect again, or use a Meta app of its own with only ads_read',
       OAUTH_PERMISSION_MISSING: 'Some permissions needed were not granted in the platform dialog; connect again and accept all of them',
       OAUTH_PROVIDER_FAILED: 'The platform did not answer as expected; try again later',
       CHANNEL_NO_ACCOUNTS: 'This grant covers no account you can post to',

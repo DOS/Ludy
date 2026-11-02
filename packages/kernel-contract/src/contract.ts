@@ -1690,7 +1690,7 @@ export const contract = {
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
     lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),
-    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number(), connectionsClosed: z.number() })),
+    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number(), connectionsClosed: z.number(), readConnectionsClosed: z.number() })),
     disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false), connectionsClosed: z.number() })),
     pauseAll: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ launchesBlocked: z.literal(true), paused: z.number() })),
     summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
