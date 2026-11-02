@@ -24,7 +24,7 @@ export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resol
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
 export const POLL_MS = 6_000;
 // How often typing in the reply box tells the server (it takes one mark in 20 seconds, and a mark lives 60).
-const COMPOSING_EVERY_MS = 15_000;
+const COMPOSING_EVERY_MS = 25_000;
 
 export interface PostRef {
   connectionId: string;
@@ -143,7 +143,7 @@ export function ConversationListItem({ conversation: c, open, onOpen }: { conver
           </span>
           {c.composing.length > 0 && (
             <span className="shrink-0 text-primary" data-testid="conversation-composing-short">
-              {t('composingShort', { names: composingNames(c.composing, members, t('someone')) })}
+              {t('composingShort', { names: composingNames(c.composing, members, t('someone')), count: c.composing.length })}
             </span>
           )}
         </span>
@@ -160,7 +160,7 @@ function ComposingNote({ userIds, members }: { userIds: readonly string[]; membe
   const t = useTranslations('conversations');
   return (
     <p role="status" className="text-sm text-muted-foreground" data-testid="conversation-composing">
-      {t('composing', { names: composingNames(userIds, members, t('someone')) })}
+      {t('composing', { names: composingNames(userIds, members, t('someone')), count: userIds.length })}
     </p>
   );
 }
@@ -483,7 +483,7 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   const t = useTranslations('conversations');
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
-  // "Linh is replying": typing marks the thread for the others (the server keeps a mark for 60 seconds and takes one in 20; asking every 15 here is
+  // "Linh is replying": typing marks the thread for the others (the server keeps a mark for 60 seconds and takes one in 20; asking every 25 here is
   // enough). A failed mark is not worth a message.
   const lastMarked = useRef(0);
   // The draft or the saved reply the text in the box began from: the reply names it, so the draft is marked used (its length and the size of the

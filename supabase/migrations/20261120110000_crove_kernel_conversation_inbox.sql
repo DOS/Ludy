@@ -90,7 +90,7 @@ DROP POLICY IF EXISTS conversation_composing_update ON crove_kernel.conversation
 CREATE POLICY conversation_composing_update ON crove_kernel.conversation_composing AS RESTRICTIVE FOR UPDATE TO crove_tenant
   USING ((user_id = (SELECT crove_kernel.ctx_user_id()) OR (SELECT crove_kernel.ctx_actor_type()) = 'system') AND crove_kernel.conversation_access(kind, channel_connection_id, false))
   WITH CHECK ((user_id = (SELECT crove_kernel.ctx_user_id()) OR (SELECT crove_kernel.ctx_actor_type()) = 'system') AND crove_kernel.conversation_access(kind, channel_connection_id, true));
--- A member removes their own marker (when they send or leave the box); every other removal is the sweep's or the thread's cascade.
+-- A member removes their own marker (when they send); every other removal is the sweep's or the thread's cascade.
 DROP POLICY IF EXISTS conversation_composing_delete ON crove_kernel.conversation_composing;
 CREATE POLICY conversation_composing_delete ON crove_kernel.conversation_composing AS RESTRICTIVE FOR DELETE TO crove_tenant
   USING ((user_id = (SELECT crove_kernel.ctx_user_id()) OR (SELECT crove_kernel.ctx_actor_type()) = 'system'));
@@ -113,7 +113,7 @@ BEGIN
   END IF;
   RETURN QUERY
   SELECT m.user_id,
-         (COALESCE(a.status, 'available') = 'available' AND (a.until IS NULL OR a.until > pg_catalog.now()))
+         (a.status IS NULL OR a.status = 'available' OR (a.until IS NOT NULL AND a.until <= pg_catalog.now()))
   FROM crove_kernel.conversation c
   JOIN crove_kernel.tenant_member m ON m.org_id = c.org_id
   LEFT JOIN crove_kernel.member_availability a ON a.org_id = m.org_id AND a.user_id = m.user_id

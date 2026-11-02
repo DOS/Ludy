@@ -81,7 +81,8 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
     direction: 'in',
     contact: { id: contactId, name },
     text,
-    at: new Date(Date.UTC(2026, 10, 2, 3, 0, tick)).toISOString(),
+    // Ten minutes ago, a second apart: recent enough to be news (a thread older than a day is not told as new).
+    at: new Date(Date.now() - 600_000 + tick * 1000).toISOString(),
   });
   // A message the platform dates after now: a customer who writes again once the thread was resolved (an older one does not reopen it).
   const later = (e: ConversationEvent): ConversationEvent => ({ ...e, at: new Date(Date.now() + 60_000).toISOString() });
@@ -173,6 +174,38 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect(await told(o, a2)).toEqual([o.desk]);
     });
 
+    it('reads an away time that passed as available, respects a muted kind with the fallback among those who did not, never tells a viewer given the role, and tells nothing of an old thread', async () => {
+      const o = await org();
+      // Away until a time that has passed (a restore's statement ages the row): available again, so told, as the availability read says.
+      await exec(o, o.desk, 'kernel.conversation.set_availability', { status: 'away', until: new Date(Date.now() + 3_600_000).toISOString() });
+      await rows("UPDATE crove_kernel.member_availability SET until = now() - interval '1 minute' WHERE org_id = $1 AND user_id = $2", [o.orgId, o.desk]);
+      await ingest(o, [event('direct', 'e1', 'Hỏi sau giờ vắng')]);
+      expect(await told(o, await threadOf(o, 'e1'))).toEqual(sorted(o.owner, o.admin, o.desk));
+      // The desk member turned the kind off: the others who are available are told, the desk member is not.
+      await rows("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new')", [o.orgId, o.desk]);
+      await ingest(o, [event('direct', 'e2', 'Hỏi khi nhân viên tắt thông báo')]);
+      expect(await told(o, await threadOf(o, 'e2'))).toEqual(sorted(o.owner, o.admin));
+      // Owner and admin are away and the desk member muted it: the fallback is owners and admins, who did not mute it.
+      await exec(o, o.owner, 'kernel.conversation.set_availability', { status: 'away' });
+      await exec(o, o.admin, 'kernel.conversation.set_availability', { status: 'away' });
+      await ingest(o, [event('direct', 'e3', 'Hỏi khi chỉ còn chủ vắng')]);
+      expect(await told(o, await threadOf(o, 'e3'))).toEqual(sorted(o.owner, o.admin));
+      // Everyone who could be told muted it: nobody is.
+      await rows("INSERT INTO crove_kernel.notification_mute (org_id, user_id, kind) VALUES ($1, $2, 'kernel.conversation_new'), ($1, $3, 'kernel.conversation_new')", [o.orgId, o.owner, o.admin]);
+      await ingest(o, [event('direct', 'e4', 'Hỏi khi tất cả tắt')]);
+      expect(await told(o, await threadOf(o, 'e4'))).toEqual([]);
+      // A viewer given the role (a database owner's statement: the grant itself refuses it) is no reader of a private message and is not told of one.
+      const p = await org();
+      await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [p.orgId, p.viewer, p.owner]);
+      await ingest(p, [event('direct', 'v1', 'Nhắn riêng')]);
+      expect(await told(p, await threadOf(p, 'v1'))).toEqual(sorted(p.owner, p.admin, p.desk));
+      expect((await list(p, p.viewer)).conversations).toEqual([]);
+      // A message the platform dated more than a day ago (a history read, a reconcile) is not news.
+      const old = { ...event('direct', 'old1', 'Tin cũ'), at: new Date(Date.now() - 3 * 86_400_000).toISOString() };
+      await ingest(p, [old]);
+      expect(await told(p, await threadOf(p, 'old1'))).toEqual([]);
+    });
+
     it('answers the readers of a thread to the worker login alone, in a system context', async () => {
       const o = await org();
       await ingest(o, [event('direct', 'r1', 'Nhắn riêng')]);
@@ -238,6 +271,8 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       const team = await query<Availability>(o, o.desk, 'kernel.conversation.availability', {});
       expect(team.members).toEqual([expect.objectContaining({ userId: o.lan, status: 'away' })]);
       expect(team.me).toMatchObject({ userId: o.desk, status: 'available' });
+      // A viewer reads none of it: the screen is for those who answer.
+      await expect(query(o, o.viewer, 'kernel.conversation.availability', {})).rejects.toMatchObject({ status: 403 });
       // Setting it again is an update of the one row; an away time in the past is refused; available clears the time.
       await expect(exec(o, o.lan, 'kernel.conversation.set_availability', { status: 'away', until: new Date(Date.now() - 60_000).toISOString() })).rejects.toMatchObject({ code: 'AVAILABILITY_PAST' });
       expect(await exec(o, o.lan, 'kernel.conversation.set_availability', { status: 'available' })).toMatchObject({ status: 'available', until: null });
@@ -254,7 +289,7 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
   });
 
   describe('searching, the customer’s other threads and the Home read', () => {
-    it('searches the customer’s name and the words of a thread without regard to case, Vietnamese marks or punctuation, and a typed % matches itself', async () => {
+    it('searches the customer’s name and the words of a thread without regard to case, Vietnamese marks or punctuation, and punctuation alone is no search', async () => {
       const o = await org();
       await ingest(o, [event('direct', 'q1', 'Cho mình hỏi giá áo thun cotton', 'Nguyễn Thị Hoa'), event('direct', 'q2', 'Đơn hàng giảm 50% còn không', 'Trần Văn Bình')]);
       const ids = async (q: string) => (await list(o, o.owner, { q })).conversations.map((c) => c.contact.displayName).sort();
@@ -262,6 +297,9 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       expect(await ids('NGUYEN thi')).toEqual(['Nguyễn Thị Hoa']);
       expect(await ids('binh')).toEqual(['Trần Văn Bình']);
       expect(await ids('không có')).toEqual([]);
+      // Text that is only punctuation folds to nothing: it is no search, so every thread stays; a % in the text is punctuation like the rest.
+      expect(await ids('???')).toEqual(['Nguyễn Thị Hoa', 'Trần Văn Bình']);
+      expect(await ids('50%')).toEqual(['Trần Văn Bình']);
       // A member who may not read a private message finds none by searching for it.
       expect((await list(o, o.lan, { q: 'gia ao thun' })).conversations).toEqual([]);
     });
@@ -305,6 +343,10 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, other, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
       await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, other, o.owner]);
       expect(await today(o.lan)).toEqual([]);
+      // Answered (pending), the thread waits for the customer, not for a member: nothing for anyone.
+      await rows("UPDATE crove_kernel.conversation SET status = 'pending' WHERE org_id = $1", [o.orgId]);
+      expect(await today(o.owner)).toEqual([]);
+      expect(await today(o.admin)).toEqual([]);
     });
   });
 });

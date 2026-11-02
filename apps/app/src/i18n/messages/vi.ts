@@ -891,8 +891,6 @@ export const vi = {
     removed: 'Đã xóa “{name}”.',
   },
   conversations: {
-    pageTitle: 'Hộp bình luận',
-    pageSubtitle: 'Bình luận trên các bài đăng của bạn, ở mọi kênh. Tin nhắn riêng nằm ở mục Hộp thư.',
     listLabel: 'Danh sách hội thoại',
     threadLabel: 'Hội thoại đang mở',
     status: { new: 'Mới', pending: 'Đang chờ', resolved: 'Đã xong' },
@@ -903,8 +901,8 @@ export const vi = {
     pick: 'Chọn một hội thoại để xem.',
     kind: { comment_thread: 'Bình luận', direct: 'Tin nhắn riêng' },
     someone: 'Một đồng nghiệp',
-    composing: '{names} đang soạn trả lời…',
-    composingShort: '{names} đang soạn…',
+    composing: '{names} {count, plural, other {đang soạn trả lời…}}',
+    composingShort: '{names} {count, plural, other {đang soạn…}}',
     // The Inbox (CV3, #2306): the three panes of the Hộp thư group of the Social app.
     inbox: {
       pageTitle: 'Hộp thư',
@@ -6682,6 +6680,7 @@ export const vi = {
       SAVED_REPLY_NOT_FOUND: 'Không tìm thấy câu trả lời mẫu này',
       SAVED_REPLY_LIMIT: 'Mỗi tổ chức lưu tối đa 200 câu trả lời mẫu',
       CONVERSATION_MOVED: 'Hội thoại vừa có tin mới, hãy đọc lại trước khi trả lời',
+      AVAILABILITY_PAST: 'Giờ quay lại phải ở tương lai',
       REPLY_NOT_SUPPORTED: 'Kênh này chưa hỗ trợ trả lời tại đây',
       REPLY_TOO_LONG: 'Câu trả lời dài hơn giới hạn của kênh này',
       REPLY_WINDOW_CLOSED: 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này',

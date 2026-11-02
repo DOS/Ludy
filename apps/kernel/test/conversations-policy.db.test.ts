@@ -174,9 +174,12 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     // Without the permission (taken away here, as the database owner, the way it was before the seed) the role gives nothing: nobody but owners and
     // admins reads a private message.
     await rows("DELETE FROM crove_kernel.role_permission WHERE role_key = 'desk.agent' AND permission = $1", [DESK_AGENT_PERMISSION]);
-    expect(await counts(o.desk)).toEqual(nothingPrivate);
-    // With it, as the migration seeds it: its holder reads them.
-    await rows("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', $1)", [DESK_AGENT_PERMISSION]);
+    try {
+      expect(await counts(o.desk)).toEqual(nothingPrivate);
+    } finally {
+      // With it, as the migration seeds it: its holder reads them. Put back even when the check above fails, so the other tests of this file keep the seed.
+      await rows("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', $1)", [DESK_AGENT_PERMISSION]);
+    }
 
     expect(await counts(o.owner)).toEqual(all);
     expect(await counts(o.admin)).toEqual(all);

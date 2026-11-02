@@ -545,7 +545,11 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .execute();
   // A thread that is New now and was not before (a first message, or a customer writing again after it was answered or resolved) is told to the
   // members who can answer it (CV3).
-  if (inbound && status === 'new' && (conversation.status !== 'new' || conversation.last_seq === 0)) await routeNewConversation(ctx, conversation.id, conversation.assignee_user_id, seq);
+  // Not for a message the platform dated more than a day ago: an old thread brought in by a history read or a reconcile is not news, and a burst of
+  // them would be a notice for each reader.
+  if (inbound && status === 'new' && (conversation.status !== 'new' || conversation.last_seq === 0) && sentAt.getTime() > ctx.now.getTime() - NEW_NOTICE_AGE_MS) {
+    await routeNewConversation(ctx, conversation.id, conversation.assignee_user_id, seq);
+  }
   return 'stored';
 }
 
@@ -633,9 +637,10 @@ export const conversationList = defineQuery({
     if (input.assignee === 'none') where.push(sql`c.assignee_user_id IS NULL`);
     if (input.q) {
       // The customer's name, the contact's name, or any message of the thread, ignoring case, Vietnamese marks and punctuation (search_fold, as the
-      // contacts' search does); the text is matched as typed, with LIKE's own characters escaped.
+      // contacts' search does). Text that folds to nothing (only punctuation) is no search: every thread stays. The folded text is matched with LIKE's own
+      // characters escaped, so a fold that keeps one cannot widen the match.
       const needle = sql`'%' || replace(replace(replace(crove_kernel.search_fold(${input.q}), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
-      where.push(sql`(crove_kernel.search_fold(COALESCE(i.display_name, '')) LIKE ${needle} ESCAPE '\\'
+      where.push(sql`(crove_kernel.search_fold(${input.q}) = '' OR crove_kernel.search_fold(COALESCE(i.display_name, '')) LIKE ${needle} ESCAPE '\\'
         OR crove_kernel.search_fold(COALESCE(p.name, '')) LIKE ${needle} ESCAPE '\\'
         OR EXISTS (SELECT 1 FROM crove_kernel.conversation_message sm WHERE sm.org_id = c.org_id AND sm.conversation_id = c.id
                    AND crove_kernel.search_fold(sm.body) LIKE ${needle} ESCAPE '\\'))`);
@@ -781,7 +786,7 @@ export const conversationGet = defineQuery({
           .where('o.org_id', '=', ctx.orgId)
           .where('o.identity_id', '=', row.identity_id)
           .where('o.id', '<>', input.conversationId)
-          .orderBy('o.last_message_at', 'desc')
+          .orderBy(sql`o.last_message_at DESC NULLS LAST`)
           .orderBy('o.id', 'desc')
           .limit(CONVERSATION_OTHERS_MAX)
           .execute()
@@ -1472,6 +1477,8 @@ export const conversationMarkRead = defineCommand({
 
 // The notification kind of a conversation that needs an answer: ids only, the screen reads the thread itself.
 export const CONVERSATION_NEW = 'kernel.conversation_new';
+// A thread whose newest customer message is older than this is not told as new.
+const NEW_NOTICE_AGE_MS = 24 * 3_600_000;
 
 // Tells the members who can answer a conversation that has become New: the assignee when there is one and they can read it; else the available
 // members who can read it; else the owners and admins (whoever is away). The readers are those the database lets read the thread
@@ -1479,13 +1486,17 @@ export const CONVERSATION_NEW = 'kernel.conversation_new';
 // New (the key carries the message that did it), no text in it.
 async function routeNewConversation(ctx: CommandContext, conversationId: string, assignee: string | null, seq: number): Promise<number> {
   const { rows } = await sql<{ user_id: string; available: boolean }>`SELECT user_id, available FROM crove_kernel.conversation_readers(${conversationId}::uuid)`.execute(ctx.trx);
+  // A member who turned this kind off is not told: the choice below is made among those who did not, so the fallback still runs when the available
+  // readers all muted it.
+  const muted = new Set((await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.notification_mute WHERE org_id = ${ctx.orgId}::uuid AND kind = ${CONVERSATION_NEW}`.execute(ctx.trx)).rows.map((r) => r.user_id));
+  const open = rows.filter((r) => !muted.has(r.user_id));
   let users: string[] = [];
-  if (assignee && rows.some((r) => r.user_id === assignee)) users = [assignee];
+  if (assignee && open.some((r) => r.user_id === assignee)) users = [assignee];
   else {
-    users = rows.filter((r) => r.available).map((r) => r.user_id);
+    users = open.filter((r) => r.available).map((r) => r.user_id);
     if (users.length === 0) {
       const admins = new Set(await ownersAndAdmins(ctx));
-      users = rows.filter((r) => admins.has(r.user_id)).map((r) => r.user_id);
+      users = open.filter((r) => admins.has(r.user_id)).map((r) => r.user_id);
     }
   }
   if (users.length === 0) return 0;
@@ -1557,7 +1568,7 @@ export const conversationSetAvailability = defineCommand({
 export const conversationAvailability = defineQuery({
   name: 'kernel.conversation.availability',
   input: z.strictObject({}),
-  access: ALL,
+  access: WRITERS,
   handler: async (ctx): Promise<Availability> => {
     const me = viewerOf(ctx);
     const rows = await ctx.trx.selectFrom('crove_kernel.member_availability').select(['user_id', 'status', 'until']).where('org_id', '=', ctx.orgId).orderBy('user_id').execute();

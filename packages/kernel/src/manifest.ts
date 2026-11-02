@@ -37,9 +37,9 @@ export const kernelManifest = defineModule({
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
         { source_url: 'pii' },
       ),
-      // Vy's reply draft (#2310): its text exists only while the draft is live, tainted, derived from a customer's words (personal data of a third party).
       // The "you are replying" marker (CV3, #2306): who is typing and until when; ids and times only.
       conversation_composing: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'user_id', 'expires_at', 'updated_at']),
+      // A reply draft (#2310): its text exists only while the draft is live, tainted, derived from a customer's words (personal data of a third party).
       conversation_draft: columns(
         ['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'basis_seq', 'source', 'requested_by', 'state', 'tainted', 'draft_length', 'final_length', 'edit_size', 'created_at', 'written_at', 'decided_at'],
         { body: 'pii' },

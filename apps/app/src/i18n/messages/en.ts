@@ -893,8 +893,6 @@ export const en = {
     removed: 'Deleted “{name}”.',
   },
   conversations: {
-    pageTitle: 'Comment inbox',
-    pageSubtitle: 'Comments on your posts, on every channel. Private messages are in Inbox.',
     listLabel: 'Conversation list',
     threadLabel: 'Open conversation',
     status: { new: 'New', pending: 'Pending', resolved: 'Resolved' },
@@ -905,8 +903,8 @@ export const en = {
     pick: 'Pick a conversation to read.',
     kind: { comment_thread: 'Comment', direct: 'Private message' },
     someone: 'A colleague',
-    composing: '{names} is replying…',
-    composingShort: '{names} is replying…',
+    composing: '{names} {count, plural, one {is replying…} other {are replying…}}',
+    composingShort: '{names} {count, plural, one {is replying…} other {are replying…}}',
     // The Inbox (CV3, #2306): the three panes of the Inbox group of the Social app.
     inbox: {
       pageTitle: 'Inbox',
@@ -6683,6 +6681,7 @@ export const en = {
       SAVED_REPLY_NOT_FOUND: 'This saved reply was not found',
       SAVED_REPLY_LIMIT: 'Each organization keeps at most 200 saved replies',
       CONVERSATION_MOVED: 'The conversation has a new message, read it before you reply',
+      AVAILABILITY_PAST: 'The time you are back must be in the future',
       REPLY_NOT_SUPPORTED: 'This channel does not support replies here yet',
       REPLY_TOO_LONG: 'The reply is longer than this channel allows',
       REPLY_WINDOW_CLOSED: 'The platform no longer allows a reply to this conversation',

@@ -5,7 +5,7 @@
 // unread mark for each; a private message is in the list only for those the database lets read it. The open thread, the tab and the filters live in the
 // address, so a link (Home's, a notification's) opens the screen where it should.
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
@@ -44,7 +44,7 @@ function AvailabilitySwitch() {
   };
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm" data-testid="availability">
-      <Button type="button" size="sm" variant={available ? 'outline' : 'default'} aria-pressed={!available} loading={busy} onClick={() => void toggle()}>
+      <Button type="button" size="sm" variant={available ? 'outline' : 'default'} loading={busy} onClick={() => void toggle()}>
         {available ? t('setAway') : t('setAvailable')}
       </Button>
       <span className="text-muted-foreground" role="status">
@@ -69,8 +69,10 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const change = (next: { [K in keyof InboxSearch]?: InboxSearch[K] | undefined }) => onSearch(withSearch(search, { c: undefined, ...next }));
   // The first thread of a list is opened for good: answering it moves it to another tab, and it stays on screen (the address names it from then on).
   const first = items[0]?.id;
+  // A thread the reader may no longer read has just gone: it is not opened again from the list that still holds it until the next poll.
+  const gone = useRef<string | null>(null);
   useEffect(() => {
-    if (!search.c && first) onSearch({ ...search, c: first });
+    if (!search.c && first && first !== gone.current) onSearch({ ...search, c: first });
   }, [search.c, first]); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState(search.q ?? '');
   const typed = useDebounced(text.trim(), SEARCH_PAUSE_MS);
@@ -139,7 +141,18 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
           {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
         </section>
         <section aria-label={t('threadLabel')} className="min-w-0">
-          {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => change({})} /> : <Empty title={t('pick')} />}
+          {openId ? (
+            <ConversationThread
+              key={openId}
+              conversationId={openId}
+              onGone={() => {
+                gone.current = openId;
+                change({});
+              }}
+            />
+          ) : (
+            <Empty title={t('pick')} />
+          )}
         </section>
         {openId && (
           <div className="min-w-0 md:col-span-2 lg:col-span-1">
