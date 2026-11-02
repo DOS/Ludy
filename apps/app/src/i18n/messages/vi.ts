@@ -6511,6 +6511,7 @@ export const vi = {
       EXPORT_EXPIRED: 'Bản xuất dữ liệu đã hết hạn; hãy yêu cầu xuất lại',
       EXPORT_PENDING: 'Dữ liệu đang được xuất; hãy đợi bản xuất hiện tại xong rồi thử lại',
       EXPORT_TOO_LARGE: 'Quá nhiều bút toán để xuất một lần; hãy chọn khoảng ngày ngắn hơn',
+      EXPORT_VOUCHER_NUMBER_TOO_LONG: 'Một số chứng từ quá dài so với tệp MISA (tối đa 20 ký tự); hãy thu hẹp khoảng ngày để bỏ chứng từ đó ra',
       AUDIT_EXPORT_TOO_LARGE: 'Nhật ký khớp bộ lọc có hơn 10.000 dòng; hãy thu hẹp bộ lọc rồi xuất lại',
       AUDIT_RANGE: 'Ngày bắt đầu phải trước hoặc bằng ngày kết thúc',
       PERIOD_TOO_LARGE: 'Kỳ này có quá nhiều hóa đơn hoặc bút toán để lập báo cáo một lần; hãy chọn kỳ ngắn hơn',

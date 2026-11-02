@@ -766,31 +766,29 @@ suite('cash and bank vouchers (#327)', () => {
       expect(asked.status).toBe(200);
       expect((await approve(owner, String(asked.body.proposalId))).status).toBe(200);
     };
-    // The test above posted a báo Có of 2026; 2027 starts again at number 1, so its second one has the code of the 2026 one.
-    for (const [day, memo] of [['2027-01-04', 'HĐ 91'], ['2027-01-05', 'HĐ 92']]) {
-      await posted({ type: 'bank_credit', date: day, cashAccount: '1121', partyId: customer, personName: 'Trần Thị Bình', description: 'Khách chuyển khoản tháng 1', lines: [{ account: '131', amount: '700000', memo }] });
-    }
+    // A báo Có of 2026 of its own, so the test does not lean on the ones before it; its number is n of 2026, and 2027
+    // starts again at 1, so the n-th voucher of 2027 has the same code.
+    await posted({ type: 'bank_credit', date: '2026-12-20', cashAccount: '1121', partyId: customer, personName: 'Trần Thị Bình', description: 'Khách chuyển khoản tháng 12', lines: [{ account: '131', amount: '600000', memo: 'HĐ 90' }] });
     const asViewer = { actor: asUser(viewer.userId), orgId: org.orgId };
-    const vouchers = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { from: '2026-12-01', to: '2027-01-31', type: 'bank_credit' }, asViewer);
-    expect(vouchers.map((v) => [v.date, v.numberPeriod])).toEqual([
-      ['2026-12-02', '2026'],
-      ['2027-01-04', '2027'],
-      ['2027-01-05', '2027'],
-    ]);
+    const range = { from: '2026-12-15', to: '2027-01-31', type: 'bank_credit' } as const;
+    const [last2026] = await runtime.query<CashVoucher[]>('finance.vouchers.cash', range, asViewer);
+    const number = Number(last2026?.code.slice(2));
+    expect(number).toBeGreaterThan(0);
+    for (let n = 1; n <= number; n++) {
+      await posted({ type: 'bank_credit', date: `2027-01-${String(3 + n).padStart(2, '0')}`, cashAccount: '1121', partyId: customer, personName: 'Trần Thị Bình', description: 'Khách chuyển khoản tháng 1', lines: [{ account: '131', amount: '700000', memo: `HĐ 9${n}` }] });
+    }
+    const vouchers = await runtime.query<CashVoucher[]>('finance.vouchers.cash', range, asViewer);
+    expect(vouchers).toHaveLength(1 + number);
+    expect(vouchers.map((v) => v.numberPeriod)).toEqual(['2026', ...Array.from({ length: number }, () => '2027')]);
     // The case the issue describes: one code in two years.
-    expect(vouchers[2]?.code).toBe(vouchers[0]?.code);
+    expect(vouchers.at(-1)?.code).toBe(last2026?.code);
     const rows = vouchers.flatMap(cashRows);
-    const [y2026, , y2027] = vouchers;
-    expect(rows.map((r) => r.voucherNo)).toEqual([
-      `CRBC2026${y2026?.code.slice(2)}`,
-      `CRBC2027${vouchers[1]?.code.slice(2)}`,
-      `CRBC2027${y2027?.code.slice(2)}`,
-    ]);
-    expect(new Set(rows.map((r) => r.voucherNo)).size).toBe(3);
+    expect(rows.map((r) => r.voucherNo)).toEqual(vouchers.map((v) => `CRBC${v.numberPeriod}${v.code.slice(2)}`));
+    expect(new Set(rows.map((r) => r.voucherNo)).size).toBe(1 + number);
     // The download of that range works, and a voucher keeps its number when the range shrinks to its own year.
     const response = await app.request('/api/export/misa/bank-receipts.xlsx?from=2026-12-01&to=2027-01-31', { headers: { authorization: `Bearer ${await tokenFor(viewer)}`, 'x-crove-org': org.slug } });
     expect(response.status).toBe(200);
     const only2027 = await runtime.query<CashVoucher[]>('finance.vouchers.cash', { from: '2027-01-01', to: '2027-01-31', type: 'bank_credit' }, asViewer);
-    expect(only2027.flatMap(cashRows).map((r) => r.voucherNo)).toEqual([rows[1]?.voucherNo, rows[2]?.voucherNo]);
+    expect(only2027.flatMap(cashRows).map((r) => r.voucherNo)).toEqual(rows.slice(1).map((r) => r.voucherNo));
   });
 });

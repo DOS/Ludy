@@ -254,7 +254,7 @@ against the partner's own downloaded templates first (open question 12).
 |---|---|
 | Hiển thị trên sổ | blank: both books |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
-| Số chứng từ (*) | `CR` + code letters + the series' year + number, as for the cash vouchers (max 20): `CRBC202600001` |
+| Số chứng từ (*) | `CR` + code letters + the series' period + number, as for the cash vouchers (max 20; a longer number is refused with 422, never cut): `CRBC202600001`, or `CRBC20261000001` for October 2026 under a monthly reset |
 | Mã đối tượng, Đối tượng | blank (MISA catalog) |
 | Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
 | Nộp vào TK, Mở tại NH | blank: a MISA bank account catalog entry |

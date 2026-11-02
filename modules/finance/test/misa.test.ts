@@ -799,6 +799,9 @@ describe('MISA SME cash vouchers (#657)', () => {
     expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '2027-03' })).toBe('CRBN20270300007');
     expect(cashVoucherNo({ code: 'BN00007', numberPeriod: '-' })).toBe('CRBN00007');
     expect(cashVoucherNo({ code: 'BN123456789012', numberPeriod: '2027' }).length).toBeLessThanOrEqual(20);
+    // Over MISA's 20 characters the number is refused, not cut: a cut one would repeat for vouchers that differ at the end.
+    expect(() => cashVoucherNo({ code: 'BN1234567890123', numberPeriod: '2027' })).toThrow(expect.objectContaining({ code: 'EXPORT_VOUCHER_NUMBER_TOO_LONG', status: 422 }));
+    expect(() => cashVoucherNo({ code: 'BN12345678901', numberPeriod: '2027-03' })).toThrow(expect.objectContaining({ code: 'EXPORT_VOUCHER_NUMBER_TOO_LONG' }));
   });
 
   it.each([
