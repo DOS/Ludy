@@ -6,9 +6,9 @@ import { N, team } from './roster';
 export const en: Dictionary = {
   lang: 'en',
   meta: {
-    title: 'Ludy: the all-in-one business OS where AI agents are your coworkers',
+    title: 'Ludy: the all-in-one Business OS, with an AI team for every department',
     description:
-      `${N.gm} and its AI agents draft your journal entries and suggest meeting times; you approve what matters. Ludy is an open-source business OS you run on your own server.`,
+      `${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve. Ludy is an open-source business OS you run on your own server.`,
   },
   nav: {
     label: 'Main navigation',
@@ -27,8 +27,8 @@ export const en: Dictionary = {
     closeMenu: 'Close menu',
   },
   hero: {
-    title: 'The all-in-one business OS where AI agents are your coworkers',
-    lead: `${N.gm} and its AI agents draft your journal entries and suggest meeting times; you approve what matters.`,
+    title: 'The all-in-one Business OS, with an AI team for every department.',
+    lead: `${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve.`,
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',
     note: 'Open source under the AGPL. Runs on your own server with docker compose. Ludy Cloud is coming soon.',

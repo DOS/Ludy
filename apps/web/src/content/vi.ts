@@ -6,9 +6,9 @@ export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const vi = {
   lang: 'vi',
   meta: {
-    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
+    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI',
     description:
-      `${N.gm} và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
+      `${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
   },
   nav: {
     label: 'Điều hướng chính',
@@ -27,8 +27,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn',
-    lead: `${N.gm} và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.`,
+    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, mỗi phòng\u00a0ban một đội\u00a0AI.',
+    lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.crm} lo bán\u00a0hàng, ${N.engage} lo marketing và khách\u00a0hàng. Bạn chỉ duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',

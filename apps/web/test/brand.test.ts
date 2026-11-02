@@ -76,7 +76,15 @@ describe('brand on the landing page (#1683)', () => {
   });
 
   it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
-    // The home hero line is held until the owner picks it (#2409), so it is not asserted here.
+    // The owner's final hero (2026-11-02, #2409): the names in the lead come from the roster, never from the copy.
+    const NB = String.fromCharCode(0xa0);
+    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI.');
+    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe(`${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt.`);
+    expect(en.hero.title).toBe('The all-in-one Business OS, with an AI team for every department.');
+    expect(en.hero.lead).toBe(`${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve.`);
+    expect(vi.meta.title).toBe('Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI');
+    expect(en.meta.title).toBe('Ludy: the all-in-one Business OS, with an AI team for every department');
+    for (const dict of [vi, en]) expect(dict.meta.description, dict.lang).toContain(dict.hero.lead.replaceAll(NB, ' '));
     for (const dict of [vi, en]) {
       expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
       expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
