@@ -3,7 +3,7 @@
 // upload path, after shrinking it on the device when it is larger than the direct upload limit, so a stack of receipts
 // does not wait on a slow mobile connection. The photo stays readable: the long side is never made shorter than
 // PHOTO_MIN_SIDE and the short side never shorter than PHOTO_MIN_SHORT, which keeps the small print of a receipt legible
-// for the reading (Vy reads it; the checks decide). This module holds the decisions (when to shrink, which encodes to try,
+// for the reading (Ly reads it; the checks decide). This module holds the decisions (when to shrink, which encodes to try,
 // in which order) and the loop that tries them; the drawing runs in the browser (browserCodec) and is passed in, so the
 // rest is unit tested.
 import { DIRECT_UPLOAD_MAX_BYTES } from '@crove/kernel-contract';
