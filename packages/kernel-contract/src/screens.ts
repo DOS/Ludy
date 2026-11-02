@@ -104,7 +104,7 @@ const SOCIAL_SCREENS = {
     { app: 'social', group: 'social', path: 'social/notifications', label: 'notifications' },
     // The Hộp thư group of the Social app (CV3): one Inbox, shown when this module is enabled, with the comments of the org's posts and the private
     // messages together (a private message only to those who may read it).
-    { app: 'social', group: 'inbox', path: 'social/inbox', label: 'inbox' },
+    { app: 'social', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
   ],
 } as const satisfies ModuleScreens;
 

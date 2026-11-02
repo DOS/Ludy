@@ -65,8 +65,6 @@ export function useContactName() {
 
 export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKind; posts?: readonly PostRef[] | undefined; empty?: string | undefined }) {
   const t = useTranslations('conversations');
-  const f = useFormat();
-  const contactName = useContactName();
   const [status, setStatus] = useState<ConversationStatus>('new');
   const [selected, setSelected] = useState<string | null>(null);
   const postFilter = posts && posts.length > 0 ? { posts: posts.map((p) => ({ connectionId: p.connectionId, externalPostId: p.externalPostId })) } : {};

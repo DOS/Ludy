@@ -34,7 +34,8 @@ import { SocialPage } from './routes/social.tsx';
 import { SocialImportPage } from './routes/social-import.tsx';
 import { SocialSnippetsPage } from './routes/social-snippets.tsx';
 import { SocialNotificationsPage } from './routes/social-notifications.tsx';
-import { SocialCommentsPage } from './routes/social-comments.tsx';
+import { SocialInboxPage } from './routes/social-inbox.tsx';
+import { parseConversationInboxSearch } from './lib/conversation-inbox.ts';
 import { SocialLabelsPage } from './routes/social-labels.tsx';
 import { SocialIdeasPage } from './routes/social-ideas.tsx';
 import { SocialBioPage } from './routes/social-bio.tsx';
@@ -417,7 +418,17 @@ const socialChannelsRoute = createRoute({ getParentRoute: () => socialRoute, pat
 const socialImportRoute = createRoute({ getParentRoute: () => socialRoute, path: 'import', component: SocialImportPage });
 const socialSnippetsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'snippets', component: SocialSnippetsPage });
 const socialNotificationsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'notifications', component: SocialNotificationsPage });
-const socialCommentsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'comments', component: SocialCommentsPage });
+// The Inbox of the Social app (CV3, #2306): comments and private messages in three panes; ?status=&kind=&channel=&assignee=&q= keep the tab and the filters,
+// ?c= the open thread (where Home's and a notification's links go).
+const socialInboxRoute = createRoute({ getParentRoute: () => socialRoute, path: 'inbox', validateSearch: parseConversationInboxSearch, component: SocialInboxPage });
+// The comment inbox of CV1 (#2303) moved into the Inbox group: its old address opens the Inbox on the comment threads.
+const socialCommentsRoute = createRoute({
+  getParentRoute: () => socialRoute,
+  path: 'comments',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$slug/social/inbox', params: { slug: (params as { slug: string }).slug }, search: { kind: 'comment_thread' } });
+  },
+});
 const socialLabelsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'labels', component: SocialLabelsPage });
 const socialIdeasRoute = createRoute({ getParentRoute: () => socialRoute, path: 'ideas', component: SocialIdeasPage });
 const socialBioRoute = createRoute({ getParentRoute: () => socialRoute, path: 'bio', component: SocialBioPage });
@@ -483,7 +494,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, notesRoute, myWorkRoute, adsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, notesRoute, myWorkRoute, adsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
