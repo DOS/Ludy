@@ -27,3 +27,17 @@ export function phoneKey(phone: string | null | undefined): string | null {
   }
   return digits === '' ? null : digits;
 }
+
+// The phone keys of the numbers written in a text (the Inbox's contact match, CV3, #2306): a Vietnamese mobile number, written with a leading `0`, `84` or
+// `+84`, nine more digits and at most a space, a dot or a dash between digits. A number inside a longer run of digits (an order number, a bank account) is
+// not one. At most `max` distinct keys, in the order written.
+const PHONE_IN_TEXT = /(?<![\d+])(?:\+?84|0)(?:[ .-]?\d){9}(?!\d)/g;
+export function phoneKeysIn(text: string, max = 3): string[] {
+  const keys: string[] = [];
+  for (const match of text.matchAll(PHONE_IN_TEXT)) {
+    const key = phoneKey(match[0]);
+    if (key !== null && !keys.includes(key)) keys.push(key);
+    if (keys.length >= max) break;
+  }
+  return keys;
+}

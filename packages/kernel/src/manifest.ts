@@ -31,7 +31,7 @@ export const kernelManifest = defineModule({
       channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive' }),
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
-      conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
+      conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'intent', 'intent_set_by', 'intent_set_at', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
       // A customer's image of a message (#2357): its platform address is personal data (cleared when the bytes are stored), the rest is metadata.
       conversation_attachment: columns(
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],

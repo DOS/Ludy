@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -19,6 +19,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
+import { IntentBadge, IntentBar } from './conversation-intent.tsx';
 
 export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -114,7 +115,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
 }
 
 // One row of a list of threads: who, the last words, the channel, an unread dot, and the members who are typing a reply to it now (CV3).
-export function ConversationListItem({ conversation: c, open, onOpen }: { conversation: ConversationSummary; open: boolean; onOpen: () => void }) {
+export function ConversationListItem({ conversation: c, open, onOpen, suggested = null }: { conversation: ConversationSummary; open: boolean; onOpen: () => void; suggested?: ConversationIntent | null }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
@@ -137,9 +138,12 @@ export function ConversationListItem({ conversation: c, open, onOpen }: { conver
         </span>
         <span className="truncate text-muted-foreground">{c.preview || t('noText')}</span>
         <span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span className="truncate">
-            {c.channel.displayName}
-            {c.kind === 'direct' ? ` · ${t('kind.direct')}` : ''}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate">
+              {c.channel.displayName}
+              {c.kind === 'direct' ? ` · ${t('kind.direct')}` : ''}
+            </span>
+            {c.intent ? <IntentBadge intent={c.intent} applied /> : suggested ? <IntentBadge intent={suggested} applied={false} /> : null}
           </span>
           {c.composing.length > 0 && (
             <span className="shrink-0 text-primary" data-testid="conversation-composing-short">
@@ -213,6 +217,7 @@ export function ConversationThread({ conversationId, onGone }: { conversationId:
           {isAdmin && <EraseContactButton conversation={c} onErased={onGone} />}
         </div>
       </header>
+      {canWrite ? <IntentBar conversation={c} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
       {data.gap && (
         <p role="note" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid="conversation-gap">
           {t('gap', { from: f.dateTime(data.gap.from), to: f.dateTime(data.gap.to) })}
