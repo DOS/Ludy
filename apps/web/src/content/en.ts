@@ -22,7 +22,6 @@ export const en: Dictionary = {
     toDark: 'Switch to dark theme',
     otherLang: 'VI',
     otherLangLabel: 'View in Vietnamese',
-    otherLangHref: '/',
     openMenu: 'Open menu',
     closeMenu: 'Close menu',
   },

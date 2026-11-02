@@ -4,7 +4,7 @@ import { appPageMetadata } from '../../../components/root-document';
 import { notesVi } from '../../../content/notes-vi';
 import { APP_PAGES } from '../../../content/site';
 
-export const metadata = appPageMetadata(notesVi, 'vi', APP_PAGES.notes);
+export const metadata = appPageMetadata(notesVi, 'vi', APP_PAGES.notes.path);
 
 export default function NotesViPage() {
   return <NotesPage lang="vi" />;

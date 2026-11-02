@@ -98,7 +98,7 @@ export function Modules({ dict }: { dict: Dictionary }) {
             points={finance.points}
             people={finance.people}
             deptLabel={modules.deptLabel}
-            more={{ label: `${modules.pageLink}: ${finance.name}`, href: appPagePath('accounting', dict.lang) }}
+            more={{ label: `${modules.pageLink}: ${finance.name}`, href: appPagePath('accounting') }}
           />
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-col rounded-md border border-line bg-bg md:col-span-2 lg:col-span-1">
@@ -228,7 +228,7 @@ export function Modules({ dict }: { dict: Dictionary }) {
               points={notes.points}
               people={notes.people}
               deptLabel={modules.deptLabel}
-              more={{ label: `${modules.pageLink}: ${notes.name}`, href: appPagePath('notes', dict.lang) }}
+              more={{ label: `${modules.pageLink}: ${notes.name}`, href: appPagePath('notes') }}
             />
             <div className="grid min-w-0 gap-4 md:grid-cols-2">
               <NotesList notes={notes} />
@@ -246,7 +246,7 @@ export function Modules({ dict }: { dict: Dictionary }) {
               points={crm.points}
               people={crm.people}
               deptLabel={modules.deptLabel}
-              more={{ label: `${modules.pageLink}: ${crm.name}`, href: appPagePath('crm', dict.lang) }}
+              more={{ label: `${modules.pageLink}: ${crm.name}`, href: appPagePath('crm') }}
             />
             <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
               <BookingSlots crm={crm} />

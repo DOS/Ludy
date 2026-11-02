@@ -2,7 +2,6 @@
 import { en } from '../../content/en';
 import { notesEn } from '../../content/notes-en';
 import { notesVi } from '../../content/notes-vi';
-import { APP_PAGES } from '../../content/site';
 import { vi } from '../../content/vi';
 import { AppPage } from './app-page';
 import { DataVisual, MyWorkVisual, NotesHero, ShareVisual, WorkplaceVisual } from './notes-visuals';
@@ -17,7 +16,6 @@ export function NotesPage({ lang }: { lang: 'vi' | 'en' }) {
     <AppPage
       dict={dict}
       copy={copy}
-      otherLangHref={APP_PAGES.notes[lang === 'vi' ? 'en' : 'vi']}
       hero={<NotesHero {...props} />}
       visuals={{
         [copy.groups.items[0]!.id]: <ShareVisual {...props} />,

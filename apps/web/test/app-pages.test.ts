@@ -33,7 +33,7 @@ describe('app pages', () => {
 
   it('live under their own route, with their own social preview image, in each language', () => {
     for (const key of KEYS) {
-      const { vi: viPath, en: enPath }: { vi: string; en: string } = APP_PAGES[key];
+      const { path: viPath, enRoute: enPath }: { path: string; enRoute: string } = APP_PAGES[key];
       expect(viPath.startsWith('/') && !viPath.startsWith('/en/') && viPath !== '/en').toBe(true);
       expect(enPath.startsWith('/en/')).toBe(true);
       for (const [group, path] of [['(vi)', viPath], ['(en)', enPath]] as const) {
@@ -44,15 +44,12 @@ describe('app pages', () => {
     }
   });
 
-  it('are in the sitemap with each other as the language alternates', () => {
+  it('are in the sitemap once, at the one address of both languages, with no /en entry and no alternates', () => {
     const entries = sitemap();
-    for (const key of KEYS) {
-      const languages = { vi: `${SITE_URL}${APP_PAGES[key].vi}`, en: `${SITE_URL}${APP_PAGES[key].en}` };
-      for (const url of Object.values(languages)) {
-        const entry = entries.find((candidate) => candidate.url === url);
-        expect(entry, url).toBeDefined();
-        expect(entry?.alternates?.languages, url).toEqual(languages);
-      }
+    expect(entries.map((entry) => entry.url).sort()).toEqual([`${SITE_URL}/`, ...KEYS.map((key) => `${SITE_URL}${APP_PAGES[key].path}`)].sort());
+    for (const entry of entries) {
+      expect(entry.url, entry.url).not.toMatch(/\/en(\/|$)/);
+      expect(entry.alternates, entry.url).toBeUndefined();
     }
   });
 
@@ -100,6 +97,6 @@ describe('app pages', () => {
     const footer = readFileSync(join(import.meta.dirname, '..', 'src', 'components', 'landing', 'site-footer.tsx'), 'utf8');
     // The footer lists every page from the registry; the cards name theirs one by one.
     expect(footer).toContain('Object.keys(APP_PAGES)');
-    for (const key of KEYS) expect(modules, key).toContain(`appPagePath('${key}', dict.lang)`);
+    for (const key of KEYS) expect(modules, key).toContain(`appPagePath('${key}')`);
   });
 });

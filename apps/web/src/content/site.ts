@@ -9,13 +9,15 @@ export const APP_URL = (process.env.NEXT_PUBLIC_APP_URL || 'https://app.ludy.vn'
 export const SIGN_IN_URL = `${APP_URL}/login`;
 export const SITE_URL = 'https://ludy.vn';
 
-// The apps that have a page of their own (DESIGN.md 1.1 names), each with its path in both languages and the module of
-// the home page's dictionary that names it. The sitemap, the footer links, the home page's module cards and the
-// language switch of each page read this list, so a new app page is one entry here, its copy and its routes.
+// The apps that have a page of their own (DESIGN.md 1.1 names), each with its one public path (the same in both
+// languages; the language comes from the visitor's choice, see src/proxy.ts), the route of its English page inside the
+// app (`enRoute`, which the proxy rewrites to and which is never a public address) and the module of the home page's
+// dictionary that names it. The sitemap, the footer links and the home page's module cards read this list, so a new
+// app page is one entry here, its copy and its two routes.
 export const APP_PAGES = {
-  accounting: { vi: '/ke-toan', en: '/en/accounting', module: 'finance' },
-  crm: { vi: '/crm', en: '/en/crm', module: 'crm' },
-  notes: { vi: '/notes', en: '/en/notes', module: 'notes' },
+  accounting: { path: '/ke-toan', enRoute: '/en/accounting', module: 'finance' },
+  crm: { path: '/crm', enRoute: '/en/crm', module: 'crm' },
+  notes: { path: '/notes', enRoute: '/en/notes', module: 'notes' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
-export const appPagePath = (key: AppPageKey, lang: string) => APP_PAGES[key][lang === 'vi' ? 'vi' : 'en'];
+export const appPagePath = (key: AppPageKey) => APP_PAGES[key].path;
