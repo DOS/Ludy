@@ -9,8 +9,9 @@ import { zMoney } from './schemas.ts';
 export const TODAY_KINDS = ['proposal', 'flag', 'message', 'deadline'] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 
-// The app whose read returned the item; Home hides an app the member cannot see and shows nothing for one with no read yet.
-export const TODAY_APPS = ['finance', 'crm', 'notes', 'social', 'ads'] as const;
+// The app whose read returned the item (`conversations` is the Service inbox of the conversation core, a code id that
+// stays whatever the app is called on screen); Home hides an app the member cannot see and shows nothing for one with no read yet.
+export const TODAY_APPS = ['finance', 'crm', 'notes', 'social', 'ads', 'conversations'] as const;
 export type TodayApp = (typeof TODAY_APPS)[number];
 
 export const TODAY_SEVERITIES = ['info', 'warn', 'block'] as const;

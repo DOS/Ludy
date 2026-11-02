@@ -31,9 +31,9 @@ describe('TodayItem', () => {
     expect(typed.amount).toBe('1250000.50');
   });
 
-  it('knows the four kinds and the five apps', () => {
+  it('knows the four kinds and the six apps', () => {
     expect([...TODAY_KINDS]).toEqual(['proposal', 'flag', 'message', 'deadline']);
-    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'social', 'ads']);
+    expect([...TODAY_APPS]).toEqual(['finance', 'crm', 'notes', 'social', 'ads', 'conversations']);
     for (const kind of TODAY_KINDS) expect(zTodayItem.safeParse(item({ kind })).success, kind).toBe(true);
     for (const app of TODAY_APPS) expect(zTodayItem.safeParse(item({ app })).success, app).toBe(true);
     expect(zTodayItem.safeParse(item({ kind: 'task' })).success).toBe(false);
