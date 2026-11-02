@@ -4,7 +4,7 @@
 -- an owner or an admin approves (Q2), no approval permission, four-eyes with the one-person path (P10), and none of them posts to
 -- the ledger (`ledger` false). Kept equal to approval.ts (POLICIES) by apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
 -- Idempotent; applied files stay untouched. The ads module's own part (the marker the guards read) is in
--- 20261118140000_crove_ads_write_proposals.sql.
+-- 20261118170000_crove_ads_write_proposals.sql.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.approval_command_policy(p_command text, OUT roles text[], OUT permission text, OUT four_eyes boolean, OUT ledger boolean)

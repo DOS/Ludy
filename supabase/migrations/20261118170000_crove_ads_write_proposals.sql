@@ -14,7 +14,7 @@
 --                                        inside it can write only the change the approver was shown.
 -- crove_ads.switch_guard, cap_guard      replaced to pass the change they guard to approved_execution.
 --
--- The approval policy rows of the four ads commands are in 20261118140100_crove_kernel_approval_policy_ads.sql, a crove_kernel migration.
+-- The approval policy rows of the four ads commands are in 20261118170100_crove_kernel_approval_policy_ads.sql, a crove_kernel migration.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_ads.approved_execution(p_command text, p_match jsonb DEFAULT NULL, p_amount numeric DEFAULT NULL) RETURNS boolean
