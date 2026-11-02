@@ -46,6 +46,16 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
       return has('count', 'lines') ? t('invoiceChecks.accounts.unclassified', { count: p.count ?? '', lines: p.lines ?? '' }) : check.message;
     case 'accounts.classified':
       return t('invoiceChecks.accounts.classified');
+    case 'anomaly_bank.changed':
+      return has('previous', 'current') ? t('invoiceChecks.anomaly_bank.changed', { previous: p.previous ?? '', current: p.current ?? '' }) : check.message;
+    case 'anomaly_amount.unusual':
+      return has('total', 'usual', 'count')
+        ? t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '' })
+        : check.message;
+    case 'anomaly_price.jump':
+      return has('item', 'usual', 'current', 'percent')
+        ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })
+        : check.message;
     case 'issue_date.ok':
       return has('date') ? t('invoiceChecks.issue_date.ok', { date: date(p.date ?? '') }) : check.message;
     case 'lines_sum.ok':

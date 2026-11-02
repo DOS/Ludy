@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import {
+  ANOMALY_CHECK_PREFIX,
   MAX_IMPORT_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
@@ -949,9 +950,20 @@ export const approveProposals = defineCommand({
           .execute()
       ).map((p) => p.id),
     );
+    // A proposal carrying an anomaly flag (#2380) is approved one by one, with its flag on the screen: refused here like the
+    // single-approval commands, whatever the client sent.
+    const flagged = new Set(
+      (
+        await sql<{ id: string }>`
+          SELECT p.id FROM crove_kernel.proposal p
+          WHERE p.org_id = ${ctx.orgId} AND p.id = ANY(${input.items.map((i) => i.id)}::uuid[])
+            AND jsonb_typeof(p.payload -> 'checks') = 'array'
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements(p.payload -> 'checks') c WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.execute(ctx.trx)
+      ).rows.map((p) => p.id),
+    );
     const outcomes = new Map<string, BulkApproveResult>();
     for (const item of bulkApproveOrder(input.items, voucherTypes)) {
-      if (singleOnly.has(item.id)) {
+      if (singleOnly.has(item.id) || flagged.has(item.id)) {
         outcomes.set(item.id, { id: item.id, outcome: 'refused', code: 'BULK_NOT_ALLOWED', rule: null });
         continue;
       }

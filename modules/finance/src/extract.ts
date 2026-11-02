@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { ExtractClient, ExtractFailure } from '@crove/extract-contract';
 import type { UsageMetric } from '@crove/db';
 import { zId, zLocalDate, zPurchaseProposal, zRelatedInvoiceRef, type DocumentDirection, type PurchaseProposal, type RelatedInvoiceRef } from '@crove/kernel-contract';
-import { defineQuery, readVerified, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
+import { defineQuery, readVerified, sha256Hex, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { AiNotConfiguredError, AmountFormatError, type AiUsage, type InvoiceReader } from '@crove/agent';
 import { journalMemo } from './memo.ts';
 import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/foreign-currency.ts';
@@ -15,6 +15,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
 import { isOwnTaxCode } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
+import { anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import {
   bookableLines,
@@ -91,10 +92,65 @@ export interface InvoiceLookup {
   attachDiffers?: boolean;
   // The document in force of the invoice a replacement or an adjustment corrects (#916), or null.
   relatedDocumentId: string | null;
+  // What the books remember of the vendor of a purchase, for the anomaly flags (#2380); null for a sale and for a vendor not
+  // in the books yet.
+  history?: VendorHistory | null;
 }
+
+// The invoices of the vendor's history the anomaly rules read.
+const HISTORY_DOCUMENTS = 12;
 
 // The check a duplicate invoice carries: from the lookup before the record, or from the record's own (#2137).
 const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate', status: 'fail', code: 'duplicate.found', message: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' });
+
+// What the books remember of a vendor (#2380): the totals, the line unit prices and the bank accounts of its last
+// HISTORY_DOCUMENTS invoices in force, newest first, without the invoice being read (a re-reading of it is not its own
+// history). The bank accounts are those its earlier proposals carried.
+async function vendorHistory(ctx: QueryContext, partyId: string, current: { series: string; number: string }): Promise<VendorHistory> {
+  const documents = await ctx.trx
+    .selectFrom('crove_finance.purchase_document as d')
+    .select(['d.id', 'd.total', 'd.proposal_id'])
+    .where('d.org_id', '=', ctx.orgId)
+    .where('d.party_id', '=', partyId)
+    .where('d.direction', '=', 'purchase')
+    .where((eb) => eb.not(eb.and([eb('d.invoice_series', '=', current.series), eb('d.invoice_number', '=', current.number)])))
+    .where(({ not, exists, selectFrom }) =>
+      not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
+    )
+    .orderBy('d.invoice_date', 'desc')
+    .orderBy('d.id', 'desc')
+    .limit(HISTORY_DOCUMENTS)
+    .execute();
+  if (documents.length === 0) return { totals: [], prices: [], bankAccounts: [] };
+  const order = new Map(documents.map((d, i) => [d.id, i]));
+  const lines = await ctx.trx
+    .selectFrom('crove_finance.purchase_line as l')
+    .select(['l.document_id', 'l.line_no', 'l.description', 'l.unit_price'])
+    .where('l.org_id', '=', ctx.orgId)
+    .where('l.document_id', 'in', documents.map((d) => d.id))
+    .where('l.unit_price', 'is not', null)
+    .execute();
+  lines.sort((a, b) => (order.get(a.document_id) ?? 0) - (order.get(b.document_id) ?? 0) || a.line_no - b.line_no);
+  const proposalIds = documents.flatMap((d) => (d.proposal_id ? [d.proposal_id] : []));
+  const accounts =
+    proposalIds.length === 0
+      ? []
+      : await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select(['id', sql<string | null>`payload #>> '{seller,bankAccount}'`.as('account')])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', proposalIds)
+          .execute();
+  const byProposal = new Map(accounts.map((a) => [a.id, a.account]));
+  return {
+    totals: documents.map((d) => d.total),
+    prices: lines.flatMap((l) => (l.unit_price === null ? [] : [{ description: l.description, unitPrice: l.unit_price }])),
+    bankAccounts: documents.flatMap((d) => {
+      const account = d.proposal_id ? byProposal.get(d.proposal_id) : null;
+      return account ? [account] : [];
+    }),
+  };
+}
 
 export const purchaseLookup = defineQuery({
   name: 'finance.extraction.lookup',
@@ -228,6 +284,7 @@ export const purchaseLookup = defineQuery({
         document.proposal_id === duplicate.id,
       attachDiffers: document !== undefined && input.totals !== undefined ? amountsDiffer(document, input.totals) : false,
       relatedDocumentId: original?.id ?? null,
+      history: !sale && ruleParty ? await vendorHistory(ctx, ruleParty.id, { series: input.series, number: input.number }) : null,
     };
   },
 });
@@ -559,6 +616,8 @@ export async function extractAndPropose(
   // line has its account; the check is replaced by its pass when a revision classifies the last line.
   const classification = sale ? null : classificationCheck(lines);
   if (classification?.status === 'warn') checks.push(classification);
+  // Anomaly flags against the vendor's own history (#2380): warnings a person sees before approving, never blocking.
+  if (!sale) checks.push(...anomalyChecks({ sellerBankAccount: invoice.seller.bankAccount, total: booked.total, lines }, lookup.history ?? null));
 
   const seller = { ...invoice.seller, taxCode: sellerTaxCode ?? invoice.seller.taxCode };
   const buyer = sale ? { ...invoice.buyer, taxCode: parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode } : invoice.buyer;

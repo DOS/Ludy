@@ -6214,6 +6214,13 @@ export const vi = {
     },
     source: { ai: 'Đọc bằng AI từ ảnh/PDF, cần người kiểm tra' },
     duplicate: { found: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' },
+    // Anomaly flags against the vendor's own history (#2380): Ly's warnings, which never block and are approved one by one.
+    anomaly_bank: { changed: 'Ly cảnh báo: tài khoản nhận tiền khác lần trước (lần trước {previous}, lần này {current}). Hãy xác nhận với nhà cung cấp trước khi thanh toán.' },
+    anomaly_amount: {
+      high: 'Ly cảnh báo: số tiền {total} cao bất thường so với các hóa đơn trước của nhà cung cấp này (thường khoảng {usual}, theo {count} hóa đơn gần nhất).',
+      low: 'Ly cảnh báo: số tiền {total} thấp bất thường so với các hóa đơn trước của nhà cung cấp này (thường khoảng {usual}, theo {count} hóa đơn gần nhất).',
+    },
+    anomaly_price: { jump: 'Ly cảnh báo: đơn giá "{item}" tăng {percent}% so với các hóa đơn trước (thường {usual}, lần này {current}).' },
     accounts: {
       unclassified: 'Chưa phân loại {count} dòng (dòng {lines}): không khớp quy tắc tài khoản nào, hãy chọn tài khoản trước khi duyệt',
       classified: 'Mọi dòng đã có tài khoản hạch toán',
