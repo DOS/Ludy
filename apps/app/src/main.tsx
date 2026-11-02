@@ -1,5 +1,6 @@
 import './share-boot.ts';
 import './zod-jitless.ts';
+import { IconDefaults } from '@crove/ui/components/icon-defaults';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
@@ -31,9 +32,11 @@ async function start() {
     document.title = brandName();
   } catch {
     root.render(
-      <I18nProvider>
-        <ServerUnreachable />
-      </I18nProvider>,
+      <IconDefaults>
+        <I18nProvider>
+          <ServerUnreachable />
+        </I18nProvider>
+      </IconDefaults>,
     );
     return;
   }
@@ -51,11 +54,13 @@ async function start() {
   });
   root.render(
     <StrictMode>
-      <I18nProvider>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-        </QueryClientProvider>
-      </I18nProvider>
+      <IconDefaults>
+        <I18nProvider>
+          <QueryClientProvider client={queryClient}>
+            <RouterProvider router={router} />
+          </QueryClientProvider>
+        </I18nProvider>
+      </IconDefaults>
     </StrictMode>,
   );
 }
