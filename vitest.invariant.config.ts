@@ -16,6 +16,8 @@ export default defineConfig({
     exclude: ['**/node_modules/**'],
     fileParallelism: false,
     testTimeout: 30_000,
+    // A suite's beforeAll builds a database from every migration, about 10 s on CI by November 2026; 60 s leaves room.
+    hookTimeout: 60_000,
     // An empty suite must fail the gate; the workflow also fails when any invariant test is skipped.
     passWithNoTests: false,
   },
