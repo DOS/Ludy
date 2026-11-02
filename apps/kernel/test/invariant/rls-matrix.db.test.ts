@@ -143,6 +143,9 @@ interface RowFactory {
   // The table is written by the system context alone (a RESTRICTIVE policy with a WITH CHECK on the actor): a member context's own-org
   // insert and update are refused (42501) instead of being the controls, and the system actor runs the controls. The reason is why.
   systemWritesOnly?: string;
+  // The table's UPDATE policy admits the system context alone (a RESTRICTIVE policy on the actor, the day of the last mail), while members insert
+  // and delete their own rows: a member context's own-org update finds no row to change, instead of being the control. The reason is why.
+  updatesBySystemOnly?: string;
   // For a role that may update some columns but not org_id: the assignment (and extra row filter) the update
   // probes use, when a no-op assignment would be refused by a trigger. Defaults to "<first column> = <itself>".
   update?: { set: string; where?: string };
@@ -1254,7 +1257,11 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.tenant_member': { make: (o) => ({ row: { org_id: o.id, user_id: o.freshUser(), role: 'member' } }) },
   // An item kept for an org's next daily budget (#675): append-only, tenants read and insert.
   // A member's opt-in to the daily brief by email (#2406): one row per member, shown to its owner alone, like notification mail-off.
-  'crove_kernel.today_mail': { make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner } }) },
+  'crove_kernel.today_mail': {
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member inserts their own, through its command (today-mail.db.test.ts tests it)',
+    updatesBySystemOnly: 'only the system context writes the day of the last mail; a member context updates no row',
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner } }),
+  },
   'crove_kernel.usage_deferral': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), metric: 'extraction_pages', subject_type: 'file', subject_id: randomUUID(), retry_at: '2099-01-01T00:00:00Z' } }),
   },
@@ -2305,6 +2312,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
           if (factory.systemWritesOnly && !actor.system) {
             // Written by the system context alone: a member context's update of its own org's rows is refused by the row policy.
             expect(await probe(actor, updateOwn), `${where} (own rows): ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
+            continue;
+          }
+          if (factory.updatesBySystemOnly && !actor.system) {
+            // The update policy admits the system context alone: a member context's update of its own org's rows changes none.
+            expect(expectRows(await probe(actor, updateOwn), `${where} (own rows): ${factory.updatesBySystemOnly}`).rowCount, `${where}: own rows updated`).toBe(0);
             continue;
           }
           // Control: the same update on its own rows runs, so the zero above is the org filter.

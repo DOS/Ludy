@@ -12,6 +12,7 @@ test('an agency sees each client’s Social figures on the overview and opens th
 
   await test.step('the first company has a post waiting for review on its sandbox channel', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
     await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
     await page.getByLabel('Tên kênh thử').fill('Fanpage An Bình');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

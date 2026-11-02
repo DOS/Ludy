@@ -201,6 +201,27 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     expect(ok.status === 'ok' && Array.isArray(ok.value)).toBe(true);
   });
 
+  // The CRM's screens joined the Engage app (#2435): the shell changed, not the modules. The accounting reads its customers and vendors from the kernel's
+  // parties through finance's own queries, so they answer the same with the crm module off and on, and a contact the crm module made is a party like any other.
+  it("answers the accounting's customer and vendor reads the same with the crm module off and on (#2435)", async () => {
+    const actor = asUser(owner);
+    const every = ['kernel', 'finance', 'social', 'ads', 'crm', 'notes'];
+    const answers: unknown[] = [];
+    for (const enabled of [['kernel', 'finance'], ['kernel', 'finance', 'crm']]) {
+      const runtime = new Runtime(db, { manifests: TEST_MANIFESTS, absentModules: every.filter((m) => !enabled.includes(m)) }).register(moduleDefinitions(configFor(enabled.join(','))));
+      expect(runtime.installed('crm'), enabled.join()).toBe(enabled.includes('crm'));
+      expect(runtime.installed('finance'), enabled.join()).toBe(true);
+      const customers = await runtime.query<{ items: unknown[] }>('finance.customers.list', {}, { actor, orgId });
+      const vendors = await runtime.query<unknown[]>('finance.vendors.list', {}, { actor, orgId });
+      const everyone = await runtime.query<unknown[]>('finance.vendors.list', { all: true }, { actor, orgId });
+      expect(Array.isArray(customers.items), enabled.join()).toBe(true);
+      expect(Array.isArray(vendors), enabled.join()).toBe(true);
+      expect(Array.isArray(everyone), enabled.join()).toBe(true);
+      answers.push([customers.items.length, vendors.length, everyone.length]);
+    }
+    expect(answers[0]).toEqual(answers[1]);
+  });
+
   it('boots with only kernel: no finance route or job, kernel flows still work', { timeout: 90_000 }, async () => {
     const port = await freePort();
     const config = configFor('kernel', port);
