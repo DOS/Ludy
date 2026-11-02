@@ -216,6 +216,9 @@ export interface RpcChannels {
   bankFeedSandbox?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
+  // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
+  // Meta reading connection (ADR-0043 point 4). Left out, it is taken as shared, the safe side.
+  adsWriteAppShared?: boolean;
   // Bluesky accounts may connect with an app password (CHANNEL_BLUESKY).
   bluesky?: boolean;
   // Telegram channels may connect with a bot token (CHANNEL_TELEGRAM).
@@ -2283,7 +2286,7 @@ export function createRpcHandler(
           return runtime.execute('ads.cap.lower', rest, { actor, orgId, idempotencyKey });
         }),
       ),
-      writeDisable: os.ads.writeDisable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.disable', {}, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
+      writeDisable: os.ads.writeDisable.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.execute('ads.write.disable', { sharedApp: channels?.adsWriteAppShared ?? true }, { actor, orgId, idempotencyKey: input.idempotencyKey }))),
       disableAccountWrite: os.ads.disableAccountWrite.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => runtime.execute('ads.account.disable_write', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
       ),
