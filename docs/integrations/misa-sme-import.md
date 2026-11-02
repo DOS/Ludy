@@ -17,11 +17,15 @@ instead of typing them again.
   "Xuất phiếu chi cho MISA" (`GET /api/export/misa/receipts.xlsx?from=&to=` and `payments.xlsx`, #657). The posted
   vouchers of the date range (voucher date), one file per type since an import file holds vouchers of one type (S1), one
   row per voucher line. A voucher whose entry was reversed is left out.
-- **Bank vouchers (giấy báo Có, giấy báo Nợ)** are not exported yet: MISA imports them with its own deposit templates
-  (Tiền gửi > Thu tiền / Chi tiền), whose headers no source here gives. See the open questions.
+- **Bank vouchers (giấy báo Có, giấy báo Nợ, #657):** "Thu chi" screen, buttons "Xuất giấy báo Có cho MISA" and
+  "Xuất giấy báo Nợ cho MISA" (`GET /api/export/misa/bank-receipts.xlsx?from=&to=` and `bank-payments.xlsx`). The same
+  rules as the cash vouchers, with MISA's own deposit templates (Tiền gửi > Thu tiền / Chi tiền): one file per type,
+  one row per voucher line, reversed vouchers left out. Their headers come from one source (S9), see "Bank receipts and
+  payments" below.
 
 The column mapping is one array per template in `modules/finance/src/misa.ts` (`MISA_SME_PURCHASE_SERVICE.columns`,
-`MISA_SME_PURCHASE_GOODS.columns`, `MISA_SME_SALES.columns`, `MISA_SME_CASH_RECEIPT.columns`, `MISA_SME_CASH_PAYMENT.columns`): header text, order and the rule that fills each column. When the partner's real template
+`MISA_SME_PURCHASE_GOODS.columns`, `MISA_SME_SALES.columns`, `MISA_SME_CASH_RECEIPT.columns`, `MISA_SME_CASH_PAYMENT.columns`, `MISA_SME_BANK_CREDIT.columns`,
+`MISA_SME_BANK_DEBIT.columns`): header text, order and the rule that fills each column. When the partner's real template
 differs, edit that array and the golden header list in `modules/finance/test/misa.test.ts`; nothing else needs to change.
 
 ## Template versions and sources
@@ -40,9 +44,9 @@ against each other where possible.
 | S6 | `lib/misa-export/Ban_hang_template.xls`, `template_notes.json`, `phieu_chi_notes.json`, `phieu_thu_notes.json` in [duynguyen1105/tt-station-hub](https://github.com/duynguyen1105/tt-station-hub/tree/6cafe35bc3d7faa10137f86d8ae512f2449dd19b/lib/misa-export) | A blank MISA SME.NET "Chứng từ bán hàng" template (sheet `Chứng từ bán hàng`, 49 headers in row 1). We read the file: its cell notes are titled "MISA SME.NET" (51 notes) and give the value codes. The notes of the MISA SME.NET "Phiếu chi" template give the purchase side VAT codes. The notes of the "Phiếu thu" (sheet `Phiếu thu`, 18 columns) and "Phiếu chi" (sheet `Phiếu chi`, 32 columns) templates give their headers, in column order, with value codes and length limits (read on 2026-10-20) | Third-party copy of the MISA file |
 | S7 | `MISA-AUDIT-FULL-V12.md` in [NachaFromMars/supercitadel](https://github.com/NachaFromMars/supercitadel/blob/8f64f35186ebc90587d301fd8e92ff7f6269baa4/MISA-AUDIT-FULL-V12.md) | Header rows of the files in `Template/ImportExcel` of a **MISA SME 2026** installation, including `Ban_hang_VND.xls` and `Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls` | Third-party listing of the MISA files |
 | S8 | `converter/fixtures/templates/purchase_service.xls` in [dataiyeumenh/ez-format](https://github.com/dataiyeumenh/ez-format/tree/bb01c85f8aaac01c930f14b51bd20a9394f1bb7b/converter/fixtures/templates) | The **MISA AMIS** (not SME) "mua dịch vụ" template, with a sample row: dates `31/01/2020`, `% thuế GTGT` as the number `10` | Third-party copy, other product |
-| S9 | `modules/1ms-print/templates/misa-source/Template/ImportExcel/` in [NachaFromMars/supercitadellab](https://github.com/NachaFromMars/supercitadellab/tree/b0085ff7e25ed6fa604196d6313ca41b8b9510eb/modules/1ms-print/templates/misa-source/Template/ImportExcel), with its manifest `modules/1ms-print/templates/manifests/CHECKSUMS.sha256` | Copies of the shipped files of the same **MISA SME 2026** install as S7. We read `Mua_hang_qua_kho_VND.xls` (SHA-256 `b16d18f3…f0b`, as in the manifest): sheet `Chứng từ mua hàng nhập kho`, 44 headers in row 1, and an input note on each column (data validation prompts) with value codes and length limits. `Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls` (SHA-256 `02adf1a6…7dfd`, as in the manifest) has the 33 purchase headers below, which confirms S7 for that file (read on 2026-10-25) | Third-party copy of the MISA files |
+| S9 | `modules/1ms-print/templates/misa-source/Template/ImportExcel/` in [NachaFromMars/supercitadellab](https://github.com/NachaFromMars/supercitadellab/tree/b0085ff7e25ed6fa604196d6313ca41b8b9510eb/modules/1ms-print/templates/misa-source/Template/ImportExcel), with its manifest `modules/1ms-print/templates/manifests/CHECKSUMS.sha256` | Copies of the shipped files of the same **MISA SME 2026** install as S7. We read `Mua_hang_qua_kho_VND.xls` (SHA-256 `b16d18f3…f0b`, as in the manifest): sheet `Chứng từ mua hàng nhập kho`, 44 headers in row 1, and an input note on each column (data validation prompts) with value codes and length limits. `Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls` (SHA-256 `02adf1a6…7dfd`, as in the manifest) has the 33 purchase headers below, which confirms S7 for that file (read on 2026-10-25). `Phieu_thu_tien_gui_VND.xls` (the giấy báo Có, SHA-256 `d7983532…0d84`, as in the manifest): sheet `Chứng từ thu tiền`, 25 headers in row 1; `Phieu_chi_tien_gui_VND.xls` (the giấy báo Nợ, SHA-256 `1f8f85cc…bfb8`, as in the manifest): sheet `Chứng từ Chi tiền gửi`, 47 headers in row 1. Headers only, and no data row: the input notes of those two files (value codes, length limits) were not read (read on 2026-11-02, #657). The S7 listing does not list these two files, so their headers have this one source. The same install also holds the cash templates `Phieu_thu_VND.xls` (SHA-256 `1677f9b8…c2f9`, sheet `Phiếu thu`, 18 headers) and `Phieu_chi_VND.xls` (SHA-256 `62274057…9bbc`, sheet `Phiếu chi`, 32 headers), both as in the manifest: their header rows equal, in text, order and sheet name, the S6 headers the cash exports use, which confirms them with a second source | Third-party copy of the MISA files |
 
-Sources read on 2026-10-17 (S9 on 2026-10-25). Target version: **MISA SME 2026** (S7, S9), with the sales headers
+Sources read on 2026-10-17 (S9 on 2026-10-25 and 2026-11-02). Target version: **MISA SME 2026** (S7, S9), with the sales headers
 matching an older MISA SME.NET copy (S6) column for column.
 
 ## Purchase vouchers: `Chung_tu_mua_dich_vu_chua_thanh_toan_VND.xls`
@@ -208,9 +212,11 @@ on purpose: voided sales documents and reversal entries.
 
 ## Cash receipts and payments: `Phiếu thu`, `Phiếu chi`
 
-Sheets `Phiếu thu` (18 columns) and `Phiếu chi` (32 columns), headers in row 1. **From one source**: the cell notes
-of the MISA SME.NET templates (S6), one note per column, in column order. No MISA SME 2026 listing of these two files
-was found, so check the headers against the partner's own template first (open question 9).
+Sheets `Phiếu thu` (18 columns) and `Phiếu chi` (32 columns), headers in row 1. **From two sources**: the cell notes
+of the MISA SME.NET templates (S6), one note per column, in column order, and the header rows of the MISA SME 2026
+files `Phieu_thu_VND.xls` and `Phieu_chi_VND.xls` (S9, read on 2026-11-02), which have the same headers in the same order
+and the same sheet names. The value codes and length limits still come from the S6 notes alone. Check the headers
+against the partner's own template all the same (open question 9).
 
 | Header | Crove fills |
 |---|---|
@@ -231,6 +237,60 @@ was found, so check the headers against the partner's own template first (open q
 
 The exports record an audit row like the others, with `format: 'misa_sme_cash_receipts'` or
 `'misa_sme_cash_payments'`.
+
+## Bank receipts and payments: `Phieu_thu_tien_gui_VND.xls`, `Phieu_chi_tien_gui_VND.xls` (#657)
+
+MISA's deposit templates for the giấy báo Có (Tiền gửi > Thu tiền) and the giấy báo Nợ (Tiền gửi > Chi tiền). **Every
+header below is unconfirmed: it has one source**, the header row of the two MISA SME 2026 files in S9, which the S7
+listing does not repeat. Only headers (facts) were taken; the value codes and length limits of the files' input notes
+were not read, so the limits Crove applies (128 for a name, 255 for an address or a reason) are those of the same fields
+in the cash templates (S6) and are unconfirmed for these files. The headers are written exactly as the files spell them,
+including the trailing space of `Diễn giải lý do thu `, since MISA matches columns by header name (S2). Check them
+against the partner's own downloaded templates first (open question 12).
+
+**Báo Có**, sheet `Chứng từ thu tiền`, 25 columns, voucher number `CRBC00001`:
+
+| Header | Crove fills |
+|---|---|
+| Hiển thị trên sổ | blank: both books |
+| Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
+| Số chứng từ (*) | `CR` + Crove's voucher code (max 20) |
+| Mã đối tượng, Đối tượng | blank (MISA catalog) |
+| Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
+| Nộp vào TK, Mở tại NH | blank: a MISA bank account catalog entry |
+| Lý do thu | blank (a MISA code) |
+| Diễn giải lý do thu | the voucher's reason (max 255) |
+| Nhân viên thu | blank |
+| Diễn giải (max 255) | the line's memo, else the voucher's reason |
+| TK Nợ (*), TK Có (*) | the bank account (112x) and the line's account |
+| Số tiền | the line's amount, exact |
+| Khoản mục CP, Đơn vị, Đối tượng THCP, Công trình, Đơn đặt hàng, Hợp đồng mua, Hợp đồng bán, Mã thống kê | blank |
+
+The template has no "Người nộp" column, so the payer named on the voucher is not exported.
+
+**Báo Nợ**, sheet `Chứng từ Chi tiền gửi`, 47 columns, voucher number `CRBN00001`:
+
+| Header | Crove fills |
+|---|---|
+| Hiển thị trên sổ, Phương thức thanh toán | blank: both books; the payment method is a MISA code |
+| Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
+| Số chứng từ (*) | `CR` + Crove's voucher code (max 20) |
+| Tài khoản chi, Mở tại NH | blank: a MISA bank account catalog entry |
+| Nội dung thanh toán | blank (a MISA code) |
+| Diễn giải nội dung thanh toán | the voucher's reason (max 255) |
+| Mã đối tượng | blank (MISA catalog) |
+| Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
+| Tài khoản nhận, Tên NH nhận | blank |
+| Người lĩnh tiền (max 255) | the payee named on the voucher |
+| Số CMND, Ngày cấp CMND, Nơi cấp CMND, Nhân viên | blank |
+| Diễn giải (max 255) | the line's memo, else the voucher's reason |
+| TK Nợ (*), TK Có (*) | the line's account and the bank account (112x) |
+| Số tiền | the line's amount, exact |
+| Mã đối tượng (Chi tiết), Khoản mục chi phí, Đơn vị, ĐT tập hợp chi phí, Công trình, Đơn đặt hàng, Hợp đồng mua, Hợp đồng bán, Chi phí không hợp lý, Mã thống kê | blank |
+| Diễn giải (Thuế), TK thuế GTGT, Tiền thuế GTGT, % thuế GTGT, Tỷ lệ tính thuế (Thuế suất KHAC), Giá trị HHDV chưa thuế, Mẫu số hóa đơn, Ký hiệu hóa đơn, Số hóa đơn, Ngày hóa đơn, Nhóm HHDV mua vào, Mã NCC, Tên NCC, Mã số thuế NCC | blank: a purchase invoice reaches the books as a purchase voucher, and the báo Nợ only settles it (Dr 331) |
+
+The exports record an audit row like the others, with `format: 'misa_sme_bank_credits'` or `'misa_sme_bank_debits'`,
+before the file is sent. A voucher whose entry was reversed is left out, as for the cash vouchers.
 
 ## Value rules
 
@@ -268,6 +328,9 @@ The exports record an audit row like the others, with `format: 'misa_sme_cash_re
    từ Excel > Chứng từ > Bán hàng > Chứng từ bán hàng, sheet `Chứng từ bán hàng`.
 7. Cash: on the "Thu chi" screen, pick the dates, click "Xuất phiếu thu cho MISA" or "Xuất phiếu chi cho MISA"; in
    MISA, Tiền mặt > Thu tiền (or Chi tiền) > Nhập từ Excel, sheet `Phiếu thu` (or `Phiếu chi`).
+8. Bank: on the "Thu chi" screen, click "Xuất giấy báo Có cho MISA" or "Xuất giấy báo Nợ cho MISA"; in MISA, Tiền gửi >
+   Thu tiền (or Chi tiền) > Nhập từ Excel, sheet `Chứng từ thu tiền` (or `Chứng từ Chi tiền gửi`). Fill the bank account
+   columns (**Nộp vào TK** / **Tài khoản chi**) that MISA needs for the firm's bank account, if the wizard asks for them.
 
 ## Open questions (to settle with the partner's template and one real import)
 
@@ -288,10 +351,21 @@ The exports record an audit row like the others, with `format: 'misa_sme_cash_re
    and how does the firm record the invoice series that the VND sales template has no column for?
 8. **Voucher numbering:** is `CRMDV…` / `CRBH…` acceptable, or does the firm want its own number series?
 9. **Cash templates:** compare the partner's own "Phiếu thu" and "Phiếu chi" templates (Tiền mặt > Nhập từ Excel >
-   Tải tệp mẫu) with the headers above, which come from one source (S6). Should "Lý do nộp" / "Lý do chi" carry a
+   Tải tệp mẫu) with the headers above (S6 and S9 agree on them). Should "Lý do nộp" / "Lý do chi" carry a
    code (12 Thu hoàn ứng, 21 Tạm ứng nhân viên ...) instead of the default "khác"? Is `CRPT…` / `CRPC…` acceptable?
-10. **Bank vouchers:** to export giấy báo Có and giấy báo Nợ, Crove needs the headers of MISA's deposit templates
-    (Tiền gửi > Thu tiền / Chi tiền > Nhập từ Excel > Tải tệp mẫu). A blank copy of each, with no data, is enough.
+10. **Bank vouchers:** see question 12.
 11. **Mixed invoices (#1398):** an invoice with both stock and other lines becomes a goods voucher and a services
     voucher with the same invoice number. Does MISA accept the second one (it may warn about a duplicate invoice
     number), and does the input VAT listing (bảng kê mua vào) show the invoice correctly on two lines?
+12. **Bank templates (#657):** compare the 25 and 47 headers of the deposit templates (Tiền gửi > Thu tiền / Chi tiền >
+    Nhập từ Excel > Tải tệp mẫu) with the partner's own downloads: they come from one source (S9), the trailing space of
+    "Diễn giải lý do thu " included. The limits Crove applies (20 for Số chứng từ, 128 for a name, 255 for an address or a
+    reason) are those of the cash templates (S6), unconfirmed for these files. Questions for the partner's accountant:
+    - What does a blank "Lý do thu" mean on a báo Có, and a blank "Nội dung thanh toán" or "Phương thức thanh toán" on a
+      báo Nợ? The cash templates read a blank reason as 13 / 23 (S6); nothing says so for these.
+    - Does MISA need the bank account columns ("Nộp vào TK", "Tài khoản chi") filled to post, and with what: the account
+      number, or its catalog code? Crove keeps the account numbers of each 112x account (Settings), so it could fill the
+      column when an account has exactly one number.
+    - Does MISA keep "Người lĩnh tiền" on a payment that is not a cash cheque (an Ủy nhiệm chi)? Crove fills it from the
+      payee named on the voucher.
+    - Does a báo Có with several lines import as one voucher, as the cash ones do?
