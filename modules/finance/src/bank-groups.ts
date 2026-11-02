@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Ly's matches of bank lines, in groups, and the lines already matched (#2385). Two reads on top of the bank matching of
+// The matches of bank lines, in groups, and the lines already matched (#2385). Two reads on top of the bank matching of
 // #326 (bank-match.ts), no write and no model call:
 //
 // - finance.bank.match_groups sorts the open lines of an account and period into a clean group (one exact candidate, no

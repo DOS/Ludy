@@ -306,7 +306,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
         description: `TT HD ${seller.number} MST ${seller.taxCode}`,
         lines: [{ account: '331', amount: '1980000' }],
         bankLineId: refByRef.get('GR1'),
-        matchedBy: { kind: 'ly', reason: 'tax_code', invoice: { series: seller.series, number: seller.number } },
+        matchedBy: { kind: 'suggested', reason: 'tax_code', invoice: { series: seller.series, number: seller.number } },
       },
       idempotencyKey: randomUUID(),
     });
@@ -335,7 +335,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
       proposalId: cleanProposal,
       approvedBy: { name: expect.any(String) },
       approvedAt: expect.any(String),
-      matchedBy: { kind: 'ly', reason: 'tax_code', invoice: { number: seller.number } },
+      matchedBy: { kind: 'suggested', reason: 'tax_code', invoice: { number: seller.number } },
       reversal: null,
     });
     // The seller's payable is settled by the voucher: the line is matched, so it leaves both groups.
@@ -358,7 +358,7 @@ suite('bank match groups and the matched lines (#2385)', () => {
         description: `CHUYEN TIEN ${seller.name}`,
         lines: [{ account: '331', amount: '555000' }],
         bankLineId: refByRef.get('GR4'),
-        matchedBy: { kind: 'ly', reason: 'tax_code' },
+        matchedBy: { kind: 'suggested', reason: 'tax_code' },
       },
       idempotencyKey: randomUUID(),
     });

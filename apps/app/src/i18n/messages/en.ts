@@ -2336,11 +2336,11 @@ export const en = {
       retry: 'Try again',
       dismiss: 'Dismiss',
       reason: {
-        taxCodeInvoice: 'Ly suggests: the tax code is in the transfer text, and the amount equals invoice {number}',
-        taxCode: 'Ly suggests: the tax code is in the transfer text',
-        invoice: 'Ly suggests: invoice {number} and its amount are in the transfer text',
-        name: "Ly suggests: the party's name is in the transfer text",
-        balance: "Ly suggests: the amount equals the party's open balance",
+        taxCodeInvoice: 'Suggested match: the tax code is in the transfer text, and the amount equals invoice {number}',
+        taxCode: 'Suggested match: the tax code is in the transfer text',
+        invoice: 'Suggested match: invoice {number} and its amount are in the transfer text',
+        name: "Suggested match: the party's name is in the transfer text",
+        balance: "Suggested match: the amount equals the party's open balance",
         none: 'How it matched is not known',
       },
       look: {

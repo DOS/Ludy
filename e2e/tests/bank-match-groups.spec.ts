@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Vy's matches of bank lines in groups (issue #2385), end to end: an e-invoice is approved into the books, a bank statement
+// The matches of bank lines in groups (issue #2385), end to end: an e-invoice is approved into the books, a bank statement
 // with the line that pays it is imported, the line shows as one clean match, one action asks for its voucher and approves it
 // (one step-up for the batch, already given when the invoice was approved), and the review page lists the matched line with
 // its voucher, its approver and how the party was found. A line that names no one stays out of the group.
@@ -90,7 +90,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('BN00001');
     await expect(row).toContainText('Đã ghi sổ');
-    await expect(page.getByTestId('matched-how')).toContainText(`Ly đề xuất: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn ${NUMBER}`);
+    await expect(page.getByTestId('matched-how')).toContainText(`Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn ${NUMBER}`);
     await expect(row.getByRole('button', { name: 'Hoàn tác chứng từ BN00001' })).toBeVisible();
   });
 

@@ -2334,11 +2334,11 @@ export const vi = {
       retry: 'Thử lại',
       dismiss: 'Bỏ qua',
       reason: {
-        taxCodeInvoice: 'Ly đề xuất: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn {number}',
-        taxCode: 'Ly đề xuất: mã số thuế có trong nội dung chuyển khoản',
-        invoice: 'Ly đề xuất: số hóa đơn {number} và số tiền có trong nội dung chuyển khoản',
-        name: 'Ly đề xuất: tên đối tượng có trong nội dung chuyển khoản',
-        balance: 'Ly đề xuất: số tiền bằng công nợ còn mở của đối tượng',
+        taxCodeInvoice: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn {number}',
+        taxCode: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản',
+        invoice: 'Gợi ý khớp: số hóa đơn {number} và số tiền có trong nội dung chuyển khoản',
+        name: 'Gợi ý khớp: tên đối tượng có trong nội dung chuyển khoản',
+        balance: 'Gợi ý khớp: số tiền bằng công nợ còn mở của đối tượng',
         none: 'Chưa rõ cách khớp',
       },
       look: {

@@ -560,12 +560,12 @@ export type VoucherLine = z.infer<typeof zVoucherLine>;
 export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
 export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
 
-// How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`ly`:
-// the deterministic matcher the screens call Ly's suggestion, never a model's read), or the person's own choice
-// (`manual`). The server checks a claimed `ly` against the matcher before it keeps it. `reason` and the invoice are what
+// How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
+// the deterministic matcher, never a model's read), or the person's own choice
+// (`manual`). The server checks a claimed `suggested` against the matcher before it keeps it. `reason` and the invoice are what
 // the matcher found, so the review page can say why in words.
 export const zBankMatchedBy = z.object({
-  kind: z.enum(['ly', 'manual']),
+  kind: z.enum(['suggested', 'manual']),
   reason: z.enum(BANK_MATCH_REASONS).optional(),
   invoice: z.object({ series: z.string().max(50), number: z.string().max(50) }).optional(),
 });
