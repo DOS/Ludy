@@ -51,6 +51,34 @@ describe('sentences', () => {
   });
 });
 
+describe('numbers that are allowed one by one but mean something else', () => {
+  const dropped = (sentence: string) => checkedSentences([sentence], facts()).kept.length === 0;
+
+  it('drops a sentence that scales a figure in words, even when the digit is allowed', () => {
+    for (const s of ['Có 3 triệu đồng đang chờ.', 'Có 2k đề xuất.', 'Có 12 nghìn việc.', 'Có 2 million việc.', 'Có 3 tỷ đồng.']) expect(dropped(s), s).toBe(true);
+    // A word that merely starts with a scale letter is not a scale.
+    expect(dropped('Có 3 tin nhắn.')).toBe(false);
+    expect(dropped('Có 12 mục.')).toBe(false);
+  });
+
+  it('checks a date as a whole: day and month swapped, or a day that is not given, is dropped', () => {
+    expect(dropped('Hạn gần nhất là 20/11/2026.')).toBe(false);
+    expect(dropped('Hạn là 20/11 và 30/11.')).toBe(false);
+    expect(dropped('Hôm nay là 2/11.')).toBe(false);
+    expect(dropped('Hạn là 11/2.')).toBe(true);
+    expect(dropped('Hạn là 12/11.')).toBe(true);
+    expect(dropped('Hạn là 2026-11-20.')).toBe(false);
+    expect(dropped('Hạn là 2026-11-25.')).toBe(true);
+    // A decimal figure is not a date.
+    expect(checkedSentences(['Tổng 148.500.000 ₫.'], facts()).kept).toHaveLength(1);
+  });
+
+  it('reads full-width digits as the digits they are', () => {
+    expect(dropped('Có ４０ đề xuất.')).toBe(true);
+    expect(dropped('Có １２ đề xuất.')).toBe(false);
+  });
+});
+
 describe('templateBrief', () => {
   it('says the counts in plain words in both languages, and passes its own numbers check', () => {
     const vi = templateBrief(facts());
@@ -81,12 +109,12 @@ describe('briefAsk', () => {
 describe('TodayWriter', () => {
   it('returns the model sentences that pass, as written by Vy', async () => {
     const result = await writer(['Hôm nay có 12 đề xuất chờ bạn duyệt.', 'Hạn gần nhất là 20/11/2026.']).brief(facts());
-    expect(result).toEqual({ sentences: ['Hôm nay có 12 đề xuất chờ bạn duyệt.', 'Hạn gần nhất là 20/11/2026.'], writtenBy: 'vy' });
+    expect(result).toEqual({ sentences: ['Hôm nay có 12 đề xuất chờ bạn duyệt.', 'Hạn gần nhất là 20/11/2026.'], writtenBy: 'vy', final: true });
   });
 
   it('drops a sentence that invents a figure, and keeps the rest', async () => {
     const result = await writer(['Có 40 đề xuất chờ duyệt.', 'Có 3 tin nhắn chưa trả lời.']).brief(facts());
-    expect(result).toEqual({ sentences: ['Có 3 tin nhắn chưa trả lời.'], writtenBy: 'vy' });
+    expect(result).toEqual({ sentences: ['Có 3 tin nhắn chưa trả lời.'], writtenBy: 'vy', final: true });
   });
 
   it('falls back to the template when every sentence is dropped, the model answers nothing or fails', async () => {
@@ -94,6 +122,7 @@ describe('TodayWriter', () => {
     for (const answer of answers) {
       const result = await writer(answer).brief(facts());
       expect(result.writtenBy).toBe('template');
+      expect(result.final, 'a fallback after a model call is not final').toBe(false);
       expect(result.sentences).toEqual(templateBrief(facts()));
     }
   });
@@ -105,5 +134,6 @@ describe('TodayWriter', () => {
   it('does not ask the model when nothing needs the member', async () => {
     const result = await writer(new Error('must not be called')).brief(facts(none));
     expect(result.writtenBy).toBe('template');
+    expect(result.final).toBe(true);
   });
 });

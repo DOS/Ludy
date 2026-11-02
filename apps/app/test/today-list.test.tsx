@@ -29,7 +29,7 @@ vi.mock('../src/lib/stream-hook.ts', () => ({ useStreamLive: () => false, pollEv
 vi.mock('@tanstack/react-router', () => ({ useRouter: () => ({ history: { push: () => undefined } }) }));
 
 const { TodayList } = await import('../src/components/today-list.tsx');
-const { briefStorageKey, listFingerprint } = await import('../src/lib/today-brief.ts');
+const { briefDay, briefStorageKey, listFingerprint } = await import('../src/lib/today-brief.ts');
 
 const base = { app: 'finance', title: { key: 'finance.unknown' }, href: '/inbox' };
 const ITEMS = [
@@ -47,7 +47,7 @@ function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; b
   if (opts.brief !== undefined) {
     // Vy's brief is cached by day, language and the list it was written from; seed both languages.
     const items = (opts.data as { items: TodayItem[] }).items;
-    for (const language of ['vi', 'en']) qc.setQueryData(['today', 'brief', briefStorageKey(new Date().toLocaleDateString('en-CA'), language, listFingerprint(items))], opts.brief);
+    for (const language of ['vi', 'en']) qc.setQueryData(['today', 'brief', briefStorageKey('acme', briefDay(), language, listFingerprint(items))], opts.brief);
   }
   if (opts.error) void qc.fetchQuery({ queryKey: key, queryFn: () => Promise.reject(new Error('boom')), retry: false }).catch(() => undefined);
   const locale = opts.locale ?? 'en';
@@ -102,7 +102,7 @@ describe('TodayList', () => {
   });
 
   it('shows Vy’s brief above the list, marked as written by Vy', () => {
-    const brief = { writtenBy: 'vy', sentences: ['Hôm nay có 4 việc cần bạn.', 'Hạn gần nhất là 20/11/2026.'], budgetSpent: false };
+    const brief = { writtenBy: 'vy', sentences: ['Hôm nay có 4 việc cần bạn.', 'Hạn gần nhất là 20/11/2026.'], budgetSpent: false, final: true };
     const html = render({ data: { items: ITEMS, dropped: 0 }, brief });
     expect(html).toContain('data-testid="today-brief"');
     expect(html).toContain('Hôm nay có 4 việc cần bạn. Hạn gần nhất là 20/11/2026.');
@@ -112,13 +112,13 @@ describe('TodayList', () => {
   });
 
   it('says a template brief is automatic, with no AI mark', () => {
-    const html = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: 'template', sentences: ['Hôm nay có 4 việc cần bạn.'], budgetSpent: false } });
+    const html = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: 'template', sentences: ['Hôm nay có 4 việc cần bạn.'], budgetSpent: false, final: true } });
     expect(html).toContain(en.today.brief.byTemplate);
     expect(html).not.toContain(en.today.brief.aiBadge);
   });
 
   it('shows the list alone when there is no brief (the month’s AI budget is spent), and a quiet placeholder while it loads', () => {
-    const spent = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: null, sentences: [], budgetSpent: true } });
+    const spent = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: null, sentences: [], budgetSpent: true, final: false } });
     expect(spent).not.toContain('data-testid="today-brief"');
     expect(spent).toContain('A voucher does not balance');
     const loading = render({ data: { items: ITEMS, dropped: 0 } });

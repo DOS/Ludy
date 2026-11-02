@@ -99,7 +99,7 @@ export function TodayList({ slug }: { slug: string }) {
           <Empty title={t('empty')} hint={t('emptyHint')} />
         ) : (
           <div className="space-y-5">
-            <TodayBrief items={today.data?.items ?? []} />
+            <TodayBrief slug={slug} items={today.data?.items ?? []} />
             {groups.map((group) => (
               <div key={group.kind}>
                 <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">

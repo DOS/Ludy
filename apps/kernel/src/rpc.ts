@@ -290,6 +290,8 @@ export function createRpcHandler(
   aiEnabled = false,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
+  const briefs = new DraftBudget();
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -510,7 +512,7 @@ export function createRpcHandler(
       brief: os.today.brief.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
           const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
-          return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => drafts.take(orgId, actor.userId));
+          return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
         }),
       ),
     },

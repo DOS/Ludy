@@ -3,33 +3,35 @@
 // amounts and due dates. The server checks every number of a sentence against them and falls back to a plain sentence built
 // from the same figures; with the month's AI budget spent there is no brief and the list stands alone. It approves and
 // sends nothing. A brief that fails to load is simply not shown: the list is what matters.
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import type { TodayItem } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
 import { useLocaleSetting } from '../i18n/provider.tsx';
 import { client } from '../lib/api.ts';
-import { briefStorageKey, listFingerprint, readStoredBrief, storeBrief } from '../lib/today-brief.ts';
+import { briefDay, briefStorageKey, listFingerprint, readStoredBrief, storeBrief } from '../lib/today-brief.ts';
 
-export function TodayBrief({ items }: { items: readonly TodayItem[] }) {
+export function TodayBrief({ slug, items }: { slug: string; items: readonly TodayItem[] }) {
   const t = useTranslations('today.brief');
   const { locale } = useLocaleSetting();
   const language = locale === 'en' ? 'en' : 'vi';
-  const day = new Date().toLocaleDateString('en-CA');
-  const key = briefStorageKey(day, language, listFingerprint(items));
+  const key = briefStorageKey(slug, briefDay(), language, listFingerprint(items));
   const brief = useQuery({
     // The same list on the same day asks the model once.
     queryKey: ['today', 'brief', key],
+    // A brief kept in this tab for the same list is the answer; the card never waits for it.
+    initialData: () => readStoredBrief(key),
     queryFn: async () => {
-      const stored = readStoredBrief(key);
-      if (stored) return stored;
       const fresh = await client.today.brief({ language });
       storeBrief(key, fresh);
       return fresh;
     },
+    // While the list changes (it is refreshed every minute) the card keeps the previous brief instead of flashing a placeholder.
+    placeholderData: keepPreviousData,
     enabled: items.length > 0,
-    staleTime: 60 * 60 * 1000,
+    // A final brief is good for the hour; a fallback is asked again soon.
+    staleTime: (query) => (query.state.data?.final ? 60 * 60 * 1000 : 30 * 1000),
     refetchOnWindowFocus: false,
     retry: false,
   });

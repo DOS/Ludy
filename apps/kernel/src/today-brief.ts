@@ -47,17 +47,18 @@ export async function briefAnswer(
   write: ((facts: BriefFacts) => Promise<BriefResult>) | undefined,
   take: () => DraftTicket,
 ): Promise<TodayBrief> {
-  if (items.length === 0) return { writtenBy: null, sentences: [], budgetSpent: false };
+  if (items.length === 0) return { writtenBy: null, sentences: [], budgetSpent: false, final: true };
   const facts = briefFactsOf(items, language, today);
-  const plain: TodayBrief = { writtenBy: 'template', sentences: templateBrief(facts), budgetSpent: false };
+  const plain: TodayBrief = { writtenBy: 'template', sentences: templateBrief(facts), budgetSpent: false, final: true };
+  // No model: this is the brief. Asking too often: the template for now, not kept, so the next ask can reach the model.
   if (!write) return plain;
   const ticket = take();
-  if (!ticket.allowed) return plain;
+  if (!ticket.allowed) return { ...plain, final: false };
   try {
     const result = await write(facts);
-    return { writtenBy: result.writtenBy, sentences: result.sentences, budgetSpent: false };
+    return { writtenBy: result.writtenBy, sentences: result.sentences, budgetSpent: false, final: result.final };
   } catch (error: unknown) {
-    if (error instanceof AiBudgetExhaustedError) return { writtenBy: null, sentences: [], budgetSpent: true };
+    if (error instanceof AiBudgetExhaustedError) return { writtenBy: null, sentences: [], budgetSpent: true, final: false };
     throw error;
   } finally {
     ticket.release();

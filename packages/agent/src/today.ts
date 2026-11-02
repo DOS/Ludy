@@ -83,10 +83,16 @@ export function sentencesOf(text: string): string[] {
 /** The sentences that write only allowed numbers (at most BRIEF_SENTENCES_MAX, each at most BRIEF_SENTENCE_MAX characters), and how many were dropped. */
 export function checkedSentences(sentences: readonly string[], facts: BriefFacts): { kept: string[]; dropped: number } {
   const allowed = briefAllowed(facts);
+  const dates = dateTokens(facts);
   const kept: string[] = [];
   let dropped = 0;
   for (const sentence of sentences.flatMap((s) => sentencesOf(s))) {
-    const fits = sentence.length <= BRIEF_SENTENCE_MAX && numbersIn(sentence).every((n) => allowed.has(n));
+    const text = sentence.normalize('NFKC');
+    const fits =
+      sentence.length <= BRIEF_SENTENCE_MAX &&
+      numbersIn(sentence).every((n) => allowed.has(n)) &&
+      !SCALED.test(text) &&
+      (text.match(DATE_TOKEN) ?? []).every((token) => dates.has(token));
     if (fits && kept.length < BRIEF_SENTENCES_MAX) kept.push(sentence);
     else dropped += 1;
   }
@@ -94,6 +100,33 @@ export function checkedSentences(sentences: readonly string[], facts: BriefFacts
 }
 
 const ddmmyyyy = (date: string) => date.split('-').reverse().join('/');
+
+// A number that is a quantity in words ("5 triệu", "5k", "2 million") is a different number from the digit it starts with, so
+// a sentence that scales a figure is dropped even when the digit itself is allowed.
+const SCALED = /\p{Nd}\s*(?:k|nghìn|ngàn|trăm|triệu|tỷ|tỉ|thousand|hundred|million|billion|m|b)(?![\p{L}\p{N}])/iu;
+
+// A date written in numbers (day/month or day/month/year with "/" or "-") must be one of the dates given, whole: "2/11" and
+// "11/2" are not the same day, though both of their numbers are allowed one by one.
+const DATE_TOKEN = /(?<![\p{Nd}/-])\p{Nd}{1,2}[/-]\p{Nd}{1,2}(?:[/-]\p{Nd}{2,4})?(?![\p{Nd}/-])/gu;
+
+function dateTokens(facts: BriefFacts): Set<string> {
+  const out = new Set<string>();
+  for (const date of [facts.today, ...facts.dueDates]) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
+    if (!m) continue;
+    const [, y, mo, d] = m as unknown as [string, string, string, string];
+    for (const day of [d, String(Number(d))]) {
+      for (const month of [mo, String(Number(mo))]) {
+        for (const sep of ['/', '-']) {
+          out.add(`${day}${sep}${month}`);
+          out.add(`${day}${sep}${month}${sep}${y}`);
+          out.add(`${day}${sep}${month}${sep}${y.slice(2)}`);
+        }
+      }
+    }
+  }
+  return out;
+}
 
 /** The plain brief built from the figures alone: no model, so nothing to check. */
 export function templateBrief(facts: BriefFacts): string[] {
@@ -136,6 +169,9 @@ export type BriefGenerator = (args: { system: string; prompt: string }) => Promi
 export interface BriefResult {
   sentences: string[];
   writtenBy: 'vy' | 'template';
+  // false: a fallback after the model was asked and gave nothing usable, which a later call may improve on, so the caller
+  // does not keep it.
+  final: boolean;
 }
 
 // The brief of a member's Home. The model call goes through the AI budget meter; AiBudgetExhaustedError is for the caller
@@ -164,7 +200,7 @@ export class TodayWriter {
   }
 
   async brief(facts: BriefFacts): Promise<BriefResult> {
-    if (total(facts) === 0) return { sentences: templateBrief(facts), writtenBy: 'template' };
+    if (total(facts) === 0) return { sentences: templateBrief(facts), writtenBy: 'template', final: true };
     let answer: z.infer<typeof zBrief> | null = null;
     try {
       answer = await this.generate(briefAsk(facts));
@@ -173,6 +209,6 @@ export class TodayWriter {
       console.error('[today-brief] the model call failed', error instanceof Error ? error.name : typeof error);
     }
     const { kept } = checkedSentences(answer?.sentences ?? [], facts);
-    return kept.length > 0 ? { sentences: kept, writtenBy: 'vy' } : { sentences: templateBrief(facts), writtenBy: 'template' };
+    return kept.length > 0 ? { sentences: kept, writtenBy: 'vy', final: true } : { sentences: templateBrief(facts), writtenBy: 'template', final: false };
   }
 }

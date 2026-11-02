@@ -118,5 +118,8 @@ export const zTodayBrief = z.object({
   writtenBy: z.enum(['vy', 'template']).nullable(),
   sentences: z.array(z.string().max(300)).max(4),
   budgetSpent: z.boolean(),
+  // false: a fallback a later call may improve on (the model was asked and gave nothing usable, or the member is asking too
+  // often); the app does not keep it.
+  final: z.boolean(),
 });
 export type TodayBrief = z.infer<typeof zTodayBrief>;

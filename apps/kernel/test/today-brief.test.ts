@@ -60,20 +60,21 @@ describe('briefAnswer', () => {
     const released: number[] = [];
     return { take: (): DraftTicket => (allowed ? { allowed: true, release: () => void released.push(1) } : { allowed: false, retryAfterSeconds: 5, reason: 'busy' }), released };
   };
-  const vy: BriefResult = { sentences: ['Có 13 việc cần bạn.'], writtenBy: 'vy' };
+  const vy: BriefResult = { sentences: ['Có 13 việc cần bạn.'], writtenBy: 'vy', final: true };
 
   it('says nothing for an empty list, and asks nobody', async () => {
     const t = ticket();
-    expect(await briefAnswer([], 'vi', '2026-11-02', async () => vy, t.take)).toEqual({ writtenBy: null, sentences: [], budgetSpent: false });
+    expect(await briefAnswer([], 'vi', '2026-11-02', async () => vy, t.take)).toEqual({ writtenBy: null, sentences: [], budgetSpent: false, final: true });
     expect(t.released).toEqual([]);
   });
 
   it('gives the plain template with no model, or when the member is rate limited', async () => {
     const plain = templateBrief(briefFactsOf(items, 'vi', '2026-11-02'));
-    expect(await briefAnswer(items, 'vi', '2026-11-02', undefined, ticket().take)).toEqual({ writtenBy: 'template', sentences: plain, budgetSpent: false });
+    expect(await briefAnswer(items, 'vi', '2026-11-02', undefined, ticket().take)).toEqual({ writtenBy: 'template', sentences: plain, budgetSpent: false, final: true });
     const denied = ticket(false);
     let asked = false;
-    expect(await briefAnswer(items, 'vi', '2026-11-02', async () => ((asked = true), vy), denied.take)).toEqual({ writtenBy: 'template', sentences: plain, budgetSpent: false });
+    // Asking too often gives the template for now, not kept: the next ask can reach the model.
+    expect(await briefAnswer(items, 'vi', '2026-11-02', async () => ((asked = true), vy), denied.take)).toEqual({ writtenBy: 'template', sentences: plain, budgetSpent: false, final: false });
     expect(asked).toBe(false);
   });
 
@@ -81,7 +82,7 @@ describe('briefAnswer', () => {
     const t = ticket();
     let seen: BriefFacts | undefined;
     const answer = await briefAnswer(items, 'vi', '2026-11-02', async (facts) => ((seen = facts), vy), t.take);
-    expect(answer).toEqual({ writtenBy: 'vy', sentences: ['Có 13 việc cần bạn.'], budgetSpent: false });
+    expect(answer).toEqual({ writtenBy: 'vy', sentences: ['Có 13 việc cần bạn.'], budgetSpent: false, final: true });
     expect(seen).toMatchObject({ proposals: 12, flags: 1, blocking: 1, today: '2026-11-02', language: 'vi' });
     expect(t.released).toEqual([1]);
   });
@@ -91,7 +92,7 @@ describe('briefAnswer', () => {
     const spent = async (): Promise<BriefResult> => {
       throw new AiBudgetExhaustedError('org', '2026-12-01T00:00:00Z');
     };
-    expect(await briefAnswer(items, 'en', '2026-11-02', spent, t.take)).toEqual({ writtenBy: null, sentences: [], budgetSpent: true });
+    expect(await briefAnswer(items, 'en', '2026-11-02', spent, t.take)).toEqual({ writtenBy: null, sentences: [], budgetSpent: true, final: false });
     expect(t.released).toEqual([1]);
   });
 
