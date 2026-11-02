@@ -499,6 +499,9 @@ export function createRpcHandler(
         }),
       ),
     },
+    today: {
+      list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+    },
     org: {
       create: os.org.create.handler(({ context, input }) =>
         guard(() => createOrg(runtime, actorOf(context.user), input.name, input.idempotencyKey)),
