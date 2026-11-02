@@ -1335,8 +1335,9 @@ export const conversationRetentionSet = defineCommand({
 // Deletes threads and what hangs on them (messages, notes and read marks go with a thread by the foreign keys). Returns counts.
 async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>): Promise<{ threads: number; messages: number }> {
   const { rows } = await sql<{ threads: string; messages: string }>`
-    WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id, c.last_seq)
-    SELECT count(*)::text AS threads, COALESCE(sum(gone.last_seq), 0)::text AS messages FROM gone`.execute(ctx.trx);
+    WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
+    SELECT (SELECT count(*) FROM gone)::text AS threads,
+           (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
   return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
 }
 
@@ -1346,6 +1347,8 @@ async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
     WITH gone AS (
       DELETE FROM crove_kernel.conversation_identity i
       WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+        -- A person who only replied in other customers' threads is still named by what they wrote there.
+        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
       RETURNING i.id)
     SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
   return Number(rows[0]?.n ?? 0);
@@ -1366,25 +1369,42 @@ export const conversationEraseContact = defineCommand({
   handler: async (ctx, input): Promise<ConversationErased> => {
     requireUser(ctx);
     const conversation = await lockConversation(ctx, input.conversationId);
-    const filter = conversation.identity_id ? sql`c.identity_id = ${conversation.identity_id}::uuid` : sql`c.id = ${conversation.id}::uuid`;
+    // The person: the thread's own customer, or the author of the message named (a customer who only replied in this thread).
+    let subject = conversation.identity_id;
+    if (input.messageId) {
+      const m = await ctx.trx
+        .selectFrom('crove_kernel.conversation_message')
+        .select('author_identity_id')
+        .where('org_id', '=', ctx.orgId)
+        .where('conversation_id', '=', conversation.id)
+        .where('id', '=', input.messageId)
+        .executeTakeFirst();
+      if (!m?.author_identity_id) throw new DomainError('MESSAGE_NOT_FOUND', 404, 'Không tìm thấy tin của khách này');
+      subject = m.author_identity_id;
+    }
+    const filter = subject ? sql`c.identity_id = ${subject}::uuid` : sql`c.id = ${conversation.id}::uuid`;
     const erased = await deleteThreads(ctx, filter);
-    if (conversation.identity_id) {
+    if (subject) {
       // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
       // its author).
       const others = await sql<{ n: string }>`
-        WITH gone AS (DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${conversation.identity_id}::uuid RETURNING 1)
+        WITH gone AS (DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING 1)
         SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
       erased.messages += Number(others.rows[0]?.n ?? 0);
       // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises
       // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
-      const who = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst();
+      const who = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst();
       if (who) {
         const h = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
+        const key = `erased:${h.rows[0]?.h ?? ''}`;
+        // A customer erased before, who came back and is erased again within the tombstone's 30 days: the old tombstone is replaced by
+        // this one (the key is unique), which carries the later erasure time.
+        await ctx.trx.deleteFrom('crove_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('external_user_id', '=', key).where('id', '<>', subject).execute();
         await ctx.trx
           .updateTable('crove_kernel.conversation_identity')
-          .set({ display_name: null, party_id: null, external_user_id: `erased:${h.rows[0]?.h ?? ''}`, erased_at: ctx.now, updated_at: ctx.now })
+          .set({ display_name: null, party_id: null, external_user_id: key, erased_at: ctx.now, updated_at: ctx.now })
           .where('org_id', '=', ctx.orgId)
-          .where('id', '=', conversation.identity_id)
+          .where('id', '=', subject)
           .execute();
       }
     }

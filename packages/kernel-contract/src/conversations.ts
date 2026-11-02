@@ -208,7 +208,9 @@ export const zConversationRetention = z.strictObject({ retentionMonths: zRetenti
 export type ConversationRetention = z.infer<typeof zConversationRetention>;
 // Erasing a customer: every thread of the same person (their identity on the platform) goes, with its messages, notes and read marks.
 // The thread the button is on names the person; a thread with no identity goes alone. `confirm` is the screen's confirmation.
-export const zConversationEraseContact = z.strictObject({ conversationId: zId, confirm: z.literal(true) });
+// `messageId`: a customer message of that thread whose author is the person to erase (a customer who only replied in someone else's
+// comment thread has no thread of their own to start from); without it, the thread's own customer.
+export const zConversationEraseContact = z.strictObject({ conversationId: zId, messageId: zId.optional(), confirm: z.literal(true) });
 export const zConversationErased = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
 export type ConversationErased = z.infer<typeof zConversationErased>;
 // The worker's retention purge of one org, in batches of threads, and the erasure of one connection's conversations that Meta's

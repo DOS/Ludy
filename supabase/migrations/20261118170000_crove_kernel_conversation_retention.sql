@@ -128,9 +128,9 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_deletion_request (
   requested_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   completed_at timestamptz,
   connections integer CHECK (connections IS NULL OR connections >= 0),
-  -- The code the Ads side of the same person's request carries, when it differs from this one (an earlier request of theirs was still open
-  -- there): the status page of either code then answers for both sides.
-  sibling_code text CHECK (sibling_code IS NULL OR sibling_code ~ '^[0-9a-f]{32}$'),
+  -- The codes the Ads side of the same person's request carries when they differ from this one (an earlier request of theirs was still open
+  -- there, or finished while this stayed open and a new one was made): the status page of any of them answers for both sides.
+  sibling_codes text[] NOT NULL DEFAULT '{}' CHECK (pg_catalog.cardinality(sibling_codes) <= 20),
   -- A request whose erasure failed waits until this time before the worker claims it again.
   next_attempt_at timestamptz NOT NULL DEFAULT pg_catalog.now()
 );
@@ -169,20 +169,20 @@ BEGIN
 END $$;
 
 -- What the status page shows for a code (API login only); no row, no answer.
-DROP FUNCTION IF EXISTS crove_kernel.conversation_deletion_status(text);
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_status(p_code text)
-RETURNS TABLE (requested_at timestamptz, completed_at timestamptz, connections integer, ads_code text)
+RETURNS TABLE (requested_at timestamptz, completed_at timestamptz, connections integer, ads_codes text[])
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  -- ads_code: the code the Ads side of this person's request carries (the linked one, else the code asked about, which both sides share).
-  SELECT r.requested_at, r.completed_at, r.connections, CASE WHEN r.code = p_code THEN COALESCE(r.sibling_code, p_code) ELSE p_code END
-  FROM crove_kernel.conversation_deletion_request r WHERE (r.code = p_code OR r.sibling_code = p_code) AND p_code ~ '^[0-9a-f]{32}$'
+  -- ads_codes: the codes the Ads side of this person's request can carry: the code asked about (both sides may share it) and every linked one.
+  SELECT r.requested_at, r.completed_at, r.connections, CASE WHEN r.code = p_code THEN ARRAY[p_code] || r.sibling_codes ELSE ARRAY[p_code] END
+  FROM crove_kernel.conversation_deletion_request r WHERE (r.code = p_code OR p_code = ANY (r.sibling_codes)) AND p_code ~ '^[0-9a-f]{32}$'
 $$;
 
 -- Links the Ads side's code to this side's open request (API login only), when the two differ.
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_link(p_code text, p_sibling_code text)
 RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  UPDATE crove_kernel.conversation_deletion_request r SET sibling_code = p_sibling_code
+  UPDATE crove_kernel.conversation_deletion_request r SET sibling_codes = pg_catalog.array_append(r.sibling_codes, p_sibling_code)
   WHERE r.code = p_code AND r.completed_at IS NULL AND p_code ~ '^[0-9a-f]{32}$' AND p_sibling_code ~ '^[0-9a-f]{32}$' AND p_sibling_code <> p_code
+    AND NOT (p_sibling_code = ANY (r.sibling_codes)) AND pg_catalog.cardinality(r.sibling_codes) < 20
 $$;
 
 -- The worker's claim: for each open request that is due, one row per connection of an org that is not closed that the request's

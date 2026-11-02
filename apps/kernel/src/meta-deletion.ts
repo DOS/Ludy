@@ -76,22 +76,25 @@ export interface MetaDeletionStatus {
 export async function metaDeletionStatus(runtime: Runtime, code: string, adsInstalled: boolean): Promise<MetaDeletionStatus | null> {
   if (!/^[0-9a-f]{32}$/.test(code)) return null;
   return runtime.orgless(async (db) => {
-    const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null; ads_code: string | null }>`
-      SELECT requested_at, completed_at, connections, ads_code FROM crove_kernel.conversation_deletion_status(${code})`.execute(db);
-    // The Ads side holds the code itself or, when the two sides differ, the one the conversations side is linked to.
-    const adsCode = kernel.rows[0]?.ads_code ?? code;
-    const ads = adsInstalled
-      ? await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-          SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db)
-      : { rows: [] as Array<{ requested_at: Date; completed_at: Date | null; accounts: number | null }> };
+    const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null; ads_codes: string[] }>`
+      SELECT requested_at, completed_at, connections, ads_codes FROM crove_kernel.conversation_deletion_status(${code})`.execute(db);
+    // The Ads side holds the code itself or, when the two sides differ, any of the codes the conversations request is linked to.
+    const adsCodes = kernel.rows[0]?.ads_codes ?? [code];
+    const adsRows: Array<{ requested_at: Date; completed_at: Date | null; accounts: number | null }> = [];
+    if (adsInstalled) {
+      for (const adsCode of adsCodes) {
+        const found = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
+          SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db);
+        if (found.rows[0]) adsRows.push(found.rows[0]);
+      }
+    }
     const k = kernel.rows[0];
-    const a = ads.rows[0];
-    if (!k && !a) return null;
-    const sides = [k, a].filter((s): s is NonNullable<typeof s> => Boolean(s));
+    if (!k && adsRows.length === 0) return null;
+    const sides = [...(k ? [k] : []), ...adsRows];
     const requestedAt = sides.map((s) => s.requested_at).sort((x, y) => x.getTime() - y.getTime())[0] as Date;
     const done = sides.every((s) => s.completed_at !== null);
     const completedAt = done ? (sides.map((s) => s.completed_at as Date).sort((x, y) => y.getTime() - x.getTime())[0] as Date) : null;
-    return { requestedAt, completedAt, accounts: a ? a.accounts : null, connections: k ? k.connections : null };
+    return { requestedAt, completedAt, accounts: adsRows.length > 0 ? adsRows.reduce((n, r) => n + (r.accounts ?? 0), 0) : null, connections: k ? k.connections : null };
   });
 }
 
@@ -119,12 +122,18 @@ export function renderMetaDeletionStatus(status: MetaDeletionStatus | null): str
                 vi: 'Tin nhắn và bình luận của khách trên các trang bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của các trang đó đã bị hủy.',
                 en: 'The customers\u2019 messages and comments on the pages you granted to Ludy have been deleted, and the pages\u2019 access tokens destroyed.',
               }
-            : { vi: 'Yêu cầu đã được xử lý: không còn trang nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no page you granted is left in Ludy.' }
+            : {
+                vi: 'Yêu cầu đã được xử lý: Ludy không tìm thấy trang nào được liên kết với tài khoản của bạn. Nếu bạn đã kết nối một trang cho một tổ chức, hãy nhờ chủ sở hữu tổ chức xóa dữ liệu hội thoại hoặc ngắt kết nối trang đó.',
+                en: 'The request has been handled: Ludy found no page linked to your account. If you connected a page for an organization, ask its owner to erase the conversation data or disconnect the page.',
+              }
           : adsDone || convDone
             ? {
                 vi: 'Dữ liệu bạn đã cấp quyền cho Ludy đã được xóa: số liệu quảng cáo và tài khoản quảng cáo, tin nhắn và bình luận của khách trên các trang đã kết nối, và mã truy cập của chúng đã bị hủy.',
                 en: 'The data you granted to Ludy has been deleted: ad figures and ad accounts, customers\u2019 messages and comments on the connected pages, and their access tokens destroyed.',
               }
-            : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản hay trang nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no account or page you granted is left in Ludy.' };
+            : {
+                vi: 'Yêu cầu đã được xử lý: Ludy không tìm thấy tài khoản quảng cáo hay trang nào được liên kết với tài khoản của bạn. Nếu bạn đã kết nối một trang cho một tổ chức, hãy nhờ chủ sở hữu tổ chức xóa dữ liệu hội thoại hoặc ngắt kết nối trang đó.',
+                en: 'The request has been handled: Ludy found no ad account or page linked to your account. If you connected a page for an organization, ask its owner to erase the conversation data or disconnect the page.',
+              };
   return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Ludy</title></head><body><p>${text.vi}</p><p lang="en">${text.en}</p></body></html>`;
 }

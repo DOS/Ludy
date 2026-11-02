@@ -187,7 +187,7 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
       )}
       <ol className="space-y-2" aria-label={t('messages')}>
         {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} />
+          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} />
         ))}
       </ol>
       {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
@@ -216,11 +216,11 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
 
 // Erases the customer of this thread: every thread of theirs with its messages and notes, and their name. Owners and admins, behind a
 // confirmation and a fresh second factor (the kernel asks for it); it cannot be undone.
-function EraseContactButton({ conversation, onErased }: { conversation: ConversationSummary; onErased: () => void }) {
+function EraseContactButton({ conversation, onErased, messageId, label = 'eraseOpen' }: { conversation: ConversationSummary; onErased: () => void; messageId?: string; label?: 'eraseOpen' | 'eraseAuthor' }) {
   const t = useTranslations('conversations');
   const [asking, setAsking] = useState(false);
   const erase = useMutation({
-    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, confirm: true }),
+    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, ...(messageId ? { messageId } : {}), confirm: true }),
     onSuccess: () => {
       setAsking(false);
       onErased();
@@ -231,7 +231,7 @@ function EraseContactButton({ conversation, onErased }: { conversation: Conversa
   if (!asking) {
     return (
       <Button type="button" size="sm" variant="ghost" data-testid="conversation-erase-open" onClick={() => setAsking(true)}>
-        {t('eraseOpen')}
+        {t(label)}
       </Button>
     );
   }
@@ -275,6 +275,16 @@ export function ConversationRetentionSetting() {
       void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() });
     },
   });
+  if (current.isError) {
+    return (
+      <section className="space-y-1 rounded-md border border-border p-3 text-sm" data-testid="conversation-retention-error">
+        <ErrorText>{errorMessage(current.error)}</ErrorText>
+        <Button type="button" size="sm" variant="outline" onClick={() => void current.refetch()}>
+          {t('retention.retry')}
+        </Button>
+      </section>
+    );
+  }
   if (!current.data) return null;
   const monthsOf = (m: 6 | 12 | 24 | null) => (m === null ? Number.POSITIVE_INFINITY : m);
   const choose = (next: 6 | 12 | 24 | null) => {
@@ -338,7 +348,7 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   );
 }
 
-function MessageRow({ message: m, detail, members, userId, canWrite, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string }) {
+function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -388,6 +398,8 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
             </Button>
           )}
         </div>
+        {/* A customer who only replied in this comment thread has no thread of their own to erase from: their message names them. */}
+        {isAdmin && !mine && !m.removed && detail.conversation.kind === 'comment_thread' && <EraseContactButton conversation={detail.conversation} messageId={m.id} onErased={refresh} label="eraseAuthor" />}
         {(settle.error || hide.error) && <ErrorText>{errorMessage(settle.error ?? hide.error)}</ErrorText>}
       </div>
     </li>

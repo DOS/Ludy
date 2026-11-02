@@ -316,6 +316,40 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     });
   });
 
+  describe('erasing by one of a customer’s messages, twice, and what stays', () => {
+    it('erases a customer who only replied, from their message, keeps their identity while others name it, and survives a second erasure', async () => {
+      const o = await org();
+      const opened = await thread(o, 'only-1', 'Y mở bình luận', 'u-y2');
+      await thread(o, 'only-1', 'Z chỉ trả lời', 'u-z');
+      const [reply] = await rows<{ id: string }>("SELECT m.id FROM crove_kernel.conversation_message m WHERE m.org_id = $1 AND m.conversation_id = $2 AND m.body = 'Z chỉ trả lời'", [o.orgId, opened]);
+      // Z has no thread of their own, but is named by what they wrote: the identity is not an orphan.
+      await rt.execute('kernel.conversation.retention_set', { retentionMonths: 6 }, { actor: asUser(o.owner), orgId: o.orgId });
+      await purgeExpiredConversations({ runtime: worker, workerDb });
+      expect((await rows('SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id = $2', [o.orgId, 'u-z']))).toHaveLength(1);
+      // A message that is not a customer's, or not in the thread, names nobody.
+      await expect(rt.execute('kernel.conversation.erase_contact', { conversationId: opened, messageId: randomUUID(), confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ status: 404 });
+      const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: opened, messageId: reply?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      expect(res).toEqual({ threads: 0, messages: 1 });
+      expect((await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2', [o.orgId, opened])).map((m) => m.body)).toEqual(['Y mở bình luận']);
+      // The second erasure of a customer who came back within the tombstone's 30 days replaces the tombstone and goes through.
+      const back = await thread(o, 'back-1', 'Z quay lại', 'u-z');
+      const again = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: back, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      expect(again).toEqual({ threads: 1, messages: 1 });
+      expect(await rows("SELECT 1 FROM crove_kernel.conversation_identity WHERE org_id = $1 AND external_user_id LIKE 'erased:%' AND erased_at IS NOT NULL", [o.orgId])).toHaveLength(1);
+    });
+
+    it('counts the messages a thread holds when it is deleted, not its highest number', async () => {
+      const o = await org();
+      const opened = await thread(o, 'cnt-1', 'Y mở', 'u-y3');
+      await thread(o, 'cnt-1', 'X trả lời', 'u-x3');
+      const own = await thread(o, 'cnt-x', 'X mở', 'u-x3');
+      await rt.execute('kernel.conversation.erase_contact', { conversationId: own, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      // The thread now holds one message though its last_seq is 2: erasing Y counts one.
+      const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: opened, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      expect(res).toEqual({ threads: 1, messages: 1 });
+    });
+  });
+
   describe('Meta’s one data deletion callback', () => {
     const signed = (userId: string, secret = SECRET, issuedAt = Math.floor(Date.now() / 1000)) => {
       const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: issuedAt, user_id: userId })).toString('base64url');
@@ -401,7 +435,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const code = ((await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7999')))) as { code: string }).code;
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
       expect(await metaDeletionStatus(rt, code, false)).toMatchObject({ connections: 0 });
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, false))).toContain('không còn trang nào');
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, false))).toContain('không tìm thấy trang nào');
     });
 
     it('fans a request out to the Ads side and the conversation side under one code when one app serves both', async () => {
@@ -436,7 +470,7 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
       const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8101')));
       expect(accepted).toEqual({ status: 200, code: adsCode });
-      const [conv] = await rows<{ code: string; sibling_code: string }>("SELECT code, sibling_code FROM crove_kernel.conversation_deletion_request WHERE sibling_code = $1", [adsCode]);
+      const [conv] = await rows<{ code: string }>('SELECT code FROM crove_kernel.conversation_deletion_request WHERE $1 = ANY (sibling_codes)', [adsCode]);
       expect(conv?.code).not.toBe(adsCode);
       // The conversation side finishes first: either code still says it is being handled, until the Ads side is done too.
       await runConversationDeletions({ runtime: worker, workerDb });
