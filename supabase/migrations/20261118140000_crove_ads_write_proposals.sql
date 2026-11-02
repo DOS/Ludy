@@ -2,11 +2,6 @@
 -- Crove Ads W0a-2 (issue #2294, ADR-0043 point 1, plan docs/plan/ads-write.md section 10): what opens the way to spend becomes a
 -- proposal. Nothing here calls a platform and nothing spends. Idempotent; applied files stay untouched.
 --
--- crove_kernel.approval_command_policy   gains the four ads commands that open the way to spend, `ads.write.enable`,
---                                        `ads.account.enable_write`, `ads.cap.set` and `ads.launches.unblock`: an owner or an
---                                        admin approves (Q2), no approval permission, four-eyes with the one-person path (P10),
---                                        and none of them posts to the ledger (`ledger` false). Kept equal to approval.ts
---                                        (POLICIES) by apps/kernel/test/invariant/proposal-approve-gate.db.test.ts.
 -- crove_ads.approved_execution           the second way through the guards of 20261117120000, opened. It answers true only
 --                                        while the statement runs inside the execution of an approved proposal: a proposal of
 --                                        the org in context, for exactly this command, in the state `approved` (which the
@@ -18,22 +13,9 @@
 --                                        approval. A raw statement outside that transaction finds no `approved` row; one
 --                                        inside it can write only the change the approver was shown.
 -- crove_ads.switch_guard, cap_guard      replaced to pass the change they guard to approved_execution.
+--
+-- The approval policy rows of the four ads commands are in 20261118140100_crove_kernel_approval_policy_ads.sql, a crove_kernel migration.
 SET LOCAL lock_timeout = '2s';
-
-CREATE OR REPLACE FUNCTION crove_kernel.approval_command_policy(p_command text, OUT roles text[], OUT permission text, OUT four_eyes boolean, OUT ledger boolean)
-LANGUAGE sql IMMUTABLE SET search_path = pg_catalog, pg_temp AS $$
-  WITH kind AS (
-    SELECT p_command IN ('finance.purchase.record', 'finance.journal.reverse', 'finance.voucher.record',
-                         'finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record') AS is_ledger,
-           p_command IN ('ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock') AS is_ads
-  )
-  SELECT CASE WHEN k.is_ledger OR k.is_ads THEN ARRAY['owner', 'admin']::text[] ELSE ARRAY[]::text[] END,
-         CASE WHEN k.is_ledger THEN 'finance.proposal.approve' END,
-         true,
-         k.is_ledger
-  FROM kind k
-$$;
-REVOKE ALL ON FUNCTION crove_kernel.approval_command_policy(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
 CREATE OR REPLACE FUNCTION crove_ads.approved_execution(p_command text, p_match jsonb DEFAULT NULL, p_amount numeric DEFAULT NULL) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
@@ -148,7 +130,9 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.cap_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
--- The one-argument stub of W0a-1 (always false) is gone: the guards above call the real function.
+-- The one-argument stub of W0a-1 (always false) is gone: the guards above, its only callers, now call the real function, and
+-- nothing else in the code names the one-argument form.
+-- crove:contract adr=0043
 DROP FUNCTION IF EXISTS crove_ads.approved_execution(text);
 
 -- An amount is a finite number above zero: `NaN` ranks above every number in PostgreSQL, so `amount > 0` alone accepts it, and
