@@ -263,12 +263,15 @@ export const notificationDispatch = defineCommand({
           .executeTakeFirst();
         const file = await ctx.trx.selectFrom('crove_kernel.file').select('created_by').where('org_id', '=', ctx.orgId).where('id', '=', e.data.fileId).executeTakeFirst();
         if (!proposal || !file) return { sent: 0 };
-        // The one who uploaded the original and the one who approved the posting; a mailed original with no approver left
-        // (a removed member) goes to the owners and admins.
-        const users = [...new Set([file.created_by, proposal.decided_by].filter((u): u is string => u !== null))];
+        // The one who uploaded the original and the one who approved the posting, while they are members; a mailed original
+        // whose approver has left goes to the owners and admins.
+        const named = [...new Set([file.created_by, proposal.decided_by].filter((u): u is string => u !== null))];
+        const members =
+          named.length === 0 ? [] : (await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('user_id', 'in', named).execute()).map((r) => r.user_id);
+        const users = members.length > 0 ? members : await ownersAndAdmins(ctx);
         const sent = await notifyMembers(ctx, {
           kind: ORIGINAL_FLAGGED,
-          users: users.length > 0 ? users : await ownersAndAdmins(ctx),
+          users,
           key: `original_flagged:${proposal.id}:${e.data.fileId}`,
           subject: { type: 'kernel.proposal', id: proposal.id },
           // The posted proposal's entity: a member limited to other entities never sees it (#1280). Its title is read when
