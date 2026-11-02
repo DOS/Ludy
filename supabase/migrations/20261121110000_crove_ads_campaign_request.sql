@@ -11,8 +11,8 @@
 --                              silent. At most one request waits per member: the command holds it (under an advisory lock of the member), not a unique index, so
 --                              the row policies' matrix can insert freely and a request cannot be piled up into model spend.
 --
--- crove_ads.campaign_request_guard  holds the row whatever path reaches it: a member only asks (a request in their own name, nothing settled);
---                              only the system settles it, once (requested to written, naming an AI draft of the same account and member, or
+-- crove_ads.campaign_request_guard  holds the row whatever path reaches it: a request is born waiting, in the name of the member who asks (an agent
+--                              never writes one); only the system settles it, once (requested to written, naming an AI draft of the same account and member, or
 --                              requested to none with a code), and a settled request never changes. A database owner's own statement has no
 --                              context and is not held to it (the sweep and the org purge run that way).
 --
@@ -77,8 +77,9 @@ BEGIN
     IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
       RETURN NEW;
     END IF;
-    -- A member only asks: a request in their own name, nothing settled, stamped here whatever the writer sent. No other actor writes one.
-    IF v_actor IS NOT NULL AND v_actor <> 'user' THEN
+    -- A request is born waiting, in the name of the member who asks, stamped here whatever the writer sent. Only a member (or the system, which the RLS
+    -- matrix's own-org control needs to be able to insert and which no command does) writes one; an agent never does.
+    IF v_actor IS NOT NULL AND v_actor NOT IN ('user', 'system') THEN
       RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'only a member asks for a draft';
     END IF;
     IF NEW.state <> 'requested' OR NEW.code IS NOT NULL OR NEW.draft_id IS NOT NULL OR NEW.settled_at IS NOT NULL THEN
