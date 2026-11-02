@@ -5,9 +5,9 @@ import type { Dictionary } from './vi';
 export const en: Dictionary = {
   lang: 'en',
   meta: {
-    title: 'Ludy: invoices in, journal entries ready for your approval',
+    title: 'Ludy: the all-in-one business OS where AI agents are your coworkers',
     description:
-      'The open-source Business OS for solo founders and small businesses. Ludy reads e-invoices, checks every number, proposes a TT133 journal entry and posts it only after a person approves. Notes, to-dos and bookings come with it.',
+      'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters. Ludy is an open-source business OS you run on your own server.',
   },
   nav: {
     label: 'Main navigation',
@@ -26,8 +26,8 @@ export const en: Dictionary = {
     closeMenu: 'Close menu',
   },
   hero: {
-    title: 'Vy, your AI assistant, works under your authority.',
-    lead: 'Vy works through AI agents, and each agent is a position in your org chart, with a manager, a monthly budget, a risk limit and a kill switch. The accounting agent reads invoices and drafts the entries; only a person with the authority approves and posts them.',
+    title: 'The all-in-one business OS where AI agents are your coworkers',
+    lead: 'Vy and its AI agents draft your journal entries and suggest meeting times; you approve what matters.',
     primary: 'Self-host for free',
     secondary: 'View the source on GitHub',
     note: 'Open source under the AGPL. Runs on your own server with docker compose. Ludy Cloud is coming soon.',

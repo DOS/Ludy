@@ -2646,6 +2646,7 @@ export const en = {
     title: 'Document inbox',
     subtitle: 'Send invoices here. {assistant}, your AI assistant, proposes the entries; you only check and approve.',
     upload: 'Upload documents',
+    capture: 'Photograph a receipt',
     dropHereCompact: 'Drop invoices here to upload them, or use Upload documents',
     forwardTo: 'Forward to',
     dropHere: 'Drop invoices here',
