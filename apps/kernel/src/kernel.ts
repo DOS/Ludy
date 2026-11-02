@@ -4,7 +4,7 @@
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
 import { memberMeter } from './ai-meter.ts';
-import { AdsCampaignWriter, ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
+import { AdsCampaignWriter, ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TelegramPublisher,
@@ -143,6 +143,8 @@ export interface KernelAdapters {
   today?: Pick<TodayWriter, 'brief'> | null;
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
+  // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
+  inboxReader?: Pick<InboxReader, 'intents' | 'rank'> | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -414,6 +416,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     conversationWriter: adapters.conversationWriter ?? null,
     today: adapters.today ?? null,
     adsCampaignWriter: adapters.adsCampaignWriter ?? null,
+    inboxReader: adapters.inboxReader ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -521,6 +524,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
           ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
+          ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,
@@ -721,6 +725,7 @@ export function defaultAdapters(config: Config): KernelAdapters {
     conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
     today: aiConfig ? new TodayWriter(aiConfig) : null,
     adsCampaignWriter: aiConfig ? new AdsCampaignWriter(aiConfig) : null,
+    inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

@@ -200,6 +200,12 @@ import {
   zConversationHide,
   zConversationId,
   zConversationLinkContact,
+  zConversationIntent,
+  zConversationSetIntent,
+  zConversationIntentSuggest,
+  zConversationIntentSuggested,
+  zConversationContactMatches,
+  zConversationContactMatched,
   zConversationList,
   zConversationListed,
   zConversationMarkRead,
@@ -1448,6 +1454,11 @@ export const contract = {
     reopen: oc.input(zConversationId).output(z.object({ conversationId: zId })),
     note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
     linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
+    // The intent (CV3, #2306): a person applies, changes or clears it (the only thing stored). The AI coworker's suggestion and the likely contacts of a
+    // customer are read apart: a model call through the AI budget meter, never stored, and with the model off, spent or failing the answer is no suggestion.
+    setIntent: oc.input(zConversationSetIntent).output(z.object({ conversationId: zId, intent: zConversationIntent.nullable() })),
+    suggestIntents: oc.input(zConversationIntentSuggest).output(zConversationIntentSuggested),
+    contactMatches: oc.input(zConversationContactMatches).output(zConversationContactMatched),
     markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
     // The inbox (CV3, #2306): the "you are replying" marker (at most one write in 20 seconds per thread and member), and the member's availability
     // for new conversations (every staff member reads the team's, a member sets their own).
