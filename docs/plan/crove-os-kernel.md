@@ -1138,7 +1138,7 @@ DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
 | Module | Replaces fork / reference | Contents |
 |---|---|---|
 | CRM (`crm`) | Twenty; Cal.com, Calendly | Contacts, companies, deals, pipelines, timeline; Calendar and booking pages |
-| Service (`service`) | Go Desk; Zendesk | Unified inbox: email and private messages (comments are answered in Social, [conversations.md](conversations.md)); tickets, SLA |
+| Service (`service`) | Crisp; Intercom | One inbox of conversations: chat, comments on the org's own posts and customer email, answered in one box and shown as Hộp thư ([conversations.md](conversations.md)); follow-up work is a task |
 | Social (`social`) | Postiz; Publer, Nuelink, Buffer | Compose, schedule, queues, reposting, analytics |
 | Email (`email`) | Mailchimp, Brevo, listmonk; Postmark, Amazon SES | Transactional templates and message log, sender domains, contacts with consent, campaigns, unsubscribe, analytics ([email.md](email.md)) |
 | Sign (`sign`) | Documenso; Docusign | Digital signatures via Vietnamese CAs, templates, signing order, audit certificate |
@@ -1149,7 +1149,7 @@ DO $$ DECLARE n int := 0; BEGIN LOOP BEGIN
 Every module shares from the kernel: `party`, `activity`, `task`, `file`, `calendar`, `channel`, permissions, `execute()` and the org's agent.
 
 - **Calendar lives in CRM.** The core (events, availability, external calendar sync) is the kernel `calendar` service, so HRM (interviews, leave) and Service (customer appointments) share it. The Calendly-style booking page is a CRM feature.
-- **Service and Social share the `channel` layer but are two modules.** Each Facebook, Instagram, Zalo OA or TikTok page connects once. Comments on the org's own posts are read and answered in Social; private messages land in Service's inbox (owner decision, 2026-11-01, #2213). Both sit on one conversation core in the kernel (`conversation`, `conversation_message` with a kind), so either module runs alone: [conversations.md](conversations.md), [ADR-0041](../adr/0041-conversation-core.md). They are split because the users and permissions differ (marketing vs customer support) and so does the cadence (scheduled posting vs SLA-driven replies). A comment can start a private conversation ("reply privately") and be handed to Service. In the UI, Social, Service and Ads are groups of one rail app, each shown only when its module is enabled.
+- **Service and Social share the `channel` layer but are two modules.** Each Facebook, Instagram, Zalo OA or TikTok page connects once. Every customer interaction is one conversation (chat, comments on the org's own posts, customer email), shown in one inbox, Hộp thư, with New, Pending and Resolved, as in Crisp and Intercom (owner decisions 2026-11-01 and 2026-11-03, #2213, #2437). Both modules sit on one conversation core in the kernel (`conversation`, `conversation_message` with a kind), so either runs alone: [conversations.md](conversations.md), [ADR-0041](../adr/0041-conversation-core.md). They are split because the users and permissions differ (marketing vs customer care) and so does the cadence (scheduled posting vs replies as they come). A comment can start a private conversation ("reply privately"), and follow-up work is a task linked to the conversation. In the UI, CRM, the inbox, Social and Ads are groups of one rail app, Ludy Engage, each shown only when its module is enabled.
 - **Sending mail is a kernel service; Email is the module that manages it.** Every module sends mail through the kernel pipeline (queue, log, suppression, one send per mail), so it works with `email` off; the Email module adds domains, templates, consent and campaigns ([ADR-0034](../adr/0034-outbound-email.md)). Replies to campaigns go to the org's Reply-To address until Service's inbox can take them.
 
 ## 6. Core data model
@@ -1898,7 +1898,7 @@ Calendar started early, on its own (Decision 20, 2026-10-24); its detailed plan 
 
 **CRM scope:**
 - Contacts and companies are `party`; deals and pipelines; saved views, custom fields, record sharing; CSV import.
-- A shared customer timeline: email, appointments, conversations, tickets, contracts, invoices.
+- A shared customer timeline: email, appointments, conversations, contracts, invoices.
 - AI: customer summaries, next-step suggestions, email drafts; every write is a proposal.
 
 **Calendar scope:**
@@ -1910,18 +1910,18 @@ Calendar started early, on its own (Decision 20, 2026-10-24); its detailed plan 
 - No double booking: `EXCLUDE USING gist` on `tstzrange`; 200 concurrent bookings of one slot give exactly 1 success.
 - Stored as UTC + IANA timezone; free/busy drift against external calendars <=1 minute.
 
-### Phase 4: Service (10 weeks, when wedge customers pull for it; reference: Go Desk, Zendesk)
+### Phase 4: Service, the Hộp thư inbox (10 weeks, when wedge customers pull for it; reference: Crisp, Intercom)
 
 **Kernel additions:** the `channel` layer: one OAuth connection per page or account (Facebook Page, Instagram, Zalo OA, TikTok, email), shared by Service (inbound) and Social (publishing). Connectors sit behind adapters; Cloud uses platform-approved apps, self-hosters register their own.
 
 **Scope:**
-- Unified inbox: email and private messages from Facebook Page, Instagram, Zalo OA, TikTok (comments are answered in Social, on the shared conversation core of [conversations.md](conversations.md)). Each conversation links to a `party` and becomes a ticket when needed.
-- Record-based tickets with per-org numbering; SLA, assignment, reply templates; automation v1 with loop protection.
-- AI triage, summaries, reply drafts. Outbound sends are R2 and need approval, unless the org enables auto-reply for approved question classes. Customer messages are tainted input.
+- Unified inbox: every customer interaction as one conversation: private messages from Facebook Page, Instagram, Zalo OA and TikTok, comments on the org's own posts, and customer email in and out ([conversations.md](conversations.md)). A chat thread with New, Pending and Resolved, and staff reply in the same box. Each conversation links to a `party`; follow-up work links to a `task`. The inbox has no cases, tickets or SLA timers.
+- Assignment, reply templates (saved replies) and availability; automation v1 with loop protection.
+- AI coworker: intent sorting, contact match and reply drafts. Outbound sends are R2 and a person sends them; there is no auto-send. Customer messages are tainted input.
 
 **Exit criteria:**
 - Reconciled against Message-IDs and each channel's message ids: 0 lost messages, correct order within a conversation.
-- SLAs correct under a test clock.
+- A conversation's status follows its last message under a test clock: New, Pending, Resolved, reopened by a new inbound message.
 - An expired channel token alerts and stops sending; inbound messages are not lost.
 - The AI never promises prices, discounts or refunds outside policy.
 
@@ -2018,7 +2018,7 @@ No fork has real users. The owner archived the five fork repositories on 2026-10
 |---|---|---|
 | Twenty (CRM) | CRM | Phase 3, on demand |
 | Cal (from Cal.com) | CRM calendar and booking pages | Phase 3, on demand |
-| Go Desk | Service, including the private-message inbox | Phase 4, on demand |
+| Go Desk | Service: the Hộp thư inbox, on the Crisp and Intercom model, with email and private messages | Phase 4, on demand |
 | Post (from Postiz) | Social, including comment replies; private messages go to Service | Phase 5, on demand |
 | Documenso (Sign) | Sign, with Vietnamese CAs | Phase 6, on demand |
 
