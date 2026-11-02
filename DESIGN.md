@@ -1,6 +1,6 @@
 ---
 name: "Ludy"
-version: "4.0"
+version: "4.1"
 date: "2026-11-02"
 # Machine-readable tokens of the design system, for design tools and coding agents. Everything outside `rules` is copied
 # from the CSS files and checked against them by tools/test/design-tokens.test.ts, so it cannot drift: when a value here
@@ -348,11 +348,12 @@ rules:
 
 # Ludy design system and UI/UX guidelines
 
-Version 4.0 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
+Version 4.1 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
 
 ## What changed since 3.0 (2026-10-18)
 
 - **Names and logo.** Ludy is the suite and Vy the AI assistant (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
+- **AI-first for OPC and SME** (4.1, owner decision 2026-11-02). Section 1 says how AI belongs in each core feature: Vy proposes in place, and a person approves, in batches where possible. The reference study of the leading AI products is in [docs/research/ai-first-reference-study.md](docs/research/ai-first-reference-study.md).
 - **What Ludy is.** Section 1 describes the apps as they are today (Ludy Kế toán, Ludy CRM, Ludy Notes, Social, Vy) and the focus on one-person companies and SMEs first (owner decision, 2026-10-31).
 - **One URL per page in both languages** ([#2360](https://github.com/DOS/Ludy/issues/2360)): the language comes from a cookie or the browser, the toggle keeps the path, old `/en` links redirect (6.5, 6.4, 8).
 - **App pages on ludy.vn.** Section 6.4 is new: the shared app page template, the `APP_PAGES` registry, the routes of each app in both languages, the call-to-action line for apps that are not on Ludy Cloud yet, and the rule that a claim needs a merged PR behind it ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282)). Section 6.1 is the home page as it is now.
@@ -374,6 +375,7 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | 2026-10-28 | The product is Ludy, the AI assistant is Vy ([#1682](https://github.com/DOS/Ludy/issues/1682), [#1683](https://github.com/DOS/Ludy/issues/1683)). | 1.1 |
 | 2026-10-30 | The landing page is served on ludy.vn (canonical) and ludy.so, the hosted app on app.ludy.vn (ADR-0027). | 1.1, 6 |
 | 2026-10-31 | One-person companies and SMEs first; enterprise models wait. | 1 |
+| 2026-11-02 | AI-first for OPC and SME: core SME features first, each with AI built into its workflow (Vy proposes in place, a person approves, in batches where possible). | 1 |
 | 2026-11-01 | The logo is four keys that spell L, U, D and Y. Interim: the owner is still choosing among the round-2 options of the logo canvas. | 1.2 |
 | 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (Ludy CRM and Ludy Notes use the exact line of 6.4, Ludy Kế toán says the same in its own words). | 6.4 |
 | 2026-11-02 | Frontend PO ruling ([#2351](https://github.com/DOS/Ludy/issues/2351)): all three app pages use that line, with the app's own name; Ludy Kế toán's page changed to match. | 6.4 |
@@ -403,6 +405,14 @@ The people using it:
 - **Technical founders** who self-host. They need to see that it runs with `docker compose up` and that the code is open.
 
 OPC and SME needs come first (owner decision, 2026-10-31): a feature for an enterprise model, many entities of one group or a large team waits until the core is solid.
+
+AI-first for OPC and SME (owner decision, 2026-11-02). The features an SME needs every day come first, and AI is part of each of them from the start, not a chat window added later:
+
+- Vy does the routine work inside the screen where it happens: it reads, sorts, matches, drafts and proposes.
+- The person reviews and approves, in batches where possible. Rules learned from corrections and limits the owner sets keep that review short.
+- AI output stays tainted (principle 2, AGENTS.md): deterministic checks decide, and a person approves anything that posts money, sends a message or spends.
+
+The reference study [docs/research/ai-first-reference-study.md](docs/research/ai-first-reference-study.md) collects what the leading AI products do.
 
 ### 1.1 Names
 
