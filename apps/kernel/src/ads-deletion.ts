@@ -102,31 +102,45 @@ export async function claimAdsDeletions(workerDb: Db): Promise<Array<{ code: str
   return rows.map((r) => ({ code: r.code, orgId: r.org_id, adAccountId: r.ad_account_id, connectionId: r.connection_id }));
 }
 
+// For the requests just claimed, the ad accounts whose write connection alone the person granted (somebody else granted the read
+// one): the first claim names only the accounts a person granted for reading.
+async function claimAdsWriteGrants(workerDb: Db, codes: string[]): Promise<Array<{ code: string; orgId: string; adAccountId: string }>> {
+  if (codes.length === 0) return [];
+  const { rows } = await sql<{ code: string; org_id: string; ad_account_id: string }>`
+    SELECT code, org_id, ad_account_id FROM crove_ads.deletion_request_claim_write(${codes}::text[])`.execute(workerDb);
+  return rows.map((r) => ({ code: r.code, orgId: r.org_id, adAccountId: r.ad_account_id }));
+}
+
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 
 // One relay pass: for each open request that is due, closes the connection of every ad account its hash names (as a platform's
 // deletion closes it: the credential is forgotten) and erases the account's figures, sync log and row, each in the account's
-// own org, then marks the request completed. A request that names no account (none was ever linked with this person's grant,
-// or its accounts were deleted already) is completed with none. Every step is idempotent, so a pass that dies half way is run
-// again whole. A request that fails is put off for five minutes in the database (crove_ads.deletion_request_defer), so it
-// holds nothing behind it and no restart forgets it. Returns how many requests it completed.
+// own org, then marks the request completed. An account whose write connection alone the person granted (another person's grant
+// reads it) keeps its row and figures: its write connection is closed and forgotten (`ads.account.forget_write`). A request that
+// names no account (none was ever linked with this person's grant, or its accounts were deleted already) is completed with none.
+// Every step is idempotent, so a pass that dies half way is run again whole. A request that fails is put off for five minutes in
+// the database (crove_ads.deletion_request_defer), so it holds nothing behind it and no restart forgets it. Returns how many
+// requests it completed.
 export async function runAdsDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   const claimed = await claimAdsDeletions(deps.workerDb);
-  const byCode = new Map<string, Array<{ orgId: string; adAccountId: string; connectionId: string }>>();
+  const byCode = new Map<string, { accounts: Array<{ orgId: string; adAccountId: string; connectionId: string }>; writeOnly: Array<{ orgId: string; adAccountId: string }> }>();
   for (const row of claimed) {
-    const accounts = byCode.get(row.code) ?? [];
-    if (row.orgId && row.adAccountId && row.connectionId) accounts.push({ orgId: row.orgId, adAccountId: row.adAccountId, connectionId: row.connectionId });
-    byCode.set(row.code, accounts);
+    const entry = byCode.get(row.code) ?? { accounts: [], writeOnly: [] };
+    if (row.orgId && row.adAccountId && row.connectionId) entry.accounts.push({ orgId: row.orgId, adAccountId: row.adAccountId, connectionId: row.connectionId });
+    byCode.set(row.code, entry);
   }
+  for (const grant of await claimAdsWriteGrants(deps.workerDb, [...byCode.keys()])) byCode.get(grant.code)?.writeOnly.push({ orgId: grant.orgId, adAccountId: grant.adAccountId });
   let completed = 0;
-  for (const [code, accounts] of byCode) {
+  for (const [code, { accounts, writeOnly }] of byCode) {
     try {
       for (const account of accounts) {
         const options = { actor: SYSTEM, orgId: account.orgId };
         await deps.runtime.execute('kernel.channel.revoke_by_platform', { connectionId: account.connectionId }, options);
+        // The erasure closes the account's write connection too.
         await deps.runtime.execute('ads.account.erase', { adAccountId: account.adAccountId }, options);
       }
-      await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length}::int)`.execute(deps.workerDb);
+      for (const account of writeOnly) await deps.runtime.execute('ads.account.forget_write', { adAccountId: account.adAccountId }, { actor: SYSTEM, orgId: account.orgId });
+      await sql`SELECT crove_ads.deletion_request_complete(${code}, ${accounts.length + writeOnly.length}::int)`.execute(deps.workerDb);
       completed++;
     } catch (error) {
       // By code only: nothing of the request or the accounts goes to the log.

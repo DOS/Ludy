@@ -240,28 +240,28 @@ describe('configuration guards', () => {
     expect(loadConfig({ ...base, ...auth, ...ads, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
   });
 
-  // #2294 (W0b): the Meta app for the write connection of an ad account is its own pair too, both or neither, a numeric id, and over
-  // https on a public URL; and it may hold the same app as the read pair or the Pages pair (the owner's own account is served by one
-  // classic app), so nothing asks the two to differ.
-  it('takes the Meta ads write app as a pair with a numeric id, over https on a public URL, and the same app as the read pair', () => {
+  // #2294 (W0b): the Meta app for the write connection of an ad account is a pair too, both or neither, a numeric id, over https on a
+  // public URL, and the same app as the read ads pair: Meta's data deletion request is checked with the read app's secret and finds a
+  // person's grants by a hash keyed with it, so a different write app is refused until it has a deletion callback of its own.
+  it('takes the Meta ads write app as a pair with a numeric id, over https on a public URL, and the read ads app only', () => {
     const write = { CHANNEL_META_ADS_WRITE_APP_ID: '1234567890', CHANNEL_META_ADS_WRITE_APP_SECRET: 'meta-secret-0123456789abcdef' };
+    const read = { CHANNEL_META_ADS_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
     const auth = { PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' };
-    expect(loadConfig({ ...base, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    expect(loadConfig({ ...base, ...read, ...write }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
     expect(loadConfig(base).CHANNEL_META_ADS_WRITE_APP_ID).toBeUndefined();
     expect(loadConfig(base).CHANNEL_META_ADS_WRITE_APP_SECRET).toBeUndefined();
-    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_WRITE_APP_ID: '1234567890' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
-    expect(() => loadConfig({ ...base, CHANNEL_META_ADS_WRITE_APP_SECRET: 'x' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
-    expect(() => loadConfig({ ...base, ...write, CHANNEL_META_ADS_WRITE_APP_ID: 'not-a-number' })).toThrow(/numeric id/);
-    // The same app as the read pair and as the Pages pair is fine: one app may serve reading, writing and publishing.
-    const read = { CHANNEL_META_ADS_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_ID: '1234567890' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_SECRET: 'x' })).toThrow(/both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET/);
+    expect(() => loadConfig({ ...base, ...read, ...write, CHANNEL_META_ADS_WRITE_APP_ID: 'not-a-number' })).toThrow(/numeric id/);
+    // A write app that is not the read ads app is refused: the write pair alone, another id, or the same id with another secret.
+    expect(() => loadConfig({ ...base, ...write })).toThrow(/same app as CHANNEL_META_ADS_APP_ID/);
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_ID: '987654321' , CHANNEL_META_ADS_WRITE_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET })).toThrow(/same app as CHANNEL_META_ADS_APP_ID/);
+    expect(() => loadConfig({ ...base, ...read, CHANNEL_META_ADS_WRITE_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_ADS_WRITE_APP_SECRET: 'another-secret-0123456789abcdef' })).toThrow(/same app as CHANNEL_META_ADS_APP_ID/);
+    // The Pages pair may be the same app too: one app may serve reading, writing and publishing.
     const pages = { CHANNEL_META_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
-    expect(() => loadConfig({ ...base, ...write, ...read })).not.toThrow();
-    expect(() => loadConfig({ ...base, ...write, ...pages })).not.toThrow();
-    expect(() => loadConfig({ ...base, ...write, ...read, ...pages })).not.toThrow();
-    // The write pair alone, without the read pair, is a config of its own: neither pair asks for the other.
-    expect(loadConfig({ ...base, ...write }).CHANNEL_META_ADS_APP_ID).toBeUndefined();
-    expect(() => loadConfig({ ...base, ...auth, ...write, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
-    expect(loadConfig({ ...base, ...auth, ...write, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    expect(() => loadConfig({ ...base, ...read, ...write, ...pages })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
+    expect(loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
   });
 
   // #212: org exports are sealed at rest on every public deployment; a key must be 32 bytes.

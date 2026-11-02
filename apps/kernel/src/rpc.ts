@@ -1563,7 +1563,22 @@ export function createRpcHandler(
           const connections: { connectionId: string; displayName: string; reconnected: boolean }[] = [];
           const failed: { displayName: string; code: string }[] = [];
           let firstError: DomainError | null = null;
+          // A write connection is made only for an account linked for reading with a read connection that is not closed: nothing is
+          // sealed for the others (an account an owner or admin disconnected stays closed), and when none of them is ready there is
+          // nothing to connect. The attaching command checks the same again.
+          let writeReady: Set<string> | null = null;
+          if (isAdWriteProviderId(input.provider)) {
+            const ready = await runtime.query<string[]>('ads.account.write_ready', { provider: input.provider, externalAccountIds: taken.map((a) => a.externalAccountId) }, { actor, orgId });
+            writeReady = new Set(ready);
+            if (writeReady.size === 0) {
+              throw new DomainError('ADS_WRITE_NEEDS_READ', 409, 'Hãy kết nối tài khoản quảng cáo này để đọc số liệu trước, rồi mới kết nối để chạy quảng cáo');
+            }
+          }
           for (const account of taken) {
+            if (writeReady && !writeReady.has(account.externalAccountId)) {
+              failed.push({ displayName: account.displayName, code: 'ADS_WRITE_NEEDS_READ' });
+              continue;
+            }
             const sealed = broker.seal(account.secret, { orgId, provider: account.provider, externalAccountId: account.externalAccountId });
             const command: ChannelConnectInput = {
               provider: account.provider,
@@ -2207,14 +2222,17 @@ export function createRpcHandler(
             expiresAt: null,
             credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
           };
-          const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
           try {
             const { adAccountId } = await runtime.execute<{ adAccountId: string }>('ads.account.link_write', { connectionId }, { actor, orgId, idempotencyKey: input.idempotencyKey });
             return { connectionId, adAccountId };
           } catch (error) {
-            // Refused (the switch is off): no write connection is left behind with its sealed token. One this call only reconnected stays
-            // attached to the account it already belongs to.
-            if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+            // Refused (the switch is off, the account has no read connection any more): no write connection is left behind with its
+            // sealed token, one this call only reconnected included. A close that fails is still found by the switch-off, which closes
+            // every write connection of the org whether or not an account refers to it.
+            await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+              console.warn(`[ads] a write connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+            });
             throw error;
           }
         }),

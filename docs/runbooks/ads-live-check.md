@@ -102,6 +102,15 @@ In the Meta app's dashboard, Settings, Basic: set "Data Deletion Request URL" to
 
 What the callback can and cannot do: it finds the accounts by a keyed hash of the Meta user who granted them, stored when the account was connected (since this slice). **An account connected before this slice has no hash**, so a request does not find it until it is connected again; the owner deletes its history by hand (step 11). With a **shared Meta app** (the same app also posts to Pages) the callback erases the ad data only: Social's data for the same person is not touched by it. Rotating the app secret leaves the stored hashes unmatched, so reconnect the accounts after a rotation.
 
+### 13. The write connection **[PERSON]** with **[PO]** (W0b: connecting only, nothing is launched)
+
+This step checks the connection that can change campaigns, not any change: Ludy calls no write endpoint yet. Do it on the same throwaway stack, after step 4 (the account must be connected for reading first).
+
+1. In the Meta app add the redirect address `<APP_URL>/channels/oauth/metawrite_ads/callback` (the same place as step 1). The write connection uses the **same Meta app** as reading: put the same two values in `CHANNEL_META_ADS_WRITE_APP_ID` and `CHANNEL_META_ADS_WRITE_APP_SECRET` (the kernel refuses a different app: Meta's data deletion request is checked with the read app's secret; a separate write app, better before Ludy serves other businesses, needs its own deletion callback first). With one app, a Meta permission belongs to the pair of the app and the person: once the owner grants `ads_management`, the read connections of that same person can change campaigns too, though the Ads screen still shows them as read only. **[CHECK]** the Ads screen offers "Connect to run ads" only after the org switch is on.
+2. The org switch is turned on by a proposal the owner asks for on the Ads screen and an owner or admin approves in the Inbox. Then, as the **owner**, press "Connect to run ads" on the account. Meta's dialog now asks for `ads_management` too. **[CHECK]** the account shows "Can run ads", an admin sees the badge and no button, and the read figures still sync.
+3. Switch running ads off. **[CHECK]** the screen says the connection that can run ads was closed and Ludy's copy of its token dropped, and tells you to remove the app in the Facebook account settings (Settings, Business integrations): until you do, Meta still honours the permission, because the revoke at Meta comes with the write queue. **[RECORD]** that you did it, and that a read-only reconnect works only after you have.
+4. **[CHECK]** with the switch off, "Connect to run ads" is not offered and the write dialog is refused.
+
 ## Results to record
 
 Record in the issue (#2218) without any id, name or amount of a real account:

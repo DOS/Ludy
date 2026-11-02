@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Meta ads, the connection that can run ads (ADR-0043 points 3 and 4, plan docs/plan/ads-write.md section 5.1, issue #2294, W0b).
 // An ad account gets a second connection beside the read one (ADR-0040): its own provider id (`metawrite_ads`), its own login
-// with `ads_read` and `ads_management`, and its own sealed token, so the token the reports are read with never holds the right to
-// spend and a leaked report token cannot change a campaign. This file only logs in and lists the ad accounts the person granted:
+// with `ads_read` and `ads_management`, and its own sealed token. With a separate Meta app the token the reports are read with never
+// holds the right to spend; with the one shared app of today it can (see below), and that is why switching writing off closes more
+// than this connection. This file only logs in and lists the ad accounts the person granted:
 // nothing here calls a Graph endpoint that creates or changes anything (a test pins that its source names no write and that every
 // call it makes is a GET). The writer that changes campaigns is a later slice (W2), and it is not an ad platform of the readers'
 // registry: neither `AD_PLATFORM_PROVIDERS` nor `adPlatforms()` knows this provider.
@@ -12,9 +13,14 @@
 // connections, so with one app serving both, the platform's data deletion callback finds the accounts of the person on the read
 // connection and on this one alike.
 //
-// One app may serve reading, writing and the Pages publishing of a deployment (the owner's own account: one classic app holds
-// the products together): a Meta user token carries every permission the person ever granted that app, so this connection records
-// the whole granted set as its scopes and refuses none of them (`ads_management` and `business_management` are what it is for).
+// The read ads app serves writing too for now (the owner's own account: one classic app holds the products together; the config
+// refuses a different write app until it has a data deletion callback of its own). A Meta permission belongs to the pair of the
+// app and the person, and a user token carries every permission the person ever granted that app: once the owner grants
+// `ads_management` here, the read tokens of the same person for that app can change campaigns as well, though the scopes recorded
+// for them still say `ads_read`. So nothing that depends on "the report token cannot spend" holds with a shared app, and the
+// switch-off must close the read connections of that person too (W0b-2), and W2's revoke must remove the permission for the pair
+// (the permission-revoke call of the Graph API for the pair), not only drop one token. This connection records the whole granted set as its scopes
+// and refuses none of them (`ads_management` and `business_management` are what it is for).
 import type { AuthorizeInput, ConnectedAccount, ExchangeInput, Fetch, MetaAppConfig, OAuthConnector } from '@crove/channel';
 import { MetaLogin, asProviderError } from '@crove/channel';
 import { ACT_ID, META_USER_ID, accountName, graphHostOnly, listAdAccounts, platformUserHash } from './meta.ts';

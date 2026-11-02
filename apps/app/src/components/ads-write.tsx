@@ -228,7 +228,8 @@ function AccountRow({ account, owner, waiting, slug, offer }: { account: AdAccou
   const connectSandbox = useMutation(orpc.ads.connectSandboxWrite.mutationOptions({ onSuccess: async () => (toast(t('accountConnectedToast')), refresh()) }));
   const connectMeta = useAdOAuthStart(slug, 'metawrite_ads');
   const way = writeConnectWay(account.provider, offer);
-  // An account whose own connection was closed is connected for reading again first; the server says the same (ADS_WRITE_NEEDS_READ).
+  // An account whose own connection was closed is connected for reading again first; the server says the same (ADS_WRITE_NEEDS_READ),
+  // and Meta's dialog connects every account it reached that is linked for reading, the list in the answer says which.
   const canConnect = owner && !account.canRunAds && way !== null && account.connectionStatus !== 'revoked';
   const connecting = way === 'meta' ? connectMeta.isPending : connectSandbox.isPending;
   const connect = () => (way === 'meta' ? connectMeta.mutate() : connectSandbox.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() }));

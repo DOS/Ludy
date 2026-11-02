@@ -6783,10 +6783,12 @@ export const en = {
         disconnect: 'Disconnect an ad account and the connection that can run ads on it',
         enable_write: 'Allow running ads on one account (an approved request)',
         erase: 'Erase an ad account at the platform’s data deletion request',
+        forget_write: 'Close the connection that can run ads at the platform’s data deletion request',
         link: 'Link a connected ad account',
         link_write: 'Attach the connection that can run ads to an ad account',
         list: 'List the ad accounts',
         prepare_enable_write: 'Ask to allow running ads on one account',
+        write_ready: 'Read which ad accounts are linked for reading, to make a connection to run ads',
         write_target: 'Read the ad account a connection to run ads is made for',
       },
       cap: {

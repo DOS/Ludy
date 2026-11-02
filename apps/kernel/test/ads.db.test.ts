@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, type AdPlatform, type sandboxAdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, sandboxWriteLogin, type AdPlatform, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -1281,6 +1281,30 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(done.status, JSON.stringify(done.body)).toBe(200);
         return { ...made, writeConnectionId: done.body.connectionId as string };
       };
+      // An active write connection of an account that no account refers to: what the sign-in dialog leaves between making a connection and
+      // attaching it (a crash, a deploy, or a refused attaching whose close failed), with its sealed token.
+      const unattachedWrite = async (adAccountId: string, provider: 'sandboxwrite_ads' = 'sandboxwrite_ads') => {
+        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
+        const login = sandboxWriteLogin({ externalAccountId: external, currency: 'VND' });
+        expect(login.provider).toBe(provider);
+        const token = vault.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+        const made = await api.execute<{ connectionId: string }>(
+          'kernel.channel.connect',
+          { provider: login.provider, externalAccountId: login.externalAccountId, displayName: 'Chưa gắn', scopes: [...login.scopes], expiresAt: null, credential: { keyId: token.keyId, envelope: token.envelope.toString('base64') } },
+          { actor: asOwner(), orgId },
+        );
+        return made.connectionId;
+      };
+      const META_SECRET = 'meta-app-secret';
+      // Meta's data deletion request for a person, accepted as the API does and run as the worker's relay.
+      const requestDeletion = async (userId: string) => {
+        const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId })).toString('base64url');
+        const signedRequest = `${createHmac('sha256', META_SECRET).update(encoded).digest('base64url')}.${encoded}`;
+        const accepted = await acceptAdsDeletion(api, META_SECRET, new URLSearchParams({ signed_request: signedRequest }).toString());
+        expect(accepted.status).toBe(200);
+        expect(await runAdsDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
+        return (accepted as { code: string }).code;
+      };
 
       it('connects the sandbox’s write connection for the owner alone, while the switch is on, with its own sealed token', async () => {
         await closed();
@@ -1408,30 +1432,156 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
       });
 
-      it('lets only a signed-in owner attach or replace a write connection in the database, and an owner, an admin or the system clear it', async () => {
+      it('lets only a signed-in owner attach a live write connection of the account’s own twin, and only while the switch is on', async () => {
+        await open();
         const made = await connect('Cổng kết nối ghi');
-        const spare = randomUUID();
-        await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Dự phòng', $4)`, [orgId, spare, `spare-${spare}`, owner.userId]);
+        const twin = await unattachedWrite(made.adAccountId);
         const attach = 'UPDATE crove_ads.ad_account SET write_connection_id = $3 WHERE org_id = $1 AND id = $2';
+        const refusedWith = (c: pg.Client | pg.PoolClient, params: unknown[], code: string, message: string) => expect(c.query(attach, params)).rejects.toMatchObject({ code, message: expect.stringContaining(message) });
+        // Nobody but the signed-in owner, whatever they attach.
+        for (const who of [adminAccount, member, viewer, 'system'] as const) await inContext(who, (c) => refusedWith(c, [orgId, made.adAccountId, twin], '42501', 'ADS_WRITE_CONNECTION_FORBIDDEN'));
+        // A connection that is not this account's own write twin, or is not live: the read connection (or another account's), a Social
+        // connection, another platform's, another platform account's, a closed one.
+        const other = await connect('Cổng kết nối ghi hai');
+        const otherTwin = await unattachedWrite(other.adAccountId);
+        const insert = async (provider: string, external: string) => {
+          const id = randomUUID();
+          await row(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, 'Sai', $5)`, [orgId, id, provider, external, owner.userId]);
+          return id;
+        };
+        const externalOf = async (adAccountId: string) => (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]))[0]?.e as string;
+        const wrong = [made.connectionId, other.connectionId, otherTwin, await insert('metawrite_ads', await externalOf(made.adAccountId)), await insert('sandboxwrite_ads', `elsewhere-${randomUUID()}`)];
+        for (const connectionId of wrong) await inContext(owner, (c) => refusedWith(c, [orgId, made.adAccountId, connectionId], '22023', 'ADS_WRITE_CONNECTION_INVALID'));
+        await api.execute('kernel.channel.disconnect', { connectionId: otherTwin }, { actor: asOwner(), orgId });
+        await inContext(owner, (c) => refusedWith(c, [orgId, other.adAccountId, otherTwin], '22023', 'ADS_WRITE_CONNECTION_INVALID'));
+        // Only while the org's switch is on.
+        await closed();
+        await inContext(owner, (c) => refusedWith(c, [orgId, made.adAccountId, twin], '55000', 'ADS_WRITE_OFF'));
+        await open();
+        await inContext(owner, (c) => c.query(attach, [orgId, made.adAccountId, twin]), true);
+        expect(await attached(made.adAccountId)).toBe(twin);
+      });
+
+      it('clears or replaces a write connection only once it is closed, and removes an account row only with it closed', async () => {
+        await open();
+        const made = await withWrite('Chỉ gỡ khi đã đóng');
         const clear = 'UPDATE crove_ads.ad_account SET write_connection_id = NULL, write_granted_by_hash = NULL WHERE org_id = $1 AND id = $2';
-        const denied = (c: pg.Client | pg.PoolClient, text: string, params: unknown[]) => expect(c.query(text, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_WRITE_CONNECTION_FORBIDDEN') });
-        for (const who of [adminAccount, member, viewer, 'system'] as const) await inContext(who, (c) => denied(c, attach, [orgId, made.adAccountId, spare]));
-        // The owner attaches (committed here), then clears or replaces.
-        await inContext(owner, (c) => c.query(attach, [orgId, made.adAccountId, spare]), true);
+        const params = [orgId, made.adAccountId];
+        // Open: nobody clears it, so no row forgets a token that is still sealed.
+        for (const who of [owner, adminAccount, 'system'] as const) {
+          await inContext(who, (c) => expect(c.query(clear, params)).rejects.toMatchObject({ code: '55000', message: expect.stringContaining('ADS_WRITE_CONNECTION_OPEN') }));
+        }
+        // Nor is the row removed (the read connection is closed first: the definer refuses an open one on its own).
+        expect((await callAs(owner, 'channels/disconnect', { connectionId: made.connectionId, idempotencyKey: key() })).status).toBe(200);
+        const remove = 'SELECT removed FROM crove_ads.account_history_delete($1::uuid, true, NULL)';
+        await inContext(owner, (c) => expect(c.query(remove, [made.adAccountId])).rejects.toMatchObject({ code: '55000', message: expect.stringContaining('ADS_WRITE_CONNECTION_OPEN') }));
+        // Closed: an owner, an admin or the system clear it; a member or a viewer still cannot; the row can go.
+        await api.execute('kernel.channel.disconnect', { connectionId: made.writeConnectionId }, { actor: asOwner(), orgId });
+        for (const who of [member, viewer] as const) {
+          await inContext(who, (c) => expect(c.query(clear, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_WRITE_CONNECTION_FORBIDDEN') }));
+        }
         for (const who of [owner, adminAccount, 'system'] as const) {
           await inContext(who, async (c) => {
-            await c.query(clear, [orgId, made.adAccountId]);
+            await c.query(clear, params);
           });
         }
-        for (const who of [member, viewer] as const) await inContext(who, (c) => denied(c, clear, [orgId, made.adAccountId]));
-        // The same connection cannot belong to two accounts, nor be the read connection.
-        const other = await connect('Cổng kết nối ghi hai');
+        await inContext(owner, async (c) => expect((await c.query(remove, [made.adAccountId])).rows[0]).toMatchObject({ removed: true }));
+      });
+
+      it('closes a write connection no account refers to when writing is switched off, and one of an account when it is withdrawn', async () => {
+        await open();
+        const made = await connect('Kết nối chưa gắn');
+        const second = await connect('Kết nối chưa gắn hai');
+        const orphan = await unattachedWrite(made.adAccountId);
+        const orphanTwo = await unattachedWrite(second.adAccountId);
+        for (const id of [orphan, orphanTwo]) {
+          expect(await status(id)).toBe('active');
+          expect(await sealed(id)).toBe('1');
+        }
+        expect(await attached(made.adAccountId)).toBeNull();
+        // Withdrawing one account closes the connection of its own platform account, attached or not, and the other's stays.
+        const one = await callAs(owner, 'ads/disableAccountWrite', { adAccountId: made.adAccountId, idempotencyKey: key() });
+        expect(one).toMatchObject({ status: 200, body: { connectionsClosed: 1 } });
+        expect(await status(orphan)).toBe('revoked');
+        expect(await sealed(orphan)).toBe('0');
+        expect(await status(orphanTwo)).toBe('active');
+        // Switching writing off closes every open write connection of the org, whether or not an account refers to it.
+        const off = await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() });
+        expect(off.status, JSON.stringify(off.body)).toBe(200);
+        expect(off.body.connectionsClosed).toBeGreaterThanOrEqual(1);
+        expect(await status(orphanTwo)).toBe('revoked');
+        expect(await sealed(orphanTwo)).toBe('0');
+        expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'sandboxwrite_ads' AND status <> 'revoked'`, [orgId]))[0]?.n).toBe('0');
+        expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'sandboxwrite_ads'`, [orgId]))[0]?.n).toBe('0');
+      });
+
+      it('refuses an attaching that waits behind a switch-off, and leaves nothing attached', async () => {
+        await open();
+        const made = await connect('Đua với việc tắt');
+        const twin = await unattachedWrite(made.adAccountId);
         await inContext(owner, async (c) => {
-          await expect(c.query(attach, [orgId, other.adAccountId, spare])).rejects.toMatchObject({ code: '23505' });
+          // The switch-off holds the setting (it locks it FOR UPDATE) and has not committed yet; the attaching reads it FOR SHARE and waits.
+          await c.query('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = true WHERE org_id = $1', [orgId]);
+          const pending = api.execute('ads.account.link_write', { connectionId: twin }, { actor: asOwner(), orgId }).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          await sleep(500);
+          await c.query('COMMIT');
+          expect(await pending).toMatchObject({ code: 'ADS_WRITE_OFF' });
         });
-        await inContext(owner, async (c) => {
-          await expect(c.query(attach, [orgId, other.adAccountId, other.connectionId])).rejects.toMatchObject({ code: '23514' });
-        });
+        expect(await attached(made.adAccountId)).toBeNull();
+        await open();
+      });
+
+      it('gives an account whose read connection was closed no write connection from a sign-in made for another, and closes the one it made', async () => {
+        await open();
+        const made = await withWrite('Đã ngắt đọc');
+        expect((await callAs(adminAccount, 'ads/disconnectAccount', { adAccountId: made.adAccountId, idempotencyKey: key() })).status).toBe(200);
+        expect(await status(made.connectionId)).toBe('revoked');
+        expect(await status(made.writeConnectionId)).toBe('revoked');
+        // The owner connects it to run ads (as the platform's dialog would for every account it reached): refused, and not left open.
+        expect(await connectWrite(owner, made.adAccountId)).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_NEEDS_READ' } });
+        expect(await status(made.writeConnectionId)).toBe('revoked');
+        expect(await sealed(made.writeConnectionId)).toBe('0');
+        expect(await view(owner, made.adAccountId)).toMatchObject({ canRunAds: false, connectionStatus: 'revoked' });
+        // The query the sign-in asks first leaves it out too.
+        const external = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId]))[0]?.e as string;
+        const live = await connect('Còn đọc');
+        const liveExternal = (await row<{ e: string }>(`SELECT external_account_id AS e FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, live.adAccountId]))[0]?.e as string;
+        expect(await api.query('ads.account.write_ready', { provider: 'sandboxwrite_ads', externalAccountIds: [external, liveExternal, 'never-linked'] }, { actor: asOwner(), orgId })).toEqual([liveExternal]);
+        await expect(api.query('ads.account.write_ready', { provider: 'sandboxwrite_ads', externalAccountIds: [liveExternal] }, { actor: { type: 'user', userId: adminAccount.userId, aal: 'aal1', sessionId: randomUUID() }, orgId })).rejects.toMatchObject({ status: 403 });
+      });
+
+      it('closes a write grant the platform’s deletion request names: a write-only one leaves the account, one with the read grant erases it', async () => {
+        await open();
+        // Somebody else granted the read connection; the person who asks granted the write one only.
+        const onlyWrite = await withWrite('Chỉ quyền ghi của người xin xóa');
+        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId, platformUserHash(META_SECRET, '6102')]);
+        await api.execute('ads.account.link_write', { connectionId: onlyWrite.writeConnectionId, grantedByHash: platformUserHash(META_SECRET, '6101') }, { actor: asOwner(), orgId });
+        await sync(onlyWrite.connectionId);
+        const code = await requestDeletion('6101');
+        // The write connection is closed and its token dropped, the account forgets it; the account, its read connection and its figures stay.
+        expect(await status(onlyWrite.writeConnectionId)).toBe('revoked');
+        expect(await sealed(onlyWrite.writeConnectionId)).toBe('0');
+        expect(await attached(onlyWrite.adAccountId)).toBeNull();
+        expect(await row(`SELECT write_granted_by_hash, write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, onlyWrite.adAccountId])).toEqual([{ write_granted_by_hash: null, write_enabled: false }]);
+        expect(await view(owner, onlyWrite.adAccountId)).toMatchObject({ connectionStatus: 'active', canRunAds: false, writeConnectionStatus: null });
+        expect(await sealed(onlyWrite.connectionId)).toBe('1');
+        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, onlyWrite.adAccountId]))[0]?.n)).toBeGreaterThan(0);
+        expect(await adsDeletionStatus(api, code)).toMatchObject({ accounts: 1 });
+        // The same person granted both: the account goes, with both connections closed.
+        const both = await withWrite('Cả hai của người xin xóa');
+        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId, platformUserHash(META_SECRET, '6103')]);
+        await api.execute('ads.account.link_write', { connectionId: both.writeConnectionId, grantedByHash: platformUserHash(META_SECRET, '6103') }, { actor: asOwner(), orgId });
+        const second = await requestDeletion('6103');
+        eraseAuditsBefore += 1;
+        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId])).toEqual([]);
+        for (const id of [both.connectionId, both.writeConnectionId]) {
+          expect(await status(id)).toBe('revoked');
+          expect(await sealed(id)).toBe('0');
+        }
+        expect(await adsDeletionStatus(api, second)).toMatchObject({ accounts: 1 });
       });
     });
   });

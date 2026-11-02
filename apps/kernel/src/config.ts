@@ -343,11 +343,13 @@ const schema = z.object({
   CHANNEL_META_ADS_APP_ID: optional,
   CHANNEL_META_ADS_APP_SECRET: optional,
   // The Meta app for the write connection of an ad account, which can run ads (ADR-0043, #2294, W0b): set both to offer "Connect to run
-  // ads" on the Ads screen (it also needs the org's switch on); neither hides it. It may be the same app as the read pair above or the
-  // Pages one (a classic app holds Facebook Login and the Marketing API together, and the owner's own account is served by one app), so
-  // no check asks the ids or the secrets to differ; the write login asks for ads_read and ads_management, and a token of a shared app
-  // holds every permission the person ever granted it. The app's valid OAuth redirect URI is
-  // APP_URL/channels/oauth/metawrite_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
+  // ads" on the Ads screen (it also needs the org's switch on); neither hides it. For now it is the same app as the read pair above (the
+  // same id and secret; a classic app holds Facebook Login and the Marketing API together, and the owner's own account is served by one
+  // app): Meta's data deletion request is checked with the read app's secret and finds a person's grants by a hash keyed with it, so a
+  // separate write app needs a deletion callback of its own first, and the config refuses a different one. The write login asks for
+  // ads_read and ads_management, and a token of a shared app holds every permission the person ever granted it, the read tokens of
+  // the same person included. The app's valid OAuth redirect URI is APP_URL/channels/oauth/metawrite_ads/callback. The Graph version
+  // is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_WRITE_APP_ID: optional,
   CHANNEL_META_ADS_WRITE_APP_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
@@ -648,6 +650,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_ADS_WRITE_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_ADS_WRITE_APP_ID)) throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the numeric id of the Meta app');
+  // The write app is the read ads app: the data deletion callback is checked with the read app's secret, and the hash of the person who
+  // granted a write connection is keyed with the write app's secret, so the two must be one secret for a deletion request to find it.
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && (config.CHANNEL_META_ADS_WRITE_APP_ID !== config.CHANNEL_META_ADS_APP_ID || config.CHANNEL_META_ADS_WRITE_APP_SECRET !== config.CHANNEL_META_ADS_APP_SECRET)) {
+    throw new Error('CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET must be the same app as CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET (a separate write app needs its own data deletion callback first)');
+  }
   if (Boolean(config.CHANNEL_THREADS_APP_ID) !== Boolean(config.CHANNEL_THREADS_APP_SECRET)) throw new Error('set both CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET, or neither');
   if (config.CHANNEL_THREADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_THREADS_APP_ID)) throw new Error('CHANNEL_THREADS_APP_ID is the numeric id of the Threads app');
   if (Boolean(config.CHANNEL_LINKEDIN_CLIENT_ID) !== Boolean(config.CHANNEL_LINKEDIN_CLIENT_SECRET)) throw new Error('set both CHANNEL_LINKEDIN_CLIENT_ID and CHANNEL_LINKEDIN_CLIENT_SECRET, or neither');

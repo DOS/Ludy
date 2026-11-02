@@ -18,6 +18,16 @@ describe('the write providers of running ads', () => {
     expect(READ_PROVIDER_OF_WRITE).toEqual({ metawrite_ads: 'meta_ads', sandboxwrite_ads: 'sandbox_ads' });
   });
 
+  // The database guard (crove_ads.write_connection_guard) names the twin of an account's provider by a rule, not a list: the write
+  // provider of `<x>_ads` is `<x>write_ads`. A provider that breaks the rule would be refused at every attaching.
+  it('follow the rule the database guard uses to name the write twin of a read provider', () => {
+    for (const provider of AD_WRITE_PROVIDERS) {
+      const read = READ_PROVIDER_OF_WRITE[provider];
+      expect(read.endsWith('_ads'), read).toBe(true);
+      expect(`${read.slice(0, -4)}write_ads`, read).toBe(provider);
+    }
+  });
+
   it('ask for the permission that can change campaigns, which the contract counts as spend-capable', () => {
     for (const scopes of [META_WRITE_SCOPES, SANDBOX_WRITE_SCOPES]) {
       expect(scopes).toContain('ads_read');

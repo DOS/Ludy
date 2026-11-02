@@ -6782,10 +6782,12 @@ export const vi = {
         disconnect: 'Ngắt kết nối tài khoản quảng cáo và kết nối chạy quảng cáo của nó',
         enable_write: 'Cho phép chạy quảng cáo trên một tài khoản (đề nghị đã duyệt)',
         erase: 'Xóa tài khoản quảng cáo theo yêu cầu xóa dữ liệu của nền tảng',
+        forget_write: 'Đóng kết nối chạy quảng cáo theo yêu cầu xóa dữ liệu của nền tảng',
         link: 'Liên kết tài khoản quảng cáo đã kết nối',
         link_write: 'Gắn kết nối chạy quảng cáo vào một tài khoản quảng cáo',
         list: 'Xem các tài khoản quảng cáo',
         prepare_enable_write: 'Đề nghị cho phép chạy quảng cáo trên một tài khoản',
+        write_ready: 'Xem tài khoản quảng cáo nào đã đọc được số liệu để tạo kết nối chạy quảng cáo',
         write_target: 'Xem tài khoản quảng cáo cần tạo kết nối chạy quảng cáo',
       },
       cap: {
