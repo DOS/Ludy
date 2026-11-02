@@ -54,6 +54,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_crm.deal_next_step',
+  'crove_crm.deal_setting',
   'crove_kernel.conversation_draft',
   'crove_kernel.saved_reply',
   'crove_notes.link',
@@ -426,6 +428,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
     update: { set: 'title = title' },
+  },
+  // The next step the daily stale-deal rule raises for a deal (#2381): a reason code and dates on an open deal of the org, no text. Only the system
+  // context inserts one (the row policy, so a member context's insert is refused and has no control here); a member with a write role marks it done
+  // or snoozes it (the guard trigger holds each actor to its transitions), so the update probes assign a column to itself. One open step per deal (a
+  // partial unique index): every row gets an open deal of its own, in a stage made for it.
+  'crove_crm.deal_next_step': {
+    update: { set: 'snoozed_until = snoozed_until' },
+    noInsertControl: 'only the system context raises a next step (the daily rule); a member context is refused (crm-stale-deals.db.test.ts tests it)',
+    make: (o) => {
+      const stage = randomUUID();
+      const deal = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_crm.pipeline_stage', values: { org_id: o.id, id: stage, name: `RLS ${tag()}`, kind: 'open', position: stagePosition++ } },
+          { table: 'crove_crm.deal', values: { org_id: o.id, id: deal, party_id: o.party, title: 'RLS matrix deal', stage_id: stage, sort_key: 'V', created_by: o.owner } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), deal_id: deal, reason: 'no_activity', assignee_user_id: o.owner, since_on: '2026-10-01' },
+      };
+    },
+  },
+  // The org's one row of deal settings (#2381): after how many days without a change an open deal raises a next step. Tenant roles update the days and
+  // who set them only (a column grant), so the update probes assign the days to themselves.
+  'crove_crm.deal_setting': {
+    update: { set: 'stale_days = stale_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (crm-stale-deals.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // #1314: a booking page's event type, hosted by a member; slugs are unique per org.
   'crove_crm.event_type': {
