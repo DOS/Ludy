@@ -116,6 +116,10 @@ export const zConversationMessage = z.strictObject({
   direction: z.enum(MESSAGE_DIRECTIONS),
   authorKind: z.enum(MESSAGE_AUTHOR_KINDS),
   authorUserId: zId.nullable(),
+  // The customer who wrote it, by the name the platform gave or the tail of their id: in a comment thread each reply has its own author,
+  // who is not always the thread's contact. Null for the org's own messages.
+  authorName: z.string().nullable(),
+  authorTail: z.string().nullable(),
   body: z.string(),
   attachments: z.array(zId),
   sentAt: z.iso.datetime({ offset: true }),
@@ -197,3 +201,27 @@ export const zConversationSandboxComment = z.strictObject({
   threadId: z.string().min(1).max(300).optional(),
 });
 export const zConversationSandboxQueued = z.strictObject({ queued: z.literal(true) });
+
+// Retention (CV6, #2305): the months a thread is kept after its last message; null keeps it until a person deletes it. An org with
+// no choice has the default.
+export const CONVERSATION_RETENTION_MONTHS = [6, 12, 24] as const;
+export const CONVERSATION_RETENTION_DEFAULT_MONTHS = 24;
+const zRetentionMonths = z.union([z.literal(6), z.literal(12), z.literal(24)]).nullable();
+export const zConversationRetentionSet = z.strictObject({ retentionMonths: zRetentionMonths });
+export const zConversationRetention = z.strictObject({ retentionMonths: zRetentionMonths, isDefault: z.boolean() });
+export type ConversationRetention = z.infer<typeof zConversationRetention>;
+// Erasing a customer: every thread of the same person (their identity on the platform) goes, with its messages, notes and read marks.
+// The thread the button is on names the person; a thread with no identity goes alone. `confirm` is the screen's confirmation.
+// `messageId`: a customer message of that thread whose author is the person to erase (a customer who only replied in someone else's
+// comment thread has no thread of their own to start from); without it, the thread's own customer.
+export const zConversationEraseContact = z.strictObject({ conversationId: zId, messageId: zId.optional(), confirm: z.literal(true) });
+// The route takes an idempotency key too (it travels in the call's options, never in the command's input): a retry after a lost answer
+// returns the first result instead of a false not-found.
+export const zConversationErased = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
+export type ConversationErased = z.infer<typeof zConversationErased>;
+// The worker's retention purge of one org, in batches of threads, and the erasure of one connection's conversations that Meta's
+// data deletion callback asks for.
+export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int().min(1).max(1000).default(200) });
+export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
+export type ConversationPurged = z.infer<typeof zConversationPurged>;
+export const zConversationEraseConnection = z.strictObject({ connectionId: zId });
