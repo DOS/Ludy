@@ -61,7 +61,7 @@ export async function fetchConversationImage(url: string, options: FetchConversa
       maxRedirects: MAX_REDIRECTS,
       accept: 'image/jpeg, image/png, image/webp, image/gif',
       hostAllowed: (host) => mediaHostAllowed(host, options.hosts),
-      ...(options.egress ?? {}),
+      ...options.egress,
     });
   } catch (error) {
     if (!(error instanceof EgressError)) return { kind: 'failed', retry: true, code: 'FETCH_ERROR' };

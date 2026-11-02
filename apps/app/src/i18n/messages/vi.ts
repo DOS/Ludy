@@ -6520,6 +6520,7 @@ export const vi = {
       TOO_MANY_REQUESTS: 'Thao tác quá nhanh, hãy thử lại sau một phút',
       CONVERSATION_NOT_FOUND: 'Không tìm thấy hội thoại này',
       MESSAGE_NOT_FOUND: 'Không tìm thấy tin nhắn này',
+      ATTACHMENT_NOT_FOUND: 'Không tìm thấy ảnh này',
       CONVERSATION_MOVED: 'Hội thoại vừa có tin mới, hãy đọc lại trước khi trả lời',
       REPLY_NOT_SUPPORTED: 'Kênh này chưa hỗ trợ trả lời tại đây',
       REPLY_TOO_LONG: 'Câu trả lời dài hơn giới hạn của kênh này',
@@ -7147,6 +7148,10 @@ export const vi = {
       },
       conversation: {
         assign: 'Giao hội thoại cho một thành viên',
+        attachment_get: 'Xem một ảnh khách gửi trong hội thoại',
+        attachment_record: 'Ghi kết quả tải ảnh khách gửi từ nền tảng',
+        attachment_request: 'Giao việc tải một ảnh khách gửi từ nền tảng',
+        attachment_source: 'Đọc địa chỉ ảnh khách gửi để tải về',
         counts: 'Đếm hội thoại theo trạng thái',
         erase_connection: 'Xóa hội thoại của một kênh theo yêu cầu xóa dữ liệu của Meta',
         erase_contact: 'Xóa một khách cùng mọi hội thoại của họ',
