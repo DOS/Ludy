@@ -41,12 +41,12 @@ export function chunks<T>(items: readonly T[], size: number = BULK_LIMIT): T[][]
 // way to spend on an ad platform (#2294) is read on its own page, where the change is stated and a fresh second factor asked
 // for: it is never approved in a batch.
 export function bulkSelectable(
-  item: { status: string; failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number },
+  item: { status: string; failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
   reversalKind: string,
 ): boolean {
   if (isAdsProposalKind(item.kind)) return false;
   // A line no rule matched (#2091) has no account to approve: it is classified on the proposal's own page first.
-  return item.status === 'pending' && item.failedChecks === 0 && item.duplicateOf === null && item.kind !== reversalKind && (item.unclassifiedLines ?? 0) === 0;
+  return item.status === 'pending' && item.failedChecks === 0 && item.duplicateOf === null && item.kind !== reversalKind && (item.unclassifiedLines ?? 0) === 0 && (item.anomalyChecks ?? 0) === 0;
 }
 
 // The "Chưa phân loại" filter of the Inbox (#2091): the proposals with at least one invoice line no rule matched, and how
