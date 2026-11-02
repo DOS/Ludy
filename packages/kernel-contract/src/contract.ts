@@ -268,7 +268,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1715,6 +1715,9 @@ export const contract = {
     writeState: oc.output(zAdsWriteState),
     // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins, read only.
     flags: oc.output(z.array(zAdsFlag)),
+    // The thresholds of those flags: owners and admins read them and set them (nothing spends or changes by it).
+    flagSettings: oc.output(zAdsFlagSettings),
+    setFlagSettings: oc.input(zAdsFlagSettingCall).output(zAdsFlagSettings),
     requestChange: oc.input(zAdsChangeRequest).output(z.object({ proposalId: zId })),
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),

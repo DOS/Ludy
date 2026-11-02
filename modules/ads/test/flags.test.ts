@@ -2,7 +2,7 @@
 // The ads module's deterministic flags (issue #2378): the pace of the month against a cap, a day over its share of a cap, and the jump of a
 // campaign's cost per result against its trailing median. Pure and in decimal.
 import { describe, expect, it } from 'vitest';
-import { CPR_HISTORY_DAYS, accountDaysFrom, DEFAULT_FLAG_THRESHOLDS, cprJump, dailyShare, dayOfMonth, dayOverShare, daysInMonthOf, evaluateFlags, flagAmount, monthPace, monthStartOf, paceAboveCap, type DayFigure, type FlagInput } from '../src/flags.ts';
+import { CPR_HISTORY_DAYS, accountDaysFrom, DEFAULT_FLAG_THRESHOLDS, cprJump, dailyShare, dayOfMonth, dayOverShare, daysInMonthOf, evaluateFlags, flagAmount, monthPace, monthStartOf, paceAboveCap, thresholdsFrom, type DayFigure, type FlagInput } from '../src/flags.ts';
 import { addDays } from '../src/domain.ts';
 
 describe('the days of a month', () => {
@@ -290,5 +290,30 @@ describe('the flags of an org at an instant', () => {
     const rows = month('a-vn', 1, 9, '10000');
     const caps = [{ scope: 'org' as const, adAccountId: null, period: 'monthly' as const, amount: '280000', currency: 'VND' }];
     expect(evaluateFlags(input({ caps, accountDays: [...rows].reverse() }), now)).toEqual(evaluateFlags(input({ caps, accountDays: rows }), now));
+  });
+
+  it('applies the org’s thresholds: a later start holds back the pace, a higher factor holds back a day, and an equal one does not flag', () => {
+    const monthly = [{ scope: 'account' as const, adAccountId: 'a-vn', period: 'monthly' as const, amount: '250000', currency: 'VND' }];
+    const daily = [{ scope: 'account' as const, adAccountId: 'a-vn', period: 'daily' as const, amount: '5000', currency: 'VND' }];
+    const kinds = (caps: FlagInput['caps'], set: Parameters<typeof thresholdsFrom>[0]) => evaluateFlags(input({ caps }), now, thresholdsFrom(set)).map((f) => f.kind);
+    expect(kinds(monthly, null)).toEqual(['pace']);
+    // 9 days are over: a minimum of 9 still judges, a minimum of 10 does not.
+    expect(kinds(monthly, { paceMinDays: 9 })).toEqual(['pace']);
+    expect(kinds(monthly, { paceMinDays: 10 })).toEqual([]);
+    // Yesterday spent 10 000 against a 5 000 share, exactly 2 times it: a factor of 2 does not flag it, 1.99 does.
+    expect(kinds(daily, null)).toEqual(['day']);
+    expect(kinds(daily, { dayFactor: '2' })).toEqual([]);
+    expect(kinds(daily, { dayFactor: '1.99' })).toEqual(['day']);
+    // A threshold that was never set is the default, and a set one touches no other.
+    expect(kinds(daily, { dayFactor: null, paceMinDays: 10 })).toEqual(['day']);
+  });
+});
+
+describe('the thresholds of an org', () => {
+  it('is every default until the org sets one, and a set threshold replaces only its own default', () => {
+    expect(thresholdsFrom(null)).toEqual(DEFAULT_FLAG_THRESHOLDS);
+    expect(thresholdsFrom(undefined)).toEqual(DEFAULT_FLAG_THRESHOLDS);
+    expect(thresholdsFrom({ paceMinDays: null, dayFactor: null, cprFactor: null, cprMinResults: null, cprMinHistoryDays: null })).toEqual(DEFAULT_FLAG_THRESHOLDS);
+    expect(thresholdsFrom({ cprMinResults: 20, cprFactor: '2.5' })).toEqual({ ...DEFAULT_FLAG_THRESHOLDS, cprMinResults: 20, cprFactor: '2.5' });
   });
 });
