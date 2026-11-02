@@ -101,20 +101,20 @@ describe('TodayList', () => {
     expect(html).toContain('Phú Thịnh: đề xuất chờ duyệt');
   });
 
-  it('shows Vy’s brief above the list, marked as written by Vy', () => {
+  it('shows the general manager’s brief above the list, marked as written by it', () => {
     const brief = { writtenBy: 'vy', sentences: ['Hôm nay có 4 việc cần bạn.', 'Hạn gần nhất là 20/11/2026.'], budgetSpent: false, final: true };
     const html = render({ data: { items: ITEMS, dropped: 0 }, brief });
     expect(html).toContain('data-testid="today-brief"');
     expect(html).toContain('Hôm nay có 4 việc cần bạn. Hạn gần nhất là 20/11/2026.');
-    expect(html).toContain(en.today.brief.aiBadge);
-    expect(html).toContain(en.today.brief.byVy);
+    expect(html).toContain(catalog('en').today.brief.aiBadge);
+    expect(html).toContain(catalog('en').today.brief.byVy);
     expect(html.indexOf('data-testid="today-brief"')).toBeLessThan(html.indexOf('<h3', html.indexOf('data-testid="today-brief"') + 1));
   });
 
   it('says a template brief is automatic, with no AI mark', () => {
     const html = render({ data: { items: ITEMS, dropped: 0 }, brief: { writtenBy: 'template', sentences: ['Hôm nay có 4 việc cần bạn.'], budgetSpent: false, final: true } });
-    expect(html).toContain(en.today.brief.byTemplate);
-    expect(html).not.toContain(en.today.brief.aiBadge);
+    expect(html).toContain(catalog('en').today.brief.byTemplate);
+    expect(html).not.toContain(catalog('en').today.brief.aiBadge);
   });
 
   it('shows the list alone when there is no brief (the month’s AI budget is spent), and a quiet placeholder while it loads', () => {
@@ -122,7 +122,7 @@ describe('TodayList', () => {
     expect(spent).not.toContain('data-testid="today-brief"');
     expect(spent).toContain('A voucher does not balance');
     const loading = render({ data: { items: ITEMS, dropped: 0 } });
-    expect(loading).toContain(en.today.brief.loading);
+    expect(loading).toContain(catalog('en').today.brief.loading);
     expect(loading).toContain('A voucher does not balance');
   });
 

@@ -202,8 +202,8 @@ export const vi = {
     brief: {
       title: 'Tóm tắt hôm nay',
       loading: 'Đang soạn tóm tắt',
-      aiBadge: 'Vy viết',
-      byVy: 'Vy, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
+      aiBadge: '{gm} viết',
+      byVy: '{gm}, tổng quản của các đồng nghiệp AI, viết từ số liệu của danh sách bên dưới; mọi con số đã được đối chiếu với danh sách. Bạn xem và duyệt từng việc ở màn của nó.',
       byTemplate: 'Tóm tắt tự động từ số liệu của danh sách bên dưới.',
     },
   },

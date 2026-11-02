@@ -204,8 +204,8 @@ export const en = {
     brief: {
       title: 'Today in brief',
       loading: 'Writing the brief',
-      aiBadge: 'Written by Vy',
-      byVy: 'Vy, the general manager of the AI coworkers, wrote this from the figures of the list below; every number was checked against the list. You review and approve each item on its own screen.',
+      aiBadge: 'Written by {gm}',
+      byVy: '{gm}, the general manager of the AI coworkers, wrote this from the figures of the list below; every number was checked against the list. You review and approve each item on its own screen.',
       byTemplate: 'An automatic summary of the figures of the list below.',
     },
   },
