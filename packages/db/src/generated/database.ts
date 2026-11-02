@@ -78,6 +78,7 @@ export interface CroveKernelSchema {
   'crove_kernel.channel_connection': KernelChannelConnectionTable;
   'crove_kernel.conversation': KernelConversationTable;
   'crove_kernel.conversation_attachment': KernelConversationAttachmentTable;
+  'crove_kernel.conversation_draft': KernelConversationDraftTable;
   'crove_kernel.conversation_identity': KernelConversationIdentityTable;
   'crove_kernel.conversation_message': KernelConversationMessageTable;
   'crove_kernel.conversation_note': KernelConversationNoteTable;
@@ -113,6 +114,7 @@ export interface CroveKernelSchema {
   'crove_kernel.role': KernelRoleTable;
   'crove_kernel.role_assignment': KernelRoleAssignmentTable;
   'crove_kernel.role_permission': KernelRolePermissionTable;
+  'crove_kernel.saved_reply': KernelSavedReplyTable;
   'crove_kernel.saved_view': KernelSavedViewTable;
   'crove_kernel.task': KernelTaskTable;
   'crove_kernel.task_comment': KernelTaskCommentTable;
@@ -1049,6 +1051,27 @@ export interface KernelConversationAttachmentTable {
   stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
+/** crove_kernel.conversation_draft */
+export interface KernelConversationDraftTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  conversation_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  basis_seq: ColumnType<number, number, NotGranted>;
+  source: ColumnType<string, string, NotGranted>;
+  requested_by: ColumnType<string | null, string | null, NotGranted>;
+  state: Generated<string>;
+  body: string | null;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  draft_length: number | null;
+  final_length: number | null;
+  edit_size: number | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  written_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
 /** crove_kernel.conversation_identity */
 export interface KernelConversationIdentityTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1121,6 +1144,7 @@ export interface KernelConversationSettingTable {
   set_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  auto_draft: Generated<boolean>;
 }
 
 /** crove_kernel.conversation */
@@ -1583,6 +1607,19 @@ export interface KernelRoleTable {
   key: ColumnType<string, NotGranted, NotGranted>;
   module: ColumnType<string, NotGranted, NotGranted>;
   scope: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_kernel.saved_reply */
+export interface KernelSavedReplyTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  title: string;
+  body: string;
+  keywords: Generated<string[]>;
+  use_count: Generated<number>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_kernel.saved_view */
