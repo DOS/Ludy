@@ -1505,6 +1505,8 @@ export const vi = {
       capSetAccount: 'Đặt hạn mức chi tiêu quảng cáo {period} của tài khoản {name}.',
       capFirst: 'Hiện chưa có hạn mức nào; đây là hạn mức đầu tiên: {amount}.',
       capFromTo: 'Từ {previous} thành {amount}.',
+      campaignLaunch: 'Chạy chiến dịch “{name}” trên {account}.',
+      campaignLaunchDetail: 'Có thể chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}.',
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
@@ -6700,6 +6702,13 @@ export const vi = {
       ADS_CAP_NOT_LOWER: 'Hạn mức mới phải thấp hơn hạn mức đang áp dụng.',
       ADS_CAP_CHANGED: 'Hạn mức đã thay đổi từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
       ADS_BLOCK_CHANGED: 'Các lần chạy quảng cáo đã bị chặn lại từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
+      ADS_DRAFT_NOT_FOUND: 'Không tìm thấy bản nháp chiến dịch này.',
+      ADS_DRAFT_ACCOUNT: 'Bản nháp này thuộc tài khoản quảng cáo khác.',
+      ADS_DRAFT_CLOSED: 'Bản nháp này đã được duyệt hoặc đã bị bỏ nên không sửa được nữa.',
+      ADS_DRAFT_SUBMITTED: 'Bản nháp này đang chờ duyệt ở Chứng từ chờ duyệt. Hãy từ chối đề nghị nếu muốn sửa.',
+      ADS_DRAFT_INCOMPLETE: 'Bản nháp chưa đủ thông tin để gửi duyệt.',
+      ADS_DRAFT_INVALID: 'Bản nháp chưa qua các bước kiểm tra (ngân sách, ngày chạy, hạn mức hoặc việc chạy quảng cáo). Xem danh sách việc cần sửa.',
+      ADS_DRAFT_CHANGED: 'Bản nháp đã thay đổi từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
       ADS_CURRENCY_CHANGED: 'Nền tảng báo một đơn vị tiền khác với đơn vị đã ghi cho tài khoản này nên số liệu chưa được ghi',
       ACCOUNT_CODE_TAKEN: 'Mã tài khoản này đã có trong hệ thống tài khoản',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'Tài khoản còn tài khoản con đang dùng; hãy ngừng dùng chúng trước',
@@ -7061,6 +7070,14 @@ export const vi = {
         prepare_enable_write: 'Đề nghị cho phép chạy quảng cáo trên một tài khoản',
         write_ready: 'Xem tài khoản quảng cáo nào đã đọc được số liệu để tạo kết nối chạy quảng cáo',
         write_target: 'Xem tài khoản quảng cáo cần tạo kết nối chạy quảng cáo',
+      },
+      campaign: {
+        draft: 'Xem một bản nháp chiến dịch',
+        draft_discard: 'Bỏ một bản nháp chiến dịch',
+        draft_save: 'Lưu một bản nháp chiến dịch',
+        drafts: 'Xem các bản nháp chiến dịch của một tài khoản quảng cáo',
+        launch: 'Chạy chiến dịch đã soạn (đề nghị đã duyệt)',
+        prepare_launch: 'Đề nghị duyệt để chạy chiến dịch đã soạn',
       },
       cap: {
         lower: 'Giảm hạn mức chi tiêu quảng cáo',

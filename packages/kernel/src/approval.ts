@@ -78,6 +78,8 @@ const POLICIES: Record<string, CommandPolicy> = {
   'ads.account.enable_write': ADS,
   'ads.cap.set': ADS,
   'ads.launches.unblock': ADS,
+  // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
+  'ads.campaign.launch': ADS,
 };
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
@@ -91,7 +93,7 @@ export function approvalPolicies(): Array<{ command: string; roles: readonly str
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.
-export const APPROVAL_POLICY_VERSION = 3;
+export const APPROVAL_POLICY_VERSION = 4;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).

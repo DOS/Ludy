@@ -101,6 +101,9 @@ import {
   MEMBER_ROLES,
   NOTE_LINK_TARGET_TYPES,
   AD_CAP_PERIODS,
+  AD_DRAFT_ORIGINS,
+  AD_DRAFT_STATUSES,
+  AD_OBJECTIVES,
   AD_CAP_SCOPES,
   AD_ERROR_KINDS,
   AD_LEVELS,
@@ -164,6 +167,9 @@ const unions = <const M extends Unions<M> & Readonly<Record<string, readonly str
 // schema.table.column -> the const array of schema.ts the column is refined to.
 const UNIONS = unions({
   'crove_ads.ad_account.last_error_kind': AD_ERROR_KINDS,
+  'crove_ads.ad_campaign_draft.objective': AD_OBJECTIVES,
+  'crove_ads.ad_campaign_draft.origin': AD_DRAFT_ORIGINS,
+  'crove_ads.ad_campaign_draft.status': AD_DRAFT_STATUSES,
   'crove_ads.ad_spend_cap.period': AD_CAP_PERIODS,
   'crove_ads.ad_spend_cap.scope': AD_CAP_SCOPES,
   'crove_ads.ad_spend_day.level': AD_LEVELS,

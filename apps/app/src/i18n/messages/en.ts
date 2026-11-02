@@ -1507,6 +1507,8 @@ export const en = {
       capSetAccount: 'Set the {period} spend cap of the account {name}.',
       capFirst: 'No cap is set yet; this sets the first one: {amount}.',
       capFromTo: 'From {previous} to {amount}.',
+      campaignLaunch: 'Run the campaign “{name}” on {account}.',
+      campaignLaunchDetail: 'It can spend at most {amount} over {days, plural, one {# day} other {# days}}, {daily} a day.',
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
@@ -6702,6 +6704,13 @@ export const en = {
       ADS_CAP_NOT_LOWER: 'The new cap must be below the one in force.',
       ADS_CAP_CHANGED: 'The cap changed after this request was made. Reject the request and make a new one.',
       ADS_BLOCK_CHANGED: 'Ad launches were blocked again after this request was made. Reject the request and make a new one.',
+      ADS_DRAFT_NOT_FOUND: 'This campaign draft was not found.',
+      ADS_DRAFT_ACCOUNT: 'This draft belongs to another ad account.',
+      ADS_DRAFT_CLOSED: 'This draft was already approved or discarded, so it cannot be changed.',
+      ADS_DRAFT_SUBMITTED: 'This draft waits for approval in the Inbox. Reject the request to change it.',
+      ADS_DRAFT_INCOMPLETE: 'This draft is not complete enough to send for approval yet.',
+      ADS_DRAFT_INVALID: 'This draft does not pass the checks yet (budget, dates, caps or running ads). See the list of what to fix.',
+      ADS_DRAFT_CHANGED: 'The draft changed after this request was made. Reject the request and make a new one.',
       ACCOUNT_CODE_TAKEN: 'This account code is already in the chart of accounts.',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'The account still has sub-accounts in use. Stop using them first.',
       ACCOUNT_INACTIVE: 'The account is no longer in use. Choose another account.',
@@ -7062,6 +7071,14 @@ export const en = {
         prepare_enable_write: 'Ask to allow running ads on one account',
         write_ready: 'Read which ad accounts are linked for reading, to make a connection to run ads',
         write_target: 'Read the ad account a connection to run ads is made for',
+      },
+      campaign: {
+        draft: 'Read a campaign draft',
+        draft_discard: 'Discard a campaign draft',
+        draft_save: 'Save a campaign draft',
+        drafts: 'List the campaign drafts of an ad account',
+        launch: 'Run a drafted campaign (an approved request)',
+        prepare_launch: 'Ask for approval to run a drafted campaign',
       },
       cap: {
         lower: 'Lower an ad spend cap',
