@@ -91,6 +91,8 @@ function RuleRow({ rule, canManage }: { rule: CategorizationRule; canManage: boo
             <span>{rule.vendor ? rule.vendor.name : t('allVendors')}</span>
             <span aria-hidden>·</span>
             <span className="font-mono">{t('toAccount', { code: rule.accountCode })}</span>
+            <span aria-hidden>·</span>
+            <span data-testid="rule-corrections">{rule.corrections === 0 ? t('correctionsNone') : t('corrections', { count: rule.corrections })}</span>
           </div>
           <p className="mt-1 text-xs text-subtle-foreground">{invoice ? t('learnedFrom', { name, date, invoice }) : t('addedBy', { name, date })}</p>
         </div>

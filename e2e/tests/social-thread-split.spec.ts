@@ -29,7 +29,7 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   await createOrg(page, 'Công ty Chuỗi Bài');
   const channel = 'Trang Chuỗi Bài';
 
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill(channel);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

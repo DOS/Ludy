@@ -1,6 +1,6 @@
-# 0041. A conversation core in the kernel: comments answered in Social, private messages in Service
+# 0041. A conversation core in the kernel: comments, private messages and email in one inbox
 
-- Status: Proposed (2026-11-01). Nothing here is built. The layout, the retention default and the build order are **owner** decisions ([conversations plan](../plan/conversations.md), section 16).
+- Status: Proposed (2026-11-01), amended 2026-11-03 (#2437) for the owner's decision on the inbox (Decisions 6, 7 and 10). Nothing here is built. The layout, the retention default and the build order are **owner** decisions ([conversations plan](../plan/conversations.md), section 16).
 - Date: 2026-11-01
 - Deciders: owner (JOY), on the Marketing PO's recommendation
 - Builds on:
@@ -15,7 +15,7 @@
 
 ## Context and problem statement
 
-The owner decided on 2026-11-01: "Trả lời bình luận thì nên trong Social. Tin nhắn riêng trong Service." Replies to comments on the org's own posts belong in Social, private messages (Messenger, Instagram DMs, Zalo OA chat) in Service, and the two should share as much core as possible. That reverses the earlier plan, where Service's inbox took both and Social only published.
+The owner decided on 2026-11-01: "Trả lời bình luận thì nên trong Social. Tin nhắn riêng trong Service." Replies to comments on the org's own posts belong in Social, private messages (Messenger, Instagram DMs, Zalo OA chat) in Service, and the two should share as much core as possible. That reversed the earlier plan, where Service's inbox took both and Social only published. **On 2026-11-03 the owner decided that the inbox follows Crisp and Intercom, not Zendesk (#2437):** every customer interaction, whether chat, a comment on the org's own posts or customer email, is one conversation shown in one inbox, Hộp thư, with New, Pending and Resolved, and staff reply in the same box. The shared core stands; the split of the screens does not (Decisions 6, 7 and 10).
 
 Today there is no store for platform comments or messages (the kernel keeps `inbound_message` for email, a record of arrival only), and no Service module.
 
@@ -23,7 +23,7 @@ What has to be decided:
 1. Where the shared store lives, so that Social and Service can each be sold and run alone.
 2. How comments and messages arrive and how replies go out, given what Meta and Zalo offer.
 3. Who may read a comment and who may read a private message.
-4. How the app's layout shows Social, Service and Ads.
+4. How the app's layout shows the inbox, CRM, posting and ads.
 5. What personal data of third parties the store holds, for how long, and how it is erased.
 
 Facts that shape the choices (sources and confidence tags in the [plan](../plan/conversations.md)):
@@ -44,7 +44,7 @@ Facts that shape the choices (sources and confidence tags in the [plan](../plan/
 
 ### 1. The store is in the kernel, with a kind
 
-`crove_kernel.conversation` and `conversation_message`, with `kind` `comment_thread` or `direct`, next to `channel_connection`, `party`, `task` and `activity`, which every module already shares. A comment thread is one conversation per top-level comment. Social joins its posts to a thread through `(channel_connection_id, external_post_id)` with no foreign key across schemas. Alongside: identities, internal notes, saved replies, AI drafts, read state, a composing marker and member availability (plan section 5.2).
+`crove_kernel.conversation` and `conversation_message`, with `kind` `comment_thread`, `direct` or `email`, next to `channel_connection`, `party`, `task` and `activity`, which every module already shares. A comment thread is one conversation per top-level comment. Social joins its posts to a thread through `(channel_connection_id, external_post_id)` with no foreign key across schemas. Alongside: identities, internal notes, saved replies, AI drafts, read state, a composing marker and member availability (plan section 5.2).
 
 ### 2. Intake: a signed webhook enqueues, a worker stores, a poll reconciles
 
@@ -59,19 +59,19 @@ Facts that shape the choices (sources and confidence tags in the [plan](../plan/
 
 ### 4. Permissions follow the kind, in the database
 
-A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind = 'direct'`, not only in the screen (the permission is `kernel.conversation.direct.read`: a manifest permission carries its module's prefix, and no role holds it until the Service inbox seeds it for `desk.agent`). Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
+A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message or an email is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind <> 'comment_thread'`, not only in the screen (the permission is `kernel.conversation.direct.read`: a manifest permission carries its module's prefix, and no role holds it until the Service inbox seeds it for `desk.agent`). Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
 
 ### 5. Collision, assignment and availability
 
 Assignment is the soft lock; a composing marker with a 60-second expiry shows "X is replying"; the reply command refuses with `CONVERSATION_MOVED` when a newer message exists than the one the sender saw (the guarantee). Availability is a per-member switch used for notification, with no automatic round-robin in v1.
 
-### 6. A comment shows in Social only; the bridges are explicit
+### 6. Every conversation is in Hộp thư; the bridges are explicit
 
-Comments appear under their post and in Social's comment inbox, not in Service's. "Reply privately" (Meta allows one private message within 7 days) creates a linked direct conversation that Service shows; "send to Service" hands a comment to Service as a case or, before cases exist, a task. A Service-only org gets no comments in v1 (the plan's Q2).
+Comments, private messages and email are all conversations in one inbox, Hộp thư, as in Crisp and Intercom (owner, 2026-11-03). A comment also appears under its post, in the post page's Bình luận tab, which is a filtered view of the same conversation: one store and one unread count. "Reply privately" (Meta allows one private message within 7 days) creates a linked direct conversation, and both threads are in Hộp thư. Follow-up work is a task: from any conversation a person creates a `crove_kernel.task` linked to it. An org that has the inbox but not the posting side sees the comments of its connected Pages in Hộp thư (the plan's Q2 is answered).
 
-### 7. One rail app with groups
+### 7. One rail app, Ludy Engage, with groups
 
-Social, Service and Ads are **groups of one rail app** (working name "Kênh"), each shown only when its module is enabled, instead of three rail items. The shell already builds apps and groups from the manifests' nav declarations and drops groups of modules that are not enabled; the cost is renaming the Social app id and its menu messages. The conversation screen is one shared component used by both inboxes. [ADR-0040](0040-ads-read-only-sources.md) and the Ads plan agree: Ads is a group inside this app.
+CRM, the inbox, Social and Ads are **groups of one rail app, Ludy Engage** (app id `social`), each shown only when its module is enabled (data and module switches unchanged), instead of separate rail items. Its groups: **Hộp thư** (every conversation); **Khách hàng & Bán hàng** (Người liên hệ, Công ty, Cơ hội, Lịch hẹn); **Marketing** (Bài đăng, Quảng cáo); **Báo cáo** (one group with a tab per area). The shell already builds apps and groups from the manifests' nav declarations and drops groups of modules that are not enabled; the cost is the app's rename and menu messages and the redirects from the old CRM routes (#2435). The conversation screen is one shared component used by the inbox and the post tab. [ADR-0040](0040-ads-read-only-sources.md) and the Ads plan agree: Ads is a group inside this app.
 
 ### 7a. Update of 2026-11-02 (CV3, #2306): one Inbox in the existing Social app, comments and private messages together
 
@@ -83,15 +83,19 @@ CV3's last part adds the **intent label** and the **contact match** (#2306). The
 
 ### 8. AI drafts and taint
 
-Every inbound item is tainted external text. A **draft** reply is written by the **system context**, not by an org-chart agent (#2310): a worker job reads the end of the thread, calls the model in `packages/agent` and records the draft through a system command into `conversation_draft` (always tainted, its text only while live). A person asks for one or the relay does for a new conversation, and a person reads it, edits it and presses Send; the draft is text only and nothing of a send, hide, resolve or contact link is reachable from it. ADR-0029's write allowlist is therefore unchanged: an agent context stays refused on every conversation table (the guard `apply_tenant_rls` installs, and `conversation_access`). No auto-reply to messages in v1.
+Every inbound item is tainted external text. A **draft** reply is written by the **system context**, not by an org-chart agent (#2310): a worker job reads the end of the thread, calls the model in `packages/agent` and records the draft through a system command into `conversation_draft` (always tainted, its text only while live). A person asks for one or the relay does for a new conversation, and a person reads it, edits it and presses Send; the draft is text only and nothing of a send, hide, resolve or contact link is reachable from it. ADR-0029's write allowlist is therefore unchanged: an agent context stays refused on every conversation table (the guard `apply_tenant_rls` installs, and `conversation_access`). No auto-reply to messages in v1. The same job path also records an advisory **intent label** and a **suggested contact** (tainted, never an action: nothing is linked, answered or resolved by them), behind the AI budget meter (#2382); with AI off the inbox works as before. There is no auto-send of any kind.
 
 ### 9. Personal data
 
 Names, avatars, external user ids and bodies are classed `pii`. No party is created automatically: a person links or creates a contact. Audit rows, activity and logs carry ids and lengths, never a body or a name. Retention is an org setting (default 24 months after the last message) with a daily purge; `kernel.conversation.erase_contact` (R3) answers a person's request; a platform's removal of a comment or message blanks the body; images are stored (size cap, never rendered as HTML or parsed) as rows of `crove_kernel.conversation_attachment` bound to their message and read through the message's own rule, not as kernel files, because a file is deduplicated by content and cannot belong to one message (CV5c, #2357; the plan's "CV5c as built"); other attachments are links to the platform. **AI drafting is a processing of third-party personal data (#2310):** when Vy drafts a reply (a person asks, or the org's automatic drafting is on, which is the default and which owners and admins can switch off), the last 12 messages of the thread and at most five of the org's saved replies are sent to the deployment's AI endpoint (`AI_BASE_URL`, an OpenAI-compatible service the operator chooses) and nothing else of the customer (no id, no phone number beyond what the messages say); the model's answer is stored as a tainted draft whose text lives only while the draft is live. The settings screen says so in one line, the privacy note of Ludy Cloud lists the AI endpoint as a processor, and the call is rationed by the existing per-minute draft budget (`ai-draft-limit.ts`) and the org's daily AI cost limit. Meta's data deletion callback concerns the app's users, so it disconnects the Ludy member's connections and deletes the data read through them unless the owner takes the connection over first (a cautious reading; a lawyer confirms before Ludy Cloud).
 
+### 10. Email is a conversation channel, and the inbox has no cases, tickets or SLA timers
+
+Customer email, in and out, is a conversation of kind `email` (plan section 6.7): intake through a conversation address of its own per org (the inbound path's machinery, the org found from the stored address, parsing in the sandbox), threading by Message-ID, In-Reply-To and References, the quoted history folded on display, images through the conversation attachment store, and replies through the kernel mail pipeline of [ADR-0034](0034-outbound-email.md) with its suppression check and one send per mail. It is private like a direct message and covered by retention, erasure, export and purge. The inbox follows Crisp and Intercom: a conversation that needs follow-up links to a task, and nothing is a numbered record or counts reply time. Not built; the build item CV10 is not opened.
+
 ## Decisions for the owner
 
-The seven questions in [the plan, section 16](../plan/conversations.md#16-questions-for-joy): layout (Q1), comments in Service (Q2), the app's name (Q3), approval of members' replies (Q4), retention (Q5), Zalo's paid plan (Q6), build order (Q7). Without an answer: one rail app, comments only in Social, the working name "Kênh", no approval, 24 months, a clear Zalo plan message, the order of the plan. In every order, **no live channel handles a real customer's messages before retention, erasure, export and purge are built and accepted** (CV6): until then live channels run only on the owner's own accounts.
+The seven questions in [the plan, section 16](../plan/conversations.md#16-questions-for-joy): layout (Q1, answered: one rail app), comments in the inbox (Q2, answered 2026-11-03: yes), the app's name (Q3, answered: Ludy Engage), approval of members' replies (Q4), retention (Q5), Zalo's paid plan (Q6), build order (Q7). Without an answer to the open ones: no approval, 24 months, a clear Zalo plan message, the order of the plan. In every order, **no live channel handles a real customer's messages before retention, erasure, export and purge are built and accepted** (CV6): until then live channels run only on the owner's own accounts.
 
 ## Consequences
 
@@ -100,14 +104,17 @@ The seven questions in [the plan, section 16](../plan/conversations.md#16-questi
 - New personal data of third parties lives in the kernel schema and in a short-lived queue; erasure, retention, export and purge must cover it before any customer uses it.
 - Existing Facebook and Instagram connections must be reconnected to grant the inbox scopes (an opt-in on the connect screen); a Messenger use case may need its own Meta app.
 - Ludy Cloud serving other businesses on Meta needs App Review and Business Verification for each added permission.
-- A rename of the Social app id and its menu messages, with no URL change.
+- A rename of the Social app id and its menu messages to Ludy Engage, and redirects from the old CRM routes (#2435), with no other URL change.
+- Customer email adds a conversation address per org and a path from the mail parser to the conversation core; it must never reach the invoice extractor (CV10).
 
 ## Alternatives considered
 
 - **A module `conversation`** (schema `crove_conversation`) that Social and Service both depend on. Rejected as the default: Service would need the module installed to read anything, and it would be one more module to enable, version and review for what the kernel already does for `party`, `task` and `activity`. Kept as a fallback if the kernel's size becomes the problem.
-- **The store inside Service** (as the older plan said). Rejected: Social alone would have no comments, which is the owner's decision reversed.
+- **The store inside Service** (as the older plan said). Rejected: the posting side alone would show no comments, and a store owned by one module makes the other depend on it.
 - **The store inside Social.** Rejected: a Service-only org would have to install Social to read a message.
-- **Comments in both inboxes.** Rejected: two unread counts and two people on one comment; the bridges give the connection without the duplication.
+- **Comments in Social only, private messages in Service** (the decision of 2026-11-01). Replaced on 2026-11-03: a care person would watch two lists for one customer. One inbox with the post tab as a filtered view keeps one list and one unread count.
+- **Comments in two inboxes with their own counts.** Rejected: two unread counts and two people on one comment; the post tab is a view of the same conversation instead.
+- **A help-desk model** (Zendesk, Go Desk: numbered records and reply-time timers). Rejected by the owner on 2026-11-03: too heavy for one-person companies and SMEs; the chat model of Crisp and Intercom with a follow-up task is enough.
 - **A webhook that only triggers a pull** (the bank-feed rule). Rejected here: the platforms keep no history to pull from, so the signed event is the record.
 - **Separate rail items** (Hootsuite style). Kept as option B in the plan: the cost of (a), a rename, is small and the rail stays short.
 - **Auto-reply and auto-assignment in v1.** Rejected: customer-visible, and a prompt injection in a customer message would drive it; drafts and a person's Send instead.

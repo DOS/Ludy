@@ -2,7 +2,7 @@
 // A receipt photographed with the phone's camera (issue #2384), end to end on a phone-sized viewport: the Inbox's "Chụp
 // hóa đơn" opens the rear camera through the file input, a stack of photos in a row each becomes its own file, and a photo
 // larger than the direct upload limit is shrunk on the device before it goes up, still a JPEG of the same receipt. The
-// stack runs with no AI endpoint, so what is checked here is the way in; the reading of a photo (Vy, the checks, the
+// stack runs with no AI endpoint, so what is checked here is the way in; the reading of a photo (the accounting coworker, the checks, the
 // proposal) is covered by the extraction tests.
 import { expect, test, type Page } from '@playwright/test';
 import { sql } from '../lib/db.ts';

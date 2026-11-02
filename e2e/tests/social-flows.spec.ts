@@ -39,7 +39,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 // From the org's first screen: connects one sandbox channel per name, and stays on the channels screen.
 async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   for (const name of names) {
     await page.getByLabel('Tên kênh thử').fill(name);
@@ -476,10 +476,10 @@ test('says AI drafting is off on a server without a model', async ({ page, reque
   await connectSandbox(page, 'Trang Không AI');
   await compose(page, 'Bài viết tay, không nhờ AI');
 
-  await expect(page.getByText('Soạn cùng Vy', { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Soạn cùng \p{Lu}\p{Ll}+$/u)).toBeVisible();
   await expect(page.getByText('Máy chủ chưa cấu hình AI (AI_BASE_URL, AI_MODEL).')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Nhờ Vy soạn nháp' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Nhờ Vy viết lại' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ soạn nháp$/u })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Nhờ \p{Lu}\p{Ll}+ viết lại$/u })).toHaveCount(0);
 });
 
 test('approves several posts at once from the review list (#635)', async ({ page }) => {

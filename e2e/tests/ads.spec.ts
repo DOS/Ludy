@@ -50,7 +50,7 @@ test('an owner connects a sandbox ad account and reads its spend, results and co
   const books = page.getByRole('region', { name: 'So với sổ sách' });
 
   await test.step('Ads is a group of the Social app on the rail', async () => {
-    await nav.getByRole('link', { name: 'Mạng xã hội' }).click();
+    await nav.getByRole('link', { name: 'Engage' }).click();
     const group = nav.getByRole('region', { name: 'Quảng cáo' });
     await expect(group).toBeVisible();
     await group.getByRole('link', { name: 'Quảng cáo' }).click();
