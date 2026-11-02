@@ -73,7 +73,7 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
 //   not go with the account; a switch that was on is evidence enough by itself, since the owner could have consented while it was.
 // It is the caller who closes them: the kernel's disconnect.
 const SHARED_APP_WRITE_PROVIDERS = AD_WRITE_PROVIDERS.filter((provider) => provider !== 'sandboxwrite_ads');
-export async function closeSpendCapableReadConnections(ctx: CommandContext, options: { switchWasOn: boolean }): Promise<number> {
+export async function closeSpendCapableReadConnections(ctx: CommandContext, options: { switchWasOn: boolean; sharedApp?: boolean }): Promise<number> {
   const spend = [...ADS_SPEND_SCOPES];
   const madeWrite = await ctx.trx
     .selectFrom('crove_kernel.channel_connection')
@@ -82,7 +82,9 @@ export async function closeSpendCapableReadConnections(ctx: CommandContext, opti
     .where('provider', 'in', SHARED_APP_WRITE_PROVIDERS)
     .limit(1)
     .executeTakeFirst();
-  const sharedApp = madeWrite || options.switchWasOn ? SHARED_APP_WRITE_PROVIDERS.map((provider) => READ_PROVIDER_OF_WRITE[provider]) : [];
+  // With a write app of its own no reading token can hold the permission, so only the recorded scopes close (`sharedApp: false`); the
+  // caller says which, from the deployment's config, and when it says nothing the close fails safe.
+  const sharedApp = options.sharedApp !== false && (madeWrite || options.switchWasOn) ? SHARED_APP_WRITE_PROVIDERS.map((provider) => READ_PROVIDER_OF_WRITE[provider]) : [];
   const open = await ctx.trx
     .selectFrom('crove_kernel.channel_connection as c')
     .select('c.id')

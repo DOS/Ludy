@@ -3,6 +3,7 @@
 // channel layer only, the contract on neither): the contract's constants (AD_WRITE_PROVIDERS, ADS_SPEND_SCOPES, READ_PROVIDER_OF_WRITE)
 // and the adapters' own. This is the one place that depends on both, and keeps them equal (ADR-0043, #2294, W0b).
 import { describe, expect, it } from 'vitest';
+import { metaWriteAppShared } from '../src/kernel.ts';
 import { META_FORBIDDEN_SCOPES, META_WRITE_PROVIDER, META_WRITE_SCOPES, SANDBOX_WRITE_PROVIDER, SANDBOX_WRITE_SCOPES } from '@crove/ad-platform';
 import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
 
@@ -38,5 +39,20 @@ describe('the write providers of running ads', () => {
       expect(scopes).toContain('ads_read');
       expect(scopes.some((scope) => (ADS_SPEND_SCOPES as readonly string[]).includes(scope))).toBe(true);
     }
+  });
+});
+
+// Whether the deployment's write Meta app is the read ads app or the Pages app decides how far switching running ads off closes the Meta
+// reading connections (ADR-0043 point 4): the same app means a person's reading tokens can hold the permission, an app of its own means they
+// cannot, and no write app means no write connection to make.
+describe('whether the write Meta app is shared', () => {
+  it('is shared when it has the id of the read ads app or of the Pages app, and not with an app of its own or none', () => {
+    const config = (write: string | undefined, ads: string | undefined, pages: string | undefined) => ({ CHANNEL_META_ADS_WRITE_APP_ID: write, CHANNEL_META_ADS_APP_ID: ads, CHANNEL_META_APP_ID: pages });
+    expect(metaWriteAppShared(config('1', '1', undefined))).toBe(true);
+    expect(metaWriteAppShared(config('1', '2', '1'))).toBe(true);
+    expect(metaWriteAppShared(config('1', '1', '1'))).toBe(true);
+    expect(metaWriteAppShared(config('1', '2', '3'))).toBe(false);
+    expect(metaWriteAppShared(config('1', undefined, undefined))).toBe(false);
+    expect(metaWriteAppShared(config(undefined, '1', '1'))).toBe(false);
   });
 });
