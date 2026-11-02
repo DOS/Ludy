@@ -54,10 +54,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_flag_setting',
   'crove_crm.deal_next_step',
   'crove_crm.deal_setting',
-  'crove_kernel.conversation_draft',
-  'crove_kernel.saved_reply',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -330,6 +329,14 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' },
       };
     },
+  },
+  // The org's one row of spend-flag thresholds (#2378): how many days of a month must be over before the pace is judged, and by what factor a
+  // day or a campaign's cost per result may exceed its share or its median. A NULL threshold means the default. Org-wide, so no entity. Tenant
+  // roles update the thresholds and who set them only (a column grant), so the update probes assign a threshold to itself.
+  'crove_ads.ad_flag_setting': {
+    update: { set: 'pace_min_days = pace_min_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (ads.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
   // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
   // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
