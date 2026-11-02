@@ -7,7 +7,7 @@
 // the auth email budget.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
+import { USAGE_DEFERRAL_METRICS, USAGE_DEFERRAL_SUBJECTS, USAGE_METRICS, type UsageMetric } from '@crove/db';
 import { defineCommand, defineQuery } from '@crove/kernel-runtime';
 import { createMailMessage } from './mail.ts';
 
@@ -58,6 +58,8 @@ export const usageOver = defineQuery({
                  sum(amount) OVER () AS total
           FROM crove_kernel.org_usage
           WHERE org_id = ${ctx.orgId} AND metric = ${metric}
+            -- The day's AI cost bounds the extraction queue (#675): what drafts and rewrites cost is the month's budget's (#2382).
+            AND (metric <> 'ai_cost' OR feature IS NULL OR module IN ('finance', 'conversation'))
             AND created_at > pg_catalog.now() - pg_catalog.make_interval(hours => ${USAGE_WINDOW_HOURS}::int)
         )
         SELECT (SELECT coalesce(max(total), 0)::text FROM w) AS used,
@@ -98,7 +100,7 @@ const METRIC_LABELS: Record<UsageMetric, string> = {
 export const usageDefer = defineCommand({
   name: 'kernel.usage.defer',
   input: z.strictObject({
-    metric: zMetric,
+    metric: z.enum(USAGE_DEFERRAL_METRICS),
     subjectType: z.enum(USAGE_DEFERRAL_SUBJECTS),
     subjectId: z.string().min(1).max(100),
     retryAt: z.iso.datetime({ offset: true }),
@@ -119,7 +121,10 @@ export const usageDefer = defineCommand({
       .limit(1)
       .executeTakeFirst();
     let queued = 0;
-    if (!told) {
+    // A document waiting for the AI budget (#2382) mails nobody: the budget's own notice (80% and 100%, once a month) told the
+    // owners and admins, and the Inbox shows the file as waiting.
+    const aiBudget = input.metric === 'ai_budget';
+    if (!told && !aiBudget) {
       const org = await ctx.trx.selectFrom('crove_kernel.tenant').select(['slug', 'name']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
       const owners = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').orderBy('user_id').execute();
       const ids = owners.map((o) => o.user_id);
@@ -134,7 +139,7 @@ export const usageDefer = defineCommand({
           sourceId: null,
           templateKey: USAGE_DEFERRED_TEMPLATE,
           to: person.email,
-          subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric]} trong ngày`,
+          subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
           payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: `/o/${org.slug}/inbox` },
           status: 'queued',
         });
@@ -150,14 +155,19 @@ export const usageDefer = defineCommand({
         subject_type: input.subjectType,
         subject_id: input.subjectId,
         retry_at: input.retryAt,
-        notified: !told,
+        notified: !told && !aiBudget,
       })
       .execute();
     if (input.subjectType === 'file') {
-      await ctx.activity('kernel.file', input.subjectId, 'file.deferred', `Chờ hạn mức ngày mai: tổ chức đã dùng hết ${METRIC_LABELS[input.metric]} trong ngày`);
+      await ctx.activity(
+        'kernel.file',
+        input.subjectId,
+        'file.deferred',
+        aiBudget ? 'Chờ ngân sách AI: Vy đã hết ngân sách tháng này, tệp sẽ được đọc khi ngân sách được nâng hoặc sang tháng mới' : `Chờ hạn mức ngày mai: tổ chức đã dùng hết ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
+      );
     }
     ctx.audit({ metric: input.metric, subjectType: input.subjectType, retryAt: input.retryAt, mailed: queued });
-    return { notified: !told, queued };
+    return { notified: !told && !aiBudget, queued };
   },
 });
 

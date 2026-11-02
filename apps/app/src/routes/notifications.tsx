@@ -58,6 +58,8 @@ function useLine() {
         return t('text.todo_due');
       case 'kernel.channel_expired':
         return t('text.channel_expired');
+      case 'kernel.ai_budget':
+        return n.detail.level === 'stop' ? t('text.ai_budget_stop') : t('text.ai_budget_warn', { percent: n.detail.percent ?? '' });
       case 'kernel.personal_data_notice':
         return t('text.personal_data_notice', { items: privateItems(Number(n.detail.notes ?? 0), Number(n.detail.todos ?? 0)) });
       default:
@@ -118,6 +120,7 @@ export function NotificationsPage() {
     else if (target?.to === 'task') void navigate({ to: '/o/$slug/tasks/$id', params: { slug, id: target.id } });
     else if (target?.to === 'tasks') void navigate({ to: '/o/$slug/tasks', params: { slug } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
+    else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };
   // A kind this version of the app does not know (a newer module) is left out rather than shown blank.
   const items = (list.data?.items ?? []).filter((n) => isKnownKind(n.kind));

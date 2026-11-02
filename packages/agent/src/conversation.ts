@@ -15,6 +15,7 @@
 import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
+import { metered } from './meter.ts';
 
 // One message of the thread as the writer reads it.
 export interface DraftMessage {
@@ -168,13 +169,15 @@ export class ConversationWriter {
     this.generate =
       generate ??
       (async ({ system, prompt: text }) => {
-        const { output, usage } = await generateText({
-          model: chatModel(config),
-          output: Output.object({ schema: zReply }),
-          system,
-          prompt: text,
-          abortSignal: AbortSignal.timeout(timeoutMs),
-        });
+        const { output, usage } = await metered('conversation.draft', () =>
+          generateText({
+            model: chatModel(config),
+            output: Output.object({ schema: zReply }),
+            system,
+            prompt: text,
+            abortSignal: AbortSignal.timeout(timeoutMs),
+          }),
+        );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
   }

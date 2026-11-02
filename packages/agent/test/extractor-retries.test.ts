@@ -5,7 +5,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { InvoiceExtractor } from '../src/index.ts';
+import { InvoiceExtractor, withAiScope, type AiMeter } from '../src/index.ts';
 
 let server: Server;
 let baseURL: string;
@@ -34,9 +34,26 @@ afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 beforeEach(() => {
   hits = 0;
   bodies.length = 0;
+  meterLog.length = 0;
 });
 
-const extractor = (model: string, maxRetries?: number) => new InvoiceExtractor({ baseURL, apiKey: 'test-key', model, ...(maxRetries === undefined ? {} : { maxRetries }) });
+// The meter sees one admission per document whatever the retries, and records nothing for a call that failed (#2382).
+const meterLog: string[] = [];
+const meter: AiMeter = {
+  admit: async () => {
+    meterLog.push('admit');
+  },
+  record: async () => {
+    meterLog.push('record');
+  },
+};
+const extractor = (model: string, maxRetries?: number) => {
+  const reader = new InvoiceExtractor({ baseURL, apiKey: 'test-key', model, ...(maxRetries === undefined ? {} : { maxRetries }) });
+  return {
+    fromText: (text: string) => withAiScope({ orgId: 'org-1', meter }, () => reader.fromText(text)),
+    fromImage: (bytes: Uint8Array, mediaType: string) => withAiScope({ orgId: 'org-1', meter }, () => reader.fromImage(bytes, mediaType)),
+  };
+};
 
 describe('invoice reading retries (#2119)', () => {
   it.each([
@@ -56,6 +73,11 @@ describe('invoice reading retries (#2119)', () => {
   it('does not repeat a call the provider refuses as wrong (4xx other than 408, 409, 429)', async () => {
     await expect(extractor('status-400', 3).fromText('hóa đơn')).rejects.toThrow();
     expect(hits).toBe(1);
+  });
+
+  it('admits a failing document once, whatever the retries, and records no use for it', async () => {
+    await expect(extractor('status-500', 3).fromText('hóa đơn')).rejects.toThrow();
+    expect(meterLog).toEqual(['admit']);
   });
 
   it('keeps the SDK default of 2 retries when the setting is absent', async () => {
