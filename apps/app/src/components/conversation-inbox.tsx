@@ -193,7 +193,7 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
       )}
       <ol className="space-y-2" aria-label={t('messages')}>
         {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} contact={contactName(c.contact)} />
+          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} />
         ))}
       </ol>
       {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
@@ -222,11 +222,13 @@ function AssignSelect({ conversation, members }: { conversation: ConversationSum
 
 // Erases the customer of this thread: every thread of theirs with its messages and notes, and their name. Owners and admins, behind a
 // confirmation and a fresh second factor (the kernel asks for it); it cannot be undone.
-function EraseContactButton({ conversation, onErased }: { conversation: ConversationSummary; onErased: () => void }) {
+function EraseContactButton({ conversation, onErased, messageId, who, label = 'eraseOpen' }: { conversation: ConversationSummary; onErased: () => void; messageId?: string; who?: string; label?: 'eraseOpen' | 'eraseAuthor' }) {
   const t = useTranslations('conversations');
   const [asking, setAsking] = useState(false);
+  const [attempt] = useState(() => crypto.randomUUID());
   const erase = useMutation({
-    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, confirm: true }),
+    // One key per confirmed attempt, kept across the step-up retry, so a lost answer is retried to the same result.
+    mutationFn: () => client.conversations.eraseContact({ conversationId: conversation.id, ...(messageId ? { messageId } : {}), confirm: true, idempotencyKey: attempt }),
     onSuccess: () => {
       setAsking(false);
       onErased();
@@ -236,16 +238,16 @@ function EraseContactButton({ conversation, onErased }: { conversation: Conversa
   const stepUp = isStepUpRequired(erase.error);
   if (!asking) {
     return (
-      <Button type="button" size="sm" variant="ghost" data-testid="conversation-erase-open" onClick={() => setAsking(true)}>
-        {t('eraseOpen')}
+      <Button type="button" size="sm" variant="ghost" data-testid={messageId ? 'conversation-message-erase-open' : 'conversation-erase-open'} onClick={() => setAsking(true)}>
+        {t(label)}
       </Button>
     );
   }
   return (
-    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid="conversation-erase-confirm">
-      <p>{t('eraseWarn', { channel: conversation.channel.displayName })}</p>
+    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid={messageId ? 'conversation-message-erase-confirm' : 'conversation-erase-confirm'}>
+      <p>{messageId && who ? t('eraseAuthorWarn', { name: who, channel: conversation.channel.displayName }) : t('eraseWarn', { channel: conversation.channel.displayName })}</p>
       <div className="flex gap-2">
-        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid="conversation-erase-yes" onClick={() => erase.mutate()}>
+        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid={messageId ? 'conversation-message-erase-yes' : 'conversation-erase-yes'} onClick={() => erase.mutate()}>
           {t('eraseYes')}
         </Button>
         <Button
@@ -281,6 +283,16 @@ export function ConversationRetentionSetting() {
       void queryClient.invalidateQueries({ queryKey: orpc.conversations.retention.key() });
     },
   });
+  if (current.isError) {
+    return (
+      <section className="space-y-1 rounded-md border border-border p-3 text-sm" data-testid="conversation-retention-error">
+        <ErrorText>{errorMessage(current.error)}</ErrorText>
+        <Button type="button" size="sm" variant="outline" onClick={() => void current.refetch()}>
+          {t('retention.retry')}
+        </Button>
+      </section>
+    );
+  }
   if (!current.data) return null;
   const monthsOf = (m: 6 | 12 | 24 | null) => (m === null ? Number.POSITIVE_INFINITY : m);
   const choose = (next: 6 | 12 | 24 | null) => {
@@ -344,11 +356,13 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   );
 }
 
-function MessageRow({ message: m, detail, members, userId, canWrite, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; contact: string }) {
+function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
-  const author = mine ? (m.authorKind === 'member' ? (m.authorUserId === userId ? t('you') : (members.find((x) => x.userId === m.authorUserId)?.displayName ?? t('member'))) : t('platformSide')) : contact;
+  // A customer message names its own author (in a comment thread the replies are other people's), else the thread's contact.
+  const customer = m.authorName ?? (m.authorTail ? t('anonymous', { tail: m.authorTail }) : contact);
+  const author = mine ? (m.authorKind === 'member' ? (m.authorUserId === userId ? t('you') : (members.find((x) => x.userId === m.authorUserId)?.displayName ?? t('member'))) : t('platformSide')) : customer;
   const settle = useMutation({ mutationFn: (action: 'retry' | 'mark_sent') => client.conversations.settle({ messageId: m.id, action }), onSuccess: refresh });
   const hide = useMutation({ mutationFn: (hidden: boolean) => client.conversations.hide({ messageId: m.id, hidden }), onSuccess: refresh });
   const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed;
@@ -394,6 +408,8 @@ function MessageRow({ message: m, detail, members, userId, canWrite, contact }: 
             </Button>
           )}
         </div>
+        {/* A customer who only replied in this comment thread has no thread of their own to erase from: their message names them. */}
+        {isAdmin && !mine && m.authorTail !== null && detail.conversation.kind === 'comment_thread' && <EraseContactButton conversation={detail.conversation} messageId={m.id} who={customer} onErased={refresh} label="eraseAuthor" />}
         {(settle.error || hide.error) && <ErrorText>{errorMessage(settle.error ?? hide.error)}</ErrorText>}
       </div>
     </li>

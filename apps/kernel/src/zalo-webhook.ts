@@ -17,6 +17,8 @@ export interface ZaloWebhookConfig {
   appId: string;
   // The OA secret key: a credential, never logged or answered.
   oaSecretKey: string;
+  // The key it replaces while a rotation is under way (CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS): a notice signed with either is taken.
+  oaSecretKeyPrevious?: string | undefined;
   // The clock the age of a notice is read against; the real one when absent.
   now?: (() => number) | undefined;
 }
@@ -62,7 +64,7 @@ export type ZaloWebhookOutcome =
   | { status: 503; code: 'BACKLOG' };
 
 export async function acceptZaloWebhook(runtime: Runtime, config: ZaloWebhookConfig, request: { signature: string | undefined; body: Uint8Array }, replays?: ZaloReplayCache): Promise<ZaloWebhookOutcome> {
-  if (!zaloSignatureOk({ body: request.body, header: request.signature, appId: config.appId, oaSecretKey: config.oaSecretKey })) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
+  if (!zaloSignatureOk({ body: request.body, header: request.signature, appId: config.appId, oaSecretKey: config.oaSecretKey, oaSecretKeyPrevious: config.oaSecretKeyPrevious })) return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   let notice: ReturnType<typeof parseZaloNotice>;
   try {
     notice = parseZaloNotice(request.body);

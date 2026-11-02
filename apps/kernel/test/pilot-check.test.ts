@@ -112,6 +112,10 @@ describe('pilot-check settings', () => {
     expect(line(READY)?.message).toContain('docker compose logs worker | grep "cannot open"');
     // A sample value fails as for every optional secret (Codex review): the worker would refuse it at start.
     expect(failing({ ...READY, CREDENTIAL_KEY_PREVIOUS: 'change-me' })).toEqual(['Secrets: CREDENTIAL_KEY_PREVIOUS still has a sample value']);
+    // The previous Zalo OA secret key: a sample value fails, and while it is set a manual item reminds to remove it (#2348).
+    expect(failing({ ...READY, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'change-me' })).toEqual(['Secrets: CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS still has a sample value']);
+    expect(checkEnv({ ...READY, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'an-older-oa-secret-key' }).some((r) => r.item === 'Zalo OA key rotation' && r.status === 'manual')).toBe(true);
+    expect(checkEnv(READY).some((r) => r.item === 'Zalo OA key rotation')).toBe(false);
     expect(failing({ ...READY, CREDENTIAL_KEY: 'not-a-key', CREDENTIAL_KEY_PREVIOUS: previous.toString('hex').slice(2) })).toEqual([
       'Secrets: CREDENTIAL_KEY is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',
       'Secrets: CREDENTIAL_KEY_PREVIOUS is not a 32-byte key as base64 or 64 hex characters (openssl rand -base64 32)',

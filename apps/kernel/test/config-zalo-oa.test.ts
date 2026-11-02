@@ -14,6 +14,14 @@ describe('CHANNEL_ZALO_OA_SECRET_KEY', () => {
     expect(loadConfig({ ...BASE, ...APP, CHANNEL_ZALO_OA_SECRET_KEY: 'oa-secret-key-not-real' }).CHANNEL_ZALO_OA_SECRET_KEY).toBe('oa-secret-key-not-real');
   });
 
+  it('has a previous key for a rotation: only beside the current one, with a key shape, and not the same', () => {
+    const base = { ...BASE, ...APP, CHANNEL_ZALO_OA_SECRET_KEY: 'oa-secret-key-not-real' };
+    expect(loadConfig({ ...base, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'oa-secret-key-older' }).CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS).toBe('oa-secret-key-older');
+    expect(() => loadConfig({ ...BASE, ...APP, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'oa-secret-key-older' })).toThrow(/without CHANNEL_ZALO_OA_SECRET_KEY/);
+    expect(() => loadConfig({ ...base, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'short' })).toThrow(/CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS/);
+    expect(() => loadConfig({ ...base, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'oa-secret-key-not-real' })).toThrow(/same as/);
+  });
+
   it('turns the history read on only by the word true, off by default', () => {
     expect(loadConfig({ ...BASE }).CHANNEL_ZALO_HISTORY).toBe('false');
     expect(loadConfig({ ...BASE, CHANNEL_ZALO_HISTORY: 'true' }).CHANNEL_ZALO_HISTORY).toBe('true');

@@ -39,6 +39,11 @@ describe('the signature of a Zalo notice', () => {
     expect(check(sign(body, TEXT.timestamp), { body: bytes({ ...TEXT, message: { msg_id: 'm-1', text: 'khác' } }) })).toBe(false);
     // No key configured, no body timestamp: never true.
     expect(check(sign(body, TEXT.timestamp), { oaSecretKey: '' })).toBe(false);
+    // A rotation in progress: either key is Zalo's, a third is not (#2348).
+    const rotating = (header: string) => zaloSignatureOk({ body, header, appId: APP.appId, oaSecretKey: 'the-new-key-for-the-test', oaSecretKeyPrevious: OA_KEY });
+    expect(rotating(sign(body, TEXT.timestamp))).toBe(true);
+    expect(rotating(sign(body, TEXT.timestamp, 'the-new-key-for-the-test'))).toBe(true);
+    expect(rotating(sign(body, TEXT.timestamp, 'a-third-key-not-known'))).toBe(false);
     expect(check(sign(bytes({ event_name: 'user_send_text' }), '0'), { body: bytes({ event_name: 'user_send_text' }) })).toBe(false);
   });
 
@@ -76,7 +81,7 @@ describe('what the parser refuses to date, name or carry', () => {
     expect(events({ message: { msg_id: 'm-1', text: 'có\u0000ký tự rỗng' } })[0]?.text).toBe('cóký tự rỗng');
     expect(events({ message: { msg_id: 'm-1', text: 'a'.repeat(30_000) } })[0]?.text).toHaveLength(20_000);
     expect(events({ event_name: 'user_send_image', message: { msg_id: 'm-1', text: 'Ảnh sản phẩm' } })[0]?.text).toBe('Ảnh sản phẩm\n[Khách gửi ảnh]');
-    expect(events({ message: { msg_id: 'm-1', text: '\u0000' } })[0]?.text).toBe('[Khách gửi một tệp đính kèm]');
+    expect(events({ message: { msg_id: 'm-1', text: '\u0000' } })[0]?.text).toBe('[Khách gửi tin nhắn trống]');
   });
 });
 

@@ -21,6 +21,8 @@ export interface ZaloSignatureInput {
   appId: string;
   // The OA secret key of the Zalo app: a credential, never logged, stored or put in an answer.
   oaSecretKey: string;
+  // The key it replaces, while a rotation is under way: a notice signed with either is Zalo's.
+  oaSecretKeyPrevious?: string | undefined;
 }
 
 // Whether the notice is Zalo's. Decides nothing but yes or no, in constant time for the comparison, and never says why it is no.
@@ -30,14 +32,22 @@ export function zaloSignatureOk(input: ZaloSignatureInput): boolean {
   const text = Buffer.from(input.body).toString('utf8');
   const timestamp = TIMESTAMP_IN_BODY.exec(text)?.[1];
   if (!timestamp) return false;
-  const expected = createHash('sha256').update(input.appId + text + timestamp + input.oaSecretKey).digest();
   const given = Buffer.from(mac[1] as string, 'hex');
-  return given.length === expected.length && timingSafeEqual(given, expected);
+  const matches = (key: string): boolean => {
+    const expected = createHash('sha256').update(input.appId + text + timestamp + key).digest();
+    return given.length === expected.length && timingSafeEqual(given, expected);
+  };
+  // Both are always computed, so the time taken says nothing of which key (if any) matched.
+  const current = matches(input.oaSecretKey);
+  const previous = input.oaSecretKeyPrevious ? matches(input.oaSecretKeyPrevious) : false;
+  return current || previous;
 }
 
 // What a customer's attachment is called in the thread: v1 stores text only, so an attachment is a placeholder naming its kind, with no
 // address (a media address is personal data and expires after seven days [S]).
 const CUSTOMER_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  // A text message with no text (#2348): not an attachment, so it is not called one.
+  user_send_text: '[Khách gửi tin nhắn trống]',
   user_send_image: '[Khách gửi ảnh]',
   user_send_file: '[Khách gửi tệp]',
   user_send_sticker: '[Khách gửi nhãn dán]',

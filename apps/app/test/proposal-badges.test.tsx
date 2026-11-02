@@ -70,6 +70,26 @@ describe('the badges of an Inbox row', () => {
     }
   });
 
+  // #2294: a request to open the way to spend on an ad platform has a kind chip of its own and no "matched" badge, since no
+  // check ran on it.
+  it('gives a request about running ads its own kind chip, in vi and en, and no success badge', () => {
+    for (const kind of ['ads.write_enable', 'ads.account_enable', 'ads.cap_set', 'ads.launches_unblock']) {
+      for (const locale of ['vi', 'en'] as const) {
+        const words = catalog(locale).inbox;
+        const html = render({ ...posted, kind, direction: null, signatureStatus: null }, locale);
+        expect(html, `${kind} ${locale}`).toContain(`>${words.adsKind}<`);
+        expect(variantOf(html, words.adsKind), `${kind} ${locale}`).toBe('secondary');
+        expect(html, `${kind} ${locale}`).not.toContain(`>${words.matched}<`);
+        // None of the invoice kinds' chips beside it.
+        for (const other of [words.reversalKind, words.voucherKind, words.journalVoucherKind, words.saleKind]) expect(html, `${kind} ${locale}`).not.toContain(`>${other}<`);
+      }
+    }
+    expect(catalog('vi').inbox.adsKind).toBe('Chạy quảng cáo');
+    expect(catalog('en').inbox.adsKind).toBe('Running ads');
+    // An invoice shows no such chip.
+    for (const locale of ['vi', 'en'] as const) expect(render(posted, locale)).not.toContain(`>${catalog(locale).inbox.adsKind}<`);
+  });
+
   it("words it as the file's chip does", () => {
     expect(catalog('vi').inbox.voided).toBe('Đã hủy (đảo bút toán)');
     expect(catalog('vi').inbox.voided).toBe(catalog('vi').inbox.fileStatus.voided);

@@ -918,7 +918,7 @@ export function AdsPage() {
             </Card>
           )}
           {canManage && metaOffered && <ConnectMeta slug={slug} another />}
-          {canManage && <AdsWriteCard role={role} accounts={list} />}
+          {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">
               {(control) => (

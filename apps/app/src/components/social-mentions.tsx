@@ -105,7 +105,7 @@ export function MentionBox({
         }}
       />
       {matches.length > 0 && (
-        <ul id={listId} role="listbox" aria-label={t('mentionList')} className="absolute z-10 mt-1 max-h-56 w-64 overflow-auto rounded-md border border-border bg-popover p-1 text-sm shadow-md">
+        <ul id={listId} role="listbox" aria-label={t('mentionList')} className="absolute z-10 mt-1 max-h-56 w-64 overflow-auto rounded-md border border-border bg-popover p-1 text-sm">
           {matches.map((m, i) => (
             <li
               key={m.userId}

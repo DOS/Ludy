@@ -503,7 +503,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
           ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
-          ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY } } : {}),
+          ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
