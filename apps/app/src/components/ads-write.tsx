@@ -29,7 +29,13 @@ import { toast } from '../lib/toast.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText, Field } from './ui.tsx';
 
-const refresh = () => Promise.all([queryClient.invalidateQueries({ queryKey: orpc.ads.writeState.key() }), queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() })]);
+// A lowered cap changes the spend flags too.
+const refresh = () =>
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: orpc.ads.writeState.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+  ]);
 
 // A decimal the server will accept as a cap: above zero, at most two decimals (the sandbox and Meta report in whole units and
 // cents). The server checks again.

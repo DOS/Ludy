@@ -1344,10 +1344,34 @@ export const zAgentBudget = z.object({
   monthlyLimit: z.string(),
   warnPercent: z.number().int(),
   hardStop: z.boolean(),
-  // What this month's runs it covers cost so far.
+  // What this month's model calls it covers cost so far (the AI budget meter's ledger, #2382).
   spent: z.string(),
   updatedAt: z.string(),
 });
+
+// The small meter beside Vy's panels (#2382), for every member: where the tightest org or module AI budget stands, in
+// whole percent, with no amounts. aiOn is false when the deployment has no AI endpoint: the core works without it.
+export const zAiMeter = z.object({
+  aiOn: z.boolean(),
+  state: z.enum(['none', 'ok', 'warn', 'stop']),
+  percent: z.number().int().min(0).max(100).nullable(),
+  scope: zAgentScope.nullable(),
+  resetAt: z.string(),
+});
+export type AiMeter = z.infer<typeof zAiMeter>;
+
+// This month's AI use for Settings, owners and admins (#2382): the estimated cost (a decimal string in the deployment's price
+// unit) by feature and by agent. Ids, keys and counts only: never a prompt, a document's text or an answer.
+export const zAiUsageReport = z.object({
+  aiOn: z.boolean(),
+  month: z.string(),
+  resetAt: z.string(),
+  spent: z.string(),
+  calls: z.number().int(),
+  byFeature: z.array(z.object({ feature: z.string(), module: z.string(), calls: z.number().int(), inputTokens: z.number().int(), outputTokens: z.number().int(), cost: z.string() })),
+  byAgent: z.array(z.object({ agentId: zId, name: z.string().nullable(), calls: z.number().int(), cost: z.string() })),
+});
+export type AiUsageReport = z.infer<typeof zAiUsageReport>;
 
 export const zTask = z.object({
   id: zId,

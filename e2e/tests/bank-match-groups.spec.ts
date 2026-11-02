@@ -90,7 +90,7 @@ test('a clean bank match is asked for and approved in one action, then listed wi
     await expect(row).toHaveCount(1);
     await expect(row).toContainText('BN00001');
     await expect(row).toContainText('Đã ghi sổ');
-    await expect(page.getByTestId('matched-how')).toContainText(`Mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn ${NUMBER}`);
+    await expect(page.getByTestId('matched-how')).toContainText(`Ly đề xuất: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn ${NUMBER}`);
     await expect(row.getByRole('button', { name: 'Hoàn tác chứng từ BN00001' })).toBeVisible();
   });
 
