@@ -2,6 +2,16 @@
 
 Ludy is the open-source Business OS (AGPL). It must run with `docker compose up` and no DOS service. Anything DOS-specific belongs in the private Crove Cloud layer, never here.
 
+## Who Ludy is for: OPC and SME, AI-first (owner decisions 2026-10-31 and 2026-11-02)
+
+Ludy serves one-person companies (OPC, including household businesses and solo founders) and small and medium businesses (SMEs) in Vietnam first. The core features they use every week come first, and AI does the work inside each of them. DESIGN.md section 1 says how. Every issue, plan and PR passes this gate. The PO checks it when writing or picking an issue, and the coordinator when accepting a PR.
+
+- **Fit.** It shortens or secures a task that an owner, bookkeeper or salesperson of a small business does at least monthly. A feature that serves mainly large organisations waits in the Icebox even when its design is settled. Examples: several legal entities or branches with their own books, consolidation, SSO or SCIM, territories, custom objects at scale, multi-step approval chains beyond what a small team needs, non-calendar fiscal years, agency or many-client consoles, and scale work for very large installs. When it is unclear, the issue says so and the owner decides; nobody builds it on a guess.
+- **Smallest useful slice.** It works for one person with the defaults and no setup. Settings exist only where a real small business needs a choice. One screen and one flow are better than a configurable framework.
+- **AI part named.** A core feature's acceptance says what the AI coworker reads, sorts, matches, drafts or proposes in that very screen, and how review stays short (batch approval, rules learned from corrections, limits the owner sets). Model calls go through the AI budget meter, and the core keeps working with AI off. AI output stays tainted, and a person approves anything that posts money, sends a message or spends.
+- **AI coworkers.** AI is a coworker, never an "assistant". Vy is the general manager across every app, and each app has its own coworker with a default name the org can change. The roster is in DESIGN.md section 1.1.
+- **Security and compliance stay proportionate.** Tenancy, the ledger's rules, approvals, authentication and data protection are never weakened (see "Picking up work"). Hardening beyond the current milestone's checklist waits, as that section says.
+
 ## Picking up work (GitHub Project "Crove")
 
 - Work comes from the board https://github.com/orgs/DOS/projects/8 (issues in DOS/Ludy). One task = one issue = one worktree = one PR. Split work by feature, not by layer: a task goes end to end (migration, server, contract, UI, tests).
