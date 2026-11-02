@@ -703,6 +703,16 @@ export function createRpcHandler(
         move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
         delete: os.crm.deals.delete.handler(crmCommand('crm.deal.delete')),
       },
+      // The stale-deal rule's next steps (#2381): read them, mark them done or snooze them; the rule itself runs in the worker.
+      nextSteps: {
+        list: os.crm.nextSteps.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.next_step.list', input, { actor, orgId }))),
+        done: os.crm.nextSteps.done.handler(crmCommand('crm.next_step.done')),
+        snooze: os.crm.nextSteps.snooze.handler(crmCommand('crm.next_step.snooze')),
+      },
+      dealSetting: {
+        get: os.crm.dealSetting.get.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal_setting.get', {}, { actor, orgId }))),
+        set: os.crm.dealSetting.set.handler(crmCommand('crm.deal_setting.set')),
+      },
       eventTypes: {
         list: os.crm.eventTypes.list.handler(({ context }) => inCrm(context, (orgId, actor) => runtime.query('crm.event_type.list', {}, { actor, orgId }))),
         create: os.crm.eventTypes.create.handler(crmCommand('crm.event_type.create')),
@@ -2175,6 +2185,12 @@ export function createRpcHandler(
       ),
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
+      ),
+      matchGroups: os.bank.matchGroups.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.match_groups', input, { actor, orgId })),
+      ),
+      matched: os.bank.matched.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.matched', input, { actor, orgId })),
       ),
       openLines: os.bank.openLines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.open_lines', input ?? {}, { actor, orgId })),

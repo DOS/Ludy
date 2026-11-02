@@ -89,8 +89,16 @@ export const INVOICE_CHECK_CODES = [
   // The account of every line (#2091): a warning naming the lines no rule matched, a pass once each has its account.
   'accounts.unclassified',
   'accounts.classified',
+  // Anomaly flags against the vendor's own history (#2380), warnings that never block: its bank account is not one it used
+  // before, its amount is far from its usual, a unit price jumped. The check ids are anomaly_bank, anomaly_amount and
+  // anomaly_price: a proposal with one of them is approved one by one, never in bulk.
+  'anomaly_bank.changed',
+  'anomaly_amount.unusual',
+  'anomaly_price.jump',
 ] as const;
 export type InvoiceCheckCode = (typeof INVOICE_CHECK_CODES)[number];
+// The ids of the anomaly flags start with this (#2380): a proposal that carries one is approved one by one.
+export const ANOMALY_CHECK_PREFIX = 'anomaly';
 
 export const zCheck = z.object({
   id: z.string().max(50),
@@ -102,12 +110,16 @@ export const zCheck = z.object({
 });
 export type Check = z.infer<typeof zCheck>;
 
+// The longest bank account a party reference carries; a longer one on an invoice is dropped, not refused (#2380).
+export const PARTY_BANK_ACCOUNT_MAX = 100;
 export const zPartyRef = z.object({
   name: z.string().max(500),
   taxCode: z.string().max(20).nullable(),
   address: z.string().max(1000).nullable(),
   email: z.string().max(320).nullable(),
   phone: z.string().max(50).nullable(),
+  // The bank account the invoice names for this party (#2380), the history the vendor's next invoice is compared with.
+  bankAccount: z.string().max(PARTY_BANK_ACCOUNT_MAX).nullable().optional(),
 });
 
 // 'unclassified' (#2091): no rule matched the line, so it has no account yet and cannot be approved as it is.
@@ -511,6 +523,8 @@ export const zInboxItem = z.object({
   issueDate: zLocalDate.nullable(),
   failedChecks: z.number().int(),
   warnChecks: z.number().int(),
+  // How many of its checks are anomaly flags against the vendor's history (#2380): such a proposal is not bulk approved.
+  anomalyChecks: z.number().int().nonnegative().optional(),
   // How many lines of an invoice proposal still wait for an account because no rule matched them (#2091); 0 for any
   // other kind. The Inbox's "Chưa phân loại" filter lists the proposals with at least one.
   unclassifiedLines: z.number().int().nonnegative(),
@@ -555,6 +569,22 @@ export const zVoucherLine = z.object({
 });
 export type VoucherLine = z.infer<typeof zVoucherLine>;
 
+// Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
+// description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
+export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
+
+// How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
+// the deterministic matcher, never a model's read), or the person's own choice
+// (`manual`). The server checks a claimed `suggested` against the matcher before it keeps it. `reason` and the invoice are what
+// the matcher found, so the review page can say why in words.
+export const zBankMatchedBy = z.object({
+  kind: z.enum(['suggested', 'manual']),
+  reason: z.enum(BANK_MATCH_REASONS).optional(),
+  invoice: z.object({ series: z.string().max(50), number: z.string().max(50) }).optional(),
+});
+export type BankMatchedBy = z.infer<typeof zBankMatchedBy>;
+
 // The payload of a finance.cash_voucher proposal, built by the server from the request (the party as found, the total
 // computed). finance.voucher.record checks it all again when the proposal is approved.
 export const zCashVoucherProposal = z.object({
@@ -568,6 +598,9 @@ export const zCashVoucherProposal = z.object({
   total: zVoucherAmount,
   // The bank statement line the voucher settles (#326); absent on vouchers entered by hand.
   bankLineId: zId.optional(),
+  // How the voucher's party was found when it was made from a bank line (#2385): the matcher's suggestion or the person's
+  // own choice, as the server checked it when the voucher was asked for.
+  matchedBy: zBankMatchedBy.optional(),
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),

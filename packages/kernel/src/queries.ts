@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { sql } from 'kysely';
 import {
+  ANOMALY_CHECK_PREFIX,
   JOURNAL_VOUCHER_KIND,
   VOUCHER_KIND,
   zCashVoucherProposal,
@@ -209,6 +210,7 @@ function toInboxItem(row: {
     issueDate: payload?.invoice.issueDate ?? voucher?.date ?? null,
     failedChecks: countChecks(payload, 'fail'),
     warnChecks: countChecks(payload, 'warn'),
+    anomalyChecks: payload?.checks.filter((c) => c.id.startsWith(ANOMALY_CHECK_PREFIX)).length ?? 0,
     unclassifiedLines: countUnclassified(payload),
     // As the approval decides: an invoice read from XML whose signature is not verified is unverified (#674).
     signatureStatus: payload
@@ -264,6 +266,8 @@ export const inboxList = defineQuery({
         sql<string | null>`(SELECT a.display_name FROM crove_kernel.agent a WHERE a.org_id = crove_kernel.proposal.org_id AND a.id = crove_kernel.proposal.requested_by_agent)`.as('agent_name'),
         countChecksSql('fail').as('failed_checks'),
         countChecksSql('warn').as('warn_checks'),
+        // The anomaly flags among them (#2380).
+        sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN jsonb_typeof(payload -> 'checks') = 'array' THEN payload -> 'checks' ELSE '[]'::jsonb END) c WHERE c ->> 'id' LIKE ${ANOMALY_CHECK_PREFIX + '%'})`.as('anomaly_checks'),
         // The lines of an invoice proposal no rule matched (#2091), counted as countUnclassified counts them.
         sql<string>`(SELECT count(*) FROM jsonb_array_elements(CASE WHEN kind = ${PURCHASE_KIND} AND jsonb_typeof(payload -> 'lines') = 'array' THEN payload -> 'lines' ELSE '[]'::jsonb END) l WHERE l #>> '{accountRule,source}' = 'unclassified' OR l ->> 'debitAccount' = ${UNCLASSIFIED_ACCOUNT_CODE})`.as('unclassified_lines'),
         // As the approval decides (kernel.proposal.approve): an invoice read from XML whose signature is not verified is
@@ -297,6 +301,7 @@ export const inboxList = defineQuery({
       issueDate: row.issue_date && zLocalDate.safeParse(row.issue_date).success ? row.issue_date : null,
       failedChecks: Number(row.failed_checks),
       warnChecks: Number(row.warn_checks),
+      anomalyChecks: Number(row.anomaly_checks),
       unclassifiedLines: Number(row.unclassified_lines),
       signatureStatus: row.kind === PURCHASE_KIND ? signatureStatusOf(row.signature_status) : null,
       duplicateOf: row.duplicate_of,

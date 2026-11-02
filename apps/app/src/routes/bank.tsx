@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { BankImportResult, BankLine, BankLineStatus, BankLineVoucher, BankRowError } from '@crove/kernel-contract';
+import type { BankImportResult, BankLine, BankLineStatus, BankRowError } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button, buttonVariants } from '@crove/ui/components/button';
@@ -14,11 +14,13 @@ import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { BankMatchGroups } from '../components/bank-match-groups.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Notice, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { canApproveProposals } from '../lib/review.ts';
 import { VoucherFormCard } from './vouchers.tsx';
 import {
   MAX_STATEMENT_BYTES,
@@ -253,87 +255,6 @@ function LineState({ slug, line, canEnter, onEnter }: { slug: string; line: Bank
   );
 }
 
-interface ProposeRun {
-  sending: boolean;
-  done: number;
-  failed: Array<{ date: string; message: string }>;
-}
-
-// Asks for the voucher of every open line whose party its description names (by tax code, or by an invoice of the
-// amount), one inbox.request each, as entering them one by one would (#326, stage 2b). Each stays a proposal for an
-// owner or admin to approve; a line refused (another voucher took it meanwhile, say) does not stop the others.
-function ProposeMatched({ bankAccount, month }: { bankAccount: string; month: string }) {
-  const t = useTranslations('bank');
-  const f = useFormat();
-  // The open lines of the entity chosen in the shell (#1280); each voucher goes to that entity's books.
-  const entity = useChosenEntity();
-  const suggestions = useQuery({ ...orpc.bank.suggestions.queryOptions({ input: { bankAccount, period: month, legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
-  const [run, setRun] = useState<ProposeRun | null>(null);
-  const items = suggestions.data ?? [];
-
-  const proposeAll = async (list: readonly BankLineVoucher[]) => {
-    const state: ProposeRun = { sending: true, done: 0, failed: [] };
-    setRun({ ...state });
-    for (const item of list) {
-      const voucher = item.voucher;
-      const party = item.suggested?.party;
-      if (!voucher || !party) continue;
-      try {
-        await client.inbox.request({
-          command: 'finance.voucher.record',
-          idempotencyKey: crypto.randomUUID(),
-          input: {
-            type: voucher.type,
-            date: voucher.date,
-            cashAccount: item.bankAccount,
-            partyId: party.id,
-            description: voucher.description,
-            lines: [{ account: voucher.counterAccount, amount: voucher.amount }],
-            bankLineId: item.line.id,
-            legalEntityId: entity.legalEntityId,
-          },
-        });
-        state.done += 1;
-      } catch (error) {
-        state.failed.push({ date: voucher.date, message: errorMessage(error) });
-      }
-      setRun({ ...state, failed: [...state.failed] });
-    }
-    setRun({ ...state, sending: false, failed: [...state.failed] });
-    await queryClient.invalidateQueries();
-  };
-
-  if (run) {
-    return (
-      <Alert className="mb-4">
-        <AlertDescription>
-          {run.sending ? <Spinner className="mr-2 inline-block text-current" /> : null}
-          {t('proposedAll', { done: run.done })}
-          {run.failed.map((failure, i) => (
-            <span key={i} className="block text-destructive">
-              {t('proposeFailed', { date: f.date(failure.date), message: failure.message })}
-            </span>
-          ))}
-          {!run.sending && (
-            <button type="button" className="ml-2 text-link underline" onClick={() => setRun(null)}>
-              {t('proposeClose')}
-            </button>
-          )}
-        </AlertDescription>
-      </Alert>
-    );
-  }
-  if (items.length === 0) return null;
-  return (
-    <Card className="mb-4 flex flex-wrap items-center justify-between gap-3 p-4">
-      <p className="text-sm text-muted-foreground">{t('proposeAllHint')}</p>
-      <Button type="button" onClick={() => void proposeAll(items)}>
-        {t('proposeAll', { count: items.length })}
-      </Button>
-    </Card>
-  );
-}
-
 export function BankPage() {
   const t = useTranslations('bank');
   const f = useFormat();
@@ -369,7 +290,15 @@ export function BankPage() {
 
   return (
     <>
-      <PageHeader title={t('title')} subtitle={t('subtitle')} />
+      <PageHeader
+        title={t('title')}
+        subtitle={t('subtitle')}
+        actions={
+          <Link to="/o/$slug/bank/matched" params={{ slug }} className="text-sm text-link hover:underline">
+            {t('matchedLink')}
+          </Link>
+        }
+      />
       {accounts.isLoading ? (
         <TableSkeleton columns={5} />
       ) : accounts.error ? (
@@ -407,7 +336,9 @@ export function BankPage() {
           {canImport && current?.active && (
             <StatementImport key={`${account}:${entity.legalEntityId ?? ''}`} bankAccount={account} onImported={(_result, to) => to && setMonth(to.slice(0, 7))} />
           )}
-          {canImport && /^\d{4}-\d{2}$/.test(month) && <ProposeMatched key={`${account}:${month}`} bankAccount={account} month={month} />}
+          {canImport && /^\d{4}-\d{2}$/.test(month) && (
+            <BankMatchGroups key={`${account}:${month}`} slug={slug} bankAccount={account} month={month} canApprove={canApproveProposals(org.data?.role, org.data?.permissions)} />
+          )}
           {entering && <LineVoucher key={entering.id} slug={slug} line={entering} onClose={() => setEntering(null)} />}
           {lines.isLoading ? (
             <TableSkeleton columns={5} />

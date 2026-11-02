@@ -68,6 +68,11 @@ function Card({
       className={`rounded-lg border border-border bg-card p-3 text-sm ${dragging ? 'opacity-40' : ''} ${dropBefore ? 'border-t-2 border-t-primary' : ''}`}
     >
       <p className="font-medium text-foreground">{deal.title}</p>
+      {deal.followUp && (
+        <Badge variant="warning" className="mt-1" data-testid="follow-up-badge">
+          {t('followUp')}
+        </Badge>
+      )}
       <p className="text-xs text-muted-foreground">{deal.partyName}</p>
       <p className="mt-1 tabular-nums">{formatMoney(deal.amount, locale, deal.currency)}</p>
       {deal.expectedClose && <p className={`text-xs ${overdue ? 'text-destructive' : 'text-muted-foreground'}`}>{t('board.closeOn', { date: deal.expectedClose })}</p>}

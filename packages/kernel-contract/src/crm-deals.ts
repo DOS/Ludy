@@ -38,6 +38,29 @@ export interface PipelineStage {
   position: number;
 }
 
+// The next step an open deal raises when nobody touched it for a while, or when its expected close has passed (#2381, the
+// stale-deal rule of docs/plan/crm.md): a reason code and a day, never a text. A deal shows it as `followUp` while it is open and not
+// snoozed.
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+export type DealNextStepReason = (typeof DEAL_NEXT_STEP_REASONS)[number];
+// After how many days without a change an open deal is stale: the org's setting, between the two, 14 until set.
+export const DEAL_STALE_DAYS_DEFAULT = 14;
+export const DEAL_STALE_DAYS_MIN = 7;
+export const DEAL_STALE_DAYS_MAX = 60;
+// A next step is snoozed for one of these many days.
+export const NEXT_STEP_SNOOZE_DAYS = [3, 7, 14] as const;
+export type NextStepSnoozeDays = (typeof NEXT_STEP_SNOOZE_DAYS)[number];
+// Most next steps one done or snooze action takes: one click and a bulk are the same command, one audit row.
+export const NEXT_STEP_BULK_MAX = 20;
+export const NEXT_STEP_PAGE_SIZE = 50;
+
+export interface DealFollowUp {
+  id: string;
+  reason: DealNextStepReason;
+  // The day the deal was last changed (no_activity) or its expected close (past_close).
+  sinceOn: string;
+}
+
 export interface Deal {
   id: string;
   partyId: string;
@@ -54,6 +77,8 @@ export interface Deal {
   version: number;
   // Whether the caller may delete it: owners and admins any deal, a member the ones they made.
   canDelete: boolean;
+  // The open next step the stale-deal rule raised for it, while it is not snoozed; null otherwise.
+  followUp: DealFollowUp | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -151,6 +176,7 @@ export const zDeal = z.object({
   closedAt: z.string().nullable(),
   version: z.number().int(),
   canDelete: z.boolean(),
+  followUp: z.object({ id: zId, reason: z.enum(DEAL_NEXT_STEP_REASONS), sinceOn: z.string() }).nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -188,3 +214,72 @@ export const zBoard = z.object({ columns: z.array(zBoardColumn) });
 // The board of a saved view (K3, #2227): the same Filter AST of the `crm.deal` scope as the list takes, so one view shows the
 // same deals as cards and as rows. The counts and totals of each column are over the deals the filter leaves.
 export const zBoardQuery = z.strictObject({ filters: zFilterAstShape.optional() });
+
+// The "Việc tiếp theo" list (#2381): the open next steps that are not snoozed, the longest quiet first. `mine` is the caller's own and,
+// for an owner or admin, those of deals nobody owns; `all` is everyone's.
+export const NEXT_STEP_SCOPES = ['mine', 'all'] as const;
+export interface NextStep {
+  id: string;
+  dealId: string;
+  dealTitle: string;
+  partyId: string;
+  partyName: string;
+  amount: string;
+  currency: 'VND';
+  stageName: string;
+  expectedClose: string | null;
+  // Who it is for: the deal's owner when it was raised; null for an unowned deal, which owners and admins read as theirs.
+  assigneeUserId: string | null;
+  reason: DealNextStepReason;
+  sinceOn: string;
+  raisedAt: string;
+}
+export interface NextStepCursor {
+  sinceOn: string;
+  id: string;
+}
+export interface NextStepPage {
+  items: NextStep[];
+  next: NextStepCursor | null;
+  // How many open, unsnoozed next steps there are in each scope, whatever page this is.
+  counts: { mine: number; all: number };
+}
+export const zNextStepCursor = z.strictObject({ sinceOn: zDate, id: zId });
+export const zNextStepListQuery = z.strictObject({
+  scope: z.enum(NEXT_STEP_SCOPES).optional(),
+  cursor: zNextStepCursor.nullable().optional(),
+  limit: z.number().int().min(1).max(NEXT_STEP_PAGE_SIZE).optional(),
+});
+export type NextStepListQuery = z.infer<typeof zNextStepListQuery>;
+export const zNextStep = z.object({
+  id: zId,
+  dealId: zId,
+  dealTitle: z.string(),
+  partyId: zId,
+  partyName: z.string(),
+  amount: zDealAmount,
+  currency: z.literal('VND'),
+  stageName: z.string(),
+  expectedClose: z.string().nullable(),
+  assigneeUserId: zId.nullable(),
+  reason: z.enum(DEAL_NEXT_STEP_REASONS),
+  sinceOn: z.string(),
+  raisedAt: z.string(),
+});
+export const zNextStepPage = z.object({
+  items: z.array(zNextStep),
+  next: zNextStepCursor.nullable(),
+  counts: z.object({ mine: z.number().int(), all: z.number().int() }),
+});
+const zNextStepIds = z.array(zId).min(1).max(NEXT_STEP_BULK_MAX).refine((ids) => new Set(ids).size === ids.length, { message: 'each next step once' });
+// Marks next steps done, or snoozes them for 3, 7 or 14 days; one next step or up to NEXT_STEP_BULK_MAX. Both answer the ids they changed and the ones
+// they left alone (already resolved, or gone with their deal), so a second click on the same row is not an error.
+export const zNextStepDone = z.strictObject({ nextStepIds: zNextStepIds });
+export const zNextStepSnooze = z.strictObject({ nextStepIds: zNextStepIds, days: z.union([z.literal(3), z.literal(7), z.literal(14)]) });
+export const zNextStepChanged = z.object({ changed: z.array(zId), skipped: z.array(zId) });
+export type NextStepChanged = z.infer<typeof zNextStepChanged>;
+
+// The org's setting of the stale-deal rule: after how many days without a change an open deal raises a next step.
+export const zDealSetting = z.object({ staleDays: z.number().int().min(DEAL_STALE_DAYS_MIN).max(DEAL_STALE_DAYS_MAX), isDefault: z.boolean() });
+export type DealSetting = z.infer<typeof zDealSetting>;
+export const zDealSettingSet = z.strictObject({ staleDays: z.number().int().min(DEAL_STALE_DAYS_MIN).max(DEAL_STALE_DAYS_MAX) });
