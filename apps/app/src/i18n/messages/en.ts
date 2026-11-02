@@ -3449,6 +3449,7 @@ export const en = {
     templatesTitle: 'AI agent templates',
     noTemplates: 'This server has no AI agent templates',
     templateMeta: 'Module {module}, max risk {risk}, up to {cap} runs a day',
+    defaultName: 'Default name: {name}. You can rename it in the chart.',
     install: 'Install',
     installed: 'The AI agent and its position were installed.',
     moduleDisabled: 'The {module} module is not enabled on this server (MODULE_DISABLED), so this template cannot be installed.',

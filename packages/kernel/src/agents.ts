@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql, type Transaction } from 'kysely';
 import { z } from 'zod';
-import { tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
+import { defaultCoworkerName, tableWrite, zCheck, zId, type Check } from '@crove/kernel-contract';
 import type { AgentScope, Database, MemberRole, TaskStatus } from '@crove/db';
 import {
   DomainError,
@@ -394,7 +394,8 @@ export const installAgentTemplate = defineCommand({
       .values({
         org_id: ctx.orgId,
         template_key: template.key,
-        display_name: input.displayName ?? template.title,
+        // The module's AI coworker (Ly, My, Thy, Duy, Hy) when the installer gives no name (#2410); the position keeps the title.
+        display_name: input.displayName ?? defaultCoworkerName(template.module) ?? template.title,
         max_risk: template.max_risk,
         daily_run_cap: template.daily_run_cap,
         created_by: userId,

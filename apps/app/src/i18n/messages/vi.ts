@@ -3448,6 +3448,7 @@ export const vi = {
     templatesTitle: 'Mẫu tác tử AI',
     noTemplates: 'Máy chủ này chưa có mẫu tác tử AI nào',
     templateMeta: 'Phân hệ {module}, rủi ro tối đa {risk}, tối đa {cap} lượt mỗi ngày',
+    defaultName: 'Tên mặc định: {name}. Bạn có thể đổi tên trong sơ đồ.',
     install: 'Cài',
     installed: 'Đã cài tác tử AI và vị trí của nó.',
     moduleDisabled: 'Phân hệ {module} chưa được bật trên máy chủ này (MODULE_DISABLED), nên chưa cài được mẫu này.',
