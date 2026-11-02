@@ -26,7 +26,7 @@ function setup(reader: Partial<ConversationReader> | null, options: { budget?: D
         },
       }
     : null;
-  const ai: ConversationAi = { reader: full, budget: options.budget ?? new DraftBudget(), cache: new IntentCache(options.now) };
+  const ai: ConversationAi = { reader: full, intentBudget: options.budget ?? new DraftBudget(), contactBudget: options.budget ?? new DraftBudget(), cache: new IntentCache(options.now) };
   return { ai, calls };
 }
 
@@ -44,7 +44,11 @@ describe('IntentCache', () => {
     // A newer message, another org and another thread are not the same key.
     expect(cache.get(ORG, 'c1', 4)).toBeUndefined();
     expect(cache.get('org-2', 'c1', 3)).toBeUndefined();
-    now += 60 * 60_000 + 1;
+    // No suggestion is kept only for a couple of minutes (the model may simply have skipped the thread), an answered thread for the hour.
+    now += 2 * 60_000 + 1;
+    expect(cache.get(ORG, 'c2', 3)).toBeUndefined();
+    expect(cache.get(ORG, 'c1', 3)).toBe('complaint');
+    now += 60 * 60_000;
     expect(cache.get(ORG, 'c1', 3)).toBeUndefined();
     for (let i = 0; i < 2_100; i += 1) cache.set(ORG, `t${i}`, 1, 'spam');
     expect(cache.get(ORG, 't0', 1)).toBeUndefined();
@@ -101,6 +105,20 @@ describe('suggestIntents', () => {
     mode = 'ok';
     expect(await suggestIntents(ai, ORG, USER, [src('a')])).toEqual({ ai: 'used', suggestions: [{ conversationId: 'a', intent: 'question' }] });
     expect(calls.intents).toHaveLength(3);
+  });
+
+  it('keeps the intent calls and the contact ranking apart: one running does not make the other busy', async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const { ai, calls } = setup({ intents: async (items) => (await held, items.map(() => 'spam' as Intent)), rank: async () => [1, 0] });
+    const running = suggestIntents(ai, ORG, USER, [src('a')]);
+    const ranked = await matchContacts(ai, ORG, USER, { customerName: 'Hoa', phone: [], names: [{ partyId: 'n1', name: 'Hoa A' }, { partyId: 'n2', name: 'Hoa B' }] });
+    expect(ranked.ai).toBe('used');
+    expect(ranked.candidates.map((c) => c.partyId)).toEqual(['n2', 'n1']);
+    release();
+    expect((await running).ai).toBe('used');
+    expect(calls.intents).toHaveLength(1);
+    expect(calls.ranks).toHaveLength(1);
   });
 
   it('answers busy and makes no call when the member has a call running or has used their minute', async () => {

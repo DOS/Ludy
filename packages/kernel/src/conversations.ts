@@ -1568,10 +1568,12 @@ export const conversationContactCandidates = defineQuery({
         : (
             await sql<{ id: string; name: string }>`
               SELECT p.id, p.name FROM crove_kernel.party p
-              WHERE p.org_id = ${ctx.orgId}::uuid AND p.phone IS NOT NULL AND crove_kernel.phone_key(p.phone) = ANY(${keys}::text[])
+              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.phone IS NOT NULL AND crove_kernel.phone_key(p.phone) = ANY(${keys}::text[])
               ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
           ).rows;
     // Words of two letters or more, folded; a one-word name needs that word, a longer one needs two of its words, so "Nguyễn" alone does not match everyone.
+    // The stored search column (its GIN index) narrows the contacts to those with any of the words before a name is folded, so a big address book is not
+    // folded name by name.
     const names =
       thread.identity_name === null
         ? []
@@ -1579,11 +1581,15 @@ export const conversationContactCandidates = defineQuery({
             await sql<{ id: string; name: string }>`
               WITH tok AS (
                 SELECT DISTINCT w FROM pg_catalog.unnest(pg_catalog.string_to_array(crove_kernel.search_fold(${thread.identity_name}), ' ')) AS w WHERE pg_catalog.length(w) >= 2
-              ), need AS (SELECT LEAST(2, pg_catalog.count(*))::int AS n FROM tok)
-              SELECT p.id, p.name FROM crove_kernel.party p JOIN tok ON pg_catalog.strpos(' ' || crove_kernel.search_fold(p.name) || ' ', ' ' || tok.w || ' ') > 0
-              WHERE p.org_id = ${ctx.orgId}::uuid
-              GROUP BY p.id, p.name HAVING pg_catalog.count(*) >= (SELECT n FROM need) AND (SELECT n FROM need) > 0
-              ORDER BY pg_catalog.count(*) DESC, p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX + 3}`.execute(ctx.trx)
+              ), need AS (SELECT LEAST(2, pg_catalog.count(*))::int AS n FROM tok),
+              q AS (SELECT pg_catalog.to_tsquery('pg_catalog.simple', pg_catalog.string_agg(w, ' | ')) AS tsq FROM tok),
+              near AS (
+                SELECT p.id, p.name, crove_kernel.search_fold(p.name) AS folded FROM crove_kernel.party p, q
+                WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.search @@ q.tsq
+              )
+              SELECT near.id, near.name FROM near JOIN tok ON pg_catalog.strpos(' ' || near.folded || ' ', ' ' || tok.w || ' ') > 0
+              GROUP BY near.id, near.name HAVING pg_catalog.count(*) >= (SELECT n FROM need) AND (SELECT n FROM need) > 0
+              ORDER BY pg_catalog.count(*) DESC, near.name, near.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX + 3}`.execute(ctx.trx)
           ).rows;
     const phoneIds = new Set(phone.map((r) => r.id));
     return {

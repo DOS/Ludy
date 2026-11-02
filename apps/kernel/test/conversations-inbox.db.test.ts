@@ -214,6 +214,46 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       await expect(asMember(o.orgId, o.owner, (c) => c.query('SELECT * FROM crove_kernel.conversation_readers($1::uuid)', [r1]))).rejects.toMatchObject({ code: '42501' });
       await expect(workerPool.query('SELECT * FROM crove_kernel.conversation_readers($1::uuid)', [r1])).rejects.toMatchObject({ code: '42501' });
     });
+
+    it('names as readers exactly the staff members the database lets read the thread, whatever their role or channel limit (conversation_readers agrees with conversation_access)', async () => {
+      const o = await org();
+      const second = randomUUID();
+      await rows("INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox', $3, 'Kênh khác', $4)", [o.orgId, second, `acct-${randomUUID().slice(0, 8)}`, o.owner]);
+      await ingest(o, [event('direct', 'ag1', 'Nhắn riêng'), event('comment_thread', 'ag2', 'Bình luận')]);
+      const threads = [await threadOf(o, 'ag1'), await threadOf(o, 'ag2')];
+      const staff = [o.owner, o.admin, o.lan, o.desk];
+      const readersOf = (id: string) =>
+        withClient(workerUrl, async (c) => {
+          await c.query('BEGIN');
+          try {
+            await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+            return (await c.query<{ user_id: string }>('SELECT user_id FROM crove_kernel.conversation_readers($1::uuid)', [id])).rows.map((r) => r.user_id).sort();
+          } finally {
+            await c.query('ROLLBACK').catch(() => {});
+          }
+        });
+      const canRead = async (id: string) => {
+        const ok: string[] = [];
+        for (const user of staff) if ((await asMember(o.orgId, user, (c) => c.query('SELECT 1 FROM crove_kernel.conversation WHERE id = $1', [id]))).rowCount === 1) ok.push(user);
+        return ok.sort();
+      };
+      const agree = async () => {
+        for (const id of threads) expect(await readersOf(id), `thread ${id}`).toEqual(await canRead(id));
+      };
+      // Roles alone: owners and admins read both, the desk member both, a plain member the comment thread only.
+      await agree();
+      expect(await readersOf(threads[0] as string)).toEqual(sorted(o.owner, o.admin, o.desk));
+      expect(await readersOf(threads[1] as string)).toEqual(sorted(o.owner, o.admin, o.lan, o.desk));
+      // A member limited to another channel reads neither thread, and neither side says otherwise.
+      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.lan, second, o.owner]);
+      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, second, o.owner]);
+      await agree();
+      expect(await readersOf(threads[1] as string)).toEqual(sorted(o.owner, o.admin));
+      // Limited to the thread's own channel, they read it again.
+      await rows('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [o.orgId, o.desk, o.connectionId, o.owner]);
+      await agree();
+      expect(await readersOf(threads[0] as string)).toEqual(sorted(o.owner, o.admin, o.desk));
+    });
   });
 
   describe('the "you are replying" marker and the availability switch', () => {
