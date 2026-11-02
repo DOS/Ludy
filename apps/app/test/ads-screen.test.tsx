@@ -543,13 +543,13 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
       // The cap in force is 5,000,000: the same amount, the same with decimals, and a larger one are not a lowering.
       for (const amount of ['5000000', '5000000.00', '5000000.5', '6000000']) {
         const html = form({ initial: { mode: 'lower', amount } });
-        expect(buttonBefore(html, en.ads.write.capLower), amount).toContain('disabled');
+        expect(buttonBefore(html, en.ads.write.capLower), amount).toContain('disabled=""');
         expect(html, amount).toContain(en.ads.write.capNotBelow);
       }
       // A lower amount is allowed, and nothing is said.
       for (const amount of ['4999999.99', '1']) {
         const html = form({ initial: { mode: 'lower', amount } });
-        expect(buttonBefore(html, en.ads.write.capLower), amount).not.toContain('disabled');
+        expect(buttonBefore(html, en.ads.write.capLower), amount).not.toContain('disabled=""');
         expect(html, amount).not.toContain(en.ads.write.capNotBelow);
       }
       // Asking for a raise is another matter: the same amount is not judged here (the server says it is not a raise).
