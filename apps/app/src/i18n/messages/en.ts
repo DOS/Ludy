@@ -182,6 +182,19 @@ export const en = {
       bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
     },
   },
+  financeToday: {
+    proposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
+    proposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
+    proposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
+    checksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
+    checksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
+    originalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',
+    originalsFlagged: '{count, plural, one {# original differs} other {# originals differ}} from the posted invoice or cannot be verified',
+    statementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',
+    bankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
+    vatDue: 'VAT return for {period}: due on {date}',
+    periodClose: 'Lock the books of {period} before {date}',
+  },
   notifications: {
     title: 'Work notifications',
     subtitle: 'Proposals waiting for your approval, files that could not be read, bank statements and tax portal checks to look at, and periods whose VAT return is due but are not locked.',
@@ -6907,6 +6920,7 @@ export const en = {
       },
     },
     finance: {
+      today: 'Read what needs you in accounting today',
       account: {
         create: 'Add a ledger account',
         update: 'Edit a ledger account',

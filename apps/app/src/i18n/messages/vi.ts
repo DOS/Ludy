@@ -180,6 +180,19 @@ export const vi = {
       bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
     },
   },
+  financeToday: {
+    proposalsVendor: '{count, plural, other {# hóa đơn}} của {party} chờ bạn duyệt',
+    proposalsCustomer: '{count, plural, other {# hóa đơn}} bán cho {party} chờ bạn duyệt',
+    proposalsOther: '{count, plural, other {# chứng từ}} chờ bạn duyệt',
+    checksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
+    checksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
+    originalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',
+    originalsFlagged: '{count, plural, other {# hóa đơn gốc}} khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
+    statementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',
+    bankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
+    vatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
+    periodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
+  },
   notifications: {
     title: 'Thông báo công việc',
     subtitle: 'Đề xuất chờ bạn duyệt, tệp không đọc được, sao kê và đối chiếu cổng thuế cần xem lại, kỳ sắp đến hạn nộp tờ khai mà chưa khóa sổ.',
@@ -6906,6 +6919,7 @@ export const vi = {
       },
     },
     finance: {
+      today: 'Xem việc kế toán cần bạn hôm nay',
       account: {
         create: 'Thêm tài khoản kế toán',
         update: 'Sửa tài khoản kế toán',
