@@ -132,6 +132,11 @@ describe('guardedFetch', () => {
     expect(resolved).toBe(0);
   });
 
+  it('refuses plain http when only https is allowed, on the first request and on a redirect', async () => {
+    expect(await code(guardedFetch(`${base}/page`, opts({ httpsOnly: true })))).toBe('invalid_url');
+    expect((await guardedFetch(`${base}/page`, opts({ httpsOnly: false }))).status).toBe(200);
+  });
+
   it('checks every redirect: inside addresses, metadata and other schemes are refused', async () => {
     expect(await code(guardedFetch(`${base}/inside`, opts()))).toBe('blocked');
     expect(await code(guardedFetch(`${base}/metadata`, opts()))).toBe('blocked');

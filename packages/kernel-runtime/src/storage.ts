@@ -442,12 +442,12 @@ export class LocalDiskStore implements BlobStore {
   }
 
   // Removes temporary files that a crashed put left behind, once they are older than maxAgeMs. It looks only where
-  // put writes (inbound/, org/<org_id>/ and export/<org_id>/) and only at the names put gives its temporary files,
+  // put writes (inbound/, org/<org_id>/, export/<org_id>/ and conversation/<org_id>/) and only at the names put gives its temporary files,
   // so it never touches a blob. Returns how many it removed. Called once at startup.
   async sweepTempFiles(maxAgeMs: number = STALE_TEMP_AGE_MS): Promise<number> {
     const cutoff = Date.now() - maxAgeMs;
     const dirs = [join(this.root, 'inbound')];
-    for (const top of ['org', 'export']) {
+    for (const top of ['org', 'export', 'conversation']) {
       for (const org of await entries(join(this.root, top))) {
         if (org.isDirectory() && UUID_DIR.test(org.name)) dirs.push(join(this.root, top, org.name));
       }

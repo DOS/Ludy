@@ -819,7 +819,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return config;
 }
 
-// The extract jobs this worker runs at once: EXTRACT_WORKER_CONCURRENCY, else 4 or the sandbox's slots if fewer (#2119).
 // The domains CHANNEL_ZALO_MEDIA_HOSTS names, in lower case; none when it is unset.
 export function zaloMediaHostsOf(value: string | undefined): string[] {
   return (value ?? '')
@@ -828,6 +827,7 @@ export function zaloMediaHostsOf(value: string | undefined): string[] {
     .filter((h) => h !== '');
 }
 
+// The extract jobs this worker runs at once: EXTRACT_WORKER_CONCURRENCY, else 4 or the sandbox's slots if fewer (#2119).
 export function extractConcurrency(config: Pick<Config, 'EXTRACT_WORKER_CONCURRENCY' | 'EXTRACT_CONCURRENCY'>): number {
   return config.EXTRACT_WORKER_CONCURRENCY ?? Math.min(DEFAULT_EXTRACT_WORKER_CONCURRENCY, config.EXTRACT_CONCURRENCY);
 }

@@ -222,13 +222,31 @@ export const conversationIngest = defineCommand({
   },
 });
 
+// The pending rows of a message's images (CV5c, #2357), each with a blob key of its own reserved now.
+async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string }>): Promise<void> {
+  await ctx.trx
+    .insertInto('crove_kernel.conversation_attachment')
+    .values(
+      images.map((a) => ({
+        org_id: ctx.orgId,
+        message_id: messageId,
+        channel_connection_id: connectionId,
+        kind,
+        source_url: a.url,
+        storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
+        created_at: ctx.now,
+      })),
+    )
+    .execute();
+}
+
 const customerLock = (ctx: CommandContext, provider: string, externalUserId: string) =>
   sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.conversation.customer:${ctx.orgId}:${provider}:${externalUserId}`}, 0))`.execute(ctx.trx);
 
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
-    .select(['id', 'body', 'platform_removed_at'])
+    .select(['id', 'body', 'direction', 'platform_removed_at'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
     .where('external_message_id', '=', event.messageId)
@@ -244,6 +262,11 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .execute();
       // The images go with the body (their blobs are queued for deletion by the delete trigger).
       await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
+    } else if (!event.removed && !existing.platform_removed_at && existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
+      // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
+      // the message has none, so a redelivery does not add them again.
+      const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
+      if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
     }
     return 'duplicates';
   }
@@ -455,22 +478,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // The images a customer's message carries (CV5c, #2357): a pending row each, with the platform's address (personal data, cleared when the
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
   // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
-  if (event.direction === 'in' && event.attachments && event.attachments.length > 0) {
-    await ctx.trx
-      .insertInto('crove_kernel.conversation_attachment')
-      .values(
-        event.attachments.map((a) => ({
-          org_id: ctx.orgId,
-          message_id: stored.id,
-          channel_connection_id: connectionId,
-          kind: event.kind,
-          source_url: a.url,
-          storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
-          created_at: ctx.now,
-        })),
-      )
-      .execute();
-  }
+  if (event.direction === 'in' && event.attachments && event.attachments.length > 0) await addAttachments(ctx, stored.id, connectionId, event.kind, event.attachments);
 
   const inbound = event.direction === 'in';
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
@@ -1701,7 +1709,8 @@ export const conversationProfileApply = defineCommand({
 // audit row, an event, a log or a job.
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Hands the worker one pending image to fetch: marks it handed out (the relay asks again after a few minutes if the job did not finish) and
+// Hands the worker one pending image to fetch: marks it handed out (the relay asks again after a few minutes if the job did not finish; only a
+// fetch that failed and may be asked again counts as a try, in attachment_record) and
 // emits the event the queue takes, with ids only. R2 and external, like a reply: the call it leads to reaches the platform's media host.
 export const conversationAttachmentRequest = defineCommand({
   name: 'kernel.conversation.attachment_request',
@@ -1724,7 +1733,7 @@ export const conversationAttachmentRequest = defineCommand({
     if (!connection || connection.status !== 'active') return { queued: false };
     await ctx.trx
       .updateTable('crove_kernel.conversation_attachment')
-      .set({ requested_at: ctx.now, fetch_attempts: sql<number>`fetch_attempts + 1` })
+      .set({ requested_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.attachmentId)
       .execute();
@@ -1810,6 +1819,14 @@ export const conversationAttachmentRecord = defineCommand({
     }
     if (!input.retry) {
       await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('id', '=', input.attachmentId).execute();
+    } else {
+      // A fetch that was made and may be asked again: it counts as a try (five at most; a hand-out that no job ran does not).
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_attachment')
+        .set({ fetch_attempts: sql<number>`fetch_attempts + 1` })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.attachmentId)
+        .execute();
     }
     ctx.audit({ attachment_id: input.attachmentId, outcome: input.retry ? 'retry' : 'dropped', code: input.code });
     return { recorded: true };

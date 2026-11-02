@@ -77,7 +77,7 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
   let media: Server;
   let mediaBase = '';
   const answers = new Map<string, { status?: number; type?: string; body: Buffer | string; location?: string }>();
-  const egress = { allowed: () => true, anyPort: true };
+  const egress = { allowed: () => true, anyPort: true, httpsOnly: false };
 
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const, sessionId: randomUUID() });
   const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
@@ -249,6 +249,17 @@ suite('customers’ images as files bound to their message on PostgreSQL (CV5c, 
       const before = (await attachments(o)).length;
       await ingest(o, [imageEvent('t4', ['https://cdn.zdn.vn/c.png'], { direction: 'out' })]);
       expect((await attachments(o)).length).toBe(before);
+    });
+
+    it('adds the images of a message stored before its notice brought them (the history read stores the text alone), once', async () => {
+      const o = await org();
+      const text = imageEvent('late', [], { attachments: undefined });
+      await ingest(o, [text]);
+      expect(await attachments(o)).toEqual([]);
+      const withImage = { ...text, attachments: [{ kind: 'image' as const, url: 'https://cdn.zdn.vn/late.png' }] };
+      await ingest(o, [withImage]);
+      await ingest(o, [withImage]);
+      expect((await attachments(o)).map((a) => a.state)).toEqual(['pending']);
     });
 
     it('fetches an image from an allowed host, checks its first bytes, stores it under the reserved key and clears the address', async () => {

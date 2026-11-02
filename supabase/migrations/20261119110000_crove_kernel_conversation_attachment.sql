@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_attachment (
   size_bytes integer CHECK (size_bytes IS NULL OR size_bytes BETWEEN 1 AND 20971520),
   width integer CHECK (width IS NULL OR width BETWEEN 1 AND 100000),
   height integer CHECK (height IS NULL OR height BETWEEN 1 AND 100000),
-  -- When the relay last handed it to the worker, and how many times.
+  -- When the relay last handed it to the worker, and how many fetches failed in a way worth asking again (five drop the image).
   requested_at timestamptz,
   fetch_attempts integer NOT NULL DEFAULT 0 CHECK (fetch_attempts >= 0),
   created_at timestamptz NOT NULL DEFAULT now(),

@@ -48,7 +48,7 @@ export function mediaHostsOf(provider: string, configured: readonly string[] | u
 export interface FetchConversationImageOptions {
   hosts: readonly string[];
   // Tests only: the resolver, the address check and any port (a local test server), which the guard otherwise never allows.
-  egress?: Pick<EgressOptions, 'resolve' | 'allowed' | 'anyPort'>;
+  egress?: Pick<EgressOptions, 'resolve' | 'allowed' | 'anyPort' | 'httpsOnly'>;
 }
 
 export async function fetchConversationImage(url: string, options: FetchConversationImageOptions): Promise<ConversationImage> {
@@ -61,6 +61,7 @@ export async function fetchConversationImage(url: string, options: FetchConversa
       maxRedirects: MAX_REDIRECTS,
       accept: 'image/jpeg, image/png, image/webp, image/gif',
       hostAllowed: (host) => mediaHostAllowed(host, options.hosts),
+      httpsOnly: true,
       ...options.egress,
     });
   } catch (error) {

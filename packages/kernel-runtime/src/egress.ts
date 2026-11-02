@@ -94,6 +94,8 @@ export interface EgressOptions {
   // A host allowlist, asked for the host of the first request and of every redirect: a host it refuses is 'blocked' before anything is
   // resolved or sent. For a fetch that may go only to one platform's own media hosts (a customer's image, #2357).
   hostAllowed?: (host: string) => boolean;
+  // Only https, on the first request and on every redirect: an allowed host that redirects to plain http is refused as 'invalid_url'.
+  httpsOnly?: boolean;
 }
 
 export interface EgressResponse {
@@ -131,6 +133,7 @@ function remaining(deadline: number): number {
 async function addressFor(url: URL, options: EgressOptions, deadline: number): Promise<{ address: string; family: number }> {
   const allowed = options.allowed ?? isPublicAddress;
   const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
+  if (options.httpsOnly && url.protocol !== 'https:') throw new EgressError('invalid_url', 'only https');
   if (options.hostAllowed && !options.hostAllowed(host)) throw new EgressError('blocked', 'not an allowed host');
   const family = isIP(host);
   if (family !== 0) {
