@@ -31,6 +31,9 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
   let pool: pg.Pool;
   let db: Db;
   let rt: Runtime;
+  // The worker's own login, the one that runs the system commands (it alone may read member addresses).
+  let workerPool: pg.Pool;
+  let workerRt: Runtime;
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
   const system = { type: 'system' as const, component: 'kernel.today_mail' };
 
@@ -69,7 +72,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
   }
   const set = (o: Org, user: string, enabled: boolean) => rt.execute<{ enabled: boolean }>('kernel.today_mail.set', { enabled }, { actor: asUser(user), orgId: o.orgId });
   const get = (o: Org, user: string) => rt.query<{ enabled: boolean }>('kernel.today_mail.get', {}, { actor: asUser(user), orgId: o.orgId });
-  const send = (o: Org) => rt.execute<{ state: string; day: string; members: number; mails: number; suppressed: number }>('kernel.today_mail.send', {}, { actor: system, orgId: o.orgId });
+  const send = (o: Org) => workerRt.execute<{ state: string; day: string; members: number; mails: number; suppressed: number }>('kernel.today_mail.send', {}, { actor: system, orgId: o.orgId });
   const sendAt = async (o: Org, at: Date) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(at);
@@ -116,6 +119,8 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
+    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands], queries: [...kernelQueries({ inboundDomain: null })] });
   });
 
   afterEach(() => {
@@ -124,6 +129,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
 
   afterAll(async () => {
     await pool?.end();
+    await workerPool?.end();
     if (!ADMIN) return;
     const root = new pg.Client({ connectionString: ADMIN });
     await root.connect();
