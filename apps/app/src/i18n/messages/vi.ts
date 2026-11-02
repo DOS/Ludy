@@ -951,6 +951,7 @@ export const vi = {
     addNote: 'Thêm ghi chú',
     eraseOpen: 'Xóa khách này',
     eraseAuthor: 'Xóa khách đã viết tin này',
+    eraseAuthorWarn: 'Xóa {name}, người đã viết tin này, và mọi tin họ đã viết trên {channel} (cả hội thoại họ mở và các câu trả lời của họ trong bình luận của người khác), cùng tên họ. Không khôi phục được.',
     eraseWarn: 'Xóa mọi hội thoại của khách này trên {channel}: tin nhắn, ghi chú nội bộ và tên khách. Không khôi phục được. Nếu khách nhắn lại, một hội thoại mới sẽ mở.',
     eraseYes: 'Xóa vĩnh viễn',
     eraseStepUp: 'xóa dữ liệu của một khách',

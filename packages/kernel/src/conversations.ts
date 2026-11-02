@@ -210,6 +210,9 @@ export const conversationIngest = defineCommand({
   },
 });
 
+const customerLock = (ctx: CommandContext, provider: string, externalUserId: string) =>
+  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.conversation.customer:${ctx.orgId}:${provider}:${externalUserId}`}, 0))`.execute(ctx.trx);
+
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
@@ -230,6 +233,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     }
     return 'duplicates';
   }
+  // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
+  // that was in flight is checked against the tombstone after the erasure commits, not before it.
+  await customerLock(ctx, provider, event.contact.id);
   // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
   // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
   const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
@@ -591,12 +597,19 @@ export const conversationGet = defineQuery({
     if (!row) throw notFound();
     const messages = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
-      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
+      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'author_identity_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
       .orderBy('seq', 'desc')
       .limit(CONVERSATION_MESSAGES_MAX)
       .execute();
+    // Who wrote each customer message: in a comment thread the replies are other people's, not the thread's contact.
+    const authorIds = [...new Set(messages.map((m) => m.author_identity_id).filter((id): id is string => id !== null))];
+    const authors = new Map<string, { name: string | null; tail: string }>();
+    if (authorIds.length > 0) {
+      const found = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['id', 'display_name', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
+      for (const a of found) authors.set(a.id, { name: a.display_name, tail: a.external_user_id.slice(-4) });
+    }
     const notes = await ctx.trx
       .selectFrom('crove_kernel.conversation_note')
       .select(['id', 'author_user_id', 'body', 'created_at'])
@@ -635,6 +648,8 @@ export const conversationGet = defineQuery({
           direction: m.direction as 'in' | 'out',
           authorKind: m.author_kind as 'contact' | 'member' | 'system',
           authorUserId: m.author_user_id,
+          authorName: m.author_identity_id ? (authors.get(m.author_identity_id)?.name ?? null) : null,
+          authorTail: m.author_identity_id ? (authors.get(m.author_identity_id)?.tail ?? null) : null,
           body: m.body,
           attachments: m.attachments,
           sentAt: m.sent_at.toISOString(),
@@ -1382,6 +1397,11 @@ export const conversationEraseContact = defineCommand({
       if (!m?.author_identity_id) throw new DomainError('MESSAGE_NOT_FOUND', 404, 'Không tìm thấy tin của khách này');
       subject = m.author_identity_id;
     }
+    // The customer's lock first: an intake of theirs in flight finishes before this reads or deletes, and one that starts later sees the tombstone.
+    const subjectRow = subject
+      ? await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst()
+      : undefined;
+    if (subjectRow) await customerLock(ctx, subjectRow.provider, subjectRow.external_user_id);
     const filter = subject ? sql`c.identity_id = ${subject}::uuid` : sql`c.id = ${conversation.id}::uuid`;
     const erased = await deleteThreads(ctx, filter);
     if (subject) {
@@ -1393,7 +1413,7 @@ export const conversationEraseContact = defineCommand({
       erased.messages += Number(others.rows[0]?.n ?? 0);
       // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises
       // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
-      const who = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst();
+      const who = subjectRow;
       if (who) {
         const h = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
         const key = `erased:${h.rows[0]?.h ?? ''}`;

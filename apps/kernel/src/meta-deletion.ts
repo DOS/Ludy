@@ -52,9 +52,13 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
     // Two sides with two codes (the person's earlier request is still open on one of them): the answer is the Ads side's code and the
     // conversations side's request is linked to it, so the status page of either code waits for both sides before it says "done".
     if (second && second !== first) {
-      await runtime.orgless(async (db) => {
-        await sql`SELECT crove_kernel.conversation_deletion_link(${second}, ${first})`.execute(db);
+      const linked = await runtime.orgless(async (db) => {
+        const { rows } = await sql<{ linked: boolean }>`SELECT crove_kernel.conversation_deletion_link(${second}, ${first}) AS linked`.execute(db);
+        return rows[0]?.linked === true;
       });
+      // Not linked (the request closed meanwhile, or too many codes hang on it): the answer is not given, Meta asks again, and the next
+      // request finds the sides as they are, so the page is never tied to one side only.
+      if (!linked) return { status: 503, code: 'DELETION_BACKLOG' };
     }
     return { status: 200, code: first };
   } catch (error) {
@@ -73,7 +77,7 @@ export interface MetaDeletionStatus {
 }
 
 // What the status page shows for a code: the request is complete when every side that holds it is, and unknown when none does.
-export async function metaDeletionStatus(runtime: Runtime, code: string, adsInstalled: boolean): Promise<MetaDeletionStatus | null> {
+export async function metaDeletionStatus(runtime: Runtime, code: string): Promise<MetaDeletionStatus | null> {
   if (!/^[0-9a-f]{32}$/.test(code)) return null;
   return runtime.orgless(async (db) => {
     const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null; ads_codes: string[] }>`
@@ -81,12 +85,12 @@ export async function metaDeletionStatus(runtime: Runtime, code: string, adsInst
     // The Ads side holds the code itself or, when the two sides differ, any of the codes the conversations request is linked to.
     const adsCodes = kernel.rows[0]?.ads_codes ?? [code];
     const adsRows: Array<{ requested_at: Date; completed_at: Date | null; accounts: number | null }> = [];
-    if (adsInstalled) {
-      for (const adsCode of adsCodes) {
-        const found = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-          SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db);
-        if (found.rows[0]) adsRows.push(found.rows[0]);
-      }
+    // Always asked, installed or not: an Ads request queued before the module was turned off is still open and nobody finishes it, and the
+    // page must not call that deletion handled.
+    for (const adsCode of adsCodes) {
+      const found = await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
+        SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db);
+      if (found.rows[0]) adsRows.push(found.rows[0]);
     }
     const k = kernel.rows[0];
     if (!k && adsRows.length === 0) return null;
@@ -126,11 +130,15 @@ export function renderMetaDeletionStatus(status: MetaDeletionStatus | null): str
                 vi: 'Yêu cầu đã được xử lý: Ludy không tìm thấy trang nào được liên kết với tài khoản của bạn. Nếu bạn đã kết nối một trang cho một tổ chức, hãy nhờ chủ sở hữu tổ chức xóa dữ liệu hội thoại hoặc ngắt kết nối trang đó.',
                 en: 'The request has been handled: Ludy found no page linked to your account. If you connected a page for an organization, ask its owner to erase the conversation data or disconnect the page.',
               }
-          : adsDone || convDone
+          : adsDone && convDone
             ? {
                 vi: 'Dữ liệu bạn đã cấp quyền cho Ludy đã được xóa: số liệu quảng cáo và tài khoản quảng cáo, tin nhắn và bình luận của khách trên các trang đã kết nối, và mã truy cập của chúng đã bị hủy.',
                 en: 'The data you granted to Ludy has been deleted: ad figures and ad accounts, customers\u2019 messages and comments on the connected pages, and their access tokens destroyed.',
               }
+            : adsDone
+              ? { vi: 'Số liệu quảng cáo, nhật ký cập nhật và các tài khoản quảng cáo bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của chúng đã bị hủy.', en: 'The ad figures, update logs and ad accounts you granted to Ludy have been deleted, and their access tokens destroyed.' }
+              : convDone
+                ? { vi: 'Tin nhắn và bình luận của khách trên các trang bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của các trang đó đã bị hủy.', en: 'The customers\u2019 messages and comments on the pages you granted to Ludy have been deleted, and the pages\u2019 access tokens destroyed.' }
             : {
                 vi: 'Yêu cầu đã được xử lý: Ludy không tìm thấy tài khoản quảng cáo hay trang nào được liên kết với tài khoản của bạn. Nếu bạn đã kết nối một trang cho một tổ chức, hãy nhờ chủ sở hữu tổ chức xóa dữ liệu hội thoại hoặc ngắt kết nối trang đó.',
                 en: 'The request has been handled: Ludy found no ad account or page linked to your account. If you connected a page for an organization, ask its owner to erase the conversation data or disconnect the page.',

@@ -116,6 +116,10 @@ export const zConversationMessage = z.strictObject({
   direction: z.enum(MESSAGE_DIRECTIONS),
   authorKind: z.enum(MESSAGE_AUTHOR_KINDS),
   authorUserId: zId.nullable(),
+  // The customer who wrote it, by the name the platform gave or the tail of their id: in a comment thread each reply has its own author,
+  // who is not always the thread's contact. Null for the org's own messages.
+  authorName: z.string().nullable(),
+  authorTail: z.string().nullable(),
   body: z.string(),
   attachments: z.array(zId),
   sentAt: z.iso.datetime({ offset: true }),
@@ -211,6 +215,8 @@ export type ConversationRetention = z.infer<typeof zConversationRetention>;
 // `messageId`: a customer message of that thread whose author is the person to erase (a customer who only replied in someone else's
 // comment thread has no thread of their own to start from); without it, the thread's own customer.
 export const zConversationEraseContact = z.strictObject({ conversationId: zId, messageId: zId.optional(), confirm: z.literal(true) });
+// The route takes an idempotency key too (it travels in the call's options, never in the command's input): a retry after a lost answer
+// returns the first result instead of a false not-found.
 export const zConversationErased = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
 export type ConversationErased = z.infer<typeof zConversationErased>;
 // The worker's retention purge of one org, in batches of threads, and the erasure of one connection's conversations that Meta's

@@ -155,7 +155,8 @@ BEGIN
   IF FOUND THEN
     RETURN v_code;
   END IF;
-  IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_kernel.conversation_deletion_request LIMIT 100001) s) > 100000 THEN
+  -- Only open requests count: completed ones are dropped by conversation_deletion_complete after 90 days, and must not lock the callback.
+  IF (SELECT pg_catalog.count(*) FROM (SELECT 1 FROM crove_kernel.conversation_deletion_request r WHERE r.completed_at IS NULL LIMIT 100001) s) > 100000 THEN
     RAISE EXCEPTION 'CONVERSATION_DELETION_BACKLOG' USING ERRCODE = '53400';
   END IF;
   INSERT INTO crove_kernel.conversation_deletion_request (code, user_hash) VALUES (p_code, p_user_hash) ON CONFLICT DO NOTHING;
@@ -173,17 +174,26 @@ CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_status(p_code text
 RETURNS TABLE (requested_at timestamptz, completed_at timestamptz, connections integer, ads_codes text[])
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
   -- ads_codes: the codes the Ads side of this person's request can carry: the code asked about (both sides may share it) and every linked one.
-  SELECT r.requested_at, r.completed_at, r.connections, CASE WHEN r.code = p_code THEN ARRAY[p_code] || r.sibling_codes ELSE ARRAY[p_code] END
+  SELECT r.requested_at, r.completed_at, r.connections, CASE WHEN r.code = p_code THEN ARRAY[p_code] || r.sibling_codes ELSE r.sibling_codes END
   FROM crove_kernel.conversation_deletion_request r WHERE (r.code = p_code OR p_code = ANY (r.sibling_codes)) AND p_code ~ '^[0-9a-f]{32}$'
 $$;
 
 -- Links the Ads side's code to this side's open request (API login only), when the two differ.
+-- True when the code is linked to the open request (or already was); false when it could not be (no open request, or 20 codes linked).
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_link(p_code text, p_sibling_code text)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_n integer;
+BEGIN
   UPDATE crove_kernel.conversation_deletion_request r SET sibling_codes = pg_catalog.array_append(r.sibling_codes, p_sibling_code)
   WHERE r.code = p_code AND r.completed_at IS NULL AND p_code ~ '^[0-9a-f]{32}$' AND p_sibling_code ~ '^[0-9a-f]{32}$' AND p_sibling_code <> p_code
-    AND NOT (p_sibling_code = ANY (r.sibling_codes)) AND pg_catalog.cardinality(r.sibling_codes) < 20
-$$;
+    AND NOT (p_sibling_code = ANY (r.sibling_codes)) AND pg_catalog.cardinality(r.sibling_codes) < 20;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  IF v_n > 0 THEN
+    RETURN true;
+  END IF;
+  RETURN EXISTS (SELECT 1 FROM crove_kernel.conversation_deletion_request r WHERE r.code = p_code AND p_sibling_code = ANY (r.sibling_codes));
+END $$;
 
 -- The worker's claim: for each open request that is due, one row per connection of an org that is not closed that the request's
 -- hash granted, and one row with null ids for a request that names none. Nothing is deleted here (a worker that dies leaves

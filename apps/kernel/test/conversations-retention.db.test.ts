@@ -12,7 +12,7 @@ import { sandboxNoticeBody } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationEvent, ConversationRetention } from '@crove/kernel-contract';
+import type { ConversationDetail, ConversationEvent, ConversationRetention } from '@crove/kernel-contract';
 import { CredentialVault, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { purgeExpiredConversations, runConversationDeletions, runConversationIntake } from '../src/conversations-worker.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from '../src/meta-deletion.ts';
@@ -350,6 +350,44 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     });
   });
 
+  describe('who wrote a message', () => {
+    it('names each reply’s own author, not the thread’s contact, and erases that author from their reply', async () => {
+      const o = await org();
+      const opened = await thread(o, 'who-1', 'Y mở bình luận', 'u-y9');
+      await thread(o, 'who-1', 'X trả lời', 'u-x9');
+      const read = async () => (await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: opened }, { actor: asUser(o.owner), orgId: o.orgId })).messages;
+      const before = await read();
+      expect(before.map((m) => [m.body, m.authorTail])).toEqual([['Y mở bình luận', 'u-y9'], ['X trả lời', 'u-x9']]);
+      // Erasure from X's reply, whatever its state (a removed reply keeps its author too, so the screen offers it).
+      const [reply] = await rows<{ id: string }>("SELECT id FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 AND body = 'X trả lời'", [o.orgId, opened]);
+      expect(reply?.id).toBeDefined();
+      const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: opened, messageId: reply?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      expect(res.messages).toBe(1);
+      expect((await read()).map((m) => m.body)).toEqual(['Y mở bình luận']);
+    });
+  });
+
+  describe('the status page words', () => {
+    it('says what each side did by its own count, and does not claim a side that matched nothing', () => {
+      const at = new Date();
+      const page = (accounts: number | null, connections: number | null) => renderMetaDeletionStatus({ requestedAt: at, completedAt: at, accounts, connections });
+      expect(page(2, 0)).toContain('Số liệu quảng cáo');
+      expect(page(2, 0)).not.toContain('tin nhắn và bình luận');
+      expect(page(0, 3)).toContain('Tin nhắn và bình luận của khách');
+      expect(page(0, 3)).not.toContain('quảng cáo');
+      expect(page(2, 3)).toContain('số liệu quảng cáo và tài khoản quảng cáo, tin nhắn và bình luận');
+      expect(page(0, 0)).toContain('không tìm thấy');
+    });
+
+    it('does not link a code to a request that is closed, and says so', async () => {
+      const code = randomBytes(16).toString('hex');
+      const done = randomBytes(16).toString('hex');
+      await pool.query('SELECT crove_kernel.conversation_deletion_enqueue($1, $2)', [code, 'a'.repeat(64)]);
+      await workerPool.query('SELECT crove_kernel.conversation_deletion_complete($1, 0)', [code]);
+      expect((await pool.query('SELECT crove_kernel.conversation_deletion_link($1, $2) AS linked', [code, done])).rows[0].linked).toBe(false);
+    });
+  });
+
   describe('Meta’s one data deletion callback', () => {
     const signed = (userId: string, secret = SECRET, issuedAt = Math.floor(Date.now() / 1000)) => {
       const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: issuedAt, user_id: userId })).toString('base64url');
@@ -390,8 +428,8 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await acceptMetaDeletion(api, { conversations: SECRET }, form(signed('7001')))).toEqual({ status: 200, code });
       expect(await requests()).toBe(before + 1);
       // The status page says it is being handled until the worker has run.
-      expect(await metaDeletionStatus(api, code, false)).toMatchObject({ completedAt: null });
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(api, code, false))).toContain('đang được xử lý');
+      expect(await metaDeletionStatus(api, code)).toMatchObject({ completedAt: null });
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(api, code))).toContain('đang được xử lý');
 
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
       expect(await threads(a)).toEqual([]);
@@ -401,14 +439,14 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       // The connection no longer holds a credential, and its row stays for the books.
       const [conn] = await rows<{ status: string }>('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [a.orgId, a.connectionId]);
       expect(conn?.status).not.toBe('active');
-      expect(await metaDeletionStatus(api, code, false)).toMatchObject({ connections: 2 });
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(api, code, false))).toContain('đã được xóa');
+      expect(await metaDeletionStatus(api, code)).toMatchObject({ connections: 2 });
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(api, code))).toContain('đã được xóa');
       // The audit row names the connection and counts, not the comment.
       const audit = JSON.stringify((await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_connection'", [a.orgId]))[0]?.detail);
       expect(audit).not.toContain('Bình luận ở org a');
       // Run again, nothing changes (idempotent), and an unknown code has no page.
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBe(0);
-      expect(await metaDeletionStatus(api, '0'.repeat(32), false)).toBeNull();
+      expect(await metaDeletionStatus(api, '0'.repeat(32))).toBeNull();
       expect(renderMetaDeletionStatus(null)).toContain('Không tìm thấy');
     });
 
@@ -434,8 +472,8 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
     it('answers a person who granted nothing, with a completed request of none', async () => {
       const code = ((await acceptMetaDeletion(rt, { conversations: SECRET }, form(signed('7999')))) as { code: string }).code;
       expect(await runConversationDeletions({ runtime: worker, workerDb })).toBeGreaterThanOrEqual(1);
-      expect(await metaDeletionStatus(rt, code, false)).toMatchObject({ connections: 0 });
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, false))).toContain('không tìm thấy trang nào');
+      expect(await metaDeletionStatus(rt, code)).toMatchObject({ connections: 0 });
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code))).toContain('không tìm thấy trang nào');
     });
 
     it('fans a request out to the Ads side and the conversation side under one code when one app serves both', async () => {
@@ -449,11 +487,11 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await rows('SELECT 1 FROM crove_kernel.conversation_deletion_request WHERE code = $1', [code])).toHaveLength(1);
       // Complete only when both sides are: the conversation side finishes first, the page still says it is being handled.
       await runConversationDeletions({ runtime: worker, workerDb });
-      expect(await metaDeletionStatus(rt, code, true)).toMatchObject({ completedAt: null });
+      expect(await metaDeletionStatus(rt, code)).toMatchObject({ completedAt: null });
       await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [code]);
-      expect(await metaDeletionStatus(rt, code, true)).toMatchObject({ connections: 1, accounts: 0 });
-      expect((await metaDeletionStatus(rt, code, true))?.completedAt).not.toBeNull();
-      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code, true))).toContain('đã được xóa');
+      expect(await metaDeletionStatus(rt, code)).toMatchObject({ connections: 1, accounts: 0 });
+      expect((await metaDeletionStatus(rt, code))?.completedAt).not.toBeNull();
+      expect(renderMetaDeletionStatus(await metaDeletionStatus(rt, code))).toContain('đã được xóa');
       // A different app on each side: a request signed by one secret reaches only that side.
       const second = await acceptMetaDeletion(rt, { ads: 'the-ads-app-secret', conversations: SECRET }, form(signed('8002')));
       const code2 = (second as { code: string }).code;
@@ -474,11 +512,11 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(conv?.code).not.toBe(adsCode);
       // The conversation side finishes first: either code still says it is being handled, until the Ads side is done too.
       await runConversationDeletions({ runtime: worker, workerDb });
-      expect(await metaDeletionStatus(rt, adsCode, true)).toMatchObject({ completedAt: null });
-      expect(await metaDeletionStatus(rt, conv?.code as string, true)).toMatchObject({ completedAt: null });
+      expect(await metaDeletionStatus(rt, adsCode)).toMatchObject({ completedAt: null });
+      expect(await metaDeletionStatus(rt, conv?.code as string)).toMatchObject({ completedAt: null });
       await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [adsCode]);
-      expect((await metaDeletionStatus(rt, adsCode, true))?.completedAt).not.toBeNull();
-      expect((await metaDeletionStatus(rt, conv?.code as string, true))?.completedAt).not.toBeNull();
+      expect((await metaDeletionStatus(rt, adsCode))?.completedAt).not.toBeNull();
+      expect((await metaDeletionStatus(rt, conv?.code as string))?.completedAt).not.toBeNull();
     });
 
     it('is reached through the one URL, signed with the Pages app’s secret, rate limited and answered with the status page', async () => {

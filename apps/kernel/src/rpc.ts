@@ -1836,7 +1836,7 @@ export function createRpcHandler(
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
-      eraseContact: os.conversations.eraseContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.erase_contact', input, { actor, orgId }))),
+      eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
       sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
           // The intake is shared by every org, so a demo comment is limited per org: thirty a minute.

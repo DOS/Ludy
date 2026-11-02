@@ -953,6 +953,7 @@ export const en = {
     addNote: 'Add note',
     eraseOpen: 'Erase this customer',
     eraseAuthor: 'Erase the customer who wrote this message',
+    eraseAuthorWarn: "Erase {name}, who wrote this message, and everything they wrote on {channel} (the conversations they opened and their replies in other people's comment threads), with their name. This cannot be undone.",
     eraseWarn: "Erase every conversation of this customer on {channel}: messages, internal notes and the customer's name. This cannot be undone. If the customer writes again, a new conversation opens.",
     eraseYes: 'Erase for good',
     eraseStepUp: "erase one customer's data",

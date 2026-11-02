@@ -1417,7 +1417,7 @@ export const contract = {
     // admins, with a fresh second factor).
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
-    eraseContact: oc.input(zConversationEraseContact).output(zConversationErased),
+    eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.

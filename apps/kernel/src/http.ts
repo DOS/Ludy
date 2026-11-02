@@ -786,7 +786,7 @@ export function createHttpApp(deps: HttpDeps) {
       const limited = take(c);
       if (limited) return limited;
       try {
-        const status = await metaDeletionStatus(runtime, c.req.query('code') ?? '', adsInstalled);
+        const status = await metaDeletionStatus(runtime, c.req.query('code') ?? '');
         c.header('cache-control', 'no-store');
         c.header('x-robots-tag', 'noindex');
         return c.html(renderMetaDeletionStatus(status), status ? 200 : 404);
