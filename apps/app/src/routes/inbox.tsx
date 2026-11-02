@@ -21,7 +21,7 @@ import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from 
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
 import { SM_UP, useMediaQuery } from '../lib/media.ts';
-import { browserCodec, needsShrink, preparePhoto } from '../lib/photo.ts';
+import { browserCodec, needsShrink, preparePhotos } from '../lib/photo.ts';
 import { useReviewShortcuts } from '../lib/review-shortcuts.ts';
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
@@ -326,7 +326,7 @@ export function InboxPage() {
       return;
     }
     setPreparing(true);
-    void Promise.all(chosen.map((file) => preparePhoto(file, browserCodec)))
+    void preparePhotos(chosen, browserCodec)
       .then((prepared) => intake.start(prepared))
       .finally(() => setPreparing(false));
   }

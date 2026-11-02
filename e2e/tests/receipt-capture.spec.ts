@@ -65,7 +65,7 @@ test('photograph receipts on a phone: the camera opens, each photo is its own fi
 
   const files = () =>
     sql<{ filename: string; content_type: string; size_bytes: string }>(
-      `SELECT f.filename, f.content_type, f.size_bytes::text FROM crove_kernel.file f JOIN crove_kernel.tenant t ON t.org_id = f.org_id WHERE t.slug = :'slug' ORDER BY f.created_at, f.filename`,
+      `SELECT f.filename, f.content_type, f.size_bytes::text FROM crove_kernel.file f JOIN crove_kernel.tenant t ON t.org_id = f.org_id WHERE t.slug = :'slug' ORDER BY f.filename`,
       { slug },
     );
 
