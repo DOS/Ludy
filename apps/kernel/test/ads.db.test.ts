@@ -1756,11 +1756,19 @@ suite('ads on PostgreSQL (#2217)', () => {
         await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
         const after = await flagsOf();
         expect(after.map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
-        expect(after.find((f) => f.kind === 'pace')).toEqual({ kind: 'pace', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 });
-        expect(after.find((f) => f.kind === 'day')).toEqual({ kind: 'day', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' });
+        expect(after.find((f) => f.kind === 'pace')).toEqual({ kind: 'pace', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', skippedAccounts: 0, cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 });
+        expect(after.find((f) => f.kind === 'day')).toEqual({ kind: 'day', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', skippedAccounts: 0, period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' });
         // A cap above the projection and above the day's spend raises neither (a raised cap is the latest row of its key).
         await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '300000', 'VND', $3), ($1, 'account', $2, 'daily', '9000', 'VND', $3)`);
         expect((await flagsOf()).map((f) => f.kind)).toEqual(['cpr']);
+        // The 1st of the next month: yesterday is the last day of November, which the loader must read (it starts at the month of yesterday), so
+        // a day over its share is flagged on that day too; no pace is judged on the 1st.
+        for (let d = 10; d <= 30; d++) await seed('account', 'acct', 'Cờ chi tiêu', `2026-11-${String(d).padStart(2, '0')}`, '10000', null);
+        await row(`UPDATE crove_ads.ad_account SET synced_through = '2026-11-30' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        const firstOfMonth = ((await api.query('ads.flags', { now: '2026-12-01T05:00:00.000Z' }, { actor: asOutsider(), orgId: otherOrgId })) as Array<Record<string, unknown>>).filter((f) => f.adAccountId === mine);
+        expect(firstOfMonth.map((f) => f.kind)).toEqual(['day']);
+        expect(firstOfMonth[0]).toMatchObject({ day: '2026-11-30', spend: '10000', ratio: '2.00' });
         // A flag moves nothing: the cap rows and the account's flags of running ads are as they were.
         expect(await row(`SELECT write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine])).toEqual([{ write_enabled: false }]);
       });

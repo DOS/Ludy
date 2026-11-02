@@ -62,12 +62,15 @@ export function dailyShare(cap: { period: 'daily' | 'monthly'; amount: Decimal.V
   return cap.period === 'daily' ? new Decimal(cap.amount) : new Decimal(cap.amount).div(daysInMonth);
 }
 
-// A day that spent more than `factor` times its share; the ratio (spend over share, two decimals) or null.
-export function dayOverShare(input: { spend: Decimal.Value; share: Decimal.Value; factor: Decimal.Value }): string | null {
-  const share = new Decimal(input.share);
+// A day that spent more than `factor` times its share of a cap; the ratio (spend over share, two decimals, rounded up so a flag never
+// reads as the threshold it is above) or null. Decided by cross-multiplication, so a monthly cap that does not divide evenly by the days of
+// the month is not rounded before it is compared.
+export function dayOverShare(input: { spend: Decimal.Value; cap: { period: 'daily' | 'monthly'; amount: Decimal.Value }; daysInMonth: number; factor: Decimal.Value }): string | null {
+  const days = input.cap.period === 'daily' ? new Decimal(1) : new Decimal(input.daysInMonth);
   const spend = new Decimal(input.spend);
-  if (!share.gt(0) || !spend.gt(share.times(input.factor))) return null;
-  return spend.div(share).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+  const amount = new Decimal(input.cap.amount);
+  if (!amount.gt(0) || !spend.times(days).gt(amount.times(input.factor))) return null;
+  return spend.times(days).div(amount).toDecimalPlaces(2, Decimal.ROUND_UP).toFixed(2);
 }
 
 export interface DayFigure {
@@ -85,42 +88,61 @@ export interface CprJump {
   historyDays: number;
 }
 
-function median(values: Decimal[]): Decimal {
-  const sorted = [...values].sort((a, b) => a.cmp(b));
+// A day's cost per result as the fraction it is (spend over results), so the median and the comparison are exact.
+interface Fraction {
+  num: Decimal;
+  den: Decimal;
+}
+
+// The median of fractions, as a fraction: the middle one, or the mean of the two middle ones for an even count.
+function medianOf(values: readonly Fraction[]): Fraction {
+  const sorted = [...values].sort((a, b) => a.num.times(b.den).cmp(b.num.times(a.den)));
   const mid = sorted.length >> 1;
-  return sorted.length % 2 === 1 ? (sorted[mid] as Decimal) : (sorted[mid - 1] as Decimal).plus(sorted[mid] as Decimal).div(2);
+  if (sorted.length % 2 === 1) return sorted[mid] as Fraction;
+  const a = sorted[mid - 1] as Fraction;
+  const b = sorted[mid] as Fraction;
+  return { num: a.num.times(b.den).plus(b.num.times(a.den)), den: a.den.times(b.den).times(2) };
 }
 
 // The cost per result of the last 3 days (ending at `lastDay`) against the median of the daily cost per result of the 14 days before
 // them. Only days with results count for the median; too few results in the last days or too few days with results before them is not
-// enough to judge, so no flag. Currency-neutral: the caller names the currency the figures are in.
+// enough to judge, so no flag. Above the factor times the median, never at it: decided by cross-multiplication (no division is rounded
+// before the comparison), and the ratio is rounded up so a flag never reads as the threshold it is above. Currency-neutral: the caller
+// names the currency the figures are in.
 export function cprJump(input: { figures: readonly DayFigure[]; lastDay: string; currency: string; thresholds: FlagThresholds }): CprJump | null {
   const recentFrom = addDays(input.lastDay, -(CPR_RECENT_DAYS - 1));
   const historyFrom = addDays(recentFrom, -CPR_HISTORY_DAYS);
   let recentSpend = new Decimal(0);
   let recentResults = new Decimal(0);
-  const daily: Decimal[] = [];
+  const daily: Fraction[] = [];
   for (const figure of input.figures) {
     const results = figure.results === null ? new Decimal(0) : new Decimal(figure.results);
     if (figure.day >= recentFrom && figure.day <= input.lastDay) {
       recentSpend = recentSpend.plus(figure.spend);
       recentResults = recentResults.plus(results);
     } else if (figure.day >= historyFrom && figure.day < recentFrom && results.gt(0)) {
-      daily.push(new Decimal(figure.spend).div(results));
+      daily.push({ num: new Decimal(figure.spend), den: results });
     }
   }
   if (recentResults.lt(input.thresholds.cprMinResults) || daily.length < input.thresholds.cprMinHistoryDays) return null;
-  const recentCost = recentSpend.div(recentResults);
-  const medianCost = median(daily);
-  if (!medianCost.gt(0) || !recentCost.gt(medianCost.times(input.thresholds.cprFactor))) return null;
+  const median = medianOf(daily);
+  if (!median.num.gt(0)) return null;
+  // recentSpend / recentResults > factor x median.num / median.den, all positive.
+  const left = recentSpend.times(median.den);
+  const right = median.num.times(recentResults);
+  if (!left.gt(right.times(input.thresholds.cprFactor))) return null;
   return {
-    recentCost: text(recentCost, input.currency),
-    medianCost: text(medianCost, input.currency),
-    ratio: recentCost.div(medianCost).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2),
+    recentCost: text(recentSpend.div(recentResults), input.currency),
+    medianCost: text(median.num.div(median.den), input.currency),
+    ratio: left.div(right).toDecimalPlaces(2, Decimal.ROUND_UP).toFixed(2),
     recentResults: recentResults.toDecimalPlaces(4).toFixed(),
     historyDays: daily.length,
   };
 }
+
+// The first day of the account-level figures the flags read: the start of the month of yesterday, which is at or before the start of the
+// month of today (on the 1st, yesterday is the last day of the month before and is the day to judge).
+export const accountDaysFrom = (today: string): string => monthStartOf(addDays(today, -1));
 
 // An amount as text in the currency's own number of decimals.
 export const flagAmount = (value: Decimal.Value, currency: string): string => text(new Decimal(value), currency);
@@ -201,7 +223,10 @@ export function evaluateFlags(input: FlagInput, now: Date, thresholds: FlagThres
     const scoped = judged.filter((j) => j.account.currency === cap.currency && (cap.scope === 'org' || j.account.id === cap.adAccountId));
     if (scoped.length === 0) continue;
     const account = cap.scope === 'account' ? (scoped[0] as Judged).account : null;
-    const base = { scope: cap.scope, adAccountId: account?.id ?? null, accountName: account?.name ?? null, currency: cap.currency };
+    // The accounts of the cap's currency (all of the org's for an org cap) that were not judged because they have not read yesterday yet or have
+    // no figures: the org's flag is about the others, and says how many were left out.
+    const skippedAccounts = cap.scope === 'org' ? input.accounts.filter((a) => a.currency === cap.currency && !judged.some((j) => j.account.id === a.id)).length : 0;
+    const base = { scope: cap.scope, adAccountId: account?.id ?? null, accountName: account?.name ?? null, currency: cap.currency, skippedAccounts };
     if (cap.period === 'monthly') {
       const paced = scoped.filter((j): j is Judged & { pace: MonthPace } => j.pace !== null);
       if (paced.length > 0) {
@@ -221,18 +246,25 @@ export function evaluateFlags(input: FlagInput, now: Date, thresholds: FlagThres
       }
     }
     const first = scoped[0] as Judged;
-    const share = dailyShare(cap, daysInMonthOf(first.yesterday));
+    const daysInMonth = daysInMonthOf(first.yesterday);
+    const share = dailyShare(cap, daysInMonth);
     const spend = scoped.reduce((sum, j) => sum.plus(j.yesterdaySpend), new Decimal(0));
-    const ratio = dayOverShare({ spend, share, factor: thresholds.dayFactor });
+    const ratio = dayOverShare({ spend, cap, daysInMonth, factor: thresholds.dayFactor });
     if (ratio !== null) {
       day.push({ kind: 'day', ...base, period: cap.period, cap: flagAmount(cap.amount, cap.currency), share: flagAmount(share, cap.currency), day: first.yesterday, spend: flagAmount(spend, cap.currency), ratio });
     }
   }
   const cpr: AdsFlag[] = [];
-  const campaignsOf = new Map<string, Map<string, { name: string; figures: DayFigure[] }>>();
+  type Campaign = { name: string; nameDay: string; figures: DayFigure[] };
+  const campaignsOf = new Map<string, Map<string, Campaign>>();
   for (const row of input.campaignDays) {
-    const campaigns = campaignsOf.get(row.adAccountId) ?? new Map<string, { name: string; figures: DayFigure[] }>();
-    const campaign = campaigns.get(row.campaignId) ?? { name: row.campaignName, figures: [] };
+    const campaigns = campaignsOf.get(row.adAccountId) ?? new Map<string, Campaign>();
+    const campaign = campaigns.get(row.campaignId) ?? { name: row.campaignName, nameDay: row.day, figures: [] };
+    // The name is the latest one the campaign carried (a rename inside the days read), whatever the order the rows come in.
+    if (row.day > campaign.nameDay) {
+      campaign.name = row.campaignName;
+      campaign.nameDay = row.day;
+    }
     campaign.figures.push({ day: row.day, spend: row.spend, results: row.results });
     campaigns.set(row.campaignId, campaign);
     campaignsOf.set(row.adAccountId, campaigns);

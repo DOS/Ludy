@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The spend-pace and cost-per-result flags of the Ads screen (issue #2378): owners and admins read them, because they show spend. The
-// query loads the figures (the accounts the caller reads, the caps in force, the account's days of this month and the campaign days of the
-// last 17) and hands them to the pure evaluation in flags.ts. It writes nothing and calls no model: a flag moves no money and changes no
-// campaign, and the same figures always give the same flags.
+// query loads the figures (the accounts the caller reads, the caps in force, the account-level days from the start of the month of
+// yesterday and the campaign days of the last 18) and hands them to the pure evaluation in flags.ts. It writes nothing and calls no model:
+// a flag moves no money and changes no campaign, and the same figures always give the same flags.
 import { z } from 'zod';
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
 import type { AdsFlag } from '@crove/kernel-contract';
 import { defineQuery } from '@crove/kernel-runtime';
 import { addDays, todayIn } from './domain.ts';
-import { CPR_HISTORY_DAYS, CPR_RECENT_DAYS, evaluateFlags, monthStartOf, type FlagCap } from './flags.ts';
+import { CPR_HISTORY_DAYS, CPR_RECENT_DAYS, accountDaysFrom, evaluateFlags, type FlagCap } from './flags.ts';
 
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -38,33 +38,35 @@ export const adsFlags = defineQuery({
     const caps = [...latest.values()];
     const todays = judgeable.map((a) => todayIn(a.time_zone as string, now));
     const earliestToday = todays.reduce((min, d) => (d < min ? d : min));
-    const monthFrom = todays.map(monthStartOf).reduce((min, d) => (d < min ? d : min));
+    const accountFrom = todays.map(accountDaysFrom).reduce((min, d) => (d < min ? d : min));
     const ids = judgeable.map((a) => a.id);
+    // One read for the accounts' days and one for the campaigns' days, both joined to the account on its legal entity too (the index of the
+    // days leads with the account and its entity).
     const accountDays = (
       await ctx.trx
-        .selectFrom('crove_ads.ad_spend_day')
-        .select(['ad_account_id', 'day', sql<string>`spend::text`.as('spend')])
-        .where('org_id', '=', ctx.orgId)
-        .where('level', '=', 'account')
-        .where('ad_account_id', 'in', ids)
-        .where('day', '>=', monthFrom)
+        .selectFrom('crove_ads.ad_spend_day as d')
+        .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
+        .select(['d.ad_account_id', 'd.day', sql<string>`d.spend::text`.as('spend')])
+        .where('d.org_id', '=', ctx.orgId)
+        .where('d.level', '=', 'account')
+        .where('d.ad_account_id', 'in', ids)
+        .where('d.day', '>=', accountFrom)
         .execute()
     ).map((r) => ({ adAccountId: r.ad_account_id, day: day(r.day) as string, spend: r.spend }));
     // The campaigns' days: the last days judged and the days before them that make the median, for the accounts that chose a result.
     const campaignFrom = addDays(earliestToday, -(1 + CPR_RECENT_DAYS - 1 + CPR_HISTORY_DAYS + 1));
-    const campaignDays: Array<{ adAccountId: string; campaignId: string; campaignName: string; day: string; spend: string; results: string | null }> = [];
-    for (const a of judgeable) {
-      if (a.result_kind === null) continue;
-      const rows = await ctx.trx
-        .selectFrom('crove_ads.ad_spend_day')
-        .select(['external_object_id', 'object_name', 'day', sql<string>`spend::text`.as('spend'), sql<string | null>`(results ->> ${a.result_kind})`.as('result')])
-        .where('org_id', '=', ctx.orgId)
-        .where('level', '=', 'campaign')
-        .where('ad_account_id', '=', a.id)
-        .where('day', '>=', campaignFrom)
-        .execute();
-      for (const r of rows) campaignDays.push({ adAccountId: a.id, campaignId: r.external_object_id, campaignName: r.object_name, day: day(r.day) as string, spend: r.spend, results: r.result });
-    }
+    const campaignDays = (
+      await ctx.trx
+        .selectFrom('crove_ads.ad_spend_day as d')
+        .innerJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'd.org_id').onRef('a.id', '=', 'd.ad_account_id').onRef('a.legal_entity_id', '=', 'd.legal_entity_id'))
+        .select(['d.ad_account_id', 'd.external_object_id', 'd.object_name', 'd.day', sql<string>`d.spend::text`.as('spend'), sql<string | null>`(d.results ->> a.result_kind)`.as('result')])
+        .where('d.org_id', '=', ctx.orgId)
+        .where('d.level', '=', 'campaign')
+        .where('d.ad_account_id', 'in', ids)
+        .where('a.result_kind', 'is not', null)
+        .where('d.day', '>=', campaignFrom)
+        .execute()
+    ).map((r) => ({ adAccountId: r.ad_account_id, campaignId: r.external_object_id, campaignName: r.object_name, day: day(r.day) as string, spend: r.spend, results: r.result }));
     return evaluateFlags(
       {
         accounts: accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, timeZone: a.time_zone, resultKind: a.result_kind, syncedThrough: day(a.synced_through) })),

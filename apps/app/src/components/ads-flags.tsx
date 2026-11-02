@@ -14,6 +14,13 @@ export function AdsFlagsCard() {
   const f = useFormat();
   const flags = useQuery(orpc.ads.flags.queryOptions());
   const list = flags.data ?? [];
+  if (flags.isError) {
+    return (
+      <p className="text-sm text-muted-foreground" role="status">
+        {t('error')}
+      </p>
+    );
+  }
   if (list.length === 0) return null;
   return (
     <section aria-labelledby="ads-flags-title" className="space-y-2">

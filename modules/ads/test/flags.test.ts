@@ -2,7 +2,7 @@
 // The ads module's deterministic flags (issue #2378): the pace of the month against a cap, a day over its share of a cap, and the jump of a
 // campaign's cost per result against its trailing median. Pure and in decimal.
 import { describe, expect, it } from 'vitest';
-import { CPR_HISTORY_DAYS, DEFAULT_FLAG_THRESHOLDS, cprJump, dailyShare, dayOfMonth, dayOverShare, daysInMonthOf, evaluateFlags, flagAmount, monthPace, monthStartOf, paceAboveCap, type DayFigure, type FlagInput } from '../src/flags.ts';
+import { CPR_HISTORY_DAYS, accountDaysFrom, DEFAULT_FLAG_THRESHOLDS, cprJump, dailyShare, dayOfMonth, dayOverShare, daysInMonthOf, evaluateFlags, flagAmount, monthPace, monthStartOf, paceAboveCap, type DayFigure, type FlagInput } from '../src/flags.ts';
 import { addDays } from '../src/domain.ts';
 
 describe('the days of a month', () => {
@@ -10,6 +10,15 @@ describe('the days of a month', () => {
     expect(monthStartOf('2026-11-20')).toBe('2026-11-01');
     expect(dayOfMonth('2026-11-20')).toBe(20);
     expect([daysInMonthOf('2026-11-05'), daysInMonthOf('2026-12-31'), daysInMonthOf('2027-02-10'), daysInMonthOf('2028-02-10')]).toEqual([30, 31, 28, 29]);
+  });
+});
+
+describe('the days the flags read', () => {
+  it('start at the beginning of the month of yesterday, so the last day of a month is read on the 1st', () => {
+    expect(accountDaysFrom('2026-12-01')).toBe('2026-11-01');
+    expect(accountDaysFrom('2027-01-01')).toBe('2026-12-01');
+    expect(accountDaysFrom('2026-11-10')).toBe('2026-11-01');
+    expect(accountDaysFrom('2026-03-01')).toBe('2026-02-01');
   });
 });
 
@@ -67,12 +76,21 @@ describe('a day over its share of a cap', () => {
     expect(dailyShare({ period: 'monthly', amount: '29000000' }, 29).toFixed()).toBe('1000000');
   });
 
-  it('flags above the factor, never at it, and gives the ratio', () => {
-    expect(dayOverShare({ spend: '1600000', share: '1000000', factor: '1.5' })).toBe('1.60');
-    expect(dayOverShare({ spend: '1500000', share: '1000000', factor: '1.5' })).toBeNull();
-    expect(dayOverShare({ spend: '1500001', share: '1000000', factor: '1.5' })).toBe('1.50');
-    expect(dayOverShare({ spend: '900000', share: '1000000', factor: '1.5' })).toBeNull();
-    expect(dayOverShare({ spend: '5', share: '0', factor: '1.5' })).toBeNull();
+  it('flags above the factor, never at it, and gives the ratio rounded up', () => {
+    const daily = (spend: string) => dayOverShare({ spend, cap: { period: 'daily', amount: '1000000' }, daysInMonth: 30, factor: '1.5' });
+    expect(daily('1600000')).toBe('1.60');
+    expect(daily('1500000')).toBeNull();
+    // 1.500001 times its share: above the factor, and the ratio never reads as the threshold it is above.
+    expect(daily('1500001')).toBe('1.51');
+    expect(daily('900000')).toBeNull();
+    expect(dayOverShare({ spend: '5', cap: { period: 'daily', amount: '0' }, daysInMonth: 30, factor: '1.5' })).toBeNull();
+  });
+
+  it('does not round a monthly cap that does not divide evenly before it compares', () => {
+    // 100 over 30 days is 3.333... a day: 5 is exactly 1.5 times it, so no flag; 5.01 is above.
+    const monthly = (spend: string) => dayOverShare({ spend, cap: { period: 'monthly', amount: '100' }, daysInMonth: 30, factor: '1.5' });
+    expect(monthly('5')).toBeNull();
+    expect(monthly('5.01')).toBe('1.51');
   });
 });
 
@@ -92,7 +110,8 @@ describe('the cost per result against its trailing median', () => {
 
   it('flags only above the factor, never at it', () => {
     expect(cprJump({ figures: [...history(10, '100000', '100'), ...recent('150000', '100')], lastDay, currency: 'VND', thresholds })).toBeNull();
-    expect(cprJump({ figures: [...history(10, '100000', '100'), ...recent('150100', '100')], lastDay, currency: 'VND', thresholds })?.ratio).toBe('1.50');
+    // 1.501 times the median: flagged, and the ratio is rounded up so it does not read as the threshold.
+    expect(cprJump({ figures: [...history(10, '100000', '100'), ...recent('150100', '100')], lastDay, currency: 'VND', thresholds })?.ratio).toBe('1.51');
   });
 
   it('takes the median of the daily costs, so one odd day does not move it', () => {
@@ -101,6 +120,14 @@ describe('the cost per result against its trailing median', () => {
     // The median stays at 1 000 whatever the one odd day costs; 3 x 300 000 over 600 results is 1 500, not above 1.5 times 1 000.
     expect(jump).toBeNull();
     expect(cprJump({ figures: [...odd, ...recent('330000', '200')], lastDay, currency: 'VND', thresholds })?.medianCost).toBe('1000');
+  });
+
+  it('compares exactly: a cost at 1.5 times a median that is not a finite decimal is not above it', () => {
+    // The median is 1003 over 9 results a day, 111.44...; the last 3 days cost 1003 over 6 results, which is exactly 1.5 times it.
+    const odd: DayFigure[] = Array.from({ length: 5 }, (_, i) => ({ day: addDays(lastDay, -(3 + i)), spend: '1003', results: '9' }));
+    const last = (spend: string): DayFigure[] => [{ day: lastDay, spend, results: '6' }];
+    expect(cprJump({ figures: [...odd, ...last('1003')], lastDay, currency: 'VND', thresholds })).toBeNull();
+    expect(cprJump({ figures: [...odd, ...last('1003.01')], lastDay, currency: 'VND', thresholds })).not.toBeNull();
   });
 
   it('averages the two middle days of an even number of days', () => {
@@ -170,8 +197,8 @@ describe('the flags of an org at an instant', () => {
       now,
     );
     expect(flags).toEqual([
-      { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
-      { kind: 'pace', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
+      { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
+      { kind: 'pace', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 },
     ]);
     // Exactly at the cap, or under it, raises none.
     expect(evaluateFlags(input({ caps: [{ scope: 'org', adAccountId: null, period: 'monthly', amount: '300000', currency: 'VND' }] }), now)).toEqual([]);
@@ -179,7 +206,7 @@ describe('the flags of an org at an instant', () => {
 
   it('flags a day over its share: a daily cap is its own share, a monthly cap is spread over the month', () => {
     const daily = evaluateFlags(input({ caps: [{ scope: 'account', adAccountId: 'a-vn', period: 'daily', amount: '5000', currency: 'VND' }] }), now);
-    expect(daily).toEqual([{ kind: 'day', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' }]);
+    expect(daily).toEqual([{ kind: 'day', scope: 'account', adAccountId: 'a-vn', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' }]);
     // A monthly cap of 240 000 over 30 days is 8 000 a day: 10 000 is 1.25 times it, under the factor of 1.5.
     expect(evaluateFlags(input({ caps: [{ scope: 'org', adAccountId: null, period: 'monthly', amount: '240000', currency: 'VND' }] }), now).filter((f) => f.kind === 'day')).toEqual([]);
     expect(evaluateFlags(input({ caps: [{ scope: 'org', adAccountId: null, period: 'monthly', amount: '150000', currency: 'VND' }] }), now).filter((f) => f.kind === 'day')).toHaveLength(1);
@@ -197,7 +224,7 @@ describe('the flags of an org at an instant', () => {
       now,
     );
     // 160.00 on the 8th against a 100.00 day is 1.60 times it; the 9th (today there) is not counted.
-    expect(flags).toEqual([{ kind: 'day', scope: 'account', adAccountId: 'a-la', accountName: 'Store', currency: 'USD', period: 'daily', cap: '100.00', share: '100.00', day: '2026-11-08', spend: '160.00', ratio: '1.60' }]);
+    expect(flags).toEqual([{ kind: 'day', scope: 'account', adAccountId: 'a-la', accountName: 'Store', currency: 'USD', skippedAccounts: 0, period: 'daily', cap: '100.00', share: '100.00', day: '2026-11-08', spend: '160.00', ratio: '1.60' }]);
   });
 
   it('never compares or adds amounts of different currencies, and skips an account that has not read yesterday', () => {
@@ -213,7 +240,8 @@ describe('the flags of an org at an instant', () => {
       now,
     );
     // Only the VND account that has read yesterday counts: 300 000 projected, not more.
-    expect(flags).toEqual([{ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 }]);
+    // One account of the cap's currency was not judged (it has not read yesterday): the flag says so.
+    expect(flags).toEqual([{ kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 1, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 }]);
     // A cap in another currency than the account's is not compared.
     expect(evaluateFlags(input({ caps: [{ scope: 'account', adAccountId: 'a-vn', period: 'monthly', amount: '10', currency: 'USD' }] }), now)).toEqual([]);
   });
@@ -247,6 +275,15 @@ describe('the flags of an org at an instant', () => {
     ]);
     // An account that chose no result has no cost per result to judge.
     expect(evaluateFlags(input({ accounts: [vn], campaignDays: days('c1', 'A', 7, 9, '300000', '100') }), now)).toEqual([]);
+  });
+
+  it('names a campaign by the latest name it carried, whatever the order the rows come in', () => {
+    const account = { ...vn, resultKind: 'purchase' };
+    const row = (name: string, day: number, spend: string) => ({ adAccountId: 'a-vn', campaignId: 'c1', campaignName: name, day: `2026-11-${String(day).padStart(2, '0')}`, spend, results: '100' });
+    const rows = [...[1, 2, 3, 4, 5, 6].map((d) => row('Old name', d, '100000')), ...[7, 8, 9].map((d) => row('New name', d, '300000'))];
+    const named = (campaignDays: typeof rows) => evaluateFlags(input({ accounts: [account], campaignDays }), now).map((f) => (f.kind === 'cpr' ? f.campaignName : null));
+    expect(named(rows)).toEqual(['New name']);
+    expect(named([...rows].reverse())).toEqual(['New name']);
   });
 
   it('gives the same flags for the same figures, whatever the order they come in', () => {

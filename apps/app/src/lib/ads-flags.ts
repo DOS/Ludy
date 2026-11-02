@@ -9,10 +9,13 @@ export interface FlagFormat {
   date: (value: string | null | undefined) => string;
 }
 
+// An org flag says how many accounts were left out because they have not read yesterday yet: it is about the others.
+const withSkipped = (t: Translate, text: string, skipped: number): string => (skipped > 0 ? `${text} ${t('ads.flags.skipped', { count: String(skipped) })}` : text);
+
 export function flagText(t: Translate, f: FlagFormat, flag: AdsFlag): string {
   switch (flag.kind) {
-    case 'pace':
-      return t(flag.scope === 'org' ? 'ads.flags.paceOrg' : 'ads.flags.paceAccount', {
+    case 'pace': {
+      const text = t(flag.scope === 'org' ? 'ads.flags.paceOrg' : 'ads.flags.paceAccount', {
         account: flag.accountName ?? '',
         projected: f.money(flag.projected, flag.currency),
         cap: f.money(flag.cap, flag.currency),
@@ -20,8 +23,10 @@ export function flagText(t: Translate, f: FlagFormat, flag: AdsFlag): string {
         elapsed: String(flag.elapsedDays),
         days: String(flag.daysInMonth),
       });
-    case 'day':
-      return t(flag.scope === 'org' ? 'ads.flags.dayOrg' : 'ads.flags.dayAccount', {
+      return withSkipped(t, text, flag.skippedAccounts);
+    }
+    case 'day': {
+      const text = t(flag.scope === 'org' ? 'ads.flags.dayOrg' : 'ads.flags.dayAccount', {
         account: flag.accountName ?? '',
         spend: f.money(flag.spend, flag.currency),
         day: f.date(flag.day),
@@ -30,6 +35,8 @@ export function flagText(t: Translate, f: FlagFormat, flag: AdsFlag): string {
         share: f.money(flag.share, flag.currency),
         cap: f.money(flag.cap, flag.currency),
       });
+      return withSkipped(t, text, flag.skippedAccounts);
+    }
     case 'cpr':
       return t('ads.flags.cpr', {
         campaign: flag.campaignName,

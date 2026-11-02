@@ -259,6 +259,8 @@ export const zAdsFlag = z.discriminatedUnion('kind', [
     projected: z.string(),
     elapsedDays: z.number().int(),
     daysInMonth: z.number().int(),
+    // The accounts of the cap's currency that were left out because they have not read yesterday yet (an org flag is about the others).
+    skippedAccounts: z.number().int(),
   }),
   z.object({
     kind: z.literal('day'),
@@ -272,6 +274,7 @@ export const zAdsFlag = z.discriminatedUnion('kind', [
     day: zLocalDate,
     spend: z.string(),
     ratio: z.string(),
+    skippedAccounts: z.number().int(),
   }),
   z.object({
     kind: z.literal('cpr'),

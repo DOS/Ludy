@@ -9,9 +9,9 @@ const inEn = translatorFor('en');
 const inVi = translatorFor('vi');
 const f: FlagFormat = { money: (value, currency) => `${value} ${currency ?? ''}`.trim(), date: (value) => value ?? '' };
 
-const pace: AdsFlag = { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 };
+const pace: AdsFlag = { kind: 'pace', scope: 'org', adAccountId: null, accountName: null, currency: 'VND', skippedAccounts: 0, cap: '280000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 };
 const paceAccount: AdsFlag = { ...pace, scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', currency: 'USD', cap: '250.00', spent: '90.00', projected: '300.00' };
-const day: AdsFlag = { kind: 'day', scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', currency: 'VND', period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' };
+const day: AdsFlag = { kind: 'day', scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', currency: 'VND', skippedAccounts: 0, period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' };
 const cpr: AdsFlag = { kind: 'cpr', adAccountId: '0190c4a1-0000-7000-8000-000000000001', accountName: 'Cửa hàng', campaignId: 'c1', campaignName: 'Chiến dịch A', currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio: '3.00', recentResults: '300', historyDays: 6 };
 
 describe('the words of a flag', () => {
@@ -26,8 +26,14 @@ describe('the words of a flag', () => {
     expect(flagText(inEn, f, day)).toBe('Cửa hàng spent 10000 VND on 2026-11-09, 2.00 times its share of the daily cap (5000 VND a day; cap 5000 VND).');
     expect(flagText(inVi, f, day)).toContain('gấp 2.00 lần phần của một ngày theo hạn mức ngày');
     expect(flagText(inEn, f, { ...day, scope: 'org', adAccountId: null, accountName: null, period: 'monthly' })).toContain('The org spent 10000 VND on 2026-11-09, 2.00 times its share of the monthly cap');
-    expect(flagText(inEn, f, cpr)).toBe('Chiến dịch A (Cửa hàng): the last 3 days cost 3000 VND per result, 3.00 times the median of 1000 VND over the 14 days before (300 results).');
-    expect(flagText(inVi, f, cpr)).toContain('3 ngày gần nhất tốn 3000 VND cho mỗi kết quả, gấp 3.00 lần mức trung vị 1000 VND');
+    expect(flagText(inEn, f, cpr)).toBe('Chiến dịch A (Cửa hàng): the last 3 days cost 3000 VND per result (300 results), 3.00 times the median of 1000 VND over the 14 days before.');
+    expect(flagText(inVi, f, cpr)).toContain('3 ngày gần nhất tốn 3000 VND cho mỗi kết quả (300 kết quả), gấp 3.00 lần mức trung vị 1000 VND');
+  });
+
+  it('says how many accounts an org flag leaves out, because they have not read up to yesterday', () => {
+    expect(flagText(inEn, f, { ...pace, skippedAccounts: 2 })).toMatch(/ Not counted: accounts that have not read up to yesterday \(2\)\.$/);
+    expect(flagText(inVi, f, { ...day, scope: 'org', adAccountId: null, accountName: null, skippedAccounts: 1 })).toMatch(/ Chưa tính: các tài khoản chưa cập nhật đến hôm qua \(1\)\.$/);
+    expect(flagText(inEn, f, pace)).not.toContain('Not counted');
   });
 
   it('keys a list by what each flag is about, so two flags of one account and kind do not collide', () => {
