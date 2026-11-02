@@ -66,7 +66,7 @@ export function ProposalGroups<T extends GroupedItem>({
               return (
                 <li key={id} className="flex flex-wrap items-center gap-2" data-testid="group-rule">
                   <span className="text-foreground">
-                    {rule ? t('groups.rule', { rule: rule.label?.trim() || rule.matchText, account: rule.accountCode }) : t('groups.ruleUnlisted')}
+                    {rule ? t('groups.rule', { rule: rule.label?.trim() || rule.matchText }) : t('groups.ruleUnlisted')}
                   </span>
                   {rule && (
                     <Badge variant={rule.corrections >= RULE_OFTEN_CORRECTED ? 'warning' : 'secondary'} data-testid="group-rule-corrections">

@@ -63,6 +63,8 @@ interface BulkRun {
   sending: boolean;
   // The approver closed the step-up prompt or the error: the batches not sent stay pending.
   stopped: boolean;
+  // The run is a clean group's (#2379): the checkboxes' selection is not the run's and stays as it is.
+  group: boolean;
 }
 
 // One proposal as the Inbox lists it.
@@ -352,7 +354,7 @@ export function InboxPage() {
   const shellEntity = useChosenEntity();
   const groupsOn = bulkEnabled && config.modules.includes('finance');
   const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
-  const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready });
+  const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready, staleTime: 30_000 });
   const chosen = selectable.filter((item) => selected.has(item.id));
   const sending = bulk?.sending ?? false;
   // Invoices whose digital signature is unverified (#674): approving them, in bulk as one by one, asks the approver to
@@ -374,7 +376,7 @@ export function InboxPage() {
       (step) => setBulk((current) => (current ? { ...current, progress: step } : current)),
     );
     setBulk((current) => (current ? { ...current, progress, sending: false } : current));
-    if (!progress.error) setSelected(new Set());
+    if (!progress.error && !run.group) setSelected(new Set());
     await queryClient.invalidateQueries();
   }
 
@@ -398,6 +400,7 @@ export function InboxPage() {
       total: picked.length,
       sending: false,
       stopped: false,
+      group: group !== undefined,
     });
   }
 

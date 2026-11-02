@@ -77,7 +77,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     await expect(group).toContainText('2 hóa đơn, tổng');
     await expect(group.getByTestId('group-item')).toHaveCount(2);
     const rule = group.getByTestId('group-rule');
-    await expect(rule).toContainText('Theo quy tắc đã học: Cước dịch vụ internet tháng 9/2026, ghi vào TK 242');
+    await expect(rule).toContainText('Theo quy tắc đã học: Cước dịch vụ internet tháng 9/2026');
     await expect(rule.getByTestId('group-rule-corrections')).toHaveText('Chưa bị sửa lần nào');
     // Each invoice says why its accounts are what they are.
     await expect(group.getByTestId('group-item').first()).toContainText('Theo quy tắc đã học');
@@ -97,7 +97,8 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
       await prompt.click();
     }
     await expect(done).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId('proposal-groups')).toHaveCount(0);
+    // Both left the pending list.
+    await expect(page.getByRole('link', { name: SELLER })).toHaveCount(0);
     const documents = sql<{ n: string }>(
       `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },

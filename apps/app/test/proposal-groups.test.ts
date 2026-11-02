@@ -18,6 +18,7 @@ const item = (id: string, change: Partial<GroupableItem> = {}): GroupableItem =>
   signatureStatus: 'verified',
   requestedByAgent: null,
   sellerName: 'Công ty Điện lực',
+  legalEntityId: 'e1',
   total: '1000000',
   learnedRuleIds: [RULE_A],
   otherRuleLines: 0,
@@ -78,6 +79,11 @@ describe('cleanGroups', () => {
     expect(groups).toHaveLength(1);
     expect(groups[0]).toMatchObject({ ruleIds: [], otherLines: 4 });
     expect(GROUP_MIN_SIZE).toBe(2);
+  });
+
+  it('keeps the legal entities apart, as their books and rules are', () => {
+    const groups = cleanGroups([item('1'), item('2'), item('3', { legalEntityId: 'e2' }), item('4', { legalEntityId: 'e2' }), item('5', { legalEntityId: 'e3' })], REVERSAL);
+    expect(groups.map((g) => g.items.map((i) => i.id))).toEqual([['1', '2'], ['3', '4']]);
   });
 
   it('keys a group by the set of rules whatever their order, and skips a proposal with no vendor name', () => {

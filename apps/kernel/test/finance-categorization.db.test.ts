@@ -268,6 +268,8 @@ suite('learned account rules with provenance (#1399)', () => {
     const ruleId = String((internet.accountRule as { ruleId?: string } | undefined)?.ruleId);
     const pending = (await rpc('inbox/list', owner, { status: 'pending' })).body as Array<{ id: string; learnedRuleIds: string[]; otherRuleLines: number }>;
     expect(pending.find((i) => i.id === id)).toMatchObject({ learnedRuleIds: [ruleId], otherRuleLines: 2 });
+    // The detail answers the same as the list.
+    expect((await rpc('inbox/get', owner, { id })).body).toMatchObject({ learnedRuleIds: [ruleId], otherRuleLines: 2 });
     // The vendor default is the account of the largest line of the first invoice (242 too); the ad line follows it.
     expect(lineOf(payload.lines, 'Phí quảng cáo')).toMatchObject({ debitAccount: '242', accountRule: { source: 'vendor_default' } });
     // The approver puts the ad line back on 6421: a second rule for this vendor, and the first one is untouched.

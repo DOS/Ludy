@@ -2820,7 +2820,7 @@ export const vi = {
       summary: '{count, number} hóa đơn, tổng {total}',
       approve: 'Duyệt {count, number} hóa đơn',
       approveOf: 'Duyệt nhóm {vendor}',
-      rule: 'Theo quy tắc đã học: {rule}, ghi vào TK {account}',
+      rule: 'Theo quy tắc đã học: {rule}',
       ruleUnlisted: 'Theo quy tắc đã học (quy tắc của pháp nhân khác hoặc đã bị xóa)',
       correctionsNone: 'Chưa bị sửa lần nào',
       corrections: 'Đã bị sửa {count, number} lần',

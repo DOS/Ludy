@@ -18,6 +18,7 @@ export interface GroupableItem {
   signatureStatus: string | null;
   requestedByAgent: unknown;
   sellerName: string | null;
+  legalEntityId: string | null;
   total: string | null;
   learnedRuleIds?: readonly string[];
   otherRuleLines?: number;
@@ -53,8 +54,8 @@ export interface ProposalGroup<T extends GroupableItem> {
   otherLines: number;
 }
 
-// The groups of at least GROUP_MIN_SIZE clean proposals sharing a vendor (by name, as the Inbox shows it) and the same
-// set of learned rules, the largest first.
+// The groups of at least GROUP_MIN_SIZE clean proposals sharing a legal entity, a vendor (by name, as the Inbox shows it)
+// and the same set of learned rules, the largest first.
 export function cleanGroups<T extends GroupableItem>(items: readonly T[], reversalKind: string): ProposalGroup<T>[] {
   const groups = new Map<string, ProposalGroup<T>>();
   for (const item of items) {
@@ -62,7 +63,7 @@ export function cleanGroups<T extends GroupableItem>(items: readonly T[], revers
     const vendor = (item.sellerName ?? '').trim();
     if (vendor === '') continue;
     const ruleIds = [...new Set(item.learnedRuleIds ?? [])].sort();
-    const key = `${vendor.toLowerCase()}|${ruleIds.join(',')}`;
+    const key = `${item.legalEntityId ?? ''}|${vendor.toLowerCase()}|${ruleIds.join(',')}`;
     const group = groups.get(key) ?? { key, vendor, items: [], total: '0', ruleIds, otherLines: 0 };
     group.items.push(item);
     group.otherLines += item.otherRuleLines ?? 0;
