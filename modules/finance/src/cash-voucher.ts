@@ -31,15 +31,16 @@ import {
   zLocalDate,
   zVoucherCursor,
   zVoucherType,
+  type BankMatchedBy,
   type CashVoucherPage,
   type CashVoucherProposal,
   type VoucherType,
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { journalIsBalanced } from '@crove/l10n-vn';
 import { assertUsableAccounts } from './accounts.ts';
-import { checkBankLineVoucher, lockBankLine } from './bank-match.ts';
+import { checkBankLineVoucher, lineMatchFor, lockBankLine, readParties, type StoredBankLine } from './bank-match.ts';
 import {
   VOUCHER_LABELS,
   VOUCHER_SOURCE,
@@ -90,6 +91,19 @@ async function checkVoucher(ctx: QueryContext, voucher: { type: VoucherType; cas
   await assertUsableAccounts(ctx, [voucher.cashAccount, ...voucher.lines.map((l) => l.account)]);
 }
 
+// The match recorded on a voucher made from a bank line: `vy` only when the matcher, run now on the line, suggests this very
+// party for this very reason (the invoice kept only if it is one of the party's open invoices of the line's amount), so
+// a request cannot label its own choice as the suggestion; anything else is the person's own choice.
+async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId: string | null, claimed: BankMatchedBy | undefined): Promise<BankMatchedBy> {
+  if (claimed?.kind !== 'vy' || !partyId) return { kind: 'manual' };
+  const { made, invoices } = await lineMatchFor(ctx, line, { status: 'open' }, await readParties(ctx), true);
+  const suggested = made.suggested;
+  if (!suggested || suggested.party.id !== partyId || suggested.reason !== claimed.reason) return { kind: 'manual' };
+  const named = claimed.invoice;
+  const invoice = named && invoices.some((i) => i.partyId === partyId && i.series === named.series && i.number === named.number) ? named : undefined;
+  return { kind: 'vy', reason: suggested.reason, ...(invoice ? { invoice } : {}) };
+}
+
 export const prepareVoucher = defineCommand({
   name: 'finance.voucher.prepare',
   input: zCashVoucherRequest,
@@ -102,6 +116,8 @@ export const prepareVoucher = defineCommand({
     // The legal entity whose books the voucher goes to (#1280): a bank line's own, else the one resolved for the caller.
     // It is stored with the proposal, so the approver posts it there.
     let legalEntityId: string;
+    // How the party of a voucher made from a bank line was found (#2385).
+    let matchedBy: BankMatchedBy | undefined;
     if (input.bankLineId) {
       // One voucher proposal per line at a time: a second request for the line waits here for the first to commit,
       // then sees its proposal.
@@ -111,6 +127,7 @@ export const prepareVoucher = defineCommand({
       // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
       // another entity's lines).
       legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+      matchedBy = await verifiedMatch(ctx, line, partyId, input.matchedBy);
     } else {
       legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     }
@@ -125,6 +142,7 @@ export const prepareVoucher = defineCommand({
       lines: input.lines.map((l) => ({ account: l.account, amount: l.amount, ...(l.memo?.trim() ? { memo: l.memo.trim() } : {}) })),
       total: voucherTotal(input.lines),
       ...(input.bankLineId ? { bankLineId: input.bankLineId } : {}),
+      ...(matchedBy ? { matchedBy } : {}),
       legalEntityId,
     };
     // The payload is stored as the proposal and parsed again with this schema when it is approved
