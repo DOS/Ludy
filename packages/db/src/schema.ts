@@ -825,8 +825,22 @@ export type AdsAdSpendCapTable = Refine<
   }
 >;
 
+// A campaign draft (#2295, W1): its objective, where it stands (a draft, approved by an approved proposal, or discarded) and who wrote it.
+export const AD_OBJECTIVES = ['traffic', 'engagement', 'messenger'] as const;
+export const AD_DRAFT_STATUSES = ['draft', 'approved', 'discarded'] as const;
+export const AD_DRAFT_ORIGINS = ['human', 'ai'] as const;
+export type AdsAdCampaignDraftTable = Refine<
+  G.AdsAdCampaignDraftTable,
+  {
+    objective: (typeof AD_OBJECTIVES)[number];
+    status: Generated<(typeof AD_DRAFT_STATUSES)[number]>;
+    origin: Generated<(typeof AD_DRAFT_ORIGINS)[number]>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
