@@ -263,7 +263,7 @@ export function checkEnv(env: Env): CheckResult[] {
     else if (inboundPrevious === value(env, 'INBOUND_SECRET')) secrets.push('INBOUND_SECRET_PREVIOUS is the same as INBOUND_SECRET');
   }
   // Optional secrets: only a shipped sample value is wrong.
-  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
+  for (const name of ['INBOUND_SECRET', 'S3_SECRET_ACCESS_KEY', 'SMTP_PASS', 'AI_API_KEY', 'CREDENTIAL_KEY', 'CREDENTIAL_KEY_PREVIOUS', 'CHANNEL_META_APP_SECRET', 'CHANNEL_ZALO_APP_SECRET', 'CHANNEL_ZALO_OA_SECRET_KEY', 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS', 'CHANNEL_THREADS_APP_SECRET', 'CHANNEL_LINKEDIN_CLIENT_SECRET', 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET', 'CHANNEL_GOOGLE_CLIENT_SECRET', 'CHANNEL_TIKTOK_CLIENT_SECRET', 'CHANNEL_X_CLIENT_SECRET', 'CHANNEL_PINTEREST_APP_SECRET', 'MEDIA_PEXELS_API_KEY', 'VAPID_PRIVATE_KEY']) {
     if (name === 'INBOUND_SECRET' && value(env, 'INBOUND_DOMAIN')) continue;
     const secret = value(env, name);
     if (secret && (KNOWN_DEFAULTS.has(secret) || /change-?me/i.test(secret))) secrets.push(`${name} still has a sample value`);
@@ -454,6 +454,17 @@ export function checkEnv(env: Env): CheckResult[] {
               'INBOUND_SECRET_PREVIOUS is set: an inbound secret rotation is under way and the old value is still accepted; once the mail worker sends the new INBOUND_SECRET, remove it and restart (docs/runbooks/secret-rotation.md, section 2)',
           },
         ]),
+    // A rotation of the Zalo OA secret key left half done: the previous key is still accepted, and a leaked one must never be (#2348).
+    ...(value(env, 'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS')
+      ? [
+          {
+            item: 'Zalo OA key rotation',
+            status: 'manual' as const,
+            message:
+              'CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS is set, so notices signed with the old key are still accepted: remove it and restart once the rotation is done (minutes after Zalo starts signing with the new key); never put a leaked key there (docs/runbooks/zalo-conversations-live-check.md, section 0)',
+          },
+        ]
+      : []),
     // Envelopes under a key the worker cannot open (#1888): only the worker sees the database's key ids, so it logs them.
     {
       item: 'Credential key',

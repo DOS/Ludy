@@ -11,7 +11,7 @@
 // Sending. A reply or a hide is begun (the call row is committed as started), made with the credential the API sealed, and
 // recorded. A reply is never repeated after an unclear answer (no platform send call has an idempotency key); a hide is
 // idempotent, so its job may repeat it.
-import { ConversationNoticeError, parseSandboxNotice, type ConversationAdapter, type ConversationNotice } from '@crove/channel';
+import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type ConversationAdapter, type ConversationNotice } from '@crove/channel';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
@@ -30,6 +30,8 @@ export const CONVERSATION_CLAIM = 20;
 type NoticeParser = (body: Uint8Array) => ConversationNotice;
 export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   sandbox: parseSandboxNotice,
+  // Zalo OA (#2304): its signature was checked by the route before the body was parked.
+  zalo_oa: parseZaloNotice,
 };
 
 export interface ClaimedNotice {
@@ -89,6 +91,11 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       parsed = parse ? parse(notice.body) : null;
     } catch (error) {
       if (!(error instanceof ConversationNoticeError)) throw error;
+    }
+    // A notice with no event (Zalo's follow or seen): nothing to store.
+    if (parsed && parsed.events.length === 0) {
+      await finishNotice(deps.workerDb, notice.seq);
+      continue;
     }
     if (!parsed) {
       // Not a notice we can read: nothing to retry, so nothing to keep.

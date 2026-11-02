@@ -1,7 +1,7 @@
 // Cash and bank vouchers (issue #327), end to end: enter a giấy báo Nợ for a bank fee on the "Thu chi" screen, approve
 // it in the Inbox (R3: the page asks for a second factor and approves again by itself), then find it numbered BN00001
 // on the vouchers screen, in the journal and in the database. The MISA exports of cash receipts and payments (#657)
-// download from the same screen, and leave the bank note out (bank vouchers have their own MISA templates).
+// download from the same screen, and leave the bank note out; the bank notes (giấy báo Có, báo Nợ) have their own exports, and the báo Nợ holds it.
 import { expect, test } from '@playwright/test';
 import ExcelJS from 'exceljs';
 import { sql } from '../lib/db.ts';
@@ -59,12 +59,15 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
     await expect(page.getByText('BN00001 Phí chuyển khoản tháng 10')).toBeVisible();
   });
 
-  await test.step('the MISA exports download from the cash and bank screen, without the bank note', async () => {
+  await test.step('the MISA exports download from the cash and bank screen: the bank note only in the báo Nợ file', async () => {
     await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
     await page.getByRole('navigation').getByRole('link', { name: 'Thu chi' }).click();
-    for (const [button, file, sheet] of [
-      ['Xuất phiếu thu cho MISA', `ludy-misa-phieu-thu-${slug}.xlsx`, 'Phiếu thu'],
-      ['Xuất phiếu chi cho MISA', `ludy-misa-phieu-chi-${slug}.xlsx`, 'Phiếu chi'],
+    // The báo Nợ (voucher BN00001) is a row of its own file (header and one row); the other three files hold no voucher.
+    for (const [button, file, sheet, rows] of [
+      ['Xuất phiếu thu cho MISA', `ludy-misa-phieu-thu-${slug}.xlsx`, 'Phiếu thu', 1],
+      ['Xuất phiếu chi cho MISA', `ludy-misa-phieu-chi-${slug}.xlsx`, 'Phiếu chi', 1],
+      ['Xuất giấy báo Có cho MISA', `ludy-misa-bao-co-${slug}.xlsx`, 'Chứng từ thu tiền', 1],
+      ['Xuất giấy báo Nợ cho MISA', `ludy-misa-bao-no-${slug}.xlsx`, 'Chứng từ Chi tiền gửi', 2],
     ] as const) {
       const download = page.waitForEvent('download');
       await page.getByRole('button', { name: button }).click();
@@ -74,8 +77,17 @@ test('enter a bank debit note, approve it and find it numbered in the books', as
       await workbook.xlsx.readFile(await saved.path());
       const worksheet = workbook.getWorksheet(sheet);
       if (!worksheet) throw new Error(`sheet ${sheet} missing`);
-      expect((worksheet.getRow(1).values as unknown[]).slice(1, 5)).toEqual(['Hiển thị trên sổ', 'Ngày hạch toán (*)', 'Ngày chứng từ (*)', 'Số chứng từ (*)']);
-      expect(worksheet.rowCount).toBe(1);
+      const headers = (worksheet.getRow(1).values as unknown[]).slice(1);
+      expect(headers.slice(0, 1)).toEqual(['Hiển thị trên sổ']);
+      expect(headers).toEqual(expect.arrayContaining(['Ngày hạch toán (*)', 'Ngày chứng từ (*)', 'Số chứng từ (*)', 'TK Nợ (*)', 'TK Có (*)', 'Số tiền']));
+      expect(worksheet.rowCount).toBe(rows);
+      if (rows === 2) {
+        const cell = (header: string) => worksheet.getRow(2).getCell(headers.indexOf(header) + 1).value;
+        expect(cell('Số chứng từ (*)')).toBe('CRBN00001');
+        expect(cell('TK Nợ (*)')).toBe('6422');
+        expect(cell('TK Có (*)')).toBe('1121');
+        expect(Number(cell('Số tiền'))).toBe(22000);
+      }
     }
   });
 

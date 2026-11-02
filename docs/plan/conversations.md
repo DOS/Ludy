@@ -249,6 +249,12 @@ Priority P2 for CV1 to CV5, P3 after; the milestone is the Marketing line's curr
 
 **Order** (Q7): CV1, CV2, CV3, CV4, CV5, CV6, then CV7 to CV9. Zalo can move ahead of Messenger if the owner prefers it. **No live channel (CV2, CV4, CV5) handles a real customer's messages before CV6 is accepted**: until retention, erasure, export and purge exist, those channels run only on the owner's own Page and OA with test accounts, and CV6 can be built in the same sitting as CV2 if the owner wants a customer earlier.
 
+### CV5 as built (#2304)
+
+- The webhook is `POST /api/channels/zalo/webhook` (one URL for every org, nothing in it names an org), enabled by `CHANNEL_ZALO_OA_SECRET_KEY` beside the Zalo app's id and secret. It checks `X-ZEvent-Signature` over the raw body before anything else, caps the body at 64 KiB before reading it, answers every refusal of the signature with the same 401, parks only a verified message (a follow, a delivery or a seen mark is answered 200 and not parked), and writes no tenant row; the worker finds the org from the stored connection by the OA's id.
+- A reply is `oa/message/cs` v3.0 through `ZaloConversations`, once, inside the 48-hour window counted from the customer's last message by the platform's own time (`zalo_oa` in `CONVERSATION_PROVIDER_RULES`); Zalo's errors are typed and worded (`conversationError`). An attachment is a placeholder naming its kind. The signature formula, the payload shapes, the window and the error codes stay [S] or [U] until the live check settles them, each read in one place; the facts, their files and the OA secret key's handling and rotation are in [the runbook](../runbooks/zalo-conversations-live-check.md).
+- Not in CV5: history on reconnect and the "events missed" marker, customers' images stored as files, and the customer's name and picture: issue CV5b (#2329).
+
 ### CV1 as built (#2303)
 
 What differs from the table above, each for a reason found while building:

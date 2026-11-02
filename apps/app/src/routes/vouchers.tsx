@@ -422,6 +422,16 @@ export function VoucherFormCard({ slug, onClose, fromLine }: { slug: string; onC
   );
 }
 
+// The MISA SME exports of the screen (#657), one button and one file per voucher type: the route's name after
+// /api/export/misa/, the button's label and the download's file name (messages of `vouchers`).
+const MISA_EXPORTS = {
+  receipts: { label: 'exportReceipts', file: 'exportReceiptsFile' },
+  payments: { label: 'exportPayments', file: 'exportPaymentsFile' },
+  'bank-receipts': { label: 'exportBankCredits', file: 'exportBankCreditsFile' },
+  'bank-payments': { label: 'exportBankDebits', file: 'exportBankDebitsFile' },
+} as const;
+type MisaExportKind = keyof typeof MISA_EXPORTS;
+
 // The cash and bank vouchers of the org (#327): every posted phiếu thu, phiếu chi, báo Có and báo Nợ, newest first.
 export function VouchersPage() {
   const t = useTranslations('vouchers');
@@ -454,15 +464,15 @@ export function VouchersPage() {
   });
   const rows = vouchers.data?.pages.flatMap((p) => p.items) ?? [];
   const allowed = canEnterVoucher(org.data?.role);
-  // Cash receipts and payments of the chosen dates in MISA SME's import templates, one file per type (#657).
+  // Cash and bank receipts and payments of the chosen dates in MISA SME's import templates, one file per type (#657).
   const exportMisa = useMutation({
-    mutationFn: async (kind: 'receipts' | 'payments') => {
+    mutationFn: async (kind: MisaExportKind) => {
       const params = exportQuery({ ...(from ? { from } : {}), ...(to ? { to } : {}) }, entity.legalEntityId);
       const response = await apiFetch(`/api/export/misa/${kind}.xlsx?${params}`);
       const url = URL.createObjectURL(await response.blob());
       const a = document.createElement('a');
       a.href = url;
-      a.download = t(kind === 'receipts' ? 'exportReceiptsFile' : 'exportPaymentsFile', { org: getCurrentOrg() ?? 'org' });
+      a.download = t(MISA_EXPORTS[kind].file, { org: getCurrentOrg() ?? 'org' });
       a.click();
       URL.revokeObjectURL(url);
     },
@@ -475,12 +485,11 @@ export function VouchersPage() {
         subtitle={t('subtitle')}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button loading={exportMisa.isPending && exportMisa.variables === 'receipts'} size="lg" variant="outline" onClick={() => exportMisa.mutate('receipts')} disabled={exportMisa.isPending}>
-              {t('exportReceipts')}
-            </Button>
-            <Button loading={exportMisa.isPending && exportMisa.variables === 'payments'} size="lg" variant="outline" onClick={() => exportMisa.mutate('payments')} disabled={exportMisa.isPending}>
-              {t('exportPayments')}
-            </Button>
+            {(Object.keys(MISA_EXPORTS) as MisaExportKind[]).map((kind) => (
+              <Button key={kind} loading={exportMisa.isPending && exportMisa.variables === kind} size="lg" variant="outline" onClick={() => exportMisa.mutate(kind)} disabled={exportMisa.isPending}>
+                {t(MISA_EXPORTS[kind].label)}
+              </Button>
+            ))}
             {allowed && !entering && (
               <Button size="lg" onClick={() => setEntering(true)}>
                 {t('new')}

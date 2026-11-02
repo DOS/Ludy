@@ -42,6 +42,9 @@ export interface ConversationProviderRules {
 }
 export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationProviderRules>> = {
   sandbox: { kinds: ['comment_thread', 'direct'], replyMax: 2000, canHide: true, windowHours: null },
+  // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
+  // last message [S, U until the live check settles them].
+  zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
 };
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;

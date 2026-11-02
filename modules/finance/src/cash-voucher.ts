@@ -12,8 +12,8 @@
 //   more than it checks; applied migrations are never edited). The entry is this transaction's because this command
 //   writes it right after the insert, for a voucher id the database has just generated.
 // - finance.vouchers.list: the posted vouchers, page by page, with their reversal when their entry was reversed.
-// - finance.vouchers.cash: the posted phiếu thu or phiếu chi of a date range, with their lines, for the MISA SME
-//   export (#657).
+// - finance.vouchers.cash: the posted phiếu thu, phiếu chi, giấy báo Có or giấy báo Nợ of a date range, with their
+//   lines, for the MISA SME export (#657).
 // A voucher is corrected by reversing its entry (finance.journal.reverse); it keeps its number and shows as reversed.
 // A bank voucher may be made from a bank statement line (#326, bank-match.ts): it then names the line (bankLineId),
 // follows it (account, date, direction, amount) and settles it; both commands check that, and the database holds it.
@@ -23,6 +23,7 @@ import {
   VOUCHER_COMMAND,
   VOUCHER_KIND,
   VOUCHER_PAGE_SIZE,
+  isInflow,
   voucherCode,
   zCashVoucherProposal,
   zCashVoucherRequest,
@@ -298,15 +299,16 @@ export const vouchersList = defineQuery({
   },
 });
 
-// The cash vouchers of one type for the MISA SME export (GET /api/export/misa/receipts.xlsx and payments.xlsx,
-// #657), oldest first, with their lines as posted: every line of the voucher's entry but the cash line. A voucher
-// whose entry was reversed is left out: it is no longer in Crove's books. At most `limit` vouchers.
+// The cash or bank vouchers of one type for the MISA SME export (GET /api/export/misa/receipts.xlsx, payments.xlsx,
+// bank-receipts.xlsx and bank-payments.xlsx, #657), oldest first, with their lines as posted: every line of the
+// voucher's entry but the cash or bank line. A voucher whose entry was reversed is left out: it is no longer in Crove's
+// books. At most `limit` vouchers.
 export const cashVouchers = defineQuery({
   name: 'finance.vouchers.cash',
   input: z.object({
     from: zLocalDate.optional(),
     to: zLocalDate.optional(),
-    type: z.enum(['cash_receipt', 'cash_payment']),
+    type: zVoucherType,
     limit: z.number().int().positive().max(JOURNAL_EXPORT_LIMIT).optional(),
     legalEntityId: zId.optional(),
   }),
@@ -360,11 +362,11 @@ export const cashVouchers = defineQuery({
     const byEntry = new Map<string, CashVoucher['lines']>();
     const cashAccountOf = new Map(vouchers.map((v) => [v.entry_id, v.cash_account]));
     for (const l of lines) {
-      // The cash line carries the total; a voucher line never posts to the voucher's own cash account.
+      // The cash (or bank) line carries the total; a voucher line never posts to the voucher's own cash or bank account.
       if (l.account_code === cashAccountOf.get(l.entry_id)) continue;
       const list = byEntry.get(l.entry_id) ?? [];
-      // A receipt's lines are credits, a payment's debits; the other side is 0.
-      list.push({ lineNo: l.line_no, account: l.account_code, amount: input.type === 'cash_receipt' ? l.credit : l.debit, memo: l.memo });
+      // A receipt's (or báo Có's) lines are credits, a payment's (or báo Nợ's) debits; the other side is 0.
+      list.push({ lineNo: l.line_no, account: l.account_code, amount: isInflow(input.type) ? l.credit : l.debit, memo: l.memo });
       byEntry.set(l.entry_id, list);
     }
     return vouchers.map((v) => ({

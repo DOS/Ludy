@@ -42,6 +42,8 @@ import {
 import type { OrgExportView } from '@crove/kernel';
 import {
   JOURNAL_EXPORT_LIMIT,
+  MISA_SME_BANK_CREDIT,
+  MISA_SME_BANK_DEBIT,
   MISA_SME_CASH_PAYMENT,
   MISA_SME_CASH_RECEIPT,
   MISA_SME_PURCHASE_GOODS,
@@ -100,6 +102,8 @@ import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
+import { ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES, acceptAdsDeletion, adsDeletionStatus, renderAdsDeletionStatus } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
@@ -169,6 +173,13 @@ export interface HttpDeps {
   bankFeedWebhooks?: Readonly<Record<string, BankFeedProvider>>;
   // Notices per minute per client address; one is checked and queued per call.
   bankFeedWebhookLimit?: RateLimiter;
+  // Zalo OA's webhook for the conversation core (#2304): the app id and the OA secret key that sign its notices. Unset: the route does
+  // not exist.
+  zaloWebhook?: ZaloWebhookConfig;
+  // Notices per minute per client address for that route.
+  zaloWebhookLimit?: RateLimiter;
+  // The events that route has parked lately (replay guard); unset: its own, one per process.
+  zaloReplays?: ZaloReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -365,6 +376,8 @@ const AUTH_PUBLIC_PATHS =
 const STATUS_CACHE_MS = 5_000;
 // Signed notices one client address may post a minute: a provider posts a few per bank event, from a handful of addresses.
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
+// Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
+const ZALO_WEBHOOKS_PER_MINUTE = 120;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
@@ -700,6 +713,38 @@ export function createHttpApp(deps: HttpDeps) {
         const outcome = await acceptBankFeedWebhook(runtime, bankFeedWebhooks[name] as BankFeedProvider, { headers, body: await c.req.text() });
         if (outcome.status === 401 || outcome.status === 400) return c.json({ code: outcome.code }, outcome.status);
         return c.json({ queued: outcome.queued }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  // Zalo OA's webhook of customers' messages (conversation core, #2304): the signature is checked before the body is read or kept, the
+  // body is capped before it is read, and a verified message is only parked for the worker (the org comes from the stored connection).
+  // The body is capped (a chunked one is cut at the cap) and the signature checked, which is one SHA-256 over at most 64 KiB. Every
+  // refusal of the signature is the same 401. Zalo does not retry on an error status [S], so a verified notice is never refused for
+  // rate: the per-address limit is charged only to REFUSED requests (a bad signature or a body that is no notice), so a flood of forged
+  // ones from the address Zalo also posts from cannot cost a real notice, whatever TRUSTED_PROXY_HOPS says. That limit only shapes the
+  // answers (a 429 in place of a 401, for an address that sends many refused requests): it does not save the work of checking, so the
+  // CPU bound is the 64 KiB body cap above, one SHA-256 over at most that much per request. What a verified flood can do is bounded by
+  // the backlog cap of the provider (conversation_inbound_enqueue).
+  const zaloWebhook = deps.zaloWebhook;
+  if (zaloWebhook) {
+    const zaloLimit = deps.zaloWebhookLimit ?? new RateLimiter({ perMinute: ZALO_WEBHOOKS_PER_MINUTE });
+    const zaloReplays = deps.zaloReplays ?? new ZaloReplayCache();
+    app.post(ZALO_WEBHOOK_PATH, bodyLimit({ maxSize: ZALO_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptZaloWebhook(runtime, zaloWebhook, { signature: c.req.header(ZALO_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, zaloReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const decision = zaloLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+          if (!decision.allowed) {
+            warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+            c.header('retry-after', String(decision.retryAfterSeconds));
+            return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+          }
+        }
+        return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {
         return problem(c, error);
       }
@@ -1672,11 +1717,14 @@ export function createHttpApp(deps: HttpDeps) {
       }
     });
 
-    // Cash receipts and payments in MISA SME's "Phiếu thu" and "Phiếu chi" templates (#657), one file per voucher type
-    // (MISA imports one type per file), same roles, range and audit as the purchase export.
+    // Cash and bank receipts and payments in MISA SME's "Phiếu thu", "Phiếu chi", "Chứng từ thu tiền" (giấy báo Có) and
+    // "Chứng từ Chi tiền gửi" (giấy báo Nợ) templates (#657), one file per voucher type (MISA imports one type per file),
+    // same roles, range and audit as the purchase export.
     const cashExports = [
       { path: '/api/export/misa/receipts.xlsx', type: 'cash_receipt', template: MISA_SME_CASH_RECEIPT, format: 'misa_sme_cash_receipts', name: 'misa-phieu-thu' },
       { path: '/api/export/misa/payments.xlsx', type: 'cash_payment', template: MISA_SME_CASH_PAYMENT, format: 'misa_sme_cash_payments', name: 'misa-phieu-chi' },
+      { path: '/api/export/misa/bank-receipts.xlsx', type: 'bank_credit', template: MISA_SME_BANK_CREDIT, format: 'misa_sme_bank_credits', name: 'misa-bao-co' },
+      { path: '/api/export/misa/bank-payments.xlsx', type: 'bank_debit', template: MISA_SME_BANK_DEBIT, format: 'misa_sme_bank_debits', name: 'misa-bao-no' },
     ] as const;
     for (const cash of cashExports) {
       app.get(cash.path, async (c) => {
