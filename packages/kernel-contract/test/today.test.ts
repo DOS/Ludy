@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The "Hôm nay cần bạn" item shape (#2383) every line's read returns.
 import { describe, expect, it } from 'vitest';
-import { TODAY_APPS, TODAY_KINDS, todayCurrency, zTodayItem, zTodayItems, type TodayItem } from '../src/today.ts';
+import { z } from 'zod';
+import { TODAY_APPS, TODAY_KINDS, todayCurrency, zTodayItem, zTodayItemBase, zTodayItems, type TodayItem } from '../src/today.ts';
 
 const item = (over: Record<string, unknown> = {}) => ({
   kind: 'proposal',
@@ -68,9 +69,40 @@ describe('TodayItem', () => {
 
   it('links only to a path inside the app', () => {
     for (const href of ['/', '/crm/deals/1', '/ke-toan?entity=3&tab=proposals']) expect(zTodayItem.safeParse(item({ href })).success, href).toBe(true);
+    for (const href of ['/crm?next=%2F%2Fx#top', '/ke-toan/hóa-đơn?entity=3']) expect(zTodayItem.safeParse(item({ href })).success, href).toBe(true);
     for (const href of ['', 'crm/deals', '//evil.example/x', 'https://evil.example', 'javascript:alert(1)', '/a b']) {
       expect(zTodayItem.safeParse(item({ href })).success, href).toBe(false);
     }
+  });
+
+  it('refuses a link a browser would read as off-site or that hides what it is', () => {
+    // A backslash is a slash to a browser: `/\evil.example` is `//evil.example`.
+    for (const href of ['/\\evil.example', '/\\\\evil', '/a\\b', '/a\tb', '/a\nb', '/a\u0000b', '/a​b', '/a‮b', '/a b', `/${'x'.repeat(2000)}`]) {
+      expect(zTodayItem.safeParse(item({ href })).success, JSON.stringify(href)).toBe(false);
+    }
+  });
+
+  it('refuses a field it does not know instead of dropping it', () => {
+    expect(zTodayItem.safeParse(item({ customerName: 'Nguyễn Văn A' })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ title: { key: 'today.x', text: 'Duyệt' } })).success).toBe(false);
+  });
+
+  it('applies the currency rule to the item, and the base object is there for a line to extend', () => {
+    const issue = zTodayItem.safeParse(item({ currency: 'USD' }));
+    expect(issue.success).toBe(false);
+    expect(issue.error?.issues[0]?.path).toEqual(['currency']);
+    expect(zTodayItemBase.extend({ extra: z.string() }).safeParse(item({ extra: 'x' })).success).toBe(true);
+  });
+
+  it('keeps the lengths in bounds', () => {
+    expect(zTodayItem.safeParse(item({ id: '' })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ id: 'x'.repeat(201) })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ title: { key: 'k'.repeat(201) } })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ title: { key: 'k', params: { '': 'x' } } })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ title: { key: 'k', params: { p: 'x'.repeat(501) } } })).success).toBe(false);
+    expect(zTodayItem.safeParse(item({ dueAt: '2026-11-03T09:00:00+0700' })).success, 'an offset needs its colon').toBe(false);
+    expect(zTodayItem.safeParse(item({ dueAt: '2026-11-03T09:00:00.250Z' })).success).toBe(true);
+    expect(zTodayItems.safeParse([item(), item({ href: 'https://evil.example' })]).success).toBe(false);
   });
 
   it('needs kind, app, id, title and href', () => {
