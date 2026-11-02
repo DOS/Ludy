@@ -1030,6 +1030,7 @@ export interface KernelConversationIdentityTable {
   party_id: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_message */

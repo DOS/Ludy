@@ -16,7 +16,7 @@ Never paste a customer's message, name or Meta user id into chat, an issue or a 
 A customer (or the org's own decision) asks for their messages to go:
 
 1. Open one of the customer's threads in Social, "Hộp bình luận" (a private message later, in Service). The header has **"Xóa khách này"** for owners and admins.
-2. Confirm. The kernel asks for a fresh second factor (R3). `kernel.conversation.erase_contact` deletes **every thread of that customer** (their identity on that platform) with its messages, notes and read marks, and their identity. A comment thread other people replied in goes **whole**, since a reply is stored with its thread, not with its author.
+2. Confirm. The kernel asks for a fresh second factor (R3). `kernel.conversation.erase_contact` deletes **every thread of that customer** (their identity on that platform) with its messages, notes and read marks; their identity stays as a **tombstone** (no name, no contact link, the platform's id and the time of the erasure) for 30 days. A comment thread other people replied in goes **whole**, since a reply is stored with its thread, not with its author.
 3. The audit row has the number of threads and messages and the kind of thread, nothing of the customer. If the customer writes again, a new thread opens: erasing is not blocking.
 4. **Not reached:** a copy in a backup (7-day point-in-time recovery) or in an earlier org export, which the org keeps under its own care (the export contains the conversations; its file is sealed and deleted after 35 to 90 days). After a restore from backup, run the recorded erasures again, as for other personal data ([personal-data-requests.md](personal-data-requests.md) section 5).
 
@@ -50,7 +50,7 @@ What it cannot do, and what the owner can do about it:
 
 ## 5. What this does not do yet
 
-- **A redelivered notice can reopen an erased thread.** Platforms may resend a notice for a while after delivery (Zalo stops after an hour [S]); one that arrives after the erasure opens a new thread, as a new message from the customer would. Notices older than 24 hours are not parked (Zalo).
+- **A replayed or redelivered notice does not bring an erased customer back (#2348).** The intake refuses any message of an erased customer dated at or before the erasure, so a captured signed body replayed within the window, or a platform's redelivery, is dropped; a message dated later is the customer writing again and opens a new thread. The tombstone is dropped by the nightly job after 30 days (longer than any redelivery or the 24-hour age limit of a Zalo notice). Purged threads are not tombstoned: they are months old, and a notice that old is refused by its age.
 - **The Meta callback finds nothing in production until a connector sets the hash:** no connection carries `granted_by_hash` yet (CV2 and CV7 set it), so until then a request completes with none; tests set the hash directly.
 
 - **Images and files of a customer's message** are not stored in this slice (a placeholder names their kind), so none are deleted here; the slice that stores them (CV4 and CV5b, #2329) deletes the files with their message, through the same commands.

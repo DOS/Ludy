@@ -12,8 +12,20 @@
 --    org) for the one Meta data deletion callback. The API checks Meta's signature, then writes a confirmation code and the
 --    keyed hash; the worker claims the requests, erases the conversations of the connections that hash names in each org and
 --    marks the request completed; the status page reads it by the code. Only the definers touch it.
--- 4. crove_kernel.conversation_purge_due: the orgs that hold a thread past their retention, for the worker's daily purge.
+-- 4. crove_kernel.conversation_purge_due: the orgs that hold a thread past their retention, or an old erase tombstone, for the
+--    worker's daily purge.
+-- 5. crove_kernel.conversation_identity.erased_at: the tombstone of an erased customer (#2348). The identity row stays, with no name and
+--    no party, and the intake refuses any message of that customer dated at or before the erasure, so a signed body captured and
+--    replayed (Zalo and Meta resend, and a body is a bearer token for 24 hours) cannot bring an erased message back. A message dated
+--    later is the customer writing again and is taken. The retention job drops a tombstone after 30 days, longer than any redelivery.
 SET LOCAL lock_timeout = '2s';
+
+-- ---------------------------------------------------------------------------
+-- 5. The tombstone of an erased customer
+-- ---------------------------------------------------------------------------
+ALTER TABLE crove_kernel.conversation_identity ADD COLUMN IF NOT EXISTS erased_at timestamptz;
+GRANT UPDATE (erased_at) ON crove_kernel.conversation_identity TO crove_tenant;
+CREATE INDEX IF NOT EXISTS conversation_identity_erased_idx ON crove_kernel.conversation_identity (erased_at) WHERE erased_at IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- 1. The org's conversation settings
@@ -178,13 +190,23 @@ BEGIN
     RAISE EXCEPTION 'CONVERSATION_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
   RETURN QUERY
-  SELECT c.org_id
-  FROM crove_kernel.conversation c
-  JOIN crove_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active'
-  LEFT JOIN crove_kernel.conversation_setting s ON s.org_id = c.org_id
-  WHERE COALESCE(c.last_message_at, c.opened_at) < pg_catalog.now() - pg_catalog.make_interval(months => CASE WHEN s.id IS NULL THEN 24 ELSE s.retention_months::integer END)
-  GROUP BY c.org_id
-  ORDER BY pg_catalog.min(COALESCE(c.last_message_at, c.opened_at)), c.org_id
+  SELECT d.org_id FROM (
+    SELECT c.org_id, pg_catalog.min(COALESCE(c.last_message_at, c.opened_at)) AS oldest
+    FROM crove_kernel.conversation c
+    JOIN crove_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active'
+    LEFT JOIN crove_kernel.conversation_setting s ON s.org_id = c.org_id
+    WHERE COALESCE(c.last_message_at, c.opened_at) < pg_catalog.now() - pg_catalog.make_interval(months => CASE WHEN s.id IS NULL THEN 24 ELSE s.retention_months::integer END)
+    GROUP BY c.org_id
+    UNION ALL
+    -- An org with an erase tombstone older than 30 days, whatever its retention.
+    SELECT i.org_id, pg_catalog.min(i.erased_at)
+    FROM crove_kernel.conversation_identity i
+    JOIN crove_kernel.tenant t ON t.org_id = i.org_id AND t.status = 'active'
+    WHERE i.erased_at < pg_catalog.now() - interval '30 days'
+    GROUP BY i.org_id
+  ) d
+  GROUP BY d.org_id
+  ORDER BY pg_catalog.min(d.oldest), d.org_id
   LIMIT LEAST(GREATEST(p_limit, 1), 1000);
 END $$;
 REVOKE ALL ON FUNCTION crove_kernel.conversation_purge_due(integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;

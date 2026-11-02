@@ -259,7 +259,17 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await erase(o.admin)).toEqual({ threads: 2, messages: 2 });
       expect(await threads(o)).toEqual(['e-3']);
       expect(await count('conversation_note', o)).toBe(0);
-      expect((await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1', [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-other']);
+      // The erased customer's identity stays as a tombstone with no name; the other customer's is untouched.
+      const people = await rows<{ external_user_id: string; display_name: string | null; erased: boolean }>('SELECT external_user_id, display_name, erased_at IS NOT NULL AS erased FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
+      expect(people).toEqual([
+        { external_user_id: 'u-erase', display_name: null, erased: true },
+        { external_user_id: 'u-other', display_name: 'Khách u-other', erased: false },
+      ]);
+      // A signed body replayed after the erasure (the same message, dated before it) brings nothing back.
+      const replay: ConversationEvent = { kind: 'comment_thread', threadId: 'e-1', postId: 'post-1', messageId: 'm-replay', direction: 'in', contact: { id: 'u-erase', name: 'Khách u-erase' }, text: 'Số điện thoại của tôi là 0912345678', at: new Date(Date.now() - 60_000).toISOString() };
+      await park(sandboxNoticeBody({ accountId: o.accountId, events: [replay] }));
+      await intake();
+      expect(await threads(o)).toEqual(['e-3']);
       // The audit row has counts and the kind, nothing of the customer.
       const [audit] = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.erase_contact' AND outcome = 'ok'", [o.orgId]);
       const text = JSON.stringify(audit?.detail);
@@ -271,6 +281,11 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       // If the customer writes again, a new thread opens: erasing is not blocking.
       await thread(o, 'e-4', 'Tôi quay lại', 'u-erase');
       expect(await threads(o)).toEqual(['e-3', 'e-4']);
+      // A tombstone older than 30 days is dropped by the retention job, and its identity goes when no thread names it.
+      await rows("UPDATE crove_kernel.conversation_identity SET erased_at = now() - interval '31 days' WHERE org_id = $1 AND external_user_id = 'u-other'", [o.orgId]);
+      await rows("DELETE FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'e-3'", [o.orgId]);
+      await purgeExpiredConversations({ runtime: worker, workerDb });
+      expect((await rows<{ external_user_id: string }>("SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1", [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-erase']);
     });
   });
 

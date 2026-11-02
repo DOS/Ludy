@@ -297,6 +297,16 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     return 'stored';
   }
 
+  // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery).
+  const tomb = await ctx.trx
+    .selectFrom('crove_kernel.conversation_identity')
+    .select('erased_at')
+    .where('org_id', '=', ctx.orgId)
+    .where('provider', '=', provider)
+    .where('external_user_id', '=', event.contact.id)
+    .executeTakeFirst();
+  if (tomb?.erased_at && new Date(event.at).getTime() <= tomb.erased_at.getTime()) return 'ignored';
+
   const identity = await ctx.trx
     .insertInto('crove_kernel.conversation_identity')
     .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
@@ -1331,7 +1341,7 @@ async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
   const { rows } = await sql<{ n: string }>`
     WITH gone AS (
       DELETE FROM crove_kernel.conversation_identity i
-      WHERE i.org_id = ${ctx.orgId}::uuid AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+      WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
       RETURNING i.id)
     SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
   return Number(rows[0]?.n ?? 0);
@@ -1355,7 +1365,13 @@ export const conversationEraseContact = defineCommand({
     const filter = conversation.identity_id ? sql`c.identity_id = ${conversation.identity_id}::uuid` : sql`c.id = ${conversation.id}::uuid`;
     const erased = await deleteThreads(ctx, filter);
     if (conversation.identity_id) {
-      await ctx.trx.deleteFrom('crove_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).execute();
+      // The identity stays as a tombstone, with no name and no party: the intake refuses anything of this customer dated at or before now.
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_identity')
+        .set({ display_name: null, party_id: null, erased_at: ctx.now, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', conversation.identity_id)
+        .execute();
     }
     ctx.audit({ threads: erased.threads, messages: erased.messages, kind: conversation.kind });
     return erased;
@@ -1372,15 +1388,25 @@ export const conversationPurgeExpired = defineCommand({
   sideEffect: 'internal',
   access: 'system',
   handler: async (ctx, input): Promise<ConversationPurged> => {
+    // An erase tombstone older than 30 days is longer than any redelivery: its identity goes if no thread names it.
+    await sql`UPDATE crove_kernel.conversation_identity SET erased_at = NULL WHERE org_id = ${ctx.orgId}::uuid AND erased_at < ${ctx.now}::timestamptz - interval '30 days'`.execute(ctx.trx);
     const retention = await retentionOf(ctx);
-    if (retention.retentionMonths === null) return { threads: 0, messages: 0, identities: 0, more: false };
+    if (retention.retentionMonths === null) {
+      const left = await deleteOrphanIdentities(ctx);
+      if (left > 0) ctx.audit({ threads: 0, messages: 0, identities: left, retention_months: null });
+      return { threads: 0, messages: 0, identities: left, more: false };
+    }
     const { rows } = await sql<{ id: string }>`
       SELECT c.id FROM crove_kernel.conversation c
       WHERE c.org_id = ${ctx.orgId}::uuid
         AND COALESCE(c.last_message_at, c.opened_at) < ${ctx.now}::timestamptz - pg_catalog.make_interval(months => ${retention.retentionMonths}::int)
       ORDER BY COALESCE(c.last_message_at, c.opened_at), c.id LIMIT ${input.limit}
       FOR UPDATE SKIP LOCKED`.execute(ctx.trx);
-    if (rows.length === 0) return { threads: 0, messages: 0, identities: 0, more: false };
+    if (rows.length === 0) {
+      const left = await deleteOrphanIdentities(ctx);
+      if (left > 0) ctx.audit({ threads: 0, messages: 0, identities: left, retention_months: retention.retentionMonths });
+      return { threads: 0, messages: 0, identities: left, more: false };
+    }
     const erased = await deleteThreads(ctx, sql`c.id = ANY (${rows.map((r) => r.id)}::uuid[])`);
     const identities = await deleteOrphanIdentities(ctx);
     ctx.audit({ threads: erased.threads, messages: erased.messages, identities, retention_months: retention.retentionMonths });
