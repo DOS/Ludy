@@ -13,8 +13,8 @@
 // connections, so with one app serving both, the platform's data deletion callback finds the accounts of the person on the read
 // connection and on this one alike.
 //
-// The read ads app serves writing too for now (the owner's own account: one classic app holds the products together; the config
-// refuses a different write app until it has a data deletion callback of its own). A Meta permission belongs to the pair of the
+// The write app may be the read ads app (the owner's own account: one classic app holds the products together) or an app of its own
+// (required on a deployment others reach; the config says which are refused, and the data deletion callback verifies against its secret too). A Meta permission belongs to the pair of the
 // app and the person, and a user token carries every permission the person ever granted that app: once the owner grants
 // `ads_management` here, the read tokens of the same person for that app can change campaigns as well, though the scopes recorded
 // for them still say `ads_read`. So nothing that depends on "the report token cannot spend" holds with a shared app, and the

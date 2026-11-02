@@ -22,6 +22,7 @@ import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime,
 import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
+import { acceptMetaDeletion, metaDeletionStatus } from '../src/meta-deletion.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
 import { loadConfig } from '../src/config.ts';
 import { RateLimiter } from '../src/rate-limit.ts';
@@ -1572,7 +1573,8 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await view(owner, onlyWrite.adAccountId)).toMatchObject({ connectionStatus: 'active', canRunAds: false, writeConnectionStatus: null });
         expect(await sealed(onlyWrite.connectionId)).toBe('1');
         expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, onlyWrite.adAccountId]))[0]?.n)).toBeGreaterThan(0);
-        expect(await adsDeletionStatus(api, code)).toMatchObject({ accounts: 1 });
+        // The account stays, so it is not counted among the accounts the page says were deleted (#2366).
+        expect(await adsDeletionStatus(api, code)).toMatchObject({ accounts: 0 });
         // The same person granted both: the account goes, with both connections closed.
         const both = await withWrite('Cả hai của người xin xóa');
         await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, both.adAccountId, platformUserHash(META_SECRET, '6103')]);
@@ -1585,6 +1587,116 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(await sealed(id)).toBe('0');
         }
         expect(await adsDeletionStatus(api, second)).toMatchObject({ accounts: 1 });
+      });
+
+      // #2366: a write app of its own. Meta's user ids are app-scoped and the hash that finds a person's grants is keyed with the app's
+      // secret, so the callback verifies a request against the write app's secret too, and the write grant of a person is found by the
+      // hash keyed with it, whichever app they removed.
+      it('verifies a deletion request against the write app’s secret too, and finds the write grant by the hash keyed with it', async () => {
+        const READ_APP = 'meta-app-secret';
+        const WRITE_APP = 'meta-write-app-secret';
+        const apps = { ads: READ_APP, adsWrite: WRITE_APP };
+        const form = (secret: string, userId: string) => {
+          const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId })).toString('base64url');
+          return new URLSearchParams({ signed_request: `${createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}` }).toString();
+        };
+        const ask = async (secret: string, userId: string) => {
+          const accepted = await acceptMetaDeletion(api, apps, form(secret, userId));
+          expect(accepted.status).toBe(200);
+          await runAdsDeletions({ runtime: worker, workerDb });
+          return (accepted as { code: string }).code;
+        };
+        await open();
+        const made = await withWrite('Ứng dụng ghi riêng');
+        // The read grant was made through the read app by one person, the write grant through the write app by another (or the same
+        // one: their ids under the two apps are different numbers, and so are the hashes).
+        await row(`UPDATE crove_ads.ad_account SET granted_by_hash = $3 WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId, platformUserHash(READ_APP, '8001')]);
+        await api.execute('ads.account.link_write', { connectionId: made.writeConnectionId, grantedByHash: platformUserHash(WRITE_APP, '9001') }, { actor: asOwner(), orgId });
+        await sync(made.connectionId);
+        // A request signed by neither app is refused, as before.
+        expect(await acceptMetaDeletion(api, apps, form('some-other-secret', '9001'))).toEqual({ status: 401, code: 'DELETION_SIGNATURE' });
+        // Signed by the write app for an id that granted nothing there (the read person's id): verified, and it finds nothing.
+        await ask(WRITE_APP, '8001');
+        expect(await status(made.writeConnectionId)).toBe('active');
+        expect(await status(made.connectionId)).toBe('active');
+        expect(await attached(made.adAccountId)).toBe(made.writeConnectionId);
+        // Signed by the write app for the person who granted the write connection: it is closed and forgotten, the account stays for the
+        // read grant, and the read connection and the figures are untouched.
+        const code = await ask(WRITE_APP, '9001');
+        expect(await status(made.writeConnectionId)).toBe('revoked');
+        expect(await sealed(made.writeConnectionId)).toBe('0');
+        expect(await attached(made.adAccountId)).toBeNull();
+        expect(await status(made.connectionId)).toBe('active');
+        expect(await sealed(made.connectionId)).toBe('1');
+        expect(Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`, [orgId, made.adAccountId]))[0]?.n)).toBeGreaterThan(0);
+        // The account stays, so it is not counted among the accounts the page says were deleted; the page says so in its own words.
+        const done = await adsDeletionStatus(api, code);
+        expect(done).toMatchObject({ accounts: 0 });
+        expect(done?.completedAt).toBeInstanceOf(Date);
+        // Signed by the read app for the person who granted the read connection: the account is erased as before.
+        await ask(READ_APP, '8001');
+        eraseAuditsBefore += 1;
+        expect(await row(`SELECT 1 FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, made.adAccountId])).toEqual([]);
+        expect(await status(made.connectionId)).toBe('revoked');
+      });
+
+      // The route itself (http.ts) with the write app's secret alone, as a deployment whose read app is not set (or whose reads are not
+      // Meta's): a request signed by it is accepted and queued under the hash keyed with it; one signed by another secret is refused;
+      // and with the Ads module off the route does not exist (the global auth refuses what is not mounted).
+      it('mounts the callback for the write app alone, refuses another secret, and does not exist with the Ads module off', async () => {
+        const WRITE_APP = 'meta-write-app-secret';
+        const form = (secret: string, userId: string) => {
+          const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId })).toString('base64url');
+          return new URLSearchParams({ signed_request: `${createHmac('sha256', secret).update(encoded).digest('base64url')}.${encoded}` }).toString();
+        };
+        const mount = (runtime: Runtime) =>
+          createHttpApp({
+            config: appConfig,
+            runtime,
+            store: new MemoryStore(),
+            authenticate: createAuthenticator(appConfig, appDb),
+            pool,
+            aiEnabled: false,
+            channels: { broker: vault, sandbox: true, connectors: {}, publicUrl: 'https://ludy.example.test' },
+            adsWriteDeletion: { appSecret: WRITE_APP },
+          });
+        const post = (app: ReturnType<typeof mount>, body: string) => app.request('/api/ads/meta/data-deletion', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body });
+        const only = mount(api);
+        const accepted = await post(only, form(WRITE_APP, '9002'));
+        expect(accepted.status).toBe(200);
+        const { confirmation_code: code } = (await accepted.json()) as { confirmation_code: string };
+        expect(await row(`SELECT user_hash FROM crove_ads.deletion_request WHERE code = $1`, [code])).toEqual([{ user_hash: platformUserHash(WRITE_APP, '9002') }]);
+        expect((await only.request(`/api/ads/meta/data-deletion?code=${code}`)).status).toBe(200);
+        // Signed with the read app's secret, which this deployment does not hold: refused, and stored nowhere.
+        expect((await post(only, form('meta-app-secret', '9003'))).status).toBe(401);
+        expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash('meta-app-secret', '9003')])).toEqual([]);
+        await runAdsDeletions({ runtime: worker, workerDb });
+        // The Ads module off: no route for the write app's secret either (the request is refused, and nothing is stored).
+        const off = mount(new Runtime(appDb, { manifests: TEST_MANIFESTS, absentModules: ['ads'] }).register({ commands: kernelCommands, queries: kernelQueries({ inboundDomain: null }) }));
+        expect((await post(off, form(WRITE_APP, '9004'))).status).not.toBe(200);
+        expect(await row(`SELECT 1 FROM crove_ads.deletion_request WHERE user_hash = $1`, [platformUserHash(WRITE_APP, '9004')])).toEqual([]);
+      });
+
+      // The owner's own setup is one app for the reads, the writing and the Pages: the three secrets are the same, the Ads side is asked
+      // once, and a person who asks again while their conversations request is still open is linked to it (the status page waits for both).
+      it('asks the Ads side once when the read, write and Pages apps are one, and keeps the conversations request linked', async () => {
+        const ONE = 'meta-one-app-secret';
+        const apps = { ads: ONE, adsWrite: ONE, conversations: ONE };
+        const form = (userId: string) => {
+          const encoded = Buffer.from(JSON.stringify({ algorithm: 'HMAC-SHA256', issued_at: Math.floor(Date.now() / 1000), user_id: userId })).toString('base64url');
+          return new URLSearchParams({ signed_request: `${createHmac('sha256', ONE).update(encoded).digest('base64url')}.${encoded}` }).toString();
+        };
+        const first = await acceptMetaDeletion(api, apps, form('9101'));
+        expect(first.status).toBe(200);
+        // The Ads side is handled; the conversations side is still open.
+        await runAdsDeletions({ runtime: worker, workerDb });
+        const again = await acceptMetaDeletion(api, apps, form('9101'));
+        expect(again.status).toBe(200);
+        const code = (again as { code: string }).code;
+        // The Ads side's new request is handled; the conversations side still holds the old one, linked to this code, so the page is not
+        // "done" (a link that was never made would leave the page with the Ads side alone, which is complete).
+        await runAdsDeletions({ runtime: worker, workerDb });
+        expect(await metaDeletionStatus(api, code)).toMatchObject({ completedAt: null });
       });
     });
   });
