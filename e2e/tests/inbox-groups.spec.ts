@@ -2,8 +2,9 @@
 // Clean invoices grouped by vendor and learned rule (issue #2379), end to end: an approver teaches a rule on a first
 // invoice, the vendor's next two invoices wait in the Inbox as one group naming the rule, one button approves the group
 // under one step-up, and a later correction of the rule shows its count in Settings. The fixture invoices carry no
-// verifiable signature, so the test marks the two pending ones as verified in the database, as a provider's signed
-// invoices are, to make them clean; a proposal with a warning is never in a group (covered by the unit tests).
+// verifiable signature and a seller tax code that fails its checksum, so the test marks the two pending ones as having
+// no warning in the database, as a provider's signed invoices have none, to make them clean; a proposal with a warning
+// is never in a group (covered by the unit tests).
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
@@ -59,13 +60,14 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     await expect(page.getByTestId('proposal-groups')).toHaveCount(0);
   });
 
-  await test.step('with their signatures verified they are clean, and the Inbox groups them under the rule', async () => {
+  await test.step('with no warning left they are clean, and the Inbox groups them under the rule', async () => {
     exec(
       `UPDATE crove_kernel.proposal p
           SET payload = jsonb_set(
                 jsonb_set(p.payload, '{signature}', '{"status":"verified","reason":null}'::jsonb),
                 '{checks}',
-                (SELECT jsonb_agg(CASE WHEN c ->> 'id' = 'signature' THEN c || '{"status":"pass","code":"signature.verified"}'::jsonb ELSE c END)
+                (SELECT jsonb_agg(CASE WHEN c ->> 'id' = 'signature' THEN c || '{"status":"pass","code":"signature.verified"}'::jsonb
+                                  WHEN c ->> 'status' = 'warn' THEN c || '{"status":"pass"}'::jsonb ELSE c END)
                    FROM jsonb_array_elements(p.payload -> 'checks') c))
          FROM crove_kernel.tenant t
         WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending' AND p.kind = 'finance.purchase.record'`,
