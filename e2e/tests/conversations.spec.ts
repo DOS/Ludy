@@ -64,11 +64,27 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   // Resolve it; it leaves New and Pending and is in Resolved, here and in the comment inbox.
   await comments.getByTestId('conversation-resolve').click();
   await expect(comments.getByTestId('conversation-status')).toHaveText('Đã xong');
+  // The comment inbox of CV1 moved into the Inbox group of the Social app (CV3, #2306): its old address opens the Inbox on the comments.
   await page.goto(`/o/${slug}/social/comments`);
-  await expect(page.getByRole('heading', { name: 'Hộp bình luận' })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?kind=comment_thread`));
+  await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Hộp thư' })).toBeVisible();
   await page.getByTestId('conversation-tab-resolved').click();
   await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
+  // The kind filter: no private message here, so the list is empty; comments are back with the filter cleared.
+  await page.getByTestId('inbox-kind').selectOption('direct');
+  await expect(page.getByTestId('conversation-item')).toHaveCount(0);
+  await page.getByTestId('inbox-kind').selectOption('comment_thread');
+  await expect(page.getByTestId('conversation-item')).toHaveCount(1);
+  // The contact panel: the customer is not a contact until a person makes or links one (a comment is not consent to be in a CRM).
+  const panel = page.getByTestId('contact-panel');
+  await expect(panel).toContainText('Chưa gắn với liên hệ nào');
+  await panel.getByRole('button', { name: 'Tạo liên hệ mới' }).click();
+  await panel.getByLabel('Tên liên hệ mới').fill('Chị Mai Hương');
+  await panel.getByRole('button', { name: 'Tạo và gắn' }).click();
+  await expect(panel.getByTestId('contact-name')).toHaveText('Chị Mai Hương');
+  expect(sql<{ name: string }>(`SELECT p.name FROM crove_kernel.conversation c JOIN crove_kernel.party p ON p.org_id = c.org_id AND p.id = c.party_id JOIN crove_kernel.tenant t ON t.org_id = c.org_id WHERE t.slug = :'slug'`, { slug })).toEqual([{ name: 'Chị Mai Hương' }]);
   await page.getByTestId('conversation-reopen').click();
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');

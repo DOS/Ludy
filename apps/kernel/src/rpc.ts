@@ -1945,6 +1945,10 @@ export function createRpcHandler(
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
       markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
+      // The inbox (CV3, #2306): the "you are replying" marker and the availability switch.
+      composing: os.conversations.composing.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.composing', input, { actor, orgId }))),
+      availability: os.conversations.availability.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.availability', {}, { actor, orgId }))),
+      setAvailability: os.conversations.setAvailability.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_availability', input, { actor, orgId }))),
       // The command checks the connection and the role and returns the event; the body then takes the intake's own way, parked
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
