@@ -67,6 +67,11 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
   const openId = search.c ?? items[0]?.id ?? null;
   // A change of tab or filter starts a new list: the open thread is the first of it again.
   const change = (next: { [K in keyof InboxSearch]?: InboxSearch[K] | undefined }) => onSearch(withSearch(search, { c: undefined, ...next }));
+  // The first thread of a list is opened for good: answering it moves it to another tab, and it stays on screen (the address names it from then on).
+  const first = items[0]?.id;
+  useEffect(() => {
+    if (!search.c && first) onSearch({ ...search, c: first });
+  }, [search.c, first]); // eslint-disable-line react-hooks/exhaustive-deps
   const [text, setText] = useState(search.q ?? '');
   const typed = useDebounced(text.trim(), SEARCH_PAUSE_MS);
   useEffect(() => {
