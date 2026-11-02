@@ -2350,11 +2350,11 @@ suite('ads on PostgreSQL (#2217)', () => {
             c.release();
           }
         })();
-      const reading = async (externalAccountId: string, grantor: string | null) => {
+      const reading = async (externalAccountId: string, grantor: string | null, scopes: string[] = ['ads_read']) => {
         const sealedToken = vault.seal(JSON.stringify({ accessToken: 'EAAB-second-org-token' }), { orgId: otherOrgId, provider: 'meta_ads', externalAccountId });
         const made = await api.execute<{ connectionId: string }>(
           'kernel.channel.connect',
-          { provider: 'meta_ads', externalAccountId, displayName: `Meta ${externalAccountId}`, scopes: ['ads_read'], expiresAt: null, credential: { keyId: sealedToken.keyId, envelope: sealedToken.envelope.toString('base64') } },
+          { provider: 'meta_ads', externalAccountId, displayName: `Meta ${externalAccountId}`, scopes, expiresAt: null, credential: { keyId: sealedToken.keyId, envelope: sealedToken.envelope.toString('base64') } },
           { actor: asOutsider, orgId: otherOrgId },
         );
         await api.execute('ads.account.link', { connectionId: made.connectionId, ...(grantor ? { grantedByHash: platformUserHash('meta-app-secret', grantor) } : {}) }, { actor: asOutsider, orgId: otherOrgId });
@@ -2381,6 +2381,21 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(left).toEqual(ids.map((id) => ({ id, status: 'revoked', status_reason: 'spend_scopes', sealed: '0' })));
       // The switch was already off: a second switch-off, with nothing new, closes nothing more and fails nothing.
       expect((await rpc('ads/writeDisable', token, { idempotencyKey: randomUUID() }, otherSlug)).body.readConnectionsClosed).toBe(0);
+      // With a write app of its own (the API says `sharedApp: false`, from its config) no reading token can hold the permission: a clean
+      // reading connection stays open when running ads is switched off, and one whose recorded scopes hold the permission still closes.
+      await settingSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
+      const clean = await reading('act_9503', '7001');
+      const recorded = await reading('act_9504', null, ['ads_read', 'ads_management']);
+      const own = await api.execute<{ readConnectionsClosed: number }>('ads.write.disable', { sharedApp: false }, { actor: asOutsider, orgId: otherOrgId });
+      expect(own.readConnectionsClosed).toBe(1);
+      const state = async (id: string) => (await row<{ status: string }>(`SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2`, [otherOrgId, id]))[0]?.status;
+      expect(await state(clean)).toBe('active');
+      expect(await state(recorded)).toBe('revoked');
+      // Said nothing, it fails safe: the clean one closes too.
+      await settingSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1');
+      const safe = await api.execute<{ readConnectionsClosed: number }>('ads.write.disable', {}, { actor: asOutsider, orgId: otherOrgId });
+      expect(safe.readConnectionsClosed).toBe(1);
+      expect(await state(clean)).toBe('revoked');
     });
 
     it('reads 13 months in the adapter\'s windows with only GET requests, and stores them in the account\'s currency and time zone', async () => {

@@ -2628,6 +2628,7 @@ export const vi = {
     title: 'Chứng từ chờ duyệt',
     subtitle: 'Gửi hóa đơn vào đây. Trợ lý AI {assistant} đề xuất bút toán, bạn chỉ việc kiểm tra và duyệt.',
     upload: 'Tải chứng từ lên',
+    capture: 'Chụp hóa đơn',
     dropHereCompact: 'Kéo thả hóa đơn vào đây để tải lên, hoặc dùng nút Tải chứng từ lên',
     forwardTo: 'Chuyển tiếp tới',
     dropHere: 'Kéo thả hóa đơn vào đây',
