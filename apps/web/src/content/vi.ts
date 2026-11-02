@@ -46,7 +46,7 @@ export const vi = {
     inbox: 'AI Inbox',
     groups: [
       { label: 'Tài chính', items: ['Chứng từ', 'Sổ nhật ký', 'Sổ cái', 'Nhà cung cấp', 'VAT'] },
-      { label: 'Vận hành', items: ['Công việc', 'Agents', 'Social'] },
+      { label: 'Vận hành', items: ['Công việc', 'Agents', 'Engage'] },
     ],
     user: { name: 'Chị Lan', role: 'Kế toán trưởng' },
     metaWait: '4 cần xem',
@@ -212,7 +212,7 @@ export const vi = {
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
       { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.engage}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
@@ -236,7 +236,7 @@ export const vi = {
       minh: {
         kicker: 'Người',
         title: 'Anh Minh',
-        sub: `Marketing. Duyệt bài của ${N.marketing} trước khi đăng.`,
+        sub: `Marketing. Duyệt bài của ${N.engage} trước khi đăng.`,
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ anh duyệt', note: '' },
         ],
@@ -263,7 +263,7 @@ export const vi = {
       },
       social: {
         kicker: 'Đồng nghiệp AI',
-        title: `${N.marketing}`,
+        title: `${N.engage}`,
         sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, đăng khi có người duyệt.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ Anh Minh duyệt', note: '' },
@@ -292,7 +292,7 @@ export const vi = {
         { task: 'Đọc hoá đơn, sổ sách, hệ thống tài khoản', level: 0, label: 'Tự làm' },
         { task: 'Đề xuất bút toán khi 5/5 kiểm tra đạt', level: 1, label: 'Tự đề xuất' },
         { task: 'Đề xuất bút toán có cảnh báo, ví dụ thiếu mã CQT', level: 2, label: 'Chị Lan duyệt' },
-        { task: 'Lên lịch bài đăng Social', level: 2, label: 'Anh Minh duyệt' },
+        { task: 'Lên lịch bài đăng', level: 2, label: 'Anh Minh duyệt' },
         { task: 'Ghi sổ bút toán', level: 3, label: 'Duyệt và mã hai lớp' },
       ],
       note: 'Ví dụ cấu hình. Giới hạn đặt theo từng agent, người đặt là Anh Tuấn.',
@@ -397,7 +397,7 @@ export const vi = {
       running: 'Đang chạy',
       roster: [
         { name: `${N.finance}`, risk: 'R1', manager: 'Quản lý: Chị Lan', spent: '1.240.000 / 2.000.000 ₫', pct: 62 },
-        { name: `${N.marketing}`, risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
+        { name: `${N.engage}`, risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
       ],
     },
     tasks: {
@@ -451,11 +451,11 @@ export const vi = {
       ],
     },
     social: {
-      name: 'Social',
+      name: 'Ludy Engage',
       body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
-        { name: `${N.marketing}`, initials: '', agent: true },
+        { name: `${N.engage}`, initials: '', agent: true },
       ],
       weekLabel: 'Lịch đăng tuần 16/10 đến 22/10/2026',
       todayLabel: 'Hôm nay',
@@ -502,7 +502,7 @@ export const vi = {
       noSlots: 'Kín lịch',
       pickedLabel: 'Đã chọn',
       booked: { title: 'Lịch hẹn mới', who: 'Cty TNHH Gạo Sạch Miền Tây', when: '14:00, T3 20/10/2026', state: 'Đã xác nhận' },
-      suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.sales} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
+      suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.crm} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
     },
   },
   trust: {

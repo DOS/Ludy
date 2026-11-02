@@ -46,7 +46,7 @@ export const en: Dictionary = {
     inbox: 'AI Inbox',
     groups: [
       { label: 'Finance', items: ['Documents', 'Journal', 'Ledger', 'Vendors', 'VAT'] },
-      { label: 'Operations', items: ['Tasks', 'Agents', 'Social'] },
+      { label: 'Operations', items: ['Tasks', 'Agents', 'Engage'] },
     ],
     user: { name: 'Chị Lan', role: 'Chief accountant' },
     metaWait: '4 to review',
@@ -212,7 +212,7 @@ export const en: Dictionary = {
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 post to approve' }, budget: null },
       { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Reports to Chị Lan', initials: '', chip: null, budget: { used: '1,240,000', total: '₫2,000,000', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Tasks', role: '3 open, 1 taken by an agent', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Reports to Anh Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.engage}`, role: 'Reports to Anh Minh', initials: '', chip: null, budget: { used: '310,000', total: '₫1,000,000', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
@@ -236,7 +236,7 @@ export const en: Dictionary = {
       minh: {
         kicker: 'Person',
         title: 'Anh Minh',
-        sub: `Marketing. Approves ${N.marketing}’s posts before they go out.`,
+        sub: `Marketing. Approves ${N.engage}’s posts before they go out.`,
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for him', note: '' },
         ],
@@ -263,7 +263,7 @@ export const en: Dictionary = {
       },
       social: {
         kicker: 'AI coworker',
-        title: `${N.marketing}`,
+        title: `${N.engage}`,
         sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, publishes once approved.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Anh Minh', note: '' },
@@ -292,7 +292,7 @@ export const en: Dictionary = {
         { task: 'Read invoices, books and the chart of accounts', level: 0, label: 'On its own' },
         { task: 'Propose an entry when all 5 checks pass', level: 1, label: 'Proposes' },
         { task: 'Propose an entry with a warning, such as no authority code', level: 2, label: 'Chị Lan approves' },
-        { task: 'Schedule a social post', level: 2, label: 'Anh Minh approves' },
+        { task: 'Schedule a post', level: 2, label: 'Anh Minh approves' },
         { task: 'Post an entry to the ledger', level: 3, label: 'Approval and code' },
       ],
       note: 'Example configuration. Limits are set per agent, by Anh Tuấn.',
@@ -397,7 +397,7 @@ export const en: Dictionary = {
       running: 'Running',
       roster: [
         { name: `${N.finance}`, risk: 'R1', manager: 'Manager: Chị Lan', spent: '₫1,240,000 / ₫2,000,000', pct: 62 },
-        { name: `${N.marketing}`, risk: 'R1', manager: 'Manager: Anh Minh', spent: '₫310,000 / ₫1,000,000', pct: 31 },
+        { name: `${N.engage}`, risk: 'R1', manager: 'Manager: Anh Minh', spent: '₫310,000 / ₫1,000,000', pct: 31 },
       ],
     },
     tasks: {
@@ -451,11 +451,11 @@ export const en: Dictionary = {
       ],
     },
     social: {
-      name: 'Social',
+      name: 'Ludy Engage',
       body: 'Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more. Each channel has its own approval steps, and photos and videos live in one shared library. For the large platforms, whoever installs Ludy sets up the app of that platform first.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
-        { name: `${N.marketing}`, initials: '', agent: true },
+        { name: `${N.engage}`, initials: '', agent: true },
       ],
       weekLabel: 'Posting calendar, 16/10 to 22/10/2026',
       todayLabel: 'Today',
@@ -502,7 +502,7 @@ export const en: Dictionary = {
       noSlots: 'Fully booked',
       pickedLabel: 'Picked',
       booked: { title: 'New booking', who: 'Gạo Sạch Miền Tây Co., Ltd.', when: '14:00, Tue 20/10/2026', state: 'Confirmed' },
-      suggest: `A client writes "is Tuesday afternoon OK?": ${N.sales} suggests 14:00 or 15:30, and Chị Hoa checks and sends the reply.`,
+      suggest: `A client writes "is Tuesday afternoon OK?": ${N.crm} suggests 14:00 or 15:30, and Chị Hoa checks and sends the reply.`,
     },
   },
   trust: {

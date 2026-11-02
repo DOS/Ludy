@@ -80,14 +80,14 @@ describe('brand on the landing page (#1683)', () => {
     for (const dict of [vi, en]) {
       expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
       expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
-      expect(dict.modules.crm.suggest, dict.lang).toContain(N.sales);
+      expect(dict.modules.crm.suggest, dict.lang).toContain(N.crm);
       expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
       expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
   });
 
   it('keeps the roster by role and no name written in the copy', () => {
-    expect(Object.keys(ROSTER).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
+    expect(Object.keys(ROSTER).sort()).toEqual(['crm', 'engage', 'finance', 'gm', 'system']);
     // The copy reads names from content/roster.ts (`${N.finance}`): a name typed into a string is the edit a rename must not need.
     const names = new RegExp(`\\b(${Object.values(ROSTER).map((c) => c.name).join('|')})\\b(?! work)`);
     const written = sourceFiles(join(src, 'content'))
@@ -109,6 +109,11 @@ describe('brand on the landing page (#1683)', () => {
         .flatMap((text, i) => (/assistant|trợ lý/i.test(text.normalize('NFC')) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 100)}`] : [])),
     );
     expect(found).toEqual([]);
+  });
+
+  it('names the Social app Ludy Engage', () => {
+    expect(vi.modules.social.name).toBe('Ludy Engage');
+    expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
   it('names the products Ludy Accounting and Ludy CRM', () => {
