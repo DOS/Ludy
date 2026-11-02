@@ -119,7 +119,8 @@ describe('proxy', () => {
 });
 
 describe('proxy matcher', () => {
-  const matcher = new RegExp(`^${config.matcher[0]!.replace(/^\/\(/, '/(').replace(/\(\?!/, '(?!')}$`);
+  // The pattern is a regular expression anchored at the start of the path, as Next.js reads it.
+  const matcher = new RegExp(`^${config.matcher[0]}$`);
   const matches = (path: string) => matcher.test(path);
 
   it('runs on pages and on the social preview routes', () => {

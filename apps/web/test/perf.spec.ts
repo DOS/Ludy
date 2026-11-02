@@ -9,9 +9,12 @@ import { auditResources, measureVitals } from './perf-checks';
 
 // Both languages share one URL per page (#2360): English is the visitor's cookie, set before the first request.
 const baseUrl = () => process.env.WEB_BASE_URL ?? 'http://localhost:3000';
-const english = (context: BrowserContext) => context.addCookies([{ name: 'ludy-lang', value: 'en', url: baseUrl() }]);
+const chosen = (value: 'vi' | 'en') => (context: BrowserContext) => context.addCookies([{ name: 'ludy-lang', value, url: baseUrl() }]);
+const vietnamese = chosen('vi');
+const english = chosen('en');
+// Each visit names its language, so a machine whose browser language is English still measures the Vietnamese pages.
 const VISITS = ['/', '/ke-toan', '/crm', '/notes'].flatMap((path) => [
-  { path, label: path, setup: undefined },
+  { path, label: path, setup: vietnamese },
   { path, label: `${path} in English`, setup: english },
 ]);
 
