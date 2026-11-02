@@ -255,6 +255,10 @@ export const adsCampaignDraftSave = defineCommand({
       if (current.ad_account_id !== adAccountId) throw new DomainError('ADS_DRAFT_ACCOUNT', 422, 'Bản nháp thuộc tài khoản quảng cáo khác');
       if (current.status !== 'draft') throw draftClosed();
       if (await pendingProposal(ctx, current.id)) throw draftSubmitted();
+      // An editor that sends the revision it read does not overwrite what someone saved meanwhile.
+      if (input.expectedRevision !== undefined && input.expectedRevision !== current.revision) {
+        throw new DomainError('ADS_DRAFT_STALE', 409, 'Bản nháp đã được người khác sửa từ lúc bạn mở nó; hãy tải lại rồi sửa tiếp');
+      }
       const merged: AdsCampaignPlanDraft = { ...planOf(current), ...Object.fromEntries(Object.entries(input.plan).filter(([, v]) => v !== undefined)) } as AdsCampaignPlanDraft;
       const maxSpend = merged.dailyBudget && flightDays(merged.startOn, merged.endOn) ? maxSpendOf(merged.dailyBudget, flightDays(merged.startOn, merged.endOn) as number) : null;
       await ctx.trx
@@ -372,6 +376,9 @@ export const adsCampaignLaunch = defineCommand({
     const account = await accountOf(ctx, row.ad_account_id, true);
     const draft = planOf(row);
     const plan = completePlan(draft);
+    // The proposal belongs to the legal entity the account was in when it was asked for (#1538); an account moved to another entity since is another
+    // approval's business: a new request.
+    const proposal = await ctx.trx.selectFrom('crove_kernel.proposal').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', ctx.proposalId).executeTakeFirst();
     // The plan that was asked for is the plan that stands: a change after the request is a new request. What the card showed (the plan, the account,
     // the days) is the plan the hash binds, not only the hash.
     if (
@@ -380,7 +387,8 @@ export const adsCampaignLaunch = defineCommand({
       row.revision !== payload.revision ||
       planHash(plan, account.id, account.currency) !== payload.planHash ||
       canonicalJson(plan) !== canonicalJson(payload.plan) ||
-      payload.adAccountId.toLowerCase() !== account.id
+      payload.adAccountId.toLowerCase() !== account.id ||
+      proposal?.legal_entity_id !== account.legalEntityId
     ) {
       throw new DomainError('ADS_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     }

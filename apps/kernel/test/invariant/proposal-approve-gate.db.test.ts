@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { sql } from 'kysely';
-import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { approvalPolicies, createOrg, decideApproval, kernelCommands, kernelQueries, liveApprovalCommands, upsertIdentity } from '@crove/kernel';
 import { Runtime, defineCommand, type AgentActor, type CommandDef } from '@crove/kernel-runtime';
 import { adsCommands } from '@crove/mod-ads';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
@@ -227,6 +227,14 @@ suite('the approval gate in the database (#1793)', () => {
       );
       expect(row, p.command).toEqual({ roles: [...p.roles], permission: p.permission, four_eyes: p.fourEyes, ledger: p.ledger });
     }
+  });
+
+  it('holds the same list of commands judged on the members now as approval.ts (approval_command_live), and no other', async () => {
+    const live = liveApprovalCommands().sort();
+    expect(live.length).toBeGreaterThan(0);
+    const registered = [...kernelCommands, ...financeCommands, ...adsCommands, prepare1793, proposal1793].filter((c) => (c as CommandDef<unknown, unknown>).access === 'proposal').map((c) => c.name);
+    const rows = await admin(async (c) => (await c.query<{ command: string; live: boolean }>('SELECT c AS command, crove_kernel.approval_command_live(c) AS live FROM unnest($1::text[]) c', [[...registered, 't1793.unknown', 'ads.pause_all', 'ads.cap.lower']])).rows);
+    expect(rows.filter((r) => r.live).map((r) => r.command).sort()).toEqual(live);
   });
 
   it('decides every case exactly as decideApproval does (P09 presets, P10, P12, a removed member, not pending)', { timeout: 300_000 }, async () => {

@@ -141,7 +141,8 @@ export function completePlan(draft: AdsCampaignPlanDraft): AdsCampaignPlan | nul
 
 // JSON with the keys in order and no spaces, so a hash does not depend on how an object was built.
 export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((v) => canonicalJson(v)).join(',')}]`;
+  // As JSON.stringify does for an array: an undefined element is null, so the output is always valid JSON.
+  if (Array.isArray(value)) return `[${value.map((v) => (v === undefined ? 'null' : canonicalJson(v))).join(',')}]`;
   if (value !== null && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>)
       .filter(([, v]) => v !== undefined)

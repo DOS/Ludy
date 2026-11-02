@@ -1526,8 +1526,8 @@ export const vi = {
       capSetAccount: 'Đặt hạn mức chi tiêu quảng cáo {period} của tài khoản {name}.',
       capFirst: 'Hiện chưa có hạn mức nào; đây là hạn mức đầu tiên: {amount}.',
       capFromTo: 'Từ {previous} thành {amount}.',
-      campaignLaunch: 'Chạy chiến dịch “{name}” trên {account}.',
-      campaignLaunchDetail: 'Có thể chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}.',
+      campaignLaunch: 'Duyệt kế hoạch chiến dịch “{name}” trên {account}.',
+      campaignLaunchDetail: 'Nếu sau này được chạy, có thể chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}. Duyệt chỉ đánh dấu kế hoạch là đã duyệt: chưa gửi gì lên nền tảng.',
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
@@ -3217,7 +3217,7 @@ export const vi = {
     voucherNotEligible: 'Chỉ chủ sở hữu hoặc quản trị duyệt được chứng từ thu chi.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'Thay đổi gì',
-    adsSubtitle: 'Đề xuất thay đổi việc chạy quảng cáo: khi được duyệt thì có hiệu lực ngay. Không ghi gì vào sổ sách.',
+    adsSubtitle: 'Đề xuất thay đổi việc chạy quảng cáo: khi được duyệt thì áp dụng ngay vào cài đặt của tổ chức. Kế hoạch chiến dịch chỉ được đánh dấu là đã duyệt, chưa chạy gì. Không ghi gì vào sổ sách.',
     adsOpenScreen: 'Mở màn hình Quảng cáo',
     approveAds: 'Duyệt thay đổi',
     stepUpApproveAds: 'duyệt thay đổi chạy quảng cáo này',
@@ -6748,6 +6748,7 @@ export const vi = {
       ADS_DRAFT_INCOMPLETE: 'Bản nháp chưa đủ thông tin để gửi duyệt.',
       ADS_DRAFT_INVALID: 'Bản nháp chưa qua các bước kiểm tra (ngân sách, ngày chạy, hạn mức hoặc việc chạy quảng cáo). Xem danh sách việc cần sửa.',
       ADS_DRAFT_CHANGED: 'Bản nháp đã thay đổi từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
+      ADS_DRAFT_STALE: 'Có người đã lưu bản nháp này từ lúc bạn mở nó. Hãy tải lại rồi sửa tiếp.',
       ADS_CURRENCY_CHANGED: 'Nền tảng báo một đơn vị tiền khác với đơn vị đã ghi cho tài khoản này nên số liệu chưa được ghi',
       ACCOUNT_CODE_TAKEN: 'Mã tài khoản này đã có trong hệ thống tài khoản',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'Tài khoản còn tài khoản con đang dùng; hãy ngừng dùng chúng trước',

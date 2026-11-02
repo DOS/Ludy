@@ -90,8 +90,9 @@ export const zAdsCampaignPlanDraft = z.strictObject({
 });
 export type AdsCampaignPlanDraft = z.infer<typeof zAdsCampaignPlanDraft>;
 
-// Saving a draft: a new one names its ad account, an edit names the draft (the account never changes).
-export const zAdsCampaignDraftSave = z.strictObject({ draftId: zId.optional(), adAccountId: zId, plan: zAdsCampaignPlanDraft });
+// Saving a draft: every save names its ad account (the account never changes: an edit names the draft too, and the account must be the draft's own).
+// An edit may carry the revision it was made from: a draft someone saved since is refused (ADS_DRAFT_STALE) instead of overwritten.
+export const zAdsCampaignDraftSave = z.strictObject({ draftId: zId.optional(), adAccountId: zId, plan: zAdsCampaignPlanDraft, expectedRevision: z.number().int().positive().optional() });
 export type AdsCampaignDraftSave = z.infer<typeof zAdsCampaignDraftSave>;
 export const zAdsCampaignDraftSaveCall = zAdsCampaignDraftSave.extend({ idempotencyKey: zId });
 export const zAdsCampaignDraftDiscardCall = z.strictObject({ draftId: zId, idempotencyKey: zId });

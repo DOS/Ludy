@@ -16,7 +16,7 @@ import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, sandbo
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { decideApproval, kernelCommands, kernelQueries, liveApprovalCommands } from '@crove/kernel';
+import { decideApproval, kernelCommands, kernelQueries } from '@crove/kernel';
 import { zTodayItems, type AdAccountView, type AdsSummary, type AdsSyncRunView, type TodayItem } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
@@ -1328,6 +1328,11 @@ suite('ads on PostgreSQL (#2217)', () => {
           const edited = await saved(adminAccount, account, plan({ dailyBudget: '150000' }), draft.id);
           expect(edited).toMatchObject({ id: draft.id, revision: 2, maxSpend: '1050000', days: 7, issues: [] });
           expect(await draftRow(draft.id)).toMatchObject({ revision: 2, max_spend: '1050000', daily_budget: '150000' });
+          // An editor that sends the revision it read does not overwrite a later save: the stale one is refused, the current one goes through.
+          const stale = (revision: number) => callAs(owner, 'ads/saveCampaignDraft', { idempotencyKey: key(), adAccountId: account, draftId: draft.id, plan: { name: 'Sửa từ bản cũ', objective: 'traffic' }, expectedRevision: revision });
+          expect(await stale(1)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_STALE' } });
+          expect((await draftRow(draft.id))?.revision).toBe(2);
+          expect((await stale(2)).status).toBe(200);
           // The list and the single read agree, and a draft discarded leaves the list.
           const listed = (await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>;
           expect(listed.map((d) => d.id)).toContain(draft.id);
@@ -1499,13 +1504,13 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await entityOf(open.id))?.legal_entity_id).toBe(entity);
           await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
           expect((await entityOf(approved.id))?.legal_entity_id).toBe(before);
-        });
-
-        it('keeps the database’s list of the commands judged on the members now equal to approval.ts’s', async () => {
-          const live = liveApprovalCommands().sort();
-          expect(live).toEqual(['ads.account.enable_write', 'ads.campaign.launch', 'ads.cap.set', 'ads.launches.unblock', 'ads.write.enable']);
-          const inDatabase = (await row<{ command: string; live: boolean }>(`SELECT c AS command, crove_kernel.approval_command_live(c) AS live FROM unnest($1::text[]) c`, [[...live, 'finance.purchase.record', 'kernel.org.set_approval_preset', 'ads.pause_all', 'ads.cap.lower']])).filter((r) => r.live).map((r) => r.command).sort();
-          expect(inDatabase).toEqual(live);
+          // A request made in one entity is not approved after its account moved to another: the approval is refused and a new request is the way.
+          const asked = proposalId(await submit(owner, open.id));
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          expect(await approve(adminAccount, asked)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_CHANGED' } });
+          expect((await draftRow(open.id))?.status).toBe('draft');
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          expect((await approve(adminAccount, asked)).status).toBe(200);
         });
 
         it('keeps the drafts of another org out, and answers for an account of the org only', async () => {

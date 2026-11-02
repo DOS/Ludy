@@ -1528,8 +1528,8 @@ export const en = {
       capSetAccount: 'Set the {period} spend cap of the account {name}.',
       capFirst: 'No cap is set yet; this sets the first one: {amount}.',
       capFromTo: 'From {previous} to {amount}.',
-      campaignLaunch: 'Run the campaign “{name}” on {account}.',
-      campaignLaunchDetail: 'It can spend at most {amount} over {days, plural, one {# day} other {# days}}, {daily} a day.',
+      campaignLaunch: 'Approve the plan of the campaign “{name}” on {account}.',
+      campaignLaunchDetail: 'If it is launched later, it can spend at most {amount} over {days, plural, one {# day} other {# days}}, {daily} a day. Approving only marks the plan approved: nothing is sent to the platform yet.',
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
@@ -3221,7 +3221,7 @@ export const en = {
     voucherNotEligible: 'Only owners and admins can approve cash and bank vouchers.',
     // A request to open the way to spend on an ad platform (#2294): it posts nothing to the books.
     adsChange: 'What changes',
-    adsSubtitle: 'A change to running ads: once approved it takes effect at once. It posts nothing to the books.',
+    adsSubtitle: 'A change to running ads: once approved it applies to the org’s settings at once. A campaign plan is only marked approved; nothing is launched yet. It posts nothing to the books.',
     adsOpenScreen: 'Open the Ads screen',
     approveAds: 'Approve the change',
     stepUpApproveAds: 'approve this change to running ads',
@@ -6750,6 +6750,7 @@ export const en = {
       ADS_DRAFT_INCOMPLETE: 'This draft is not complete enough to send for approval yet.',
       ADS_DRAFT_INVALID: 'This draft does not pass the checks yet (budget, dates, caps or running ads). See the list of what to fix.',
       ADS_DRAFT_CHANGED: 'The draft changed after this request was made. Reject the request and make a new one.',
+      ADS_DRAFT_STALE: 'Someone saved this draft since you opened it. Reload it, then edit again.',
       ACCOUNT_CODE_TAKEN: 'This account code is already in the chart of accounts.',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'The account still has sub-accounts in use. Stop using them first.',
       ACCOUNT_INACTIVE: 'The account is no longer in use. Choose another account.',

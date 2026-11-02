@@ -157,5 +157,8 @@ describe('the complete plan and its hash', () => {
   it('writes the same canonical text for the same value in any key order', () => {
     expect(canonicalJson({ b: 1, a: [{ d: 1, c: 2 }] })).toBe(canonicalJson({ a: [{ c: 2, d: 1 }], b: 1 }));
     expect(canonicalJson({ a: undefined, b: null })).toBe('{"b":null}');
+    // An undefined array element is null, as JSON.stringify has it: the output is always valid JSON.
+    expect(canonicalJson([undefined, 1])).toBe('[null,1]');
+    expect(JSON.parse(canonicalJson({ list: [undefined] }))).toEqual({ list: [null] });
   });
 });

@@ -333,6 +333,7 @@ export const KERNEL_ERROR_CODES = [
   'ADS_DRAFT_INCOMPLETE',
   'ADS_DRAFT_INVALID',
   'ADS_DRAFT_CHANGED',
+  'ADS_DRAFT_STALE',
   // The chart of accounts and vendor defaults (#319).
   'ACCOUNT_CODE_TAKEN',
   'ACCOUNT_HAS_SUB_ACCOUNTS',
