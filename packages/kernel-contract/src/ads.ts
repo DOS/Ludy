@@ -106,9 +106,99 @@ export const zAdsSyncFailure = z.strictObject({
 export type AdsSyncFailure = z.infer<typeof zAdsSyncFailure>;
 
 // Running ads (ADR-0043, #2294): the spend caps, in the currency's own units as a decimal string above zero, never a number. A
-// cap is set or raised by a proposal and lowered directly (the commands come after this view of them).
+// cap is set or raised by a proposal and lowered directly.
 export const ADS_CAP_SCOPES = ['org', 'account'] as const;
 export const ADS_CAP_PERIODS = ['daily', 'monthly'] as const;
+const zCapAmount = z.string().regex(/^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/, 'a decimal above zero');
+// A currency code of ISO 4217, from the platform's own list (a typo such as VDN is refused before it is a cap).
+const ISO_CURRENCIES: ReadonlySet<string> = new Set(Intl.supportedValuesOf('currency'));
+const zCapCurrency = zCurrency.refine((code) => ISO_CURRENCIES.has(code), 'an ISO 4217 currency code');
+// An org cap names no account, an account cap names one.
+const capNamesAccount = (c: { scope: 'org' | 'account'; adAccountId?: string | undefined }) => (c.scope === 'org') === (c.adAccountId === undefined);
+const capNamesAccountIssue = { message: 'an org cap names no account, an account cap names one', path: ['adAccountId'] };
+// What a person asks for when setting or raising a cap (the proposal's request) ...
+export const zAdsCapRequest = z
+  .strictObject({ scope: z.enum(ADS_CAP_SCOPES), adAccountId: zId.optional(), period: z.enum(ADS_CAP_PERIODS), amount: zCapAmount, currency: zCapCurrency })
+  .refine(capNamesAccount, capNamesAccountIssue);
+export type AdsCapRequest = z.infer<typeof zAdsCapRequest>;
+// ... and what lowering one takes: the currency is the cap's own.
+export const zAdsCapLower = z
+  .strictObject({ scope: z.enum(ADS_CAP_SCOPES), adAccountId: zId.optional(), period: z.enum(ADS_CAP_PERIODS), amount: zCapAmount })
+  .refine(capNamesAccount, capNamesAccountIssue);
+export type AdsCapLower = z.infer<typeof zAdsCapLower>;
+// The same with the idempotency key of the API call.
+export const zAdsCapLowerCall = z
+  .strictObject({ scope: z.enum(ADS_CAP_SCOPES), adAccountId: zId.optional(), period: z.enum(ADS_CAP_PERIODS), amount: zCapAmount, idempotencyKey: zId })
+  .refine(capNamesAccount, capNamesAccountIssue);
+
+// The proposals that open the way to spend (ADR-0043 point 1): their kinds (the Inbox item's kind) and the payload each stores,
+// which the target command reads back on approval. The names are display copies; the ids and amounts are the change.
+export const ADS_WRITE_ENABLE_COMMAND = 'ads.write.enable';
+export const ADS_ACCOUNT_ENABLE_COMMAND = 'ads.account.enable_write';
+export const ADS_CAP_SET_COMMAND = 'ads.cap.set';
+export const ADS_LAUNCHES_UNBLOCK_COMMAND = 'ads.launches.unblock';
+export const ADS_PROPOSAL_KIND_PREFIX = 'ads.';
+export const ADS_WRITE_ENABLE_KIND = 'ads.write_enable';
+export const ADS_ACCOUNT_ENABLE_KIND = 'ads.account_enable';
+export const ADS_CAP_SET_KIND = 'ads.cap_set';
+export const ADS_LAUNCHES_UNBLOCK_KIND = 'ads.launches_unblock';
+export const zAdsWriteEnablePayload = z.strictObject({});
+export const zAdsAccountEnablePayload = z.strictObject({ adAccountId: zId, adAccountName: z.string().max(200) });
+export const zAdsCapSetPayload = z
+  .strictObject({
+    scope: z.enum(ADS_CAP_SCOPES),
+    adAccountId: zId.optional(),
+    adAccountName: z.string().max(200).optional(),
+    period: z.enum(ADS_CAP_PERIODS),
+    amount: zCapAmount,
+    currency: zCapCurrency,
+    // The cap in force when it was asked for, for the approver to compare with; null when there was none.
+    previous: z.string().nullable(),
+    previousCurrency: z.string().nullable(),
+  })
+  .refine(capNamesAccount, capNamesAccountIssue);
+// The moment of the last change of the switches when launches were blocked (as text, with its microseconds): the approval
+// refuses when they changed since, so a stop made after the request is not undone by it.
+export const zAdsLaunchesUnblockPayload = z.strictObject({ blockedSince: z.string().min(1).max(64) });
+
+// A pending or decided proposal of this kind as the screens show it: what it changes, in one shape.
+export const zAdsChange = z.discriminatedUnion('change', [
+  z.object({ change: z.literal('write_enable') }),
+  z.object({ change: z.literal('account_enable'), adAccountId: zId, adAccountName: z.string() }),
+  z.object({
+    change: z.literal('cap_set'),
+    scope: z.enum(ADS_CAP_SCOPES),
+    adAccountId: zId.nullable(),
+    adAccountName: z.string().nullable(),
+    period: z.enum(ADS_CAP_PERIODS),
+    amount: z.string(),
+    currency: zCurrency,
+    previous: z.string().nullable(),
+    previousCurrency: z.string().nullable(),
+  }),
+  z.object({ change: z.literal('launches_unblock') }),
+]);
+export type AdsChange = z.infer<typeof zAdsChange>;
+export const zAdsProposalView = z.object({ change: zAdsChange.nullable() });
+
+// Asking for one of those changes (the API call: owners and admins; it makes a proposal in the Inbox, never the change).
+export const zAdsChangeRequest = z.discriminatedUnion('change', [
+  z.strictObject({ change: z.literal('write_enable'), idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('account_enable'), adAccountId: zId, idempotencyKey: zId }),
+  z
+    .strictObject({
+      change: z.literal('cap_set'),
+      scope: z.enum(ADS_CAP_SCOPES),
+      adAccountId: zId.optional(),
+      period: z.enum(ADS_CAP_PERIODS),
+      amount: zCapAmount,
+      currency: zCapCurrency,
+      idempotencyKey: zId,
+    })
+    .refine(capNamesAccount, capNamesAccountIssue),
+  z.strictObject({ change: z.literal('launches_unblock'), idempotencyKey: zId }),
+]);
+export type AdsChangeRequest = z.infer<typeof zAdsChangeRequest>;
 
 export const zAdsCapView = z.object({
   scope: z.enum(ADS_CAP_SCOPES),
@@ -127,6 +217,8 @@ export const zAdsWriteState = z.object({
   launchesBlocked: z.boolean(),
   updatedAt: z.string().nullable(),
   caps: z.array(zAdsCapView),
+  // The requests waiting in the Inbox for approval, newest first (the card says so and links to them).
+  pending: z.array(z.object({ proposalId: zId, change: zAdsChange, requestedAt: z.string() })),
 });
 export type AdsWriteState = z.infer<typeof zAdsWriteState>;
 

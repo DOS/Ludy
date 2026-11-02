@@ -8,12 +8,24 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AdAccountView, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChange, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { catalog } from '../src/i18n/runtime.ts';
+import { catalog, translatorFor } from '../src/i18n/runtime.ts';
+import { adsChangeLine, adsChangeText } from '../src/lib/ads-change.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
+
+// A link as an anchor that names where it leads: the route with its parameters filled in. The rest of the router stays the real
+// one (the Ads page reads the address with it).
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const { createElement } = await import('react');
+  return {
+    ...(await importOriginal<object>()),
+    Link: ({ children, to, params }: { children?: ReactNode; to: string; params?: Record<string, string> }) =>
+      createElement('a', { href: to.replace(/\$(\w+)/g, (_match, name: string) => params?.[name] ?? '') }, children),
+  };
+});
 
 vi.mock('../src/lib/api.ts', async () => {
   const { QueryClient: QC } = await import('@tanstack/react-query');
@@ -39,7 +51,8 @@ vi.mock('../src/lib/api.ts', async () => {
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
 const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
-const { AdsWriteCard } = await import('../src/components/ads-write.tsx');
+const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
+const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
 
 function render(node: ReactNode, locale: 'en' | 'vi' = 'en'): string {
   return renderToStaticMarkup(
@@ -327,54 +340,127 @@ describe('a paused ad account (#2219)', () => {
   });
 });
 
-describe('running ads: the stops, the switches and the caps (#2294, W0a-1)', () => {
+describe('running ads: the stops, the requests, the switches and the caps (#2294, W0a)', () => {
   const at2 = '2026-11-02T03:00:00.000Z';
-  const stateOf = (over: Partial<AdsWriteState> = {}): AdsWriteState => ({ writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], ...over });
+  const stateOf = (over: Partial<AdsWriteState> = {}): AdsWriteState => ({ writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], ...over });
   const card = (state: AdsWriteState, role: 'owner' | 'admin', accounts: AdAccountView[] = [account()]) => {
     client.current.setQueryData(['ads', 'writeState'], state);
-    return render(<AdsWriteCard role={role} accounts={accounts} />);
+    return render(<AdsWriteCard role={role} accounts={accounts} slug="shop" />);
   };
   const cap = (over: Partial<AdsWriteState['caps'][number]>): AdsWriteState['caps'][number] => ({ scope: 'org', adAccountId: null, period: 'daily', amount: '5000000', currency: 'VND', setBy: 'u1', setAt: at2, ...over });
+  const waiting = (proposalId: string, change: AdsChange): AdsWriteState['pending'][number] => ({ proposalId, change, requestedAt: at2 });
+  const a2 = () => account({ id: 'a2', name: 'Tài khoản hai', writeEnabled: false });
 
-  it('says it is off and offers nobody a button to turn it on: that is a proposal, not a button of this card', () => {
+  it('says it is off and lets the owner alone ask to turn it on: a request for the Inbox, never a button that turns it on', () => {
     for (const role of ['owner', 'admin'] as const) {
       const html = card(stateOf(), role);
-      expect(html).toContain(`>${en.ads.write.off}<`);
-      expect(html).toContain(en.ads.write.offHint);
-      expect(html).not.toContain(en.ads.write.accounts);
-      expect(html).not.toContain(en.ads.write.pauseAll);
-      expect(html).not.toContain('<button');
+      expect(html, role).toContain(`>${en.ads.write.off}<`);
+      expect(html, role).toContain(en.ads.write.offHint);
+      expect(html, role).not.toContain(`>${en.ads.write.disable}<`);
+      expect(html, role).not.toContain(en.ads.write.accounts);
+      expect(html, role).not.toContain(en.ads.write.pauseAll);
+      expect(html, role).not.toContain(en.ads.write.pending);
     }
+    const owner = card(stateOf(), 'owner');
+    expect(buttonBefore(owner, en.ads.write.request)).toBeDefined();
+    // Asking opens no confirmation and no second-factor prompt; it is not the change itself.
+    expect(buttonBefore(owner, en.ads.write.request)).not.toContain('aria-haspopup');
+    // The admin does not ask (the owner does, and an admin approves it in the Inbox).
+    expect(card(stateOf(), 'admin')).not.toContain(`>${en.ads.write.request}<`);
   });
 
-  it('shows what is on: the owner may turn it off behind a confirmation and an account off, and owners and admins may stop it all', () => {
-    const html = card(stateOf({ writeEnabled: true }), 'owner', [account({ writeEnabled: true }), account({ id: 'a2', name: 'Tài khoản hai', writeEnabled: false })]);
+  it('shows what is on: the owner may turn it off behind a confirmation, an account off and ask to allow another, and owners and admins may stop it all', () => {
+    const html = card(stateOf({ writeEnabled: true }), 'owner', [account({ writeEnabled: true }), a2()]);
     expect(html).toContain(`>${en.ads.write.on}<`);
+    // Turned on: nothing to ask for at the top.
+    expect(html).not.toContain(`>${en.ads.write.request}<`);
     expect(buttonBefore(html, en.ads.write.disable)).toContain('aria-haspopup="dialog"');
     expect(html).not.toContain(en.ads.write.disableTitle);
     expect(html).toContain(en.ads.write.accounts);
     expect(html).toContain(`>${en.ads.write.accountOn}<`);
     expect(html).toContain(`>${en.ads.write.accountOff}<`);
-    // One withdraw button, for the enabled account only; nothing here enables an account.
+    // One withdraw button, for the allowed account only, and one request to allow, for the other.
     expect(html.split(`>${en.ads.write.accountDisable}<`)).toHaveLength(2);
     expect(buttonBefore(html, en.ads.write.accountDisable)).toBeDefined();
+    expect(html.split(`>${en.ads.write.accountRequest}<`)).toHaveLength(2);
+    expect(buttonBefore(html, en.ads.write.accountRequest)).not.toContain('aria-haspopup');
     expect(buttonBefore(html, en.ads.write.pauseAll)).toContain('aria-haspopup="dialog"');
-    // The admin: the state and the kill switch, none of the owner's buttons.
-    const admin = card(stateOf({ writeEnabled: true }), 'admin', [account({ writeEnabled: true })]);
+    // The admin: the state and the kill switch, none of the owner's stops and none of the owner's requests.
+    const admin = card(stateOf({ writeEnabled: true }), 'admin', [account({ writeEnabled: true }), a2()]);
     expect(buttonBefore(admin, en.ads.write.pauseAll)).toBeDefined();
+    expect(admin).not.toContain(`>${en.ads.write.accountRequest}<`);
     expect(admin).not.toContain(`>${en.ads.write.disable}<`);
     expect(admin).not.toContain(`>${en.ads.write.accountDisable}<`);
   });
 
-  it('says launches are blocked, with no button to open them again; the kill switch is not offered while blocked', () => {
+  it('offers no request to allow an account while the org switch is off: the accounts list is not drawn', () => {
     for (const role of ['owner', 'admin'] as const) {
-      const html = card(stateOf({ writeEnabled: true, launchesBlocked: true }), role);
-      expect(html).toContain(en.ads.write.blocked);
-      expect(html).not.toContain(`>${en.ads.write.pauseAll}<`);
+      const html = card(stateOf({ writeEnabled: false }), role, [a2()]);
+      expect(html, role).not.toContain(en.ads.write.accounts);
+      expect(html, role).not.toContain(`>${en.ads.write.accountRequest}<`);
     }
   });
 
-  it('lists the caps of the org and of each account in their currency and "not set" where there is none, with no way to set one', () => {
+  it('says launches are blocked and lets the owner alone ask to open them again; the kill switch is not offered while blocked', () => {
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(stateOf({ writeEnabled: true, launchesBlocked: true }), role);
+      expect(html, role).toContain(en.ads.write.blocked);
+      expect(html, role).not.toContain(`>${en.ads.write.pauseAll}<`);
+    }
+    const owner = card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'owner');
+    expect(buttonBefore(owner, en.ads.write.unblockRequest)).toBeDefined();
+    expect(buttonBefore(owner, en.ads.write.unblockRequest)).not.toContain('aria-haspopup');
+    expect(card(stateOf({ writeEnabled: true, launchesBlocked: true }), 'admin')).not.toContain(`>${en.ads.write.unblockRequest}<`);
+    // Without a block there is nothing to open again.
+    expect(card(stateOf({ writeEnabled: true }), 'owner')).not.toContain(`>${en.ads.write.unblockRequest}<`);
+  });
+
+  it('says "request sent" in place of a button for what already waits in the Inbox, so the same request is not made twice', () => {
+    const enabling = card(stateOf({ pending: [waiting('p1', { change: 'write_enable' })] }), 'owner');
+    expect(enabling).toContain(`>${en.ads.write.waitingBadge}<`);
+    expect(enabling).not.toContain(`>${en.ads.write.request}<`);
+    const unblocking = card(stateOf({ writeEnabled: true, launchesBlocked: true, pending: [waiting('p2', { change: 'launches_unblock' })] }), 'owner');
+    expect(unblocking).toContain(`>${en.ads.write.waitingBadge}<`);
+    expect(unblocking).not.toContain(`>${en.ads.write.unblockRequest}<`);
+    // One account: a2 waits (its id may be spelled in capitals by the payload), a1 can still be asked for.
+    const accounts = card(stateOf({ writeEnabled: true, pending: [waiting('p3', { change: 'account_enable', adAccountId: 'A2', adAccountName: 'Tài khoản hai' })] }), 'owner', [account(), a2()]);
+    expect(accounts.split(`>${en.ads.write.waitingBadge}<`)).toHaveLength(2);
+    expect(accounts.split(`>${en.ads.write.accountRequest}<`)).toHaveLength(2);
+  });
+
+  it('lists the requests waiting for approval, one line each, with the cap and its earlier value, and a link to each Inbox item', () => {
+    const pending = [
+      waiting('p1', { change: 'write_enable' }),
+      waiting('p2', { change: 'account_enable', adAccountId: 'a2', adAccountName: 'Tài khoản hai' }),
+      waiting('p3', { change: 'cap_set', scope: 'account', adAccountId: 'a1', adAccountName: 'Quảng cáo cửa hàng', period: 'monthly', amount: '8000000', currency: 'VND', previous: '5000000', previousCurrency: 'VND' }),
+      waiting('p4', { change: 'cap_set', scope: 'org', adAccountId: null, adAccountName: null, period: 'daily', amount: '2000000', currency: 'VND', previous: null, previousCurrency: null }),
+      waiting('p5', { change: 'launches_unblock' }),
+    ];
+    for (const role of ['owner', 'admin'] as const) {
+      const html = card(stateOf({ pending }), role, [account(), a2()]);
+      expect(html, role).toContain(`>${en.ads.write.pending}<`);
+      expect(html, role).toContain(en.ads.write.pendingHint);
+      expect(html.split(`>${en.ads.write.pendingOpen}<`), role).toHaveLength(pending.length + 1);
+      for (const proposal of pending) expect(html, `${role} ${proposal.proposalId}`).toContain(`href="/o/shop/inbox/${proposal.proposalId}"`);
+      expect(html, role).toContain(en.ads.change.writeEnable);
+      expect(html, role).toContain('Allow running ads on the account Tài khoản hai.');
+      expect(html, role).toContain('Set the monthly spend cap of the account Quảng cáo cửa hàng.');
+      // The earlier value and the new one, each with its currency; a first cap says there was none.
+      expect(html, role).toMatch(/From [^<]*5,000,000[^<]* to [^<]*8,000,000/);
+      expect(html, role).toContain('Set the daily spend cap of the whole org.');
+      expect(html, role).toMatch(/No cap is set yet; this sets the first one: [^<]*2,000,000/);
+      expect(html, role).toContain(en.ads.change.launchesUnblock);
+      // One line each: the longer explanation belongs to the Inbox card, not to this list.
+      expect(html, role).not.toContain(en.ads.change.writeEnableDetail);
+      expect(html, role).not.toContain(en.ads.change.launchesUnblockDetail);
+    }
+  });
+
+  it('draws no waiting list when nothing waits', () => {
+    expect(card(stateOf({ writeEnabled: true }), 'owner')).not.toContain(`>${en.ads.write.pending}<`);
+  });
+
+  it('lists the caps of the org and of each account in their currency and "not set" where there is none', () => {
     const state = stateOf({
       caps: [cap({}), cap({ period: 'monthly', amount: '100000000' }), cap({ scope: 'account', adAccountId: 'a1', amount: '1000000' }), cap({ scope: 'account', adAccountId: 'a1', period: 'monthly', amount: '20.50', currency: 'USD' })],
     });
@@ -387,17 +473,233 @@ describe('running ads: the stops, the switches and the caps (#2294, W0a-1)', () 
       expect(html).toMatch(/5,000,000/);
       expect(html).toMatch(/100,000,000/);
       expect(html).toContain(en.ads.write.capNone);
-      expect(html).not.toContain('<form');
-      expect(html).not.toContain('<input');
     }
   });
 
+  it('offers the owner the form to ask for a cap and the choice to lower one at once, and the admin neither', () => {
+    const state = stateOf({ caps: [cap({})] });
+    const owner = card(state, 'owner');
+    expect(owner).toContain(`aria-label="${en.ads.write.capForm}"`);
+    expect(owner).toContain('<input');
+    expect(buttonBefore(owner, en.ads.write.capRequest)).toBeDefined();
+    // The cap in force beside the form: the org's daily one is the form's first choice.
+    expect(owner).toMatch(new RegExp(`${en.ads.write.capInForce.replace('{amount}', '[^<]*5,000,000')}`));
+    expect(owner).not.toContain(`>${en.ads.write.capLower}<`);
+    expect(owner).toContain(`>${en.ads.write.capAction}<`);
+    expect(owner).toContain(`>${en.ads.write.capActions.raise}<`);
+    expect(owner).toContain(`>${en.ads.write.capActions.lower}<`);
+    // The admin reads the caps and approves a request in the Inbox; the form is the owner's.
+    const admin = card(state, 'admin');
+    expect(admin).not.toContain(`aria-label="${en.ads.write.capForm}"`);
+    expect(admin).not.toContain('<input');
+    expect(admin).not.toContain(en.ads.write.capActions.lower);
+  });
+
+  describe('the cap form on its own', () => {
+    const accounts = [account(), account({ id: 'a2', name: 'Tài khoản chưa cập nhật', currency: null })];
+    const form = (props: Partial<Parameters<typeof CapForm>[0]> = {}, locale: 'en' | 'vi' = 'en') =>
+      render(<CapForm owner accounts={accounts} caps={[cap({})]} pending={[]} orgCurrency="VND" {...props} />, locale);
+
+    it('asks to set or raise: the button asks, the currency is typed for the org, and an account without a known currency is not offered', () => {
+      const org = form();
+      expect(buttonBefore(org, en.ads.write.capRequest)).toBeDefined();
+      expect(org).not.toContain(`>${en.ads.write.capLower}<`);
+      expect(org).toContain(`>${en.ads.write.capCurrency}<`);
+      expect(org).not.toContain(en.ads.write.capLowerHint);
+      const account1 = form({ initial: { scope: 'account' } });
+      expect(account1).toContain('>Quảng cáo cửa hàng<');
+      expect(account1).not.toContain('Tài khoản chưa cập nhật');
+      // The account's own currency stands in for the typed one.
+      expect(account1).not.toContain(`>${en.ads.write.capCurrency}<`);
+      expect(account1).toContain(en.ads.write.capAccountCurrency.replace('{currency}', 'VND'));
+    });
+
+    it('says why there is no account to choose while none has a known currency', () => {
+      const html = form({ accounts: [account({ currency: null })], initial: { scope: 'account' } });
+      expect(html).toContain(en.ads.write.capNoCurrency);
+    });
+
+    it('says a request for the same cap waits already, and says nothing for another scope or period', () => {
+      const same = { proposalId: 'p9', requestedAt: at2, change: { change: 'cap_set', scope: 'org', adAccountId: null, adAccountName: null, period: 'daily', amount: '9000000', currency: 'VND', previous: '5000000', previousCurrency: 'VND' } } as const;
+      expect(form({ pending: [same] })).toContain(en.ads.write.capRequestOpen);
+      expect(form({ pending: [{ ...same, change: { ...same.change, period: 'monthly' } }] })).not.toContain(en.ads.write.capRequestOpen);
+      expect(form({ pending: [{ ...same, change: { ...same.change, scope: 'account', adAccountId: 'a1', adAccountName: 'Quảng cáo cửa hàng' } }] })).not.toContain(en.ads.write.capRequestOpen);
+      // The same cap of one account is the form's choice once it is the account scope.
+      expect(form({ pending: [{ ...same, change: { ...same.change, scope: 'account', adAccountId: 'A1', adAccountName: 'Quảng cáo cửa hàng' } }], initial: { scope: 'account' } })).toContain(en.ads.write.capRequestOpen);
+    });
+
+    it('lowers at once, for the owner: its own button and hint, no typed currency, any account, and the cap in force beside it', () => {
+      const html = form({ initial: { mode: 'lower' } });
+      expect(buttonBefore(html, en.ads.write.capLower)).toBeDefined();
+      expect(html).not.toContain(`>${en.ads.write.capRequest}<`);
+      expect(html).toContain(en.ads.write.capLowerHint);
+      expect(html).not.toContain(`>${en.ads.write.capCurrency}<`);
+      expect(html).toMatch(/In force now: [^<]*5,000,000/);
+      // Lowering also takes an account whose currency is unknown: the cap in force carries its own.
+      expect(form({ initial: { mode: 'lower', scope: 'account' } })).toContain('Tài khoản chưa cập nhật');
+    });
+
+    it('does not let the owner lower a cap to the same amount or above it: submit is off and says why, however the amount is spelled', () => {
+      // The cap in force is 5,000,000: the same amount, the same with decimals, and a larger one are not a lowering.
+      for (const amount of ['5000000', '5000000.00', '5000000.5', '6000000']) {
+        const html = form({ initial: { mode: 'lower', amount } });
+        expect(buttonBefore(html, en.ads.write.capLower), amount).toContain('disabled=""');
+        expect(html, amount).toContain(en.ads.write.capNotBelow);
+      }
+      // A lower amount is allowed, and nothing is said.
+      for (const amount of ['4999999.99', '1']) {
+        const html = form({ initial: { mode: 'lower', amount } });
+        expect(buttonBefore(html, en.ads.write.capLower), amount).not.toContain('disabled=""');
+        expect(html, amount).not.toContain(en.ads.write.capNotBelow);
+      }
+      // Asking for a raise is another matter: the same amount is not judged here (the server says it is not a raise).
+      expect(form({ initial: { amount: '5000000' } })).not.toContain(en.ads.write.capNotBelow);
+      // The same words in Vietnamese.
+      expect(form({ initial: { mode: 'lower', amount: '5000000' } }, 'vi')).toContain(viMessages.ads.write.capNotBelow);
+    });
+
+    it('starts the currency of an org cap from the org cap of the period chosen, not from another period’s', () => {
+      // A daily cap in VND and a monthly one in USD: each period opens on its own currency; none opens on the default.
+      const caps = [cap({}), cap({ period: 'monthly', amount: '100', currency: 'USD' })];
+      expect(form({ caps, initial: { period: 'monthly' } })).toContain('value="USD"');
+      expect(form({ caps, initial: { period: 'daily' } })).toContain('value="VND"');
+      expect(form({ caps: [cap({ period: 'monthly', currency: 'USD' })], initial: { period: 'daily' } })).toContain('value="VND"');
+    });
+
+    it('says there is no cap in force to lower, or to compare with, where none is set', () => {
+      expect(form({ caps: [], initial: { mode: 'lower' } })).toContain(en.ads.write.capNoneYet);
+      expect(form({ caps: [] })).toContain(en.ads.write.capNoneYet);
+      expect(form()).not.toContain(en.ads.write.capNoneYet);
+    });
+
+    it('never offers lowering to an admin, even where the form starts in that mode', () => {
+      const html = form({ owner: false, initial: { mode: 'lower' } });
+      expect(html).not.toContain(`>${en.ads.write.capLower}<`);
+      expect(html).not.toContain(en.ads.write.capLowerHint);
+      expect(buttonBefore(html, en.ads.write.capRequest)).toBeDefined();
+    });
+
+    it('has the form words in Vietnamese', () => {
+      const html = form({ initial: { mode: 'lower' } }, 'vi');
+      expect(html).toContain(`aria-label="${viMessages.ads.write.capForm}"`);
+      expect(html).toContain(`>${viMessages.ads.write.capLower}<`);
+      expect(html).toContain(viMessages.ads.write.capLowerHint);
+    });
+  });
+
+  it('accepts as a cap a decimal above zero with at most two decimals, as the server does', () => {
+    for (const text of ['1', '5000000', '1.5', '20.50', ' 12 ', '0.01', '999999999999999']) expect(isCapAmount(text), text).toBe(true);
+    for (const text of ['', '0', '0.00', '00', '-1', '1.234', '1,5', '1e6', 'abc', '1.', '.5', '1000000000000000']) expect(isCapAmount(text), text).toBe(false);
+  });
+
   it('has the same words in Vietnamese as in English for the card', () => {
-    client.current.setQueryData(['ads', 'writeState'], stateOf({ writeEnabled: true }));
-    const vi = render(<AdsWriteCard role="owner" accounts={[account({ writeEnabled: true })]} />, 'vi');
+    client.current.setQueryData(['ads', 'writeState'], stateOf({ writeEnabled: true, pending: [waiting('p1', { change: 'launches_unblock' })] }));
+    const vi = render(<AdsWriteCard role="owner" accounts={[account({ writeEnabled: true }), a2()]} slug="shop" />, 'vi');
     expect(vi).toContain(viMessages.ads.write.title);
     expect(vi).toContain(viMessages.ads.write.pauseAll);
+    expect(vi).toContain(`>${viMessages.ads.write.pending}<`);
+    expect(vi).toContain(viMessages.ads.change.launchesUnblock);
+    expect(vi).toContain(`>${viMessages.ads.write.accountRequest}<`);
     expect(Object.keys(viMessages.ads.write).sort()).toEqual(Object.keys(en.ads.write).sort());
+    expect(Object.keys(viMessages.ads.write.capActions).sort()).toEqual(Object.keys(en.ads.write.capActions).sort());
+    expect(Object.keys(viMessages.ads.change).sort()).toEqual(Object.keys(en.ads.change).sort());
+  });
+});
+
+// What a request about running ads says, from the change the server read of it (ads.write.state, ads.proposal.change).
+describe('the words of a request about running ads (#2294)', () => {
+  const money = (amount: string, currency: string) => `${amount} ${currency}`;
+  const capChange = (over: Partial<Extract<AdsChange, { change: 'cap_set' }>> = {}): AdsChange => ({
+    change: 'cap_set',
+    scope: 'account',
+    adAccountId: 'a1',
+    adAccountName: 'Shop',
+    period: 'monthly',
+    amount: '8000000',
+    currency: 'VND',
+    previous: '5000000',
+    previousCurrency: 'VND',
+    ...over,
+  });
+
+  it('says each change in one sentence, in English and in Vietnamese', () => {
+    const inEn = translatorFor('en');
+    const inVi = translatorFor('vi');
+    expect(adsChangeText({ change: 'write_enable' }, inEn, money)).toEqual({ title: 'Turn on running ads for the org.', detail: en.ads.change.writeEnableDetail });
+    expect(adsChangeText({ change: 'write_enable' }, inVi, money).title).toBe('Bật chạy quảng cáo cho tổ chức.');
+    expect(adsChangeText({ change: 'account_enable', adAccountId: 'a1', adAccountName: 'Shop' }, inEn, money).title).toBe('Allow running ads on the account Shop.');
+    expect(adsChangeText({ change: 'account_enable', adAccountId: 'a1', adAccountName: 'Shop' }, inVi, money).title).toBe('Cho phép chạy quảng cáo trên tài khoản Shop.');
+    expect(adsChangeText({ change: 'launches_unblock' }, inEn, money).title).toBe('Open running ads again after the block.');
+    expect(adsChangeText({ change: 'launches_unblock' }, inVi, money).title).toBe('Mở lại việc chạy quảng cáo sau khi bị chặn.');
+  });
+
+  it('says a cap with its scope, its period and its amounts from the earlier value to the new one, each in its own currency', () => {
+    const inEn = translatorFor('en');
+    const inVi = translatorFor('vi');
+    expect(adsChangeText(capChange(), inEn, money)).toEqual({ title: 'Set the monthly spend cap of the account Shop.', detail: 'From 5000000 VND to 8000000 VND.' });
+    expect(adsChangeText(capChange(), inVi, money)).toEqual({ title: 'Đặt hạn mức chi tiêu quảng cáo theo tháng của tài khoản Shop.', detail: 'Từ 5000000 VND thành 8000000 VND.' });
+    expect(adsChangeText(capChange({ scope: 'org', adAccountId: null, adAccountName: null, period: 'daily' }), inEn, money).title).toBe('Set the daily spend cap of the whole org.');
+    expect(adsChangeText(capChange({ scope: 'org', adAccountId: null, adAccountName: null, period: 'daily' }), inVi, money).title).toBe('Đặt hạn mức chi tiêu quảng cáo theo ngày của cả tổ chức.');
+    // A cap in another currency than the one in force reads as it was: the earlier amount in its own currency.
+    expect(adsChangeText(capChange({ currency: 'USD', amount: '300', previous: '5000000', previousCurrency: 'VND' }), inEn, money).detail).toBe('From 5000000 VND to 300 USD.');
+    // The first cap has no earlier value to compare with.
+    expect(adsChangeText(capChange({ previous: null, previousCurrency: null }), inEn, money).detail).toBe('No cap is set yet; this sets the first one: 8000000 VND.');
+    expect(adsChangeText(capChange({ previous: null, previousCurrency: null }), inVi, money).detail).toBe('Hiện chưa có hạn mức nào; đây là hạn mức đầu tiên: 8000000 VND.');
+  });
+
+  it('keeps the list to one line: a cap carries its amounts, the others the sentence alone', () => {
+    const inEn = translatorFor('en');
+    expect(adsChangeLine({ change: 'write_enable' }, inEn, money)).toBe('Turn on running ads for the org.');
+    expect(adsChangeLine(capChange(), inEn, money)).toBe('Set the monthly spend cap of the account Shop. From 5000000 VND to 8000000 VND.');
+  });
+});
+
+// The Inbox card of such a request: what changes if it is approved, from ads.proposal.change.
+describe('the Inbox card of a request about running ads (#2294)', () => {
+  const title = 'Đặt hạn mức chi tiêu quảng cáo theo ngày của cả tổ chức: 5000000 VND';
+  const card = (change: AdsChange | null, locale: 'en' | 'vi' = 'en') => {
+    client.current.setQueryData(['ads', 'proposal', { id: 'p1' }], { change });
+    return render(<AdsProposalCard id="p1" title={title} slug="shop" />, locale);
+  };
+
+  it('says what changes in one clear sentence, with the cap from its earlier value to the new one and the currency', () => {
+    const html = card({ change: 'cap_set', scope: 'org', adAccountId: null, adAccountName: null, period: 'daily', amount: '8000000', currency: 'VND', previous: '5000000', previousCurrency: 'VND' });
+    expect(html).toContain(`>${en.inboxDetail.adsChange}<`);
+    expect(html).toContain('Set the daily spend cap of the whole org.');
+    expect(html).toMatch(/From [^<]*5,000,000[^<]* to [^<]*8,000,000[^<]*\./);
+    // The server's own Vietnamese title is not the card's words.
+    expect(html).not.toContain('Đặt hạn mức');
+  });
+
+  it('words each of the other changes', () => {
+    expect(card({ change: 'write_enable' })).toContain(`>${en.ads.change.writeEnable}<`);
+    expect(card({ change: 'write_enable' })).toContain(en.ads.change.writeEnableDetail);
+    expect(card({ change: 'account_enable', adAccountId: 'a1', adAccountName: 'Shop' })).toContain('Allow running ads on the account Shop.');
+    expect(card({ change: 'launches_unblock' })).toContain(`>${en.ads.change.launchesUnblock}<`);
+    expect(card({ change: 'cap_set', scope: 'account', adAccountId: 'a1', adAccountName: 'Shop', period: 'monthly', amount: '1.50', currency: 'USD', previous: null, previousCurrency: null })).toContain(
+      'Set the monthly spend cap of the account Shop.',
+    );
+  });
+
+  it('shows the title alone for a request the server could not read', () => {
+    const html = card(null);
+    expect(html).toContain(`>${title}<`);
+    expect(html).not.toContain('<p class="text-base');
+    expect(html).not.toContain(en.ads.change.writeEnable);
+  });
+
+  it('waits for the answer with a skeleton, never a lone spinner', () => {
+    const html = render(<AdsProposalCard id="other" title={title} slug="shop" />);
+    expect(html).toContain('aria-busy="true"');
+    expect(html).not.toContain('role="status"');
+  });
+
+  it('links to the Ads screen of the org and speaks Vietnamese to a reader of Vietnamese', () => {
+    const html = card({ change: 'launches_unblock' }, 'vi');
+    expect(html).toContain('href="/o/shop/ads"');
+    expect(html).toContain(`>${viMessages.inboxDetail.adsOpenScreen}<`);
+    expect(html).toContain(`>${viMessages.inboxDetail.adsChange}<`);
+    expect(html).toContain(`>${viMessages.ads.change.launchesUnblock}<`);
   });
 });
 

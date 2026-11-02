@@ -22,6 +22,12 @@ export const PROPOSAL_PREPARERS = {
   'finance.journal_voucher.record': 'finance.journal_voucher.prepare',
   'finance.closing.record': 'finance.closing.prepare',
   'finance.depreciation.record': 'finance.depreciation.prepare',
+  // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
+  // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
+  'ads.write.enable': 'ads.write.prepare_enable',
+  'ads.account.enable_write': 'ads.account.prepare_enable_write',
+  'ads.cap.set': 'ads.cap.prepare_set',
+  'ads.launches.unblock': 'ads.launches.prepare_unblock',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];

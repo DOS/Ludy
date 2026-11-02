@@ -256,7 +256,7 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1222,12 +1222,12 @@ export const contract = {
       )
       // A purchase returns its document, and the posting date when it was posted later than its invoice date (#478); a
       // reversal (#138) returns the entry it reversed and, when that entry recorded a purchase, the document it voided
-      // (#165); a cash or bank voucher (#327) returns the voucher.
+      // (#165); a cash or bank voucher (#327) returns the voucher; an ads proposal (#2294) posts nothing, so it returns none of these.
       .output(
         z.object({
           documentId: zId.optional(),
           postingDate: zLocalDate.optional(),
-          journalEntryId: zId,
+          journalEntryId: zId.optional(),
           reversedEntryId: zId.optional(),
           voidedDocumentId: zId.optional(),
           voucherId: zId.optional(),
@@ -1656,11 +1656,15 @@ export const contract = {
     // Deletes an account's stored figures and sync log (owners and admins): a connected account reads its 13 months again, one
     // whose connection is closed also loses its row (#2219).
     deleteHistory: oc.input(zAdsAccountDeleteHistory.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId, days: z.number(), runs: z.number(), removed: z.boolean() })),
-    // Running ads (ADR-0043, #2294, W0a-1): the switches, the spend caps and the stops. Owners and admins read the state and stop
-    // everything with pauseAll; the owner switches writing off and an account's flag off. What opens the way to spend (the org
-    // switch, an account's flag, a cap set or raised, launches opened again) is a proposal and comes in the next PR. Nothing
-    // here calls a platform yet.
+    // Running ads (ADR-0043, #2294): the switches, the spend caps, the stops and the requests. Owners and admins read the state
+    // and stop everything with pauseAll; the owner switches writing off, an account's flag off and lowers a cap. What opens the
+    // way to spend (the org switch, an account's flag, a cap set or raised, launches opened again) is asked for with
+    // requestChange: a proposal approved in the Inbox (P10, P11), never a direct change. Nothing here calls a platform yet.
     writeState: oc.output(zAdsWriteState),
+    requestChange: oc.input(zAdsChangeRequest).output(z.object({ proposalId: zId })),
+    // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
+    proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
+    lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),
     writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number() })),
     disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false) })),
     pauseAll: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ launchesBlocked: z.literal(true), paused: z.number() })),

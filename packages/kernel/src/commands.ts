@@ -84,6 +84,11 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.journal_voucher.record',
   'finance.closing.record',
   'finance.depreciation.record',
+  // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
+  'ads.write.enable',
+  'ads.account.enable_write',
+  'ads.cap.set',
+  'ads.launches.unblock',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -867,6 +872,11 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   'SOURCE_LEGAL_ENTITY',
 ]);
 
+// The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
+// #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
+// item by item with BULK_NOT_ALLOWED, without running them.
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock'];
+
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
   return error instanceof DomainError && BULK_ITEM_REFUSALS.has(error.code);
@@ -928,8 +938,23 @@ export const approveProposals = defineCommand({
       .where('id', 'in', input.items.map((i) => i.id))
       .execute();
     const voucherTypes = new Map(vouchers.map((v) => [v.id, v.voucher_type ?? '']));
+    const singleOnly = new Set(
+      (
+        await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('command', 'in', SINGLE_APPROVAL_COMMANDS)
+          .where('id', 'in', input.items.map((i) => i.id))
+          .execute()
+      ).map((p) => p.id),
+    );
     const outcomes = new Map<string, BulkApproveResult>();
     for (const item of bulkApproveOrder(input.items, voucherTypes)) {
+      if (singleOnly.has(item.id)) {
+        outcomes.set(item.id, { id: item.id, outcome: 'refused', code: 'BULK_NOT_ALLOWED', rule: null });
+        continue;
+      }
       // An item's confirmation of an unverified signature (#674) is passed on with its own id and revision.
       const confirm = item.acceptUnverifiedSignature === true ? { acceptUnverifiedSignature: true } : {};
       const attempt = await ctx.tryRun<Record<string, unknown>>('kernel.proposal.approve', { id: item.id, revision: item.revision, ...confirm }, { recover: isBulkItemRefusal });
