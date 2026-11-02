@@ -206,6 +206,9 @@ suite('a live agent run and the switches of running ads (ADR-0043, #2294)', () =
       ['ads.account.disable_write', { adAccountId }],
       ['ads.pause_all', {}],
       ['ads.cap.lower', { scope: 'org', period: 'daily', amount: '1' }],
+      // The write connection: attaching one and closing both are no agent's either.
+      ['ads.account.link_write', { connectionId: randomUUID() }],
+      ['ads.account.disconnect', { adAccountId }],
       // Asking for what opens the way to spend, and the commands an approval runs, are no agent's either.
       ['ads.write.prepare_enable', {}],
       ['ads.account.prepare_enable_write', { adAccountId }],

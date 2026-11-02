@@ -5,6 +5,9 @@
 // flag, a cap set or raised, launches opened again) is asked for here by the owner and is a proposal that an owner or an admin
 // approves in the Inbox (ADR-0043 point 1): no button on this card changes it. What only stops or reduces spend is direct:
 // the owner switches running ads off, withdraws one account and lowers a cap; owners and admins stop everything at once.
+// While the switch is on, the owner also connects each account to run ads (W0b): a second connection with its own token, kept
+// apart from the one that reads its reports. Each row says whether the account can run ads, and closing a connection says that
+// the platform still holds the permission until it is removed there.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
@@ -18,6 +21,9 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeLine } from '../lib/ads-change.ts';
 import { toUnits } from '../lib/decimal.ts';
+import { NO_WRITE_OFFER, writeConnectWay, type AdWriteOffer } from '../lib/ads.ts';
+import { useAdOAuthStart } from '../lib/ads-oauth.ts';
+import { accountOffToastText, disableConfirmText, disabledToastText, writeConnectionStopped } from '../lib/ads-write.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
@@ -34,7 +40,19 @@ const capKey = (cap: Pick<AdsCapView, 'scope' | 'adAccountId' | 'period'>) => `$
 
 type Pending = AdsWriteState['pending'][number];
 
-export function AdsWriteCard({ role, accounts, slug }: { role: string | undefined; accounts: readonly AdAccountView[]; slug: string }) {
+// `offer` is what the deployment lets the owner connect to run ads (Meta's dialog, the offline sandbox); the screen reads it from the
+// server's config and passes it in, so the card offers no button the server could not finish.
+export function AdsWriteCard({
+  role,
+  accounts,
+  slug,
+  offer = NO_WRITE_OFFER,
+}: {
+  role: string | undefined;
+  accounts: readonly AdAccountView[];
+  slug: string;
+  offer?: AdWriteOffer | undefined;
+}) {
   const t = useTranslations('ads.write');
   const root = useTranslations();
   const f = useFormat();
@@ -44,7 +62,8 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
   // Asking for a change is R1: it makes a proposal in the Inbox and changes nothing, so it needs no second factor.
   const enable = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
   const unblock = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
-  const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async () => (toast(t('disabledToast')), refresh()) }));
+  // Switching off closes every connection that can run ads: the toast says how the platform still holds the permission.
+  const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async (done) => (toast(disabledToastText(root, accounts, done.connectionsClosed)), refresh()) }));
   const pauseAll = useMutation(orpc.ads.pauseAll.mutationOptions({ onSuccess: async () => (toast(t('pausedToast')), refresh()) }));
   if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
   if (!state.data) return null;
@@ -83,7 +102,7 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
               render={<Button loading={disable.isPending} variant="outline" size="lg" />}
               destructive
               title={t('disableTitle')}
-              description={t('disableBody')}
+              description={disableConfirmText(root, accounts)}
               confirm={t('disable')}
               onConfirm={() => disable.mutate({ idempotencyKey: crypto.randomUUID() })}
             >
@@ -158,7 +177,7 @@ export function AdsWriteCard({ role, accounts, slug }: { role: string | undefine
           </h3>
           <ul className="divide-y text-sm">
             {accounts.map((a) => (
-              <AccountRow key={a.id} account={a} owner={owner} waiting={waitingForAccount(a.id)} />
+              <AccountRow key={a.id} account={a} owner={owner} waiting={waitingForAccount(a.id)} slug={slug} offer={offer} />
             ))}
           </ul>
         </section>
@@ -196,18 +215,35 @@ function CapLine({ label, daily, monthly }: { label: string; daily: AdsCapView |
   );
 }
 
-// One account's flag: everyone who reads the card sees where it stands. An account that is not allowed yet can be asked for (a
-// proposal, only while the org's switch is on, which is when the list is drawn); the owner can withdraw an allowed one at once.
-function AccountRow({ account, owner, waiting }: { account: AdAccountView; owner: boolean; waiting: boolean }) {
+// One account's flag and its connection to run ads: everyone who reads the card sees where they stand. An account that is not
+// allowed yet can be asked for (a proposal, only while the org's switch is on, which is when the list is drawn); the owner can
+// withdraw an allowed one at once, which also closes its connection to run ads. The owner connects an account that cannot run ads
+// yet (a second connection, apart from the one that reads its reports): through the platform's own dialog, or offline for the
+// sandbox. An admin sees the badge or the note and no button.
+function AccountRow({ account, owner, waiting, slug, offer }: { account: AdAccountView; owner: boolean; waiting: boolean; slug: string; offer: AdWriteOffer }) {
   const t = useTranslations('ads.write');
-  const off = useMutation(orpc.ads.disableAccountWrite.mutationOptions({ onSuccess: async () => (toast(t('accountOffToast')), refresh()) }));
+  const root = useTranslations();
+  const off = useMutation(orpc.ads.disableAccountWrite.mutationOptions({ onSuccess: async (done) => (toast(accountOffToastText(root, account, done.connectionsClosed)), refresh()) }));
   const ask = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: async () => (toast(t('requestedToast')), refresh()) }));
+  const connectSandbox = useMutation(orpc.ads.connectSandboxWrite.mutationOptions({ onSuccess: async () => (toast(t('accountConnectedToast')), refresh()) }));
+  const connectMeta = useAdOAuthStart(slug, 'metawrite_ads');
+  const way = writeConnectWay(account.provider, offer);
+  // An account whose own connection was closed is connected for reading again first; the server says the same (ADS_WRITE_NEEDS_READ).
+  const canConnect = owner && !account.canRunAds && way !== null && account.connectionStatus !== 'revoked';
+  const connecting = way === 'meta' ? connectMeta.isPending : connectSandbox.isPending;
+  const connect = () => (way === 'meta' ? connectMeta.mutate() : connectSandbox.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() }));
   return (
     <li className="space-y-1 py-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="min-w-0 break-words text-foreground">{account.name}</span>
-        <span className="flex items-center gap-2">
+        <span className="flex flex-wrap items-center gap-2">
           <Badge variant={account.writeEnabled ? 'warning' : 'secondary'}>{account.writeEnabled ? t('accountOn') : t('accountOff')}</Badge>
+          {account.canRunAds && <Badge variant="success">{t('accountCanRun')}</Badge>}
+          {canConnect && (
+            <Button loading={connecting} variant="outline" onClick={connect}>
+              {t('accountConnect')}
+            </Button>
+          )}
           {account.writeEnabled
             ? owner && (
                 <Button loading={off.isPending} variant="outline" onClick={() => off.mutate({ adAccountId: account.id, idempotencyKey: crypto.randomUUID() })}>
@@ -225,8 +261,15 @@ function AccountRow({ account, owner, waiting }: { account: AdAccountView; owner
               )}
         </span>
       </div>
+      {writeConnectionStopped(account) && (
+        <p className="text-sm text-warning" role="status">
+          {t('accountStopped')}
+        </p>
+      )}
       {off.error && <ErrorText>{errorMessage(off.error)}</ErrorText>}
       {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {connectSandbox.error && <ErrorText>{errorMessage(connectSandbox.error)}</ErrorText>}
+      {connectMeta.error && <ErrorText>{errorMessage(connectMeta.error)}</ErrorText>}
     </li>
   );
 }

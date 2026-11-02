@@ -342,6 +342,14 @@ const schema = z.object({
   // APP_URL/channels/oauth/meta_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_APP_ID: optional,
   CHANNEL_META_ADS_APP_SECRET: optional,
+  // The Meta app for the write connection of an ad account, which can run ads (ADR-0043, #2294, W0b): set both to offer "Connect to run
+  // ads" on the Ads screen (it also needs the org's switch on); neither hides it. It may be the same app as the read pair above or the
+  // Pages one (a classic app holds Facebook Login and the Marketing API together, and the owner's own account is served by one app), so
+  // no check asks the ids or the secrets to differ; the write login asks for ads_read and ads_management, and a token of a shared app
+  // holds every permission the person ever granted it. The app's valid OAuth redirect URI is
+  // APP_URL/channels/oauth/metawrite_ads/callback. The Graph version is CHANNEL_META_GRAPH_VERSION.
+  CHANNEL_META_ADS_WRITE_APP_ID: optional,
+  CHANNEL_META_ADS_WRITE_APP_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
   // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
@@ -636,6 +644,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_ADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_ADS_APP_ID)) throw new Error('CHANNEL_META_ADS_APP_ID is the numeric id of the Meta app');
+  if (Boolean(config.CHANNEL_META_ADS_WRITE_APP_ID) !== Boolean(config.CHANNEL_META_ADS_WRITE_APP_SECRET)) {
+    throw new Error('set both CHANNEL_META_ADS_WRITE_APP_ID and CHANNEL_META_ADS_WRITE_APP_SECRET, or neither');
+  }
+  if (config.CHANNEL_META_ADS_WRITE_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_ADS_WRITE_APP_ID)) throw new Error('CHANNEL_META_ADS_WRITE_APP_ID is the numeric id of the Meta app');
   if (Boolean(config.CHANNEL_THREADS_APP_ID) !== Boolean(config.CHANNEL_THREADS_APP_SECRET)) throw new Error('set both CHANNEL_THREADS_APP_ID and CHANNEL_THREADS_APP_SECRET, or neither');
   if (config.CHANNEL_THREADS_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_THREADS_APP_ID)) throw new Error('CHANNEL_THREADS_APP_ID is the numeric id of the Threads app');
   if (Boolean(config.CHANNEL_LINKEDIN_CLIENT_ID) !== Boolean(config.CHANNEL_LINKEDIN_CLIENT_SECRET)) throw new Error('set both CHANNEL_LINKEDIN_CLIENT_ID and CHANNEL_LINKEDIN_CLIENT_SECRET, or neither');
@@ -745,7 +757,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }

@@ -12,13 +12,14 @@ export const adsManifest = defineModule({
   tables: {
     crove_ads: {
       // granted_by_hash: a keyed hash of the platform user who granted the connection, which the platform's deletion callback
-      // finds the account by (plan section 9); never the platform's id of the person.
+      // finds the account by (plan section 9); never the platform's id of the person. write_granted_by_hash is the same for the
+      // write connection (W0b), kept apart because a read link overwrites the first and the write app may not be the read app.
       ad_account: columns(
         [
           'org_id', 'id', 'legal_entity_id', 'channel_connection_id', 'provider', 'external_account_id', 'name', 'currency', 'time_zone', 'expense_account_code', 'result_kind',
-          'backfill_from', 'settled_through', 'synced_through', 'last_requested_at', 'last_run_at', 'last_error_kind', 'next_run_at', 'created_by', 'created_at', 'updated_at', 'write_enabled',
+          'backfill_from', 'settled_through', 'synced_through', 'last_requested_at', 'last_run_at', 'last_error_kind', 'next_run_at', 'created_by', 'created_at', 'updated_at', 'write_enabled', 'write_connection_id',
         ],
-        { granted_by_hash: 'pii' },
+        { granted_by_hash: 'pii', write_granted_by_hash: 'pii' },
       ),
       // The org's switches of running ads (ADR-0043, #2294): org-wide, no legal entity.
       ad_org_setting: columns(['org_id', 'id', 'write_enabled', 'launches_blocked', 'updated_by', 'updated_at']),

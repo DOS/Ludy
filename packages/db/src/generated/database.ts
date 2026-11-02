@@ -207,6 +207,8 @@ export interface AdsAdAccountTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   granted_by_hash: string | null;
   write_enabled: Generated<boolean>;
+  write_connection_id: string | null;
+  write_granted_by_hash: string | null;
 }
 
 /** crove_ads.ad_org_setting */

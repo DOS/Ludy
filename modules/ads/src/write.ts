@@ -39,6 +39,7 @@ import {
   type AdsWriteState,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { closeWriteConnections } from './write-connection.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -345,19 +346,23 @@ export const adsLaunchesUnblock = defineCommand({
 export const adsWriteDisable = defineCommand({
   name: 'ads.write.disable',
   input: z.strictObject({}),
-  // Closes the path. The write tokens are closed with it in W0b and revoked at the platform with the launch queue (W2), which
-  // is why it declares an external effect now: a switch-off is never quiet.
+  // Closes the path: every account's flag off, launches blocked, and every write connection of the org closed with its sealed token
+  // dropped (W0b). The platform's own copy of a token is revoked by the write queue of W2, which cannot merge without it; until
+  // then the screen tells the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an
+  // external effect.
   risk: 'R2',
   sideEffect: 'external',
   access: OWNERS,
-  handler: async (ctx): Promise<{ writeEnabled: false; accountsDisabled: number }> => {
+  handler: async (ctx): Promise<{ writeEnabled: false; accountsDisabled: number; connectionsClosed: number }> => {
     const setting = await lockedSetting(ctx);
     // Launches are blocked with it, so nothing queued or launched goes on spending while the owner decides what to do;
     // opening them again is a proposal, on purpose (the stricter way back).
     await ctx.trx.updateTable('crove_ads.ad_org_setting').set({ write_enabled: false, launches_blocked: true }).where('org_id', '=', ctx.orgId).where('id', '=', setting.id).execute();
     const closed = await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false }).where('org_id', '=', ctx.orgId).where('write_enabled', '=', true).returning('id').execute();
-    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, wasEnabled: setting.write_enabled });
-    return { writeEnabled: false, accountsDisabled: closed.length };
+    // No sealed token that can change campaigns stays: each write connection is closed by the kernel's own command (one audit row each).
+    const connectionsClosed = await closeWriteConnections(ctx, {});
+    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, wasEnabled: setting.write_enabled });
+    return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed };
   },
 });
 
@@ -368,14 +373,16 @@ export const adsAccountDisableWrite = defineCommand({
   sideEffect: 'external',
   access: OWNERS,
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
-  handler: async (ctx, input): Promise<{ adAccountId: string; writeEnabled: false }> => {
+  handler: async (ctx, input): Promise<{ adAccountId: string; writeEnabled: false; connectionsClosed: number }> => {
     const account = await ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'write_enabled']).where('org_id', '=', ctx.orgId).where('id', '=', input.adAccountId).forUpdate().executeTakeFirst();
     if (!account) throw notFound();
     if (account.write_enabled) {
       await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
     }
-    ctx.audit({ adAccountId: account.id, writeEnabled: false });
-    return { adAccountId: account.id, writeEnabled: false };
+    // This account's write connection goes with its flag: closed, its sealed token dropped (the other accounts keep their own).
+    const connectionsClosed = await closeWriteConnections(ctx, { adAccountId: account.id });
+    ctx.audit({ adAccountId: account.id, writeEnabled: false, connectionsClosed });
+    return { adAccountId: account.id, writeEnabled: false, connectionsClosed };
   },
 });
 

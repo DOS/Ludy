@@ -175,8 +175,13 @@ describe('the risk of the commands of running ads (#2294)', () => {
     }
   });
 
+  it('keeps the write connection the owner’s to make and an owner’s or an admin’s to close, R2 external', () => {
+    expect(byName().get('ads.account.link_write')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner'] });
+    expect(byName().get('ads.account.disconnect')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+  });
+
   it('lets no agent run any of them', () => {
-    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower']) {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });

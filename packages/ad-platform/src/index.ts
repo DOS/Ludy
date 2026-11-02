@@ -11,6 +11,12 @@ import { createHash, randomBytes } from 'node:crypto';
 import { MetaAdsPlatform } from './meta.ts';
 
 export * from './meta.ts';
+// Running ads (ADR-0043, W0b): the write connection's login and the writer. Their provider ids (`metawrite_ads`,
+// `sandboxwrite_ads`) are not ad platforms of the readers' registry below: AD_PLATFORM_PROVIDERS, isAdPlatformProvider and
+// adPlatforms() never see them.
+export * from './meta-write-connector.ts';
+export * from './sandbox-write.ts';
+export * from './writer.ts';
 
 // The provider ids a channel connection of an ad account names. `sandbox_ads` is the offline sandbox, `meta_ads` is Meta
 // (plan slice A2); `google_ads` and `tiktok_ads` join when their adapters do (slices B and C).

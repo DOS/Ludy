@@ -1641,6 +1641,11 @@ export const contract = {
     connectSandbox: oc
       .input(z.object({ displayName: z.string().trim().min(1).max(200), currency: z.enum(ADS_SANDBOX_CURRENCIES).optional(), legalEntityId: zId.optional(), idempotencyKey: zId }))
       .output(z.object({ connectionId: zId, adAccountId: zId })),
+    // The offline write connection of a sandbox account (the owner, while the org's switch is on): its own sealed token, with the scope
+    // that can change campaigns, attached to the account the read connection linked (W0b).
+    connectSandboxWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ connectionId: zId, adAccountId: zId })),
+    // Closes the read connection of an account and its write connection, dropping both sealed tokens (owners and admins).
+    disconnectAccount: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, closed: z.number() })),
     configure: oc.input(zAdsAccountConfigure.extend({ idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
     // Asks for a refresh of one account, at most one a minute.
     requestSync: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId })),
@@ -1656,8 +1661,8 @@ export const contract = {
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
     lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),
-    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number() })),
-    disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false) })),
+    writeDisable: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ writeEnabled: z.literal(false), accountsDisabled: z.number(), connectionsClosed: z.number() })),
+    disableAccountWrite: oc.input(z.object({ adAccountId: zId, idempotencyKey: zId })).output(z.object({ adAccountId: zId, writeEnabled: z.literal(false), connectionsClosed: z.number() })),
     pauseAll: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ launchesBlocked: z.literal(true), paused: z.number() })),
     summary: oc.input(zAdsSummaryInput).output(zAdsSummary),
     syncRuns: oc.input(z.object({ adAccountId: zId })).output(z.array(zAdsSyncRunView)),
