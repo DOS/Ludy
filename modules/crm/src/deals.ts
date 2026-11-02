@@ -26,6 +26,7 @@ import {
   zPartySearchQuery,
   type Deal,
   type DealPage,
+  type DealNextStepReason,
   type DealStageKind,
   type FilterAst,
   type PartyChoice,
@@ -36,6 +37,7 @@ import type { MemberRole } from '@crove/db';
 import { z } from 'zod';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { DEAL_DEFAULT_SORT, dealFields, dealSortColumns, dealSortText, dealsAfter } from './deal-filter.ts';
+import { closeNextSteps } from './next-steps.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -123,6 +125,10 @@ export interface Row {
   updated_at: Date | string;
   party_name: string;
   stage_kind: string;
+  // The deal's open next step, while it is not snoozed (#2381).
+  follow_up_id: string | null;
+  follow_up_reason: string | null;
+  follow_up_since: Date | string | null;
 }
 
 // Owners and admins delete any deal, a member the ones they made (the delete command enforces it).
@@ -144,6 +150,7 @@ export function view(r: Row, canDelete: boolean): Deal {
     closedAt: r.closed_at === null ? null : iso(r.closed_at),
     version: r.version,
     canDelete,
+    followUp: r.follow_up_id === null ? null : { id: r.follow_up_id, reason: r.follow_up_reason as DealNextStepReason, sinceOn: day(r.follow_up_since) ?? '' },
     createdAt: iso(r.created_at),
     updatedAt: iso(r.updated_at),
   };
@@ -154,7 +161,11 @@ export function base(ctx: Reader) {
     .selectFrom('crove_crm.deal as d')
     .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
     .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
-    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind'])
+    // The open next step of the deal (at most one, by index) unless it is snoozed: the badge "Cần theo dõi".
+    .leftJoin('crove_crm.deal_next_step as n', (j) =>
+      j.onRef('n.org_id', '=', 'd.org_id').onRef('n.deal_id', '=', 'd.id').on('n.status', '=', 'open').on(sql<boolean>`(n.snoozed_until IS NULL OR n.snoozed_until <= now())`),
+    )
+    .select([...COLUMNS, 'p.name as party_name', 's.kind as stage_kind', 'n.id as follow_up_id', 'n.reason as follow_up_reason', 'n.since_on as follow_up_since'])
     .where('d.org_id', '=', ctx.orgId);
 }
 
@@ -302,6 +313,8 @@ export const dealUpdate = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
       .execute();
+    // An edit is a change: the stale-deal rule's open next step for this deal is moot.
+    await closeNextSteps(ctx, input.dealId, 'deal_edited');
     // Field names only: the title may name a person.
     const changed: string[] = [];
     if (titleChanged) changed.push('title');
@@ -358,6 +371,8 @@ export const dealMove = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.dealId)
       .execute();
+    // A move (or a close, won or lost) is a change too.
+    await closeNextSteps(ctx, input.dealId, closing ? 'deal_closed' : 'deal_moved');
     ctx.audit({ dealId: input.dealId, partyId: before.party_id, fromStageId: before.stage_id, toStageId: stage.id, status: stage.kind });
     if (stage.id !== before.stage_id) {
       const kind = stage.kind === 'won' ? 'deal.won' : stage.kind === 'lost' ? 'deal.lost' : 'deal.stage_changed';

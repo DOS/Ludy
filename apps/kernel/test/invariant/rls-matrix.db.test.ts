@@ -54,8 +54,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_crm.deal_next_step',
-  'crove_crm.deal_setting',
+  'crove_kernel.conversation_composing',
+  'crove_kernel.member_availability',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -887,6 +887,23 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // The "you are replying" marker of a thread (CV3, #2306): who is typing a reply, for 60 seconds, read by those who read the thread (its own rule) and
+  // written by a member who may write it, in their own name (the owner the member-context probes enter as). One per thread and member (a unique key), so
+  // every row gets a fresh connection and thread. Its channel and kind are the thread's (composite foreign key). The update probes assign a column to itself.
+  'crove_kernel.conversation_composing': {
+    update: { set: 'expires_at = expires_at' },
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', user_id: o.owner, expires_at: '2031-01-01T00:00:00Z' },
+      };
+    },
+  },
   // Vy's reply draft of a thread (CV8, #2310): read by those who read the thread (its own rule), asked for by a member (a row requested, no text,
   // in their own name: the owner the member-context probes enter as) and written by the system (the text, the move to live), which the guard
   // trigger holds each to. The factory's row is such a request, so the member's own-org insert and update controls pass, and the update probes
@@ -1077,6 +1094,13 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.mail_suppression': {
     update: { set: 'lift_reason = lift_reason' },
     make: (o) => ({ row: { org_id: o.id, to_hash: hex64(), scope: 'all', reason: 'manual' } }),
+  },
+  // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to. One row per member (a unique
+  // key), the owner the member-context probes enter as, so the seed holds it already; every member reads it, a member writes their own through its command.
+  'crove_kernel.member_availability': {
+    update: { set: 'status = status' },
+    noInsertControl: 'one row per member (UNIQUE (org_id, user_id)); a member writes their own, through its command (conversations-inbox.db.test.ts tests it)',
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, status: 'available' } }),
   },
   // Pending member invites (issue #35). An open invite per (org, email), so every row gets its own address. Token
   // hash and expiry take their defaults (an unusable random hash, seven days). Tenant roles may update only status,

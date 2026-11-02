@@ -43,6 +43,7 @@ const FINANCE_SCREENS = {
     { path: 'documents' },
     { path: 'journal' },
     // Opening balances from Excel (#320), reached from the journal.
+    { path: 'bank/matched' },
     { path: 'journal/opening-balances' },
     { path: 'vouchers' },
     { path: 'bank' },

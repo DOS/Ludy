@@ -231,7 +231,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
+import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
   zNote,
@@ -268,7 +268,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
+import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
 import { zAuditCursor, zAuditExport, zAuditFilter, zAuditPage } from './audit.ts';
@@ -524,6 +524,18 @@ export const contract = {
       update: oc.input(zDealUpdate).output(zDeal),
       move: oc.input(zDealMove).output(zDeal),
       delete: oc.input(zDealRef).output(zDealDeleted),
+    },
+    // The next steps the stale-deal rule raises for open deals (#2381, docs/plan/crm.md): everyone reads, owners, admins and members mark them done
+    // or snooze them (up to 20 at once); the rule itself runs in the worker.
+    nextSteps: {
+      list: oc.input(zNextStepListQuery).output(zNextStepPage),
+      done: oc.input(zNextStepDone).output(zNextStepChanged),
+      snooze: oc.input(zNextStepSnooze).output(zNextStepChanged),
+    },
+    // After how many days without a change an open deal raises a next step: everyone reads, owners and admins set it.
+    dealSetting: {
+      get: oc.input(z.strictObject({})).output(zDealSetting),
+      set: oc.input(zDealSettingSet).output(zDealSetting),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.
@@ -1634,6 +1646,13 @@ export const contract = {
     // The open lines of an account and period whose party is named by its tax code or an invoice of the amount, with
     // the voucher each makes (stage 2b); the SPA asks for them one by one with inbox.request. Owners, admins and members.
     suggestions: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(z.array(zBankLineVoucher)),
+    // The open lines of an account and period sorted into a clean group (one exact candidate, no warning: ask for and approve
+    // together) and lines that need a look, each with why (#2385). Deterministic; the SPA asks for the clean lines' vouchers
+    // with inbox.request and approves them with inbox.approveMany. Owners, admins and members.
+    matchGroups: oc.input(z.object({ bankAccount: zAccountCode, period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatchGroups),
+    // The lines a voucher settles in a period (all accounts, or one), with the voucher, who approved it and how its party
+    // was found (#2385). Every member.
+    matched: oc.input(z.object({ bankAccount: zAccountCode.optional(), period: zLedgerPeriod, legalEntityId: zId.optional() })).output(zBankMatched),
     // The open lines per bank account, for the Inbox (stage 2b). Every member.
     openLines: oc.input(zLegalEntityChoice.optional()).output(zBankOpenLines),
   },

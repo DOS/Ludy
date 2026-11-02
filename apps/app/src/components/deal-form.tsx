@@ -16,6 +16,8 @@ import { normalizeAmount } from '../lib/vouchers.ts';
 export const refreshDeals = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.board.key() });
+  // An edit or a move closes the deal's next step, and a done or a snooze changes the badge: the next steps read again with the deals.
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.nextSteps.key() });
 };
 
 export interface Member {
