@@ -136,6 +136,19 @@ export const categorizationRulesList = defineQuery({
       .orderBy('r.id', 'desc')
       .limit(RULE_LIST_LIMIT)
       .execute();
+    // The lines of approved invoices a person gave another account than the rule had proposed (#2379), read from the
+    // revisions that were approved: no counter is stored, so it cannot drift from them.
+    const corrections = new Map<string, number>();
+    if (rows.length > 0) {
+      const { rows: counted } = await sql<{ rule_id: string; n: string }>`
+        SELECT l #>> '{accountRule,correctedRuleId}' AS rule_id, count(*) AS n
+        FROM crove_kernel.proposal p
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(p.payload -> 'lines') = 'array' THEN p.payload -> 'lines' ELSE '[]'::jsonb END) l
+        WHERE p.org_id = ${ctx.orgId} AND p.command = 'finance.purchase.record' AND p.status = 'executed'
+          AND (l #>> '{accountRule,correctedRuleId}') = ANY(${rows.map((r) => r.id)}::text[])
+        GROUP BY 1`.execute(ctx.trx);
+      for (const c of counted) corrections.set(c.rule_id, Number(c.n));
+    }
     // Who confirmed a rule, by name while they are a member (crove_kernel.member_profiles answers only members).
     const users = [...new Set(rows.map((r) => r.confirmed_by).filter((u): u is string => u !== null))];
     const names = new Map<string, string>();
@@ -153,6 +166,7 @@ export const categorizationRulesList = defineQuery({
       accountCode: r.debit_account,
       confirmedBy: r.confirmed_by ? (names.get(r.confirmed_by) ?? null) : null,
       confirmedAt: r.confirmed_at.toISOString(),
+      corrections: corrections.get(r.id) ?? 0,
       sourceDocument:
         r.source_document_id && r.invoice_number !== null && r.invoice_date !== null
           ? { documentId: r.source_document_id, series: r.invoice_series ?? '', number: r.invoice_number, invoiceDate: r.invoice_date }
