@@ -261,8 +261,9 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       expect(await count('conversation_note', o)).toBe(0);
       // The erased customer's identity stays as a tombstone with no name; the other customer's is untouched.
       const people = await rows<{ external_user_id: string; display_name: string | null; erased: boolean }>('SELECT external_user_id, display_name, erased_at IS NOT NULL AS erased FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY external_user_id', [o.orgId]);
+      // The tombstone keeps no platform id, only a keyed hash of it: the id is nowhere in the identity row.
       expect(people).toEqual([
-        { external_user_id: 'u-erase', display_name: null, erased: true },
+        { external_user_id: expect.stringMatching(/^erased:k1:[0-9a-f]{64}$/), display_name: null, erased: true },
         { external_user_id: 'u-other', display_name: 'Khách u-other', erased: false },
       ]);
       // A signed body replayed after the erasure (the same message, dated before it) brings nothing back.
@@ -285,7 +286,33 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       await rows("UPDATE crove_kernel.conversation_identity SET erased_at = now() - interval '31 days' WHERE org_id = $1 AND external_user_id = 'u-other'", [o.orgId]);
       await rows("DELETE FROM crove_kernel.conversation WHERE org_id = $1 AND external_thread_id = 'e-3'", [o.orgId]);
       await purgeExpiredConversations({ runtime: worker, workerDb });
-      expect((await rows<{ external_user_id: string }>("SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1", [o.orgId])).map((r) => r.external_user_id)).toEqual(['u-erase']);
+      const left = (await rows<{ external_user_id: string }>('SELECT external_user_id FROM crove_kernel.conversation_identity WHERE org_id = $1 ORDER BY 1', [o.orgId])).map((r) => r.external_user_id);
+      expect(left).toContain('u-erase');
+      expect(left).not.toContain('u-other');
+    });
+  });
+
+  describe('erasing a customer who replied in other people’s threads', () => {
+    it('removes their replies wherever they are and keeps the thread of the customer who opened it', async () => {
+      const o = await org();
+      const opened = await thread(o, 'y-thread', 'Y mở bình luận', 'u-y');
+      await thread(o, 'y-thread', 'X trả lời trong bình luận của Y', 'u-x');
+      await thread(o, 'y-thread', 'Y trả lời tiếp', 'u-y');
+      const own = await thread(o, 'x-own', 'X mở bình luận riêng', 'u-x');
+      const bodies = async () => (await rows<{ body: string }>('SELECT body FROM crove_kernel.conversation_message WHERE org_id = $1 AND conversation_id = $2 ORDER BY seq', [o.orgId, opened])).map((r) => r.body);
+      expect(await bodies()).toHaveLength(3);
+      const res = await rt.execute<{ threads: number; messages: number }>('kernel.conversation.erase_contact', { conversationId: own, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+      // X's own thread (one message) and X's reply in Y's thread.
+      expect(res).toEqual({ threads: 1, messages: 2 });
+      expect(await bodies()).toEqual(['Y mở bình luận', 'Y trả lời tiếp']);
+      expect(await threads(o)).toEqual(['y-thread']);
+      // Y's identity is untouched, and X's replay in Y's thread (dated before the erasure) is refused.
+      const x = await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1 AND author_identity_id IS NOT NULL", [o.orgId]);
+      expect(x[0]?.n).toBe('2');
+      const replay: ConversationEvent = { kind: 'comment_thread', threadId: 'y-thread', postId: 'post-1', messageId: 'replay-x', direction: 'in', contact: { id: 'u-x', name: 'Khách u-x' }, text: 'X trả lời trong bình luận của Y', at: new Date(Date.now() - 60_000).toISOString() };
+      await park(sandboxNoticeBody({ accountId: o.accountId, events: [replay] }));
+      await intake();
+      expect(await bodies()).toEqual(['Y mở bình luận', 'Y trả lời tiếp']);
     });
   });
 
@@ -398,6 +425,26 @@ suite('conversation retention, erasure and the Meta deletion callback on Postgre
       const code2 = (second as { code: string }).code;
       expect(await rows('SELECT 1 FROM crove_ads.deletion_request WHERE code = $1', [code2])).toHaveLength(0);
       expect(await rows('SELECT 1 FROM crove_kernel.conversation_deletion_request WHERE code = $1', [code2])).toHaveLength(1);
+    });
+
+    it('links the two sides under one answer when the person’s earlier request is still open on one of them, so the page waits for both', async () => {
+      const o = await org();
+      await rows('UPDATE crove_kernel.channel_connection SET granted_by_hash = $1 WHERE org_id = $2', [platformUserHash(SECRET, '8101'), o.orgId]);
+      await thread(o, 'link-1', 'Bình luận', 'u-link');
+      // The Ads side already holds an open request of this person, under its own code.
+      const adsCode = randomBytes(16).toString('hex');
+      await pool.query('SELECT crove_ads.deletion_request_enqueue($1, $2)', [adsCode, platformUserHash(SECRET, '8101')]);
+      const accepted = await acceptMetaDeletion(rt, { ads: SECRET, conversations: SECRET }, form(signed('8101')));
+      expect(accepted).toEqual({ status: 200, code: adsCode });
+      const [conv] = await rows<{ code: string; sibling_code: string }>("SELECT code, sibling_code FROM crove_kernel.conversation_deletion_request WHERE sibling_code = $1", [adsCode]);
+      expect(conv?.code).not.toBe(adsCode);
+      // The conversation side finishes first: either code still says it is being handled, until the Ads side is done too.
+      await runConversationDeletions({ runtime: worker, workerDb });
+      expect(await metaDeletionStatus(rt, adsCode, true)).toMatchObject({ completedAt: null });
+      expect(await metaDeletionStatus(rt, conv?.code as string, true)).toMatchObject({ completedAt: null });
+      await workerPool.query('SELECT crove_ads.deletion_request_complete($1, 0)', [adsCode]);
+      expect((await metaDeletionStatus(rt, adsCode, true))?.completedAt).not.toBeNull();
+      expect((await metaDeletionStatus(rt, conv?.code as string, true))?.completedAt).not.toBeNull();
     });
 
     it('is reached through the one URL, signed with the Pages app’s secret, rate limited and answered with the status page', async () => {

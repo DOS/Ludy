@@ -230,6 +230,18 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     }
     return 'duplicates';
   }
+  // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
+  // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
+  const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
+  const tomb = await ctx.trx
+    .selectFrom('crove_kernel.conversation_identity')
+    .select('erased_at')
+    .where('org_id', '=', ctx.orgId)
+    .where('provider', '=', provider)
+    .where('external_user_id', '=', `erased:${hashed.rows[0]?.h ?? ''}`)
+    .executeTakeFirst();
+  if (tomb?.erased_at && new Date(event.at).getTime() <= tomb.erased_at.getTime()) return 'ignored';
+
   // A removal of a message never seen: a blank tombstone takes the message's id, so the add that arrives later (the platform does not
   // order its notices) finds it and never stores the body.
   if (event.removed) {
@@ -243,16 +255,16 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .where('external_thread_id', '=', event.threadId)
         .forUpdate()
         .executeTakeFirst()) as ConversationRow | undefined;
+    const who = await ctx.trx
+      .insertInto('crove_kernel.conversation_identity')
+      .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
+      .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
+      .returning(['id'])
+      .executeTakeFirstOrThrow();
     let thread = await findThread();
     if (!thread) {
       // No thread yet: it is made, already resolved (a thread of one removed message needs no answer), so the add that arrives later
       // finds the tombstone and the body is never stored. A later real message reopens it as usual.
-      const who = await ctx.trx
-        .insertInto('crove_kernel.conversation_identity')
-        .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
-        .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
-        .returning(['id'])
-        .executeTakeFirstOrThrow();
       await ctx.trx
         .insertInto('crove_kernel.conversation')
         .values({
@@ -291,21 +303,12 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         send_state: event.direction === 'in' ? null : 'sent',
         tainted: event.direction === 'in',
         platform_removed_at: ctx.now,
+        author_identity_id: event.direction === 'in' ? who.id : null,
       })
       .execute();
     await ctx.trx.updateTable('crove_kernel.conversation').set({ last_seq: next, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', thread.id).execute();
     return 'stored';
   }
-
-  // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery).
-  const tomb = await ctx.trx
-    .selectFrom('crove_kernel.conversation_identity')
-    .select('erased_at')
-    .where('org_id', '=', ctx.orgId)
-    .where('provider', '=', provider)
-    .where('external_user_id', '=', event.contact.id)
-    .executeTakeFirst();
-  if (tomb?.erased_at && new Date(event.at).getTime() <= tomb.erased_at.getTime()) return 'ignored';
 
   const identity = await ctx.trx
     .insertInto('crove_kernel.conversation_identity')
@@ -422,6 +425,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       received_at: ctx.now,
       author_kind: event.direction === 'in' ? 'contact' : 'system',
       body: event.text,
+      author_identity_id: event.direction === 'in' ? identity.id : null,
       send_state: event.direction === 'in' ? null : 'sent',
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
@@ -1365,13 +1369,24 @@ export const conversationEraseContact = defineCommand({
     const filter = conversation.identity_id ? sql`c.identity_id = ${conversation.identity_id}::uuid` : sql`c.id = ${conversation.id}::uuid`;
     const erased = await deleteThreads(ctx, filter);
     if (conversation.identity_id) {
-      // The identity stays as a tombstone, with no name and no party: the intake refuses anything of this customer dated at or before now.
-      await ctx.trx
-        .updateTable('crove_kernel.conversation_identity')
-        .set({ display_name: null, party_id: null, erased_at: ctx.now, updated_at: ctx.now })
-        .where('org_id', '=', ctx.orgId)
-        .where('id', '=', conversation.identity_id)
-        .execute();
+      // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
+      // its author).
+      const others = await sql<{ n: string }>`
+        WITH gone AS (DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${conversation.identity_id}::uuid RETURNING 1)
+        SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
+      erased.messages += Number(others.rows[0]?.n ?? 0);
+      // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises
+      // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
+      const who = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst();
+      if (who) {
+        const h = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_identity')
+          .set({ display_name: null, party_id: null, external_user_id: `erased:${h.rows[0]?.h ?? ''}`, erased_at: ctx.now, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', conversation.identity_id)
+          .execute();
+      }
     }
     ctx.audit({ threads: erased.threads, messages: erased.messages, kind: conversation.kind });
     return erased;

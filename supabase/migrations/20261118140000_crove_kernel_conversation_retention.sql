@@ -24,7 +24,50 @@ SET LOCAL lock_timeout = '2s';
 -- 5. The tombstone of an erased customer
 -- ---------------------------------------------------------------------------
 ALTER TABLE crove_kernel.conversation_identity ADD COLUMN IF NOT EXISTS erased_at timestamptz;
-GRANT UPDATE (erased_at) ON crove_kernel.conversation_identity TO crove_tenant;
+-- An erased customer's identity keeps no platform id: its external_user_id becomes 'erased:' and a keyed hash of the id, which is all the
+-- intake needs to recognise the same customer again (crove_kernel.conversation_identity_hash), so a copy of the database or the export
+-- cannot name the customer by it. A customer who writes again gets a new identity under the plain id.
+GRANT UPDATE (erased_at, external_user_id) ON crove_kernel.conversation_identity TO crove_tenant;
+
+-- The keyed hash of a platform user id: HMAC-SHA256 under the deployment's hash key (crove_kernel.mail_hash_key, as the keyed input hash
+-- of #1732), over a domain label, the org of the caller's sealed context, the provider and the id. Org-bound (the same id hashes
+-- differently in two orgs) and answered as 'k1:<64 hex>'.
+CREATE OR REPLACE FUNCTION crove_kernel.conversation_identity_hash(p_provider text, p_external_user_id text)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_ipad bytea;
+  v_opad bytea;
+BEGIN
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NO_CONTEXT' USING ERRCODE = '42501';
+  END IF;
+  IF p_provider IS NULL OR p_external_user_id IS NULL OR pg_catalog.strpos(p_provider, pg_catalog.chr(31)) > 0 THEN
+    RAISE EXCEPTION 'IDENTITY_HASH_ARGUMENT' USING ERRCODE = '22023';
+  END IF;
+  SELECT k.k_ipad, k.k_opad INTO v_ipad, v_opad FROM crove_kernel.mail_hash_key k WHERE k.id = 1;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'MAIL_HASH_KEY_MISSING' USING ERRCODE = '55000';
+  END IF;
+  RETURN 'k1:' || pg_catalog.encode(
+    pg_catalog.sha256(v_opad || pg_catalog.sha256(v_ipad || pg_catalog.convert_to(
+      'crove.conversation.identity.v1' || pg_catalog.chr(31) || v_org::text || pg_catalog.chr(31) || p_provider || pg_catalog.chr(31) || p_external_user_id, 'UTF8'))),
+    'hex');
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.conversation_identity_hash(text, text) FROM PUBLIC, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.conversation_identity_hash(text, text) TO crove_tenant;
+
+-- Who wrote a message: the identity of its author, so that erasing a customer also removes what they wrote in other people's comment
+-- threads (a reply is stored with its thread, not with the thread's opener). Null for the org's own messages.
+ALTER TABLE crove_kernel.conversation_message ADD COLUMN IF NOT EXISTS author_identity_id uuid;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'conversation_message_author_identity_fk' AND conrelid = 'crove_kernel.conversation_message'::regclass) THEN
+    ALTER TABLE crove_kernel.conversation_message ADD CONSTRAINT conversation_message_author_identity_fk
+      FOREIGN KEY (org_id, author_identity_id) REFERENCES crove_kernel.conversation_identity (org_id, id) ON DELETE SET NULL (author_identity_id);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS conversation_message_author_idx ON crove_kernel.conversation_message (org_id, author_identity_id) WHERE author_identity_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS conversation_identity_erased_idx ON crove_kernel.conversation_identity (erased_at) WHERE erased_at IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
@@ -85,6 +128,9 @@ CREATE TABLE IF NOT EXISTS crove_kernel.conversation_deletion_request (
   requested_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   completed_at timestamptz,
   connections integer CHECK (connections IS NULL OR connections >= 0),
+  -- The code the Ads side of the same person's request carries, when it differs from this one (an earlier request of theirs was still open
+  -- there): the status page of either code then answers for both sides.
+  sibling_code text CHECK (sibling_code IS NULL OR sibling_code ~ '^[0-9a-f]{32}$'),
   -- A request whose erasure failed waits until this time before the worker claims it again.
   next_attempt_at timestamptz NOT NULL DEFAULT pg_catalog.now()
 );
@@ -123,10 +169,20 @@ BEGIN
 END $$;
 
 -- What the status page shows for a code (API login only); no row, no answer.
+DROP FUNCTION IF EXISTS crove_kernel.conversation_deletion_status(text);
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_status(p_code text)
-RETURNS TABLE (requested_at timestamptz, completed_at timestamptz, connections integer)
+RETURNS TABLE (requested_at timestamptz, completed_at timestamptz, connections integer, ads_code text)
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-  SELECT r.requested_at, r.completed_at, r.connections FROM crove_kernel.conversation_deletion_request r WHERE r.code = p_code AND p_code ~ '^[0-9a-f]{32}$'
+  -- ads_code: the code the Ads side of this person's request carries (the linked one, else the code asked about, which both sides share).
+  SELECT r.requested_at, r.completed_at, r.connections, CASE WHEN r.code = p_code THEN COALESCE(r.sibling_code, p_code) ELSE p_code END
+  FROM crove_kernel.conversation_deletion_request r WHERE (r.code = p_code OR r.sibling_code = p_code) AND p_code ~ '^[0-9a-f]{32}$'
+$$;
+
+-- Links the Ads side's code to this side's open request (API login only), when the two differ.
+CREATE OR REPLACE FUNCTION crove_kernel.conversation_deletion_link(p_code text, p_sibling_code text)
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+  UPDATE crove_kernel.conversation_deletion_request r SET sibling_code = p_sibling_code
+  WHERE r.code = p_code AND r.completed_at IS NULL AND p_code ~ '^[0-9a-f]{32}$' AND p_sibling_code ~ '^[0-9a-f]{32}$' AND p_sibling_code <> p_code
 $$;
 
 -- The worker's claim: for each open request that is due, one row per connection of an org that is not closed that the request's
@@ -170,10 +226,10 @@ BEGIN
   UPDATE crove_kernel.conversation_deletion_request r SET next_attempt_at = pg_catalog.now() + interval '5 minutes' WHERE r.code = p_code AND r.completed_at IS NULL;
 END $$;
 
-REVOKE ALL ON FUNCTION crove_kernel.conversation_deletion_enqueue(text, text), crove_kernel.conversation_deletion_status(text),
+REVOKE ALL ON FUNCTION crove_kernel.conversation_deletion_enqueue(text, text), crove_kernel.conversation_deletion_status(text), crove_kernel.conversation_deletion_link(text, text),
   crove_kernel.conversation_deletion_claim(integer), crove_kernel.conversation_deletion_complete(text, integer), crove_kernel.conversation_deletion_defer(text)
   FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_kernel.conversation_deletion_enqueue(text, text), crove_kernel.conversation_deletion_status(text) TO crove_app;
+GRANT EXECUTE ON FUNCTION crove_kernel.conversation_deletion_enqueue(text, text), crove_kernel.conversation_deletion_status(text), crove_kernel.conversation_deletion_link(text, text) TO crove_app;
 GRANT EXECUTE ON FUNCTION crove_kernel.conversation_deletion_claim(integer), crove_kernel.conversation_deletion_complete(text, integer), crove_kernel.conversation_deletion_defer(text) TO crove_worker;
 
 -- ---------------------------------------------------------------------------

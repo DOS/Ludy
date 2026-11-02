@@ -1025,7 +1025,7 @@ export interface KernelConversationIdentityTable {
   org_id: ColumnType<string, string, NotGranted>;
   id: ColumnType<string, string | undefined, NotGranted>;
   provider: ColumnType<string, string, NotGranted>;
-  external_user_id: ColumnType<string, string, NotGranted>;
+  external_user_id: string;
   display_name: string | null;
   party_id: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
@@ -1059,6 +1059,7 @@ export interface KernelConversationMessageTable {
   hide_error_code: string | null;
   platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+  author_identity_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_kernel.conversation_note */

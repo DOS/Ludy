@@ -47,9 +47,16 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
       }
       return out;
     });
-    const code = codes[0];
-    if (!code) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
-    return { status: 200, code };
+    const [first, second] = codes;
+    if (!first) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+    // Two sides with two codes (the person's earlier request is still open on one of them): the answer is the Ads side's code and the
+    // conversations side's request is linked to it, so the status page of either code waits for both sides before it says "done".
+    if (second && second !== first) {
+      await runtime.orgless(async (db) => {
+        await sql`SELECT crove_kernel.conversation_deletion_link(${second}, ${first})`.execute(db);
+      });
+    }
+    return { status: 200, code: first };
   } catch (error) {
     // The API login is not trusted with volume: past a table's limit its definer raises configuration_limit_exceeded, which the
     // runtime reports as OVERLOADED; Meta tries again later (an open request is found again by its person, so no row doubles).
@@ -69,11 +76,13 @@ export interface MetaDeletionStatus {
 export async function metaDeletionStatus(runtime: Runtime, code: string, adsInstalled: boolean): Promise<MetaDeletionStatus | null> {
   if (!/^[0-9a-f]{32}$/.test(code)) return null;
   return runtime.orgless(async (db) => {
-    const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null }>`
-      SELECT requested_at, completed_at, connections FROM crove_kernel.conversation_deletion_status(${code})`.execute(db);
+    const kernel = await sql<{ requested_at: Date; completed_at: Date | null; connections: number | null; ads_code: string | null }>`
+      SELECT requested_at, completed_at, connections, ads_code FROM crove_kernel.conversation_deletion_status(${code})`.execute(db);
+    // The Ads side holds the code itself or, when the two sides differ, the one the conversations side is linked to.
+    const adsCode = kernel.rows[0]?.ads_code ?? code;
     const ads = adsInstalled
       ? await sql<{ requested_at: Date; completed_at: Date | null; accounts: number | null }>`
-          SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${code})`.execute(db)
+          SELECT requested_at, completed_at, accounts FROM crove_ads.deletion_request_status(${adsCode})`.execute(db)
       : { rows: [] as Array<{ requested_at: Date; completed_at: Date | null; accounts: number | null }> };
     const k = kernel.rows[0];
     const a = ads.rows[0];
