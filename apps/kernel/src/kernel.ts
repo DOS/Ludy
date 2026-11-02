@@ -509,6 +509,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           mailer: resolved.mail,
           // Meta's data deletion callback for the Ads connection (plan section 9): with the Meta ads app configured.
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
+          ...(config.CHANNEL_META_ADS_WRITE_APP_ID && config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { adsWriteDeletion: { appSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } } : {}),
           ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),

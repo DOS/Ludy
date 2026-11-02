@@ -255,7 +255,7 @@ function connectorFailure(error: unknown): DomainError {
     // A token that can change campaigns or the business (ads_management, business_management): the person granted more than
     // reading reports to this app before. Said as it is, since accepting more permissions cannot help.
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
-      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy dùng một ứng dụng Meta riêng chỉ có quyền ads_read, hoặc gỡ quyền đó trong Cài đặt Facebook (Ứng dụng và trang web) rồi kết nối lại');
+      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
     }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
@@ -1570,7 +1570,16 @@ export function createRpcHandler(
             { actor, orgId },
           );
           if (connector.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
-          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+          // A reading connection of an ad account whose token also holds a permission to change campaigns is accepted only while the org's
+          // switch for running ads is on, and only from an owner (ADR-0043, #2294): with the one Meta app that serves reading and writing,
+          // the owner's own read login returns every permission they granted it, and refusing it then would stop reading for good; an admin
+          // who edits the dialog to ask for more must not seal a token that can spend. The link checks the switch again.
+          let spendScopesAllowed = false;
+          if (isAdProviderId(input.provider) && !isAdWriteProviderId(input.provider)) {
+            const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+            if (role === 'owner') spendScopesAllowed = (await runtime.query<{ writeEnabled: boolean }>('ads.write.state', {}, { actor, orgId })).writeEnabled;
+          }
+          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier, ...(spendScopesAllowed ? { spendScopesAllowed } : {}) }).catch((error: unknown) => {
             throw connectorFailure(error);
           });
           if (accounts.length === 0) {
@@ -1638,11 +1647,16 @@ export function createRpcHandler(
                 }
               } else if (isAdProviderId(account.provider)) {
                 try {
-                  await runtime.execute(
+                  const linked = await runtime.execute<{ refused?: 'spend_scopes' }>(
                     'ads.account.link',
                     { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
                     { actor, orgId, idempotencyKey: `oauth-ads-link:${oauthStateHash(input.state)}:${done.connectionId}` },
                   );
+                  // The link closed the connection (running ads was switched off while the person was signing in, and the token can
+                  // change campaigns); the closing is committed, so the person is told here.
+                  if (linked.refused === 'spend_scopes') {
+                    throw new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Mã truy cập này còn quyền sửa quảng cáo mà việc chạy quảng cáo đã tắt nên chưa dùng để đọc báo cáo được. Hãy gỡ ứng dụng Meta trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại');
+                  }
                 } catch (linkError) {
                   if (!done.reconnected) {
                     // A connection that stays with no ad account is listed nowhere: say so in the log, by code only.

@@ -187,6 +187,9 @@ export interface HttpDeps {
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
+  // The app that runs ads (the write connection's), when it is set (#2366): the same callback also verifies a request signed by it, and a
+  // person's write grant is found by the hash keyed with its secret. With ads installed only.
+  adsWriteDeletion?: { appSecret: string };
   // The Pages app's secret for the conversations of the Facebook Pages and Instagram accounts, answered by the same callback (CV6, #2305).
   conversationsDeletion?: { appSecret: string };
   // Requests per minute per client address for that callback and its status page.
@@ -766,8 +769,9 @@ export function createHttpApp(deps: HttpDeps) {
   // that person granted; GET is the status page Meta shows the person, answered by the confirmation code.
   const adsInstalled = runtime.installed('ads');
   const adsDeletion = adsInstalled ? deps.adsDeletion : undefined;
+  const adsWriteDeletion = adsInstalled ? deps.adsWriteDeletion : undefined;
   const conversationsDeletion = deps.conversationsDeletion;
-  if (adsDeletion || conversationsDeletion) {
+  if (adsDeletion || adsWriteDeletion || conversationsDeletion) {
     const deletionLimit = deps.adsDeletionLimit ?? new RateLimiter({ perMinute: ADS_DELETION_PER_MINUTE });
     const take = (c: Context): Response | null => {
       const decision = deletionLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
@@ -780,7 +784,7 @@ export function createHttpApp(deps: HttpDeps) {
       const limited = take(c);
       if (limited) return limited;
       try {
-        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, conversations: conversationsDeletion?.appSecret }, await c.req.text());
+        const outcome = await acceptMetaDeletion(runtime, { ads: adsDeletion?.appSecret, adsWrite: adsWriteDeletion?.appSecret, conversations: conversationsDeletion?.appSecret }, await c.req.text());
         if (outcome.status !== 200) return c.json({ code: outcome.code }, outcome.status);
         // What Meta asks for: where the person can see the request's status, and the code that names it.
         return c.json({ url: `${config.PUBLIC_URL}${ADS_DELETION_PATH}?code=${outcome.code}`, confirmation_code: outcome.code });

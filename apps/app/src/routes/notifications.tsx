@@ -40,6 +40,8 @@ function useLine() {
     switch (n.kind) {
       case 'kernel.approval_waiting':
         return t('text.approval_waiting', { title: n.detail.title ?? '' });
+      case 'kernel.original_flagged':
+        return t(n.detail.differs === 'true' ? 'text.original_differs' : 'text.original_unverified', { title: n.detail.title ?? '' });
       case 'kernel.file_unreadable':
         return t('text.file_unreadable', { filename: n.detail.filename ?? '' });
       case 'kernel.task_rerouted':

@@ -53,6 +53,8 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   store: [],
   // The invoice reader of packages/agent.
   extractor: ['provider:ai'],
+  // The reply drafter of packages/agent (CV8, #2310): the model reads a conversation's text and writes a draft.
+  conversationWriter: ['provider:ai'],
   extract: [],
   inboundDomain: [],
   // Supabase Auth.
@@ -98,7 +100,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
 // directory runs from the base branch on a protected-path PR, so a new field lands in two steps (#1663): its
 // classification here first, which passes both the PR's own copy and the base one, then the field in a later PR, whose
 // base copy already knows it. Remove the entry once the field is on the base branch.
-export const PENDING_DEPS: Readonly<Record<string, string>> = {};
+export const PENDING_DEPS: Readonly<Record<string, string>> = {
+  conversationWriter: '#2310',
+};
 
 // What the classification of WorkerDeps gets wrong (#1663), given its top-level fields: a field DEPS_REACH does not
 // classify fails (the safety direction: a new dependency is classified before it is used), and so does an entry for a

@@ -512,13 +512,24 @@ describe('the connection that can run ads (ADR-0043, W0b)', () => {
     for (const t of [inEn, inVi]) {
       const note = t('ads.write.platformNote');
       const closes = t('ads.write.disableClosesConnections');
+      const reads = t('ads.write.disableClosesReads');
       const body = t('ads.write.disableBody');
-      // Nothing to close: the confirmation is the old one.
-      expect(disableConfirmText(t, [account(), metaWrite('revoked')])).toBe(body);
+      // Nothing to close and no platform's account that ever made a connection to run ads: the confirmation is the old one.
+      expect(disableConfirmText(t, [account(), account({ provider: 'meta_ads' })])).toBe(body);
       // A Meta connection: it is closed, and the permission stays at Meta until the app is removed there.
-      expect(disableConfirmText(t, [account(), metaWrite('active')])).toBe(`${body} ${closes} ${note}`);
+      // The platform's reading connections close too (a Meta permission belongs to the app and the person): said once. A write connection
+      // that is already closed counts, since the server remembers it after its account is gone.
+      expect(disableConfirmText(t, [account(), metaWrite('active')])).toBe(`${body} ${closes} ${reads} ${note}`);
+      expect(disableConfirmText(t, [account(), metaWrite('revoked')])).toBe(`${body} ${reads} ${note}`);
       // One that expired still holds its sealed token and the platform's permission.
-      expect(disableConfirmText(t, [metaWrite('expired')])).toBe(`${body} ${closes} ${note}`);
+      expect(disableConfirmText(t, [metaWrite('expired')])).toBe(`${body} ${closes} ${reads} ${note}`);
+      // A reading token that can change campaigns (accepted while running ads was on) closes with the switch-off even with no write
+      // connection; the offline sandbox's does not count.
+      expect(disableConfirmText(t, [account({ provider: 'meta_ads', extraScopes: ['ads_management'] })])).toBe(`${body} ${reads} ${note}`);
+      expect(disableConfirmText(t, [account({ provider: 'meta_ads', extraScopes: ['pages_manage_posts'] })])).toBe(body);
+      // A closed connection keeps its scopes but holds no token: it does not warn again.
+      expect(disableConfirmText(t, [account({ provider: 'meta_ads', connectionStatus: 'revoked', extraScopes: ['ads_management'] })])).toBe(body);
+      expect(disableConfirmText(t, [account({ extraScopes: ['ads_management'] })])).toBe(body);
       // The offline sandbox holds no permission anywhere: closing it is said, the platform note is not.
       expect(disableConfirmText(t, [sandboxWrite('active')])).toBe(`${body} ${closes}`);
     }
@@ -527,12 +538,19 @@ describe('the connection that can run ads (ADR-0043, W0b)', () => {
   it('adds the platform note to the toast of the switch-off only when a connection was closed on an org with a real platform account', () => {
     const note = inEn('ads.write.platformNote');
     const done = inEn('ads.write.disabledToast');
-    expect(disabledToastText(inEn, [metaWrite()], 1)).toBe(`${done} ${note}`);
-    expect(disabledToastText(inEn, [metaWrite(), sandboxWrite()], 2)).toBe(`${done} ${note}`);
+    expect(disabledToastText(inEn, [metaWrite()], 1, 0)).toBe(`${done} ${note}`);
+    expect(disabledToastText(inEn, [metaWrite(), sandboxWrite()], 2, 0)).toBe(`${done} ${note}`);
     // Nothing was closed, or only the sandbox exists: no permission was held anywhere.
-    expect(disabledToastText(inEn, [metaWrite()], 0)).toBe(done);
-    expect(disabledToastText(inEn, [sandboxWrite()], 1)).toBe(done);
-    expect(disabledToastText(inVi, [metaWrite()], 1)).toBe(`${inVi('ads.write.disabledToast')} ${inVi('ads.write.platformNote')}`);
+    expect(disabledToastText(inEn, [metaWrite()], 0, 0)).toBe(done);
+    expect(disabledToastText(inEn, [sandboxWrite()], 1, 0)).toBe(done);
+    expect(disabledToastText(inVi, [metaWrite()], 1, 0)).toBe(`${inVi('ads.write.disabledToast')} ${inVi('ads.write.platformNote')}`);
+    // Reading connections whose token could change campaigns were closed too: how many, and that they are connected again for reading
+    // once the app is removed at Meta, even when no write connection was open.
+    const reads = inEn('ads.write.readsClosedToast', { count: '2' });
+    expect(disabledToastText(inEn, [metaWrite()], 1, 2)).toBe(`${done} ${reads} ${note}`);
+    expect(disabledToastText(inEn, [account({ provider: 'meta_ads' })], 0, 2)).toBe(`${done} ${reads} ${note}`);
+    expect(disabledToastText(inEn, [sandboxWrite()], 0, 1)).toBe(`${done} ${inEn('ads.write.readsClosedToast', { count: '1' })}`);
+    expect(disabledToastText(inVi, [metaWrite()], 0, 3)).toBe(`${inVi('ads.write.disabledToast')} ${inVi('ads.write.readsClosedToast', { count: '3' })} ${inVi('ads.write.platformNote')}`);
   });
 
   it('adds the platform note to the toast of withdrawing one account when its connection was closed', () => {
