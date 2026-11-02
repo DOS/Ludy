@@ -91,8 +91,10 @@ async function vietnamNow(ctx: CommandContext): Promise<{ day: string; minute: n
 }
 
 // What is waiting for each given member, by the rules of the member's own screens:
-//   proposals       pending ones whose approver snapshot holds the member (the list the member's approval screen shows);
-//   notifications   their unread notifications of the work kinds, the approval-waiting ones left to the proposals count, up to
+//   proposals       pending ones of their entities whose approver snapshot holds the member, a viewer none: an approximation of the
+//                   approval screen's list (it also asks the member's role and the org's preset now), never more than the member's own
+//                   entities and snapshot;
+//   notifications   their unread notifications of the work kinds in their entities, the approval-waiting ones left to the proposals count, up to
 //                   NOTIFICATION_UNREAD_CAP each;
 //   messages        conversations waiting for a reply (New, unassigned or assigned to them), as conversation_access lets the role read
 //                   them: owners and admins every one, a member the comment threads of the channels they may use (every channel when
@@ -101,13 +103,24 @@ async function vietnamNow(ctx: CommandContext): Promise<{ day: string; minute: n
 async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: string; role: string }>): Promise<Map<string, TodayMailCounts>> {
   const out = new Map<string, TodayMailCounts>();
   for (const m of members) {
+    // The legal entities the member reads, as enter_context seals them (roles migration): owners and admins, a member with an org-wide
+    // assignment and a member with none read every entity; any other member only the entities of their assignments. Proposals and
+    // notifications carry an entity, and the row-level policy that hides another entity's from the member does not apply to the
+    // system context, so the counts apply it here.
+    const { rows: assigned } = await sql<{ legal_entity_id: string | null }>`
+      SELECT DISTINCT legal_entity_id FROM crove_kernel.role_assignment WHERE org_id = ${ctx.orgId}::uuid AND user_id = ${m.user_id}::uuid`.execute(ctx.trx);
+    const everyEntity = m.role === 'owner' || m.role === 'admin' || assigned.length === 0 || assigned.some((a) => a.legal_entity_id === null);
+    const entities = assigned.flatMap((a) => (a.legal_entity_id === null ? [] : [a.legal_entity_id]));
+    const inScope = (column: string) => sql`(${everyEntity}::boolean OR ${sql.ref(column)}::uuid = ANY (${entities}::uuid[]))`;
     const proposals = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM crove_kernel.proposal p
-      WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'pending' AND p.eligible_approvers @> ARRAY[${m.user_id}::uuid]`.execute(ctx.trx);
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.status = 'pending' AND ${m.role !== 'viewer'}::boolean AND p.eligible_approvers @> ARRAY[${m.user_id}::uuid]
+        AND ${inScope('p.legal_entity_id')}`.execute(ctx.trx);
     const notifications = await sql<{ n: number }>`
       SELECT count(*)::int AS n FROM (
         SELECT 1 FROM crove_kernel.notification n
         WHERE n.org_id = ${ctx.orgId}::uuid AND n.user_id = ${m.user_id}::uuid AND n.read_at IS NULL AND n.kind <> ${APPROVAL_WAITING}
+          AND ${inScope('n.legal_entity_id')}
         LIMIT ${NOTIFICATION_UNREAD_CAP}
       ) u`.execute(ctx.trx);
     let messages = 0;
@@ -147,6 +160,9 @@ export const todayMailSend = defineCommand({
       .set({ last_sent_day: now.day })
       .where('org_id', '=', ctx.orgId)
       .where((eb) => eb.or([eb('last_sent_day', 'is', null), eb('last_sent_day', '<', now.day)]))
+      // Opted in before today: turning it off and on again after a mail does not bring a second one the same day, and a new opt-in
+      // is first mailed the next morning (the due-orgs function holds the same rule).
+      .where(sql<boolean>`pg_catalog.timezone(${TODAY_MAIL_ZONE}::text, created_at)::date < ${now.day}::date`)
       .returning(['id', 'user_id'])
       .execute();
     if (claimed.length === 0) return { state: 'not_due', ...none };

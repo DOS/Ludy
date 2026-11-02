@@ -10,9 +10,10 @@
 --                          membership (the foreign key cascades).
 --
 -- crove_kernel.today_mail_due  the orgs that have a member to mail today, in org_id order after the given one, so the worker's sweep
---                              pages through all of them: ids only, nothing of a member. Due: an active org with an opted-in member whose
---                              last mail was before today (Vietnam time) and whose local time is past 07:30. The command checks the day
---                              again in its own transaction before it claims it.
+--                              pages through all of them: ids only, nothing of a member. Due: an active org with a member who opted in before
+--                              today (Vietnam time, so a member who turns it off and on again the same day is not mailed twice, and a new
+--                              opt-in gets its first mail the next morning), whose last mail was before today, once it is past 07:30 there.
+--                              The command checks the day again in its own transaction before it claims it.
 SET LOCAL lock_timeout = '2s';
 
 CREATE TABLE IF NOT EXISTS crove_kernel.today_mail (
@@ -70,6 +71,7 @@ BEGIN
     AND EXISTS (
       SELECT 1 FROM crove_kernel.today_mail m
       WHERE m.org_id = t.org_id AND (m.last_sent_day IS NULL OR m.last_sent_day < v_local::date)
+        AND pg_catalog.timezone('Asia/Ho_Chi_Minh', m.created_at)::date < v_local::date
     )
   ORDER BY t.org_id
   LIMIT LEAST(GREATEST(p_limit, 1), 500);

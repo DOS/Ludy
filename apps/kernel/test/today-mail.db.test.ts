@@ -71,6 +71,11 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     return o;
   }
   const set = (o: Org, user: string, enabled: boolean) => rt.execute<{ enabled: boolean }>('kernel.today_mail.set', { enabled }, { actor: asUser(user), orgId: o.orgId });
+  // Opted in long before the test's days: a new opt-in is first mailed the next morning.
+  const optIn = async (o: Org, users: string[]) => {
+    for (const u of users) await set(o, u, true);
+    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
+  };
   const get = (o: Org, user: string) => rt.query<{ enabled: boolean }>('kernel.today_mail.get', {}, { actor: asUser(user), orgId: o.orgId });
   const send = (o: Org) => workerRt.execute<{ state: string; day: string; members: number; mails: number; suppressed: number }>('kernel.today_mail.send', {}, { actor: system, orgId: o.orgId });
   const sendAt = async (o: Org, at: Date) => {
@@ -181,7 +186,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
 
   it('queues counts and links only, once a day, to opted-in members who are owed something', async () => {
     const o = await org();
-    for (const u of [o.owner, o.lan, o.minh, o.viewer]) await set(o, u, true);
+    await optIn(o, [o.owner, o.lan, o.minh, o.viewer]);
     // The owner has a pending proposal to approve and two unread notifications (one approval-waiting, counted in the proposals);
     // lan has three work notifications; minh has nothing; the viewer has a proposal that does not name them.
     await proposal(o, [o.owner]);
@@ -246,7 +251,7 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
       await thread(other, 'direct', '3');
       await thread(other, 'comment_thread', '4', 'resolved');
     });
-    for (const u of [o.owner, o.lan, o.minh, o.viewer]) await set(o, u, true);
+    await optIn(o, [o.owner, o.lan, o.minh, o.viewer]);
     await sendAt(o, MORNING);
     const byUser = new Map<string, number>();
     for (const m of await mails(o)) byUser.set(m.to_address, (m.payload.counts as { messages: number }).messages);
@@ -258,9 +263,57 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect(byUser.has((await emailOf(o.viewer)).toLowerCase())).toBe(false);
   });
 
+  it('mails a member at most once a day even when they turn it off and on again, and first the morning after they opt in', async () => {
+    const o = await org();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(EARLY);
+    await set(o, o.lan, true);
+    await notify(o, o.lan, 2);
+    vi.useRealTimers();
+    // Opted in today (Vietnam time): nothing is due today, however many times the sweep runs.
+    expect(await sendAt(o, MORNING)).toMatchObject({ state: 'not_due', mails: 0 });
+    expect(await mails(o)).toEqual([]);
+    // The next morning the first mail goes out; the member turns it off and on again, and the same day brings no second one.
+    expect(await sendAt(o, NEXT_MORNING)).toMatchObject({ state: 'sent', day: '2026-11-11', mails: 1 });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-11T03:30:00Z'));
+    await set(o, o.lan, false);
+    await set(o, o.lan, true);
+    vi.useRealTimers();
+    expect(await sendAt(o, new Date('2026-11-11T04:00:00Z'))).toMatchObject({ state: 'not_due', mails: 0 });
+    expect((await mails(o)).length).toBe(1);
+  });
+
+  it('counts the proposals and notifications of a member limited to one legal entity only for that entity', async () => {
+    const o = await org();
+    const [home, branch] = await admin(async (c) => {
+      const first = (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 ORDER BY created_at LIMIT 1', [o.orgId])).rows[0]?.id as string;
+      const second = (await c.query<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id", [o.orgId, o.owner])).rows[0]?.id as string;
+      await c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)", [o.orgId, o.lan, second, o.owner]);
+      return [first, second] as const;
+    });
+    // A proposal and a notification in each entity; lan names both proposals as an approver and holds both notifications.
+    await admin(async (c) => {
+      for (const entity of [home, branch]) {
+        await c.query(
+          `INSERT INTO crove_kernel.proposal (org_id, kind, command, title, payload, eligible_approvers, authors, legal_entity_id)
+           VALUES ($1, 'finance.purchase', 'finance.purchase.record', 'Hồ sơ', '{}', ARRAY[$2::uuid, $3::uuid], '[]', $4)`,
+          [o.orgId, o.lan, o.minh, entity],
+        );
+        await c.query("INSERT INTO crove_kernel.notification (org_id, user_id, kind, dedupe_key, legal_entity_id) VALUES ($1, $2, 'kernel.original_flagged', $3, $4), ($1, $5, 'kernel.original_flagged', $6, $4)", [o.orgId, o.lan, `k-${randomUUID()}`, entity, o.minh, `k-${randomUUID()}`]);
+      }
+    });
+    await optIn(o, [o.lan, o.minh]);
+    await sendAt(o, MORNING);
+    const byAddress = new Map((await mails(o)).map((m) => [m.to_address, m.payload.counts as { proposals: number; notifications: number }]));
+    // lan reads the branch only; minh, with no assignment, reads every entity.
+    expect(byAddress.get((await emailOf(o.lan)).toLowerCase())).toMatchObject({ proposals: 1, notifications: 1 });
+    expect(byAddress.get((await emailOf(o.minh)).toLowerCase())).toMatchObject({ proposals: 2, notifications: 2 });
+  });
+
   it('is the system context alone that sends, and only the worker that lists the due orgs', async () => {
     const o = await org();
-    await expect(rt.execute('kernel.today_mail.send', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toThrow();
+    await expect(rt.execute('kernel.today_mail.send', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // The member's API login and the tenant role cannot call the due-orgs function; the worker's login can, and gets ids only.
     await expect(asLogin(appUrl, null, null, (c) => c.query('SELECT * FROM crove_kernel.today_mail_due(NULL, 10)'))).rejects.toThrow(/permission denied/);
     await set(o, o.lan, true);
@@ -271,8 +324,8 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
   it('lists an org as due only while a member is owed a day, and pages in org order', async () => {
     const a = await org();
     const b = await org();
-    await set(a, a.lan, true);
-    await set(b, b.lan, true);
+    await optIn(a, [a.lan]);
+    await optIn(b, [b.lan]);
     await admin((c) => c.query("UPDATE crove_kernel.today_mail SET last_sent_day = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1", [b.orgId]));
     // From 07:30 in Vietnam the org with an unsent day is due and the one sent today is not; before it, none is.
     const local = await admin(async (c) => (await c.query<{ m: number }>("SELECT (extract(hour FROM l) * 60 + extract(minute FROM l))::int AS m FROM (SELECT now() AT TIME ZONE 'Asia/Ho_Chi_Minh' AS l) t")).rows[0]?.m as number);
