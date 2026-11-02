@@ -16,9 +16,10 @@
 // tried again the next day; the queue's suppressions and bounces apply like for any mail.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zTodayMailSetting, type TodayMailSetting } from '@crove/kernel-contract';
+import { zTodayMailSet, zTodayMailSetting, type TodayMailSetting } from '@crove/kernel-contract';
 import type { Db, MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type Runtime, type SystemActor } from '@crove/kernel-runtime';
+import { upstreamAuth } from './invites.ts';
 import { createMailMessage } from './mail.ts';
 import { APPROVAL_WAITING, NOTIFICATION_UNREAD_CAP } from './notifications.ts';
 
@@ -59,19 +60,26 @@ export const todayMailGet = defineQuery({
 
 export const todayMailSet = defineCommand({
   name: 'kernel.today_mail.set',
-  input: zTodayMailSetting,
+  input: zTodayMailSet,
   risk: 'R1',
   sideEffect: 'internal',
   access: ALL,
   handler: async (ctx, input): Promise<TodayMailSetting> => {
     const me = requireUser(ctx);
     if (input.enabled) {
-      // Already on keeps its row, and with it the day of its last mail.
-      await ctx.trx
-        .insertInto('crove_kernel.today_mail')
-        .values({ org_id: ctx.orgId, user_id: me, created_at: ctx.now })
-        .onConflict((oc) => oc.columns(['org_id', 'user_id']).doNothing())
-        .execute();
+      // Already on keeps its row, and with it the day of its last mail; naming another language replaces the row (the language is
+      // not a column a member may update), which also puts the next mail on the morning after, never twice in one day.
+      const row = await ctx.trx.selectFrom('crove_kernel.today_mail').select(['id', 'language']).where('org_id', '=', ctx.orgId).where('user_id', '=', me).executeTakeFirst();
+      if (row && input.language !== undefined && row.language !== input.language) {
+        await ctx.trx.deleteFrom('crove_kernel.today_mail').where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
+      }
+      if (!row || (input.language !== undefined && row.language !== input.language)) {
+        await ctx.trx
+          .insertInto('crove_kernel.today_mail')
+          .values({ org_id: ctx.orgId, user_id: me, created_at: ctx.now, language: input.language ?? null })
+          .onConflict((oc) => oc.columns(['org_id', 'user_id']).doNothing())
+          .execute();
+      }
     } else {
       await ctx.trx.deleteFrom('crove_kernel.today_mail').where('org_id', '=', ctx.orgId).where('user_id', '=', me).execute();
     }
@@ -142,12 +150,14 @@ async function countsFor(ctx: CommandContext, members: ReadonlyArray<{ user_id: 
 
 export const todayMailSend = defineCommand({
   name: 'kernel.today_mail.send',
-  input: z.strictObject({}),
+  // upstream: the deployment's Supabase Auth keeps its own record of each email (AUTH_SESSION_CHECK=db), so a member's address must
+  // be confirmed there too. Only the system context runs this, so the worker's own word for it is trusted.
+  input: z.strictObject({ upstream: z.boolean().optional() }),
   // Queues mail through the kernel pipeline in its transaction: a send, an effect outside Crove (#1578).
   risk: 'R2',
   sideEffect: 'external',
   access: 'system',
-  handler: async (ctx): Promise<{ state: TodayMailState; day: string; members: number; mails: number; suppressed: number }> => {
+  handler: async (ctx, input): Promise<{ state: TodayMailState; day: string; members: number; mails: number; suppressed: number }> => {
     const now = await vietnamNow(ctx);
     const none = { day: now.day, members: 0, mails: 0, suppressed: 0 };
     if (now.minute < SEND_FROM_MINUTE) return { state: 'not_due', ...none };
@@ -163,15 +173,15 @@ export const todayMailSend = defineCommand({
       // Opted in before today: turning it off and on again after a mail does not bring a second one the same day, and a new opt-in
       // is first mailed the next morning (the due-orgs function holds the same rule).
       .where(sql<boolean>`pg_catalog.timezone(${TODAY_MAIL_ZONE}::text, created_at)::date < ${now.day}::date`)
-      .returning(['id', 'user_id'])
+      .returning(['id', 'user_id', 'language'])
       .execute();
     if (claimed.length === 0) return { state: 'not_due', ...none };
     const ids = claimed.map((c) => c.user_id).sort();
     const { rows: roles } = await sql<{ user_id: string; role: string }>`
       SELECT user_id, role FROM crove_kernel.tenant_member WHERE org_id = ${ctx.orgId}::uuid AND user_id = ANY (${ids}::uuid[]) ORDER BY user_id`.execute(ctx.trx);
-    const { rows: people } = await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.member_emails(${ids}::uuid[])`.execute(ctx.trx);
+    const { rows: people } = await sql<{ user_id: string; email: string | null }>`SELECT user_id, email FROM crove_kernel.today_mail_recipients(${ids}::uuid[], ${input.upstream === true}::boolean)`.execute(ctx.trx);
     const emails = new Map(people.filter((p) => p.email).map((p) => [p.user_id, p.email as string]));
-    const rowOf = new Map(claimed.map((c) => [c.user_id, c.id]));
+    const rowOf = new Map(claimed.map((c) => [c.user_id, c]));
     const counts = await countsFor(ctx, roles);
     let mails = 0;
     let suppressed = 0;
@@ -187,12 +197,12 @@ export const todayMailSend = defineCommand({
         const mail = await createMailMessage(ctx, {
           stream: 'transactional',
           source: TODAY_MAIL_SOURCE,
-          sourceId: rowOf.get(m.user_id) ?? null,
+          sourceId: rowOf.get(m.user_id)?.id ?? null,
           templateKey: TODAY_MAIL_TEMPLATE,
           to: email,
           payload: {
             org: org.name,
-            language: 'vi',
+            language: rowOf.get(m.user_id)?.language ?? 'vi',
             day: now.day,
             counts: { proposals: c.proposals, notifications: c.notifications, messages: c.messages },
             home: `/o/${org.slug}/overview`,
@@ -223,11 +233,12 @@ const ACTOR: SystemActor = { type: 'system', component: 'kernel.today_mail' };
 export async function sweepTodayMail(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
   let after: string | null = null;
   let sent = 0;
+  const upstream = upstreamAuth(deps.runtime.sessionMode);
   for (let page = 0; page < TODAY_MAIL_MAX_PAGES; page++) {
     const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.today_mail_due(${after}::uuid, ${TODAY_MAIL_PAGE}::int)`.execute(deps.workerDb);
     for (const row of rows) {
       try {
-        const done = await deps.runtime.execute<{ state: TodayMailState }>('kernel.today_mail.send', {}, { actor: ACTOR, orgId: row.org_id });
+        const done = await deps.runtime.execute<{ state: TodayMailState }>('kernel.today_mail.send', { upstream }, { actor: ACTOR, orgId: row.org_id });
         if (done.state === 'sent') sent += 1;
       } catch (error) {
         console.warn(`[today-mail] org ${row.org_id.slice(0, 8)}`, error instanceof DomainError ? error.code : error instanceof Error ? error.name : 'error');

@@ -1832,6 +1832,7 @@ export interface KernelTodayMailTable {
   user_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   last_sent_day: string | null;
+  language: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_kernel.usage_deferral */

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
-import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { applyAuthGrants, migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -70,19 +70,21 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     });
     return o;
   }
-  const set = (o: Org, user: string, enabled: boolean) => rt.execute<{ enabled: boolean }>('kernel.today_mail.set', { enabled }, { actor: asUser(user), orgId: o.orgId });
+  const set = (o: Org, user: string, enabled: boolean, language?: 'vi' | 'en') =>
+    rt.execute<{ enabled: boolean }>('kernel.today_mail.set', { enabled, ...(language ? { language } : {}) }, { actor: asUser(user), orgId: o.orgId });
   // Opted in long before the test's days: a new opt-in is first mailed the next morning.
   const optIn = async (o: Org, users: string[]) => {
     for (const u of users) await set(o, u, true);
     await admin((c) => c.query("UPDATE crove_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
   };
   const get = (o: Org, user: string) => rt.query<{ enabled: boolean }>('kernel.today_mail.get', {}, { actor: asUser(user), orgId: o.orgId });
-  const send = (o: Org) => workerRt.execute<{ state: string; day: string; members: number; mails: number; suppressed: number }>('kernel.today_mail.send', {}, { actor: system, orgId: o.orgId });
-  const sendAt = async (o: Org, at: Date) => {
+  const send = (o: Org, upstream = false) =>
+    workerRt.execute<{ state: string; day: string; members: number; mails: number; suppressed: number }>('kernel.today_mail.send', { upstream }, { actor: system, orgId: o.orgId });
+  const sendAt = async (o: Org, at: Date, upstream = false) => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(at);
     try {
-      return await send(o);
+      return await send(o, upstream);
     } finally {
       vi.useRealTimers();
     }
@@ -311,6 +313,29 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect(byAddress.get((await emailOf(o.minh)).toLowerCase())).toMatchObject({ proposals: 2, notifications: 2 });
   });
 
+  it('writes the mail in the language the member chose when they opted in, Vietnamese when they named none', async () => {
+    const o = await org();
+    await set(o, o.lan, true, 'en');
+    await set(o, o.minh, true, 'vi');
+    await set(o, o.owner, true);
+    // Naming another language on a row already on replaces it with the new one.
+    await set(o, o.minh, true, 'en');
+    await set(o, o.minh, true, 'vi');
+    await set(o, o.minh, true);
+    const stored = await admin(async (c) => (await c.query('SELECT user_id, language FROM crove_kernel.today_mail WHERE org_id = $1', [o.orgId])).rows.map((r) => [r.user_id, r.language]));
+    expect(stored.sort()).toEqual([[o.lan, 'en'], [o.minh, 'vi'], [o.owner, null]].sort());
+    // Only the two languages the mail has are accepted, in the command and in the table.
+    await expect(rt.execute('kernel.today_mail.set', { enabled: true, language: 'fr' }, { actor: asUser(o.lan), orgId: o.orgId })).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(admin((c) => c.query("UPDATE crove_kernel.today_mail SET language = 'fr' WHERE org_id = $1", [o.orgId]))).rejects.toThrow(/check constraint/);
+    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET created_at = '2026-01-01T00:00:00Z' WHERE org_id = $1", [o.orgId]));
+    for (const u of [o.lan, o.minh, o.owner]) await notify(o, u, 1);
+    await sendAt(o, MORNING);
+    const languages = new Map((await mails(o)).map((m) => [m.to_address, m.payload.language]));
+    expect(languages.get((await emailOf(o.lan)).toLowerCase())).toBe('en');
+    expect(languages.get((await emailOf(o.minh)).toLowerCase())).toBe('vi');
+    expect(languages.get((await emailOf(o.owner)).toLowerCase())).toBe('vi');
+  });
+
   it('is the system context alone that sends, and only the worker that lists the due orgs', async () => {
     const o = await org();
     await expect(rt.execute('kernel.today_mail.send', {}, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
@@ -340,5 +365,49 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     } else {
       expect(due).toEqual([]);
     }
+  });
+
+  // Self-host (AUTH_SESSION_CHECK=db): Supabase Auth keeps its own record of each email, and an address it has not confirmed is never
+  // mailed (as for invites, #134). Runs last: it creates the auth tables.
+  it('mails no member whose email is unconfirmed in Supabase Auth, and none while the confirmation cannot be read', async () => {
+    await admin(async (c) => {
+      await c.query('CREATE SCHEMA IF NOT EXISTS auth AUTHORIZATION supabase_auth_admin');
+      await c.query('SET ROLE supabase_auth_admin');
+      await c.query(`
+        CREATE TABLE auth.users (
+          id uuid PRIMARY KEY, email text, email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz);
+        CREATE TABLE auth.sessions (
+          id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE, not_after timestamptz);
+        CREATE TABLE auth.mfa_factors (
+          id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE, status text NOT NULL);
+        ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE auth.sessions ENABLE ROW LEVEL SECURITY;
+        ALTER TABLE auth.mfa_factors ENABLE ROW LEVEL SECURITY;`);
+    });
+    await applyAuthGrants({ adminUrl, timeoutMs: 5000 });
+    const o = await org();
+    // Two members whose subject is a Supabase Auth user: one confirmed, one not. Another member has no auth record at all.
+    async function authed(name: string, confirmed: boolean) {
+      const subject = randomUUID();
+      const email = `${name}-${randomUUID().slice(0, 8)}@mail.test`;
+      await admin((c) => c.query('INSERT INTO auth.users (id, email, email_confirmed_at) VALUES ($1, $2, $3)', [subject, email, confirmed ? new Date() : null]));
+      const id = await upsertIdentity(db, { issuer: 'test', subject, email, name: null });
+      await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [o.orgId, id]));
+      return { id, email };
+    }
+    const sure = await authed('confirmed', true);
+    const unsure = await authed('unconfirmed', false);
+    await optIn(o, [sure.id, unsure.id, o.lan]);
+    for (const u of [sure.id, unsure.id, o.lan]) await notify(o, u, 1);
+    // In db mode only the confirmed member is mailed: the unconfirmed one and the one with no Supabase Auth record are not.
+    expect(await sendAt(o, MORNING, true)).toMatchObject({ state: 'sent', members: 3, mails: 1 });
+    expect((await mails(o)).map((m) => m.to_address)).toEqual([sure.email.toLowerCase()]);
+    // A deployment without Supabase Auth's record (an identity provider vouches for the address) mails all three the next day.
+    expect(await sendAt(o, NEXT_MORNING, false)).toMatchObject({ state: 'sent', mails: 3 });
+
+    // The confirmation cannot be read (the grant is gone): fail closed, nobody is mailed in db mode.
+    await admin((c) => c.query('REVOKE SELECT (email_confirmed_at) ON auth.users FROM crove_auth_reader'));
+    expect(await sendAt(o, new Date('2026-11-12T03:00:00Z'), true)).toMatchObject({ state: 'sent', mails: 0 });
+    expect((await mails(o)).length).toBe(4);
   });
 });

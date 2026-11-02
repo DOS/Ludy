@@ -3,7 +3,7 @@
 // theirs alone, and only sent when the server has mail. The mail's unsubscribe link opens this page with `?todayMail=off`: that
 // shows a one-click "Turn off" (a plain visit changes nothing, so a mail scanner cannot unsubscribe anyone).
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useTranslations } from 'use-intl';
+import { useLocale, useTranslations } from 'use-intl';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -24,9 +24,11 @@ const asksToTurnOff = () => {
 export function TodayMailSetting() {
   const t = useTranslations('notifications.todayMail');
   const queryClient = useQueryClient();
+  // The mail is written in the language the member uses in the app when they turn it on.
+  const language = useLocale() === 'en' ? 'en' : 'vi';
   const setting = useQuery(orpc.today.mail.get.queryOptions());
   const set = useMutation({
-    mutationFn: (enabled: boolean) => client.today.mail.set({ enabled }),
+    mutationFn: (enabled: boolean) => client.today.mail.set({ enabled, language }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: orpc.today.mail.get.queryOptions().queryKey }),
   });
   const mailOn = getConfig().mailEnabled;

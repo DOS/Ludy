@@ -128,3 +128,6 @@ export type TodayBrief = z.infer<typeof zTodayBrief>;
 // server sends the mail only when it has SMTP; the app reads that from its config.
 export const zTodayMailSetting = z.object({ enabled: z.boolean() });
 export type TodayMailSetting = z.infer<typeof zTodayMailSetting>;
+// Turning it on may name the language of the mail (the member's language in the app); left out, a row already on keeps its own, else Vietnamese.
+export const zTodayMailSet = zTodayMailSetting.extend({ language: z.enum(['vi', 'en']).optional() });
+export type TodayMailSet = z.infer<typeof zTodayMailSet>;

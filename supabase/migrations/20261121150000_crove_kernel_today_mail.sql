@@ -9,6 +9,11 @@
 --                          admits the system alone, and a member cannot insert a row with it set. A member's row goes with the
 --                          membership (the foreign key cascades).
 --
+-- crove_kernel.today_mail_recipients  the address of each given opted-in member of the org in context, for the worker's send command: ids and
+--                                    addresses only. Disabled accounts have none. With p_upstream (AUTH_SESSION_CHECK=db, where Supabase Auth
+--                                    holds its own record) a member's email must also be confirmed there, as for invites (#134): an
+--                                    unconfirmed one has no address, and none are returned while the reader cannot see the column.
+--
 -- crove_kernel.today_mail_due  the orgs that have a member to mail today, in org_id order after the given one, so the worker's sweep
 --                              pages through all of them: ids only, nothing of a member. Due: an active org with a member who opted in before
 --                              today (Vietnam time, so a member who turns it off and on again the same day is not mailed twice, and a new
@@ -23,6 +28,8 @@ CREATE TABLE IF NOT EXISTS crove_kernel.today_mail (
   created_at timestamptz NOT NULL DEFAULT now(),
   -- The Asia/Ho_Chi_Minh calendar day of the last mail; NULL until the first one.
   last_sent_day date,
+  -- The language of the mail: the one the member had chosen in the app when they opted in; NULL sends it in Vietnamese.
+  language text CHECK (language IN ('vi', 'en')),
   PRIMARY KEY (org_id, id),
   CONSTRAINT today_mail_member_fk FOREIGN KEY (org_id, user_id) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE CASCADE
 );
@@ -47,6 +54,32 @@ CREATE POLICY today_mail_update ON crove_kernel.today_mail AS RESTRICTIVE FOR UP
 DROP POLICY IF EXISTS today_mail_insert ON crove_kernel.today_mail;
 CREATE POLICY today_mail_insert ON crove_kernel.today_mail AS RESTRICTIVE FOR INSERT TO crove_tenant
   WITH CHECK (last_sent_day IS NULL OR (SELECT crove_kernel.ctx_actor_type()) = 'system');
+
+-- The addresses the worker may mail. Same EXECUTE matrix as today_mail_due, same session check.
+CREATE OR REPLACE FUNCTION crove_kernel.today_mail_recipients(p_user_ids uuid[], p_upstream boolean)
+RETURNS TABLE (user_id uuid, email text)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'TODAY_MAIL_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  -- Fail closed: the confirmation cannot be read, so nobody is mailed.
+  IF p_upstream AND NOT crove_kernel.auth_email_check_ready() THEN
+    RETURN;
+  END IF;
+  RETURN QUERY
+  SELECT u.id, u.email
+  FROM crove_kernel.tenant_member m
+  JOIN crove_kernel.user_account u ON u.id = m.user_id
+  WHERE m.org_id = (SELECT crove_kernel.ctx_org_id())
+    AND m.user_id = ANY (p_user_ids)
+    AND u.disabled_at IS NULL
+    AND (NOT p_upstream OR CASE
+      WHEN u.subject ~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN crove_kernel.auth_email_confirmed(u.subject::uuid)
+      ELSE false END);
+END $$;
+REVOKE ALL ON FUNCTION crove_kernel.today_mail_recipients(uuid[], boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.today_mail_recipients(uuid[], boolean) TO crove_worker;
 
 -- The orgs whose members are due a brief, paged. Worker only: EXECUTE for crove_worker alone, plus the session_user check the other worker-only
 -- definers carry, so a definer running as a more privileged owner cannot be used to reach it from the API.

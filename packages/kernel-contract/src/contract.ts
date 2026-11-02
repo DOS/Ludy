@@ -233,7 +233,7 @@ import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } fro
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
 import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts';
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
-import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSetting } from './today.ts';
+import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
@@ -313,7 +313,7 @@ export const contract = {
     // The caller's own opt-in to the daily brief by email (#2406); every role, only their own setting.
     mail: {
       get: oc.output(zTodayMailSetting),
-      set: oc.input(zTodayMailSetting).output(zTodayMailSetting),
+      set: oc.input(zTodayMailSet).output(zTodayMailSetting),
     },
   },
   org: {
