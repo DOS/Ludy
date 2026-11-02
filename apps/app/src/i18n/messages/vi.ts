@@ -195,6 +195,7 @@ export const vi = {
       kernel_approval_waiting: 'Đề xuất chờ bạn duyệt',
       kernel_file_unreadable: 'Tệp không đọc được',
       kernel_task_rerouted: 'Việc chuyển đến tôi vì người giữ vị trí không còn xem được',
+      kernel_original_flagged: 'Hóa đơn gốc khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
       finance_bank_attention: 'Sao kê ngân hàng có dòng cần xem lại',
       finance_portal_attention: 'Đối chiếu với cổng thuế cần xem lại',
       finance_period_closing: 'Kỳ sắp đến hạn nộp tờ khai mà chưa khóa sổ',
@@ -204,6 +205,8 @@ export const vi = {
     text: {
       approval_waiting: 'Đề xuất chờ bạn duyệt: {title}',
       file_unreadable: 'Không đọc được tệp {filename}',
+      original_differs: 'Hóa đơn gốc đính kèm {title} có số liệu khác hóa đơn đã ghi sổ. Hãy kiểm tra; sổ cái không bị thay đổi.',
+      original_unverified: 'Hóa đơn gốc đính kèm {title} chưa có chữ ký số xác minh được. Hãy kiểm tra trước khi tin vào bản gốc.',
       task_rerouted: 'Việc chuyển đến bạn: {title}',
       tasks_rerouted: '{count, plural, other {# việc}} chuyển đến bạn',
       bank_attention: 'Sao kê tài khoản {account} có {lines, plural, other {# dòng}} cần xem lại',

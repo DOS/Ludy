@@ -197,6 +197,7 @@ export const en = {
       kernel_approval_waiting: 'Proposals waiting for my approval',
       kernel_file_unreadable: 'Files that could not be read',
       kernel_task_rerouted: 'Tasks moved to me because their holder can no longer read them',
+      kernel_original_flagged: 'Original e-invoices that differ from the posted invoice or are not verified',
       finance_bank_attention: 'Bank statement lines to look at',
       finance_portal_attention: 'Tax portal checks to look at',
       finance_period_closing: 'VAT returns due on a period that is not locked',
@@ -206,6 +207,8 @@ export const en = {
     text: {
       approval_waiting: 'Waiting for your approval: {title}',
       file_unreadable: 'Could not read the file {filename}',
+      original_differs: 'The original e-invoice attached to {title} differs from the posted invoice. Please check it; the ledger was not changed.',
+      original_unverified: 'The original e-invoice attached to {title} has no digital signature that could be verified. Please check it before relying on it.',
       task_rerouted: 'A task moved to you: {title}',
       tasks_rerouted: '{count, plural, one {# task} other {# tasks}} moved to you',
       bank_attention: 'The statement of account {account} has {lines, plural, one {# line} other {# lines}} to look at',

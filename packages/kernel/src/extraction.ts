@@ -585,6 +585,16 @@ export const recordExtraction = defineCommand({
           `Đã nhận hóa đơn gốc XML ${file.filename} cho hóa đơn đã ghi sổ (chữ ký số: ${sealed}; ${differs ? 'số liệu KHÁC chứng từ đã ghi sổ, cần người kiểm tra' : 'số liệu khớp chứng từ đã ghi sổ'})`.slice(0, 500),
         );
         await ctx.activity('kernel.file', input.fileId, 'extraction.read', 'Hóa đơn gốc của hóa đơn đã ghi sổ từ tệp khác');
+        // A person is told when the original differs from the posting or its signature is not verified (#2335): the ledger
+        // stays as it is, the notice only asks for a look. kernel.notification.dispatch reads it from the outbox.
+        if (differs || signature !== 'verified') {
+          await ctx.emit('kernel.proposal.original_flagged', {
+            proposalId: attachedTo.id,
+            fileId: input.fileId,
+            differs,
+            signature: signature === 'unverified' ? 'unverified' : 'none',
+          });
+        }
         return { extractionId: attached.id, proposalId: null, duplicate: false };
       }
       run = await ctx.trx

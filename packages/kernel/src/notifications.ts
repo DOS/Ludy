@@ -42,6 +42,9 @@ export const PERSONAL_DATA_NOTICE = 'kernel.personal_data_notice';
 // until an owner or admin connects it again. Social tells its own channels' owners apart (its dispatch), so this one is
 // for the ad platforms' connections only.
 export const CHANNEL_EXPIRED = 'kernel.channel_expired';
+// The original e-invoice XML attached to a posted invoice differs from the posting or has a signature that is not verified
+// (#2335): a warning for the person who uploaded it and the one who approved the posting. The ledger is never touched.
+export const ORIGINAL_FLAGGED = 'kernel.original_flagged';
 
 export interface NotifyInput {
   // '<module>.<kind>', for example 'finance.bank_attention'.
@@ -126,7 +129,7 @@ export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ev
 }
 
 // The events kernel.notification.dispatch handles.
-export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified', 'kernel.channel.expired'] as const;
+export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified', 'kernel.channel.expired', 'kernel.proposal.original_flagged'] as const;
 
 export const notificationDispatch = defineCommand({
   name: 'kernel.notification.dispatch',
@@ -245,6 +248,33 @@ export const notificationDispatch = defineCommand({
           subject: { type: 'kernel.channel_connection', id: e.data.connection_id },
           // The platform's id only: the account's name is read where the notice opens (the Ads screen).
           detail: { provider: e.data.provider },
+          eventId: event.id,
+        });
+        return { sent };
+      }
+      case 'kernel.proposal.original_flagged': {
+        const e = z.object({ proposalId: zId, fileId: zId, differs: z.boolean(), signature: z.enum(['unverified', 'none']) }).safeParse(event.payload);
+        if (!e.success) return { sent: 0 };
+        const proposal = await ctx.trx
+          .selectFrom('crove_kernel.proposal')
+          .select(['id', 'status', 'decided_by', 'legal_entity_id'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.proposalId)
+          .executeTakeFirst();
+        const file = await ctx.trx.selectFrom('crove_kernel.file').select('created_by').where('org_id', '=', ctx.orgId).where('id', '=', e.data.fileId).executeTakeFirst();
+        if (!proposal || !file) return { sent: 0 };
+        // The one who uploaded the original and the one who approved the posting; a mailed original with no approver left
+        // (a removed member) goes to the owners and admins.
+        const users = [...new Set([file.created_by, proposal.decided_by].filter((u): u is string => u !== null))];
+        const sent = await notifyMembers(ctx, {
+          kind: ORIGINAL_FLAGGED,
+          users: users.length > 0 ? users : await ownersAndAdmins(ctx),
+          key: `original_flagged:${proposal.id}:${e.data.fileId}`,
+          subject: { type: 'kernel.proposal', id: proposal.id },
+          // The posted proposal's entity: a member limited to other entities never sees it (#1280). Its title is read when
+          // the notice is shown, never copied (#1977).
+          legalEntityId: proposal.legal_entity_id,
+          detail: { differs: e.data.differs ? 'true' : 'false', signature: e.data.signature },
           eventId: event.id,
         });
         return { sent };
