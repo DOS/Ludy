@@ -2,6 +2,7 @@
 // English copy of the Ludy Notes page (/en/notes), in the shape of notes-vi.ts. The example company, its vendors and
 // people are the home page's and stay as they are in Vietnamese where they are names.
 import type { NotesCopy } from './notes-vi';
+import { N } from './roster';
 
 export const notesEn: NotesCopy = {
   appName: 'Ludy Notes',
@@ -76,12 +77,12 @@ export const notesEn: NotesCopy = {
       },
     ],
   },
-  assistant: {
-    title: 'Vy and your notes',
-    lead: 'Your notes stay with you.',
-    doesTitle: 'Vy and the agents do',
-    does: ['Take a to-do you hand to a position held by an AI agent, after you have edited its title and description'],
-    doesNotTitle: 'Vy and the agents do not',
+  coworker: {
+    title: `${N.gm} and your notes`,
+    lead: 'Your notes stay with you. Ludy Notes has no AI coworker of its own.',
+    doesTitle: `${N.gm} and the AI coworkers do`,
+    does: ['Take a to-do you hand to a position held by an AI coworker, after you have edited its title and description'],
+    doesNotTitle: `${N.gm} and the AI coworkers do not`,
     doesNot: ['Read your notes', 'Write or edit notes'],
   },
   audience: {

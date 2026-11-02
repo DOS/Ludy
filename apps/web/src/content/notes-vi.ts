@@ -3,6 +3,7 @@
 // on main today (the PR lists the PR or route behind each one); planned work is not named. Company names, amounts and
 // dates are example data and stay the same in both languages where they are names.
 import type { AppPageCopy } from './app-page';
+import { N } from './roster';
 
 export const notesVi = {
   appName: 'Ludy Notes',
@@ -77,12 +78,12 @@ export const notesVi = {
       },
     ],
   },
-  assistant: {
-    title: 'Vy và ghi chú',
-    lead: 'Ghi chú của bạn ở lại với bạn.',
-    doesTitle: 'Vy và agent làm',
-    does: ['Nhận một việc bạn giao cho vị trí do agent AI giữ, sau khi bạn sửa tên và mô tả'],
-    doesNotTitle: 'Vy và agent không',
+  coworker: {
+    title: `${N.gm} và ghi chú`,
+    lead: 'Ghi chú của bạn ở lại với bạn. Ludy Notes không có đồng nghiệp AI riêng.',
+    doesTitle: `${N.gm} và các đồng nghiệp AI làm`,
+    does: ['Nhận một việc bạn giao cho vị trí do đồng nghiệp AI giữ, sau khi bạn sửa tên và mô tả'],
+    doesNotTitle: `${N.gm} và các đồng nghiệp AI không`,
     doesNot: ['Không đọc ghi chú của bạn', 'Không viết hay sửa ghi chú'],
   },
   audience: {
