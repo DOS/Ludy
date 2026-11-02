@@ -6704,6 +6704,7 @@ export const vi = {
       ADS_BLOCK_CHANGED: 'Các lần chạy quảng cáo đã bị chặn lại từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
       ADS_DRAFT_NOT_FOUND: 'Không tìm thấy bản nháp chiến dịch này.',
       ADS_DRAFT_ACCOUNT: 'Bản nháp này thuộc tài khoản quảng cáo khác.',
+      ADS_DRAFT_REFERENCE: 'Trang hoặc tệp đã chọn không thuộc tổ chức này.',
       ADS_DRAFT_CLOSED: 'Bản nháp này đã được duyệt hoặc đã bị bỏ nên không sửa được nữa.',
       ADS_DRAFT_SUBMITTED: 'Bản nháp này đang chờ duyệt ở Chứng từ chờ duyệt. Hãy từ chối đề nghị nếu muốn sửa.',
       ADS_DRAFT_INCOMPLETE: 'Bản nháp chưa đủ thông tin để gửi duyệt.',

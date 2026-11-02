@@ -22,7 +22,10 @@ const plan: AdsCampaignPlanDraft = {
 const context: PlanContext = {
   today: '2026-11-10',
   currency: 'VND',
-  caps: [{ scope: 'account', adAccountId: account, period: 'daily', amount: '200000', currency: 'VND' }],
+  caps: [
+    { scope: 'account', adAccountId: account, period: 'daily', amount: '200000', currency: 'VND' },
+    { scope: 'org', adAccountId: null, period: 'monthly', amount: '5000000', currency: 'VND' },
+  ],
   adAccountId: account,
   writeEnabled: true,
   accountWriteEnabled: true,
@@ -79,15 +82,18 @@ describe('local validation of a plan', () => {
 
   it('keeps a whole-unit currency to whole units and a cent currency to cents', () => {
     expect(codes({ ...plan, dailyBudget: '100000.50' })).toContain('error:budget_decimals');
-    expect(codes({ ...plan, dailyBudget: '10.50' }, { currency: 'USD', caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '20.00', currency: 'USD' }] })).toEqual([]);
-    expect(codes({ ...plan, dailyBudget: '1000.5' }, { currency: 'JPY', caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '5000', currency: 'JPY' }] })).toContain('error:budget_decimals');
+    expect(codes({ ...plan, dailyBudget: '10.50' }, { currency: 'USD', caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '20.00', currency: 'USD' }, { scope: 'org', adAccountId: null, period: 'monthly', amount: '1000.00', currency: 'USD' }] })).toEqual([]);
+    expect(codes({ ...plan, dailyBudget: '1000.5' }, { currency: 'JPY', caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '5000', currency: 'JPY' }, { scope: 'org', adAccountId: null, period: 'monthly', amount: '100000', currency: 'JPY' }] })).toContain('error:budget_decimals');
   });
 
   it('refuses a plan with no cap in force, a cap in another currency, or an unknown currency', () => {
-    expect(codes(plan, { caps: [] })).toEqual(['error:no_cap']);
+    expect(codes(plan, { caps: [] })).toEqual(['error:no_cap', 'error:no_cap']);
+    // A daily cap alone is not enough: the monthly one is missing, and the issue says which.
+    const onlyDaily = validatePlan(plan, { ...context, caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '200000', currency: 'VND' }] }).issues;
+    expect(onlyDaily).toEqual([{ code: 'no_cap', severity: 'error', field: null, params: { period: 'monthly' } }]);
     expect(codes(plan, { caps: [{ scope: 'org', adAccountId: null, period: 'daily', amount: '20.00', currency: 'USD' }] })).toEqual(['error:cap_currency']);
     // The cap of another account does not apply.
-    expect(codes(plan, { caps: [{ scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000002', period: 'daily', amount: '200000', currency: 'VND' }] })).toEqual(['error:no_cap']);
+    expect(codes(plan, { caps: [{ scope: 'account', adAccountId: '0190c4a1-0000-7000-8000-000000000002', period: 'daily', amount: '200000', currency: 'VND' }] })).toEqual(['error:no_cap', 'error:no_cap']);
     expect(codes(plan, { currency: null })).toContain('error:account_currency_unknown');
   });
 

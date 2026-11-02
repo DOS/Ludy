@@ -6706,6 +6706,7 @@ export const en = {
       ADS_BLOCK_CHANGED: 'Ad launches were blocked again after this request was made. Reject the request and make a new one.',
       ADS_DRAFT_NOT_FOUND: 'This campaign draft was not found.',
       ADS_DRAFT_ACCOUNT: 'This draft belongs to another ad account.',
+      ADS_DRAFT_REFERENCE: 'The Page or the file chosen does not belong to this org.',
       ADS_DRAFT_CLOSED: 'This draft was already approved or discarded, so it cannot be changed.',
       ADS_DRAFT_SUBMITTED: 'This draft waits for approval in the Inbox. Reject the request to change it.',
       ADS_DRAFT_INCOMPLETE: 'This draft is not complete enough to send for approval yet.',

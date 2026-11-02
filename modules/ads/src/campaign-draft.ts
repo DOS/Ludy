@@ -94,19 +94,30 @@ function planOf(row: DraftRow): AdsCampaignPlanDraft {
   };
 }
 
-// What local validation needs about an account and the org: read now, in the caller's transaction.
-async function planContext(ctx: Db, account: { id: string; currency: string | null; timeZone: string | null; writeEnabled: boolean }, pageConnectionId: string | null | undefined, now: Date): Promise<PlanContext> {
+// What local validation needs about an account and the org that does not depend on a draft: the switches and the caps in force, read now, in the
+// caller's transaction (a list of drafts reads them once per account).
+interface ContextBase {
+  writeEnabled: boolean;
+  launchesBlocked: boolean;
+  caps: PlanContext['caps'];
+}
+async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
   const setting = await currentSetting(ctx);
   const capRows = await ctx.trx
     .selectFrom('crove_ads.ad_spend_cap')
     .select(['id', 'scope', 'ad_account_id', 'period', 'amount', 'currency'])
     .where('org_id', '=', ctx.orgId)
-    .where((w) => w.or([w('scope', '=', 'org'), w('ad_account_id', '=', account.id)]))
+    .where((w) => w.or([w('scope', '=', 'org'), w('ad_account_id', '=', accountId)]))
     .orderBy('id')
     .execute();
   // The latest row of each (scope, account, period) is the cap in force.
   const latest = new Map<string, PlanContext['caps'][number]>();
   for (const c of capRows) latest.set(`${c.scope}:${c.ad_account_id ?? ''}:${c.period}`, { scope: c.scope as 'org' | 'account', adAccountId: c.ad_account_id, period: c.period as 'daily' | 'monthly', amount: String(c.amount), currency: c.currency });
+  return { writeEnabled: setting?.write_enabled ?? false, launchesBlocked: setting?.launches_blocked ?? false, caps: [...latest.values()] };
+}
+
+async function planContext(ctx: Db, account: { id: string; currency: string | null; timeZone: string | null; writeEnabled: boolean }, pageConnectionId: string | null | undefined, now: Date, known?: ContextBase): Promise<PlanContext> {
+  const base = known ?? (await contextBase(ctx, account.id));
   let pageOk: boolean | null = null;
   if (pageConnectionId) {
     const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status']).where('org_id', '=', ctx.orgId).where('id', '=', pageConnectionId).executeTakeFirst();
@@ -115,11 +126,11 @@ async function planContext(ctx: Db, account: { id: string; currency: string | nu
   return {
     today: todayIn(account.timeZone ?? 'UTC', now),
     currency: account.currency,
-    caps: [...latest.values()],
+    caps: base.caps,
     adAccountId: account.id,
-    writeEnabled: setting?.write_enabled ?? false,
+    writeEnabled: base.writeEnabled,
     accountWriteEnabled: account.writeEnabled,
-    launchesBlocked: setting?.launches_blocked ?? false,
+    launchesBlocked: base.launchesBlocked,
     pageOk,
   };
 }
@@ -146,11 +157,20 @@ async function pendingProposal(ctx: Db, draftId: string): Promise<string | null>
   return row?.id ?? null;
 }
 
-async function viewOf(ctx: Db, row: DraftRow, now: Date, cache?: Map<string, Awaited<ReturnType<typeof accountOf>>>): Promise<AdsCampaignDraftView> {
-  const account = cache?.get(row.ad_account_id) ?? (await accountOf(ctx, row.ad_account_id));
-  cache?.set(row.ad_account_id, account);
+type ViewCache = Map<string, { account: Awaited<ReturnType<typeof accountOf>>; base: ContextBase }>;
+async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now: Date, cache: ViewCache = new Map()): Promise<AdsCampaignDraftView> {
+  let known = cache.get(row.ad_account_id);
+  if (!known) {
+    const account = await accountOf(ctx, row.ad_account_id);
+    known = { account, base: await contextBase(ctx, account.id) };
+    cache.set(row.ad_account_id, known);
+  }
+  const { account } = known;
   const plan = planOf(row);
-  const checked = validatePlan(plan, await planContext(ctx, account, row.page_connection_id, now));
+  const checked = validatePlan(plan, await planContext(ctx, account, row.page_connection_id, now, known.base));
+  // The caps are the owners' and admins' to read (ads.write.state): a member sees that a cap is exceeded, not its amount.
+  const seeCaps = ctx.role === 'owner' || ctx.role === 'admin';
+  const issues = seeCaps ? checked.issues : checked.issues.map((i) => ('cap' in i.params ? { ...i, params: Object.fromEntries(Object.entries(i.params).filter(([k]) => k !== 'cap')) } : i));
   return {
     id: row.id,
     adAccountId: row.ad_account_id,
@@ -164,7 +184,7 @@ async function viewOf(ctx: Db, row: DraftRow, now: Date, cache?: Map<string, Awa
     maxSpend: checked.maxSpend,
     days: checked.days,
     // A draft that is over (approved or discarded) is judged no more.
-    issues: row.status === 'draft' ? checked.issues : [],
+    issues: row.status === 'draft' ? issues : [],
     pendingProposalId: row.status === 'draft' ? await pendingProposal(ctx, row.id) : null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -199,6 +219,19 @@ function stillDrafted(aiFields: readonly string[], before: AdsCampaignPlanDraft,
   });
 }
 
+// The Page and the file a plan names are of this org: a foreign key would refuse an unknown one with an error nobody can read. (The Social post a plan
+// came from is another module's table: its id is kept as it is, and the screen that offers it offers the org's own posts.)
+async function refuseUnknownReferences(ctx: Db, plan: AdsCampaignPlanDraft): Promise<void> {
+  if (plan.pageConnectionId) {
+    const page = await ctx.trx.selectFrom('crove_kernel.channel_connection').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.pageConnectionId).executeTakeFirst();
+    if (!page) throw new DomainError('ADS_DRAFT_REFERENCE', 422, 'Kênh hoặc trang đã chọn không thuộc tổ chức này');
+  }
+  if (plan.mediaFileId) {
+    const file = await ctx.trx.selectFrom('crove_kernel.file').select('id').where('org_id', '=', ctx.orgId).where('id', '=', plan.mediaFileId).executeTakeFirst();
+    if (!file) throw new DomainError('ADS_DRAFT_REFERENCE', 422, 'Tệp đã chọn không thuộc tổ chức này');
+  }
+}
+
 // Saves a draft: a new one for an account, or an edit of one that is still a draft with no request waiting. The plan may be incomplete; what is
 // missing comes back as issues. The database stamps the revision and who changed it, and the largest amount is worked out here, in decimal.
 export const adsCampaignDraftSave = defineCommand({
@@ -214,6 +247,7 @@ export const adsCampaignDraftSave = defineCommand({
     const adAccountId = input.adAccountId.toLowerCase();
     const account = await accountOf(ctx, adAccountId);
     const { days, ...columns } = columnsOf(input.plan);
+    await refuseUnknownReferences(ctx, input.plan);
     let draftId = input.draftId?.toLowerCase();
     if (draftId) {
       const [current] = await rows(ctx, { id: draftId }, true).execute();
@@ -285,7 +319,8 @@ export const adsCampaignPrepareLaunch = defineCommand({
     const [row] = await rows(ctx, { id: draftId }, true).execute();
     if (!row) throw draftMissing();
     if (row.status !== 'draft') throw draftClosed();
-    const account = await accountOf(ctx, row.ad_account_id);
+    // The account row is held while this reads it, so a switch-off of the account at the same moment is seen or waits (it changes the row under its lock).
+    const account = await accountOf(ctx, row.ad_account_id, true);
     const draft = planOf(row);
     const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now));
     const plan = completePlan(draft);
@@ -298,7 +333,8 @@ export const adsCampaignPrepareLaunch = defineCommand({
       kind: ADS_CAMPAIGN_LAUNCH_KIND,
       command: ADS_CAMPAIGN_LAUNCH_COMMAND,
       title: `Chạy chiến dịch ${plan.name}: tối đa ${checked.maxSpend} ${account.currency}`.slice(0, 300),
-      payload: {
+      // Parsed here as well as at the approval: a request the card or the approval could not read would sit in the Inbox stuck.
+      payload: zAdsCampaignLaunchPayload.parse({
         draftId: row.id,
         revision: row.revision,
         adAccountId: account.id,
@@ -308,7 +344,7 @@ export const adsCampaignPrepareLaunch = defineCommand({
         days: checked.days,
         planHash: planHash(plan, account.id, account.currency),
         plan,
-      },
+      }),
       // The proposal belongs to the account's legal entity (#1538).
       legalEntityId: account.legalEntityId,
     };
@@ -333,16 +369,24 @@ export const adsCampaignLaunch = defineCommand({
     const [row] = await rows(ctx, { id: payload.draftId.toLowerCase() }, true).execute();
     if (!row) throw draftMissing();
     if (row.status !== 'draft') throw draftClosed();
-    const account = await accountOf(ctx, row.ad_account_id);
+    const account = await accountOf(ctx, row.ad_account_id, true);
     const draft = planOf(row);
     const plan = completePlan(draft);
-    // The plan that was asked for is the plan that stands: a change after the request is a new request.
-    if (!plan || account.currency === null || row.revision !== payload.revision || planHash(plan, account.id, account.currency) !== payload.planHash) {
+    // The plan that was asked for is the plan that stands: a change after the request is a new request. What the card showed (the plan, the account,
+    // the days) is the plan the hash binds, not only the hash.
+    if (
+      !plan ||
+      account.currency === null ||
+      row.revision !== payload.revision ||
+      planHash(plan, account.id, account.currency) !== payload.planHash ||
+      canonicalJson(plan) !== canonicalJson(payload.plan) ||
+      payload.adAccountId.toLowerCase() !== account.id
+    ) {
       throw new DomainError('ADS_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     }
     const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now));
     const errors = checked.issues.filter((i) => i.severity === 'error');
-    if (errors.length > 0 || checked.maxSpend === null || checked.maxSpend !== payload.amount || account.currency !== payload.currency) {
+    if (errors.length > 0 || checked.maxSpend === null || checked.maxSpend !== payload.amount || checked.days !== payload.days || account.currency !== payload.currency) {
       throw new DomainError('ADS_DRAFT_INVALID', 409, `Bản nháp không còn hợp lệ: ${errors.map((e) => e.code).join(', ') || 'amount'}`, { issues: errors });
     }
     await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'approved' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
@@ -361,7 +405,7 @@ export const adsCampaignDrafts = defineQuery({
   access: DRAFTERS,
   handler: async (ctx: QueryContext, input): Promise<AdsCampaignDraftView[]> => {
     const list = await rows(ctx, { ...(input.adAccountId ? { adAccountId: input.adAccountId.toLowerCase() } : {}), notDiscarded: true }).limit(100).execute();
-    const cache = new Map<string, Awaited<ReturnType<typeof accountOf>>>();
+    const cache: ViewCache = new Map();
     const now = new Date();
     const views: AdsCampaignDraftView[] = [];
     for (const row of list) views.push(await viewOf(ctx, row, now, cache));

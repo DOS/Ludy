@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_campaign_draft (
   status text NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'discarded')),
   revision integer NOT NULL DEFAULT 1 CHECK (revision >= 1),
   -- The account's currency, from the account (never a column here): a budget is a decimal in its own units, above zero.
-  daily_budget numeric CHECK (daily_budget IS NULL OR daily_budget > 0),
+  daily_budget numeric CHECK (daily_budget IS NULL OR (daily_budget > 0 AND daily_budget < 'Infinity'::numeric AND daily_budget <> 'NaN'::numeric)),
   start_on date,
   end_on date,
   -- Locations, age range, gender and interests: a known set of keys, validated by the command and the contract.
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_campaign_draft (
   -- Who wrote it, and the plan fields the AI coworker wrote and a person has not changed since (each is marked as drafted and stays editable).
   origin text NOT NULL DEFAULT 'human' CHECK (origin IN ('human', 'ai')),
   ai_fields text[] NOT NULL DEFAULT ARRAY[]::text[] CHECK (pg_catalog.cardinality(ai_fields) <= 20),
-  max_spend numeric CHECK (max_spend IS NULL OR max_spend >= 0),
+  max_spend numeric CHECK (max_spend IS NULL OR (max_spend >= 0 AND max_spend < 'Infinity'::numeric AND max_spend <> 'NaN'::numeric)),
   -- Set by the guard when the draft is approved: the approved proposal and the time.
   proposal_id uuid,
   approved_at timestamptz,
@@ -60,9 +60,9 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_campaign_draft (
   CONSTRAINT ad_campaign_draft_account_fk FOREIGN KEY (org_id, ad_account_id, legal_entity_id)
     REFERENCES crove_ads.ad_account (org_id, id, legal_entity_id) ON UPDATE CASCADE ON DELETE CASCADE,
   CONSTRAINT ad_campaign_draft_page_fk FOREIGN KEY (org_id, page_connection_id)
-    REFERENCES crove_kernel.channel_connection (org_id, id) ON DELETE SET NULL (page_connection_id),
+    REFERENCES crove_kernel.channel_connection (org_id, id),
   CONSTRAINT ad_campaign_draft_media_fk FOREIGN KEY (org_id, media_file_id)
-    REFERENCES crove_kernel.file (org_id, id) ON DELETE SET NULL (media_file_id),
+    REFERENCES crove_kernel.file (org_id, id),
   -- An approved draft names its proposal and its time, and no other draft does.
   CONSTRAINT ad_campaign_draft_approved_ck CHECK ((status = 'approved') = (proposal_id IS NOT NULL AND approved_at IS NOT NULL))
 );
@@ -106,6 +106,12 @@ BEGIN
     NEW.updated_at := NEW.created_at;
     RETURN NEW;
   END IF;
+  -- The one change that is not a writer's: the cascade of the account's legal entity (ON UPDATE CASCADE of the account's foreign key, when the
+  -- account moves to another entity), which alters nothing else; tenant roles have no UPDATE grant on the column. It passes for a draft in any
+  -- state, so moving an account is never blocked by a draft that is over.
+  IF NEW.legal_entity_id IS DISTINCT FROM OLD.legal_entity_id AND (pg_catalog.to_jsonb(NEW) - 'legal_entity_id') = (pg_catalog.to_jsonb(OLD) - 'legal_entity_id') THEN
+    RETURN NEW;
+  END IF;
   -- A draft belongs to its account for good, and an approved or discarded one is over.
   IF NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.id IS DISTINCT FROM OLD.id OR NEW.ad_account_id IS DISTINCT FROM OLD.ad_account_id
      OR NEW.created_by IS DISTINCT FROM OLD.created_by OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
@@ -114,11 +120,15 @@ BEGIN
   IF OLD.status <> 'draft' THEN
     RAISE EXCEPTION 'ADS_DRAFT_FROZEN' USING ERRCODE = '42501';
   END IF;
+  -- Who wrote it never changes, and a person's edit can only take a field off the list of the ones the AI coworker drafted.
+  IF NEW.origin IS DISTINCT FROM OLD.origin OR NOT (NEW.ai_fields <@ OLD.ai_fields) THEN
+    RAISE EXCEPTION 'ADS_DRAFT_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
   v_plan_changed := ROW(NEW.name, NEW.objective, NEW.daily_budget, NEW.start_on, NEW.end_on, NEW.targeting, NEW.link_url, NEW.page_connection_id, NEW.source_post_id, NEW.media_file_id, NEW.variants, NEW.max_spend)
     IS DISTINCT FROM ROW(OLD.name, OLD.objective, OLD.daily_budget, OLD.start_on, OLD.end_on, OLD.targeting, OLD.link_url, OLD.page_connection_id, OLD.source_post_id, OLD.media_file_id, OLD.variants, OLD.max_spend);
   IF NEW.status = 'approved' THEN
     -- Only the execution of the approved proposal of this very plan: its draft, its revision and its largest amount. The plan does not move.
-    IF v_plan_changed OR NEW.revision IS DISTINCT FROM OLD.revision
+    IF v_plan_changed OR NEW.revision IS DISTINCT FROM OLD.revision OR OLD.max_spend IS NULL
        OR NOT crove_ads.approved_execution('ads.campaign.launch', pg_catalog.jsonb_build_object('draftId', OLD.id::text, 'revision', OLD.revision), OLD.max_spend) THEN
       RAISE EXCEPTION 'ADS_DRAFT_FORBIDDEN' USING ERRCODE = '42501';
     END IF;

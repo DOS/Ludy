@@ -16,7 +16,7 @@ import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, sandbo
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { decideApproval, kernelCommands, kernelQueries } from '@crove/kernel';
+import { decideApproval, kernelCommands, kernelQueries, liveApprovalCommands } from '@crove/kernel';
 import { zTodayItems, type AdAccountView, type AdsSummary, type AdsSyncRunView, type TodayItem } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
@@ -1355,8 +1355,16 @@ suite('ads on PostgreSQL (#2217)', () => {
           // Messenger wants a Page that is a connection of the org.
           const messenger = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null }));
           expect(messenger.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['pageConnectionId']);
-          const notAPage = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: randomUUID() }), messenger.id).catch(() => null);
-          expect(notAPage === null || codes(notAPage).includes('error:page_not_found')).toBe(true);
+          // A connection of the org that is not a Facebook Page (the account's own, for reading) is not a Page; an id that is not the org's is refused.
+          const readConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
+          expect(codes(await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: readConnection }), messenger.id))).toContain('error:page_not_found');
+          expect(await save(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: randomUUID() }), messenger.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
+          expect(await save(owner, account, plan({ mediaFileId: randomUUID() }))).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
+          // The caps are the owners' and admins' to read: a member is told a cap is exceeded, not its amount.
+          const overAsMember = await saved(member, account, plan({ dailyBudget: '300000' }));
+          expect(overAsMember.issues.find((i) => i.code === 'daily_cap_exceeded')).toEqual({ code: 'daily_cap_exceeded', severity: 'error', field: 'dailyBudget', params: { scope: 'org', budget: '300000' } });
+          const overAsOwner = await saved(owner, account, plan({ dailyBudget: '300000' }));
+          expect(overAsOwner.issues.find((i) => i.code === 'daily_cap_exceeded')).toMatchObject({ params: { scope: 'org', cap: '200000', budget: '300000' } });
         });
 
         it('submits a plan for approval only when it is complete and judged clean, one request at a time, by an owner or an admin', async () => {
@@ -1420,15 +1428,30 @@ suite('ads on PostgreSQL (#2217)', () => {
           const b = await saved(owner, account, plan({ name: 'Một chiến dịch khác' }));
           // A raw statement cannot approve a draft or insert one that is approved, discarded or with a proposal, whoever runs it.
           await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, a.id], 'ADS_DRAFT_FORBIDDEN');
-          await expect(row(`INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, status, created_by) VALUES ($1, $2, 'Giả', 'traffic', 'approved', $3)`, [orgId, account, owner.userId])).rejects.toBeTruthy();
-          await expect(row(`INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, revision, created_by) VALUES ($1, $2, 'Giả', 'traffic', 5, $3)`, [orgId, account, owner.userId])).rejects.toBeTruthy();
+          const forged = (columns: string, values: string) => refusedBy(`INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, created_by, ${columns}) VALUES ($1, $2, 'Giả', 'traffic', $3, ${values})`, [orgId, account, owner.userId], 'ADS_DRAFT_FORBIDDEN');
+          await forged('status', `'discarded'`);
+          await forged('proposal_id', 'gen_random_uuid()');
+          await forged('revision', '5');
+          // 'approved' with its proposal and its time is stopped by the guard too (the table's check alone would let a draft with both through).
+          await forged('status, proposal_id, approved_at', `'approved', gen_random_uuid(), now()`);
           // The approval of one draft's proposal does not approve another: the guard names the draft, its revision and its amount.
           const id = proposalId(await submit(owner, a.id));
           expect((await approve(adminAccount, id)).status).toBe(200);
           expect((await draftRow(b.id))?.status).toBe('draft');
-          // The writer cannot stamp who or when, or the revision: the database does.
-          await row(`UPDATE crove_ads.ad_campaign_draft SET revision = 99, updated_by = $3, created_at = '2000-01-01' WHERE org_id = $1 AND id = $2`, [orgId, b.id, member.userId]).catch(() => undefined);
+          // The writer cannot stamp who or when, or the revision: the database does, each on its own; who wrote it and the keys never change.
+          await row(`UPDATE crove_ads.ad_campaign_draft SET revision = 99 WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
           expect((await draftRow(b.id))?.revision).toBe(1);
+          await row(`UPDATE crove_ads.ad_campaign_draft SET updated_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, b.id, member.userId]);
+          expect((await row<{ updated_by: string | null }>(`SELECT updated_by FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, b.id]))[0]?.updated_by).toBeNull();
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET created_at = '2000-01-01' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET origin = 'ai' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET ai_fields = ARRAY['dailyBudget'] WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          // No amount that is not a number: NaN and Infinity are refused by the table.
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 'NaN' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_daily_budget_check');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET max_spend = 'Infinity' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_max_spend_check');
+          // A draft with no amount is never approved, even by a proposal that names it.
+          await row(`UPDATE crove_ads.ad_campaign_draft SET max_spend = NULL WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
         });
 
         it('checks again at approval: a cap lowered, running ads switched off or launches blocked after the request stop the approval, and the draft stays a draft', async () => {
@@ -1448,10 +1471,41 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(await approve(adminAccount, idBlocked)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_INVALID' } });
           expect(await submit(owner, (await saved(owner, account2, plan({ name: 'Sau khi chặn', dailyBudget: '40000' }))).id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
           expect((await reject(adminAccount, idBlocked)).status).toBe(200);
-          // Writing switched off: no request.
-          await open();
-          await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() });
-          expect(await submit(owner, (await saved(owner, account2, plan({ name: 'Sau khi tắt', dailyBudget: '40000' }))).id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+          // Writing switched off after the request: the approval is refused, the draft stays a draft; and with it off, no request at all.
+          const account3 = await ready('Tắt sau khi gửi');
+          const off = await saved(owner, account3, plan({ dailyBudget: '40000' }));
+          const idOff = proposalId(await submit(owner, off.id));
+          expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+          expect(await approve(adminAccount, idOff)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect(await draftRow(off.id)).toMatchObject({ status: 'draft', proposal_id: null });
+          expect(await submit(owner, (await saved(owner, account3, plan({ name: 'Sau khi tắt', dailyBudget: '40000' }))).id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect((await reject(adminAccount, idOff)).status).toBe(200);
+        });
+
+        it('lets an account move to another legal entity whatever state its drafts are in, and keeps the drafts with it', async () => {
+          const account = await ready('Chuyển pháp nhân');
+          const discarded = await saved(owner, account, plan());
+          expect((await callAs(owner, 'ads/discardCampaignDraft', { draftId: discarded.id, idempotencyKey: key() })).status).toBe(200);
+          const approved = await saved(owner, account, plan({ name: 'Đã duyệt' }));
+          expect((await approve(adminAccount, proposalId(await submit(owner, approved.id)))).status).toBe(200);
+          const open = await saved(owner, account, plan({ name: 'Đang soạn' }));
+          const entity = (await row<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh quảng cáo', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
+          const entityOf = async (id: string) => (await row<{ legal_entity_id: string; status: string }>(`SELECT legal_entity_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+          const before = (await entityOf(open.id))?.legal_entity_id;
+          // The account's foreign key cascades the new entity to its drafts; the guard lets that alone through for a draft that is over too.
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          expect(await entityOf(discarded.id)).toEqual({ legal_entity_id: entity, status: 'discarded' });
+          expect(await entityOf(approved.id)).toEqual({ legal_entity_id: entity, status: 'approved' });
+          expect((await entityOf(open.id))?.legal_entity_id).toBe(entity);
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          expect((await entityOf(approved.id))?.legal_entity_id).toBe(before);
+        });
+
+        it('keeps the database’s list of the commands judged on the members now equal to approval.ts’s', async () => {
+          const live = liveApprovalCommands().sort();
+          expect(live).toEqual(['ads.account.enable_write', 'ads.campaign.launch', 'ads.cap.set', 'ads.launches.unblock', 'ads.write.enable']);
+          const inDatabase = (await row<{ command: string; live: boolean }>(`SELECT c AS command, crove_kernel.approval_command_live(c) AS live FROM unnest($1::text[]) c`, [[...live, 'finance.purchase.record', 'kernel.org.set_approval_preset', 'ads.pause_all', 'ads.cap.lower']])).filter((r) => r.live).map((r) => r.command).sort();
+          expect(inDatabase).toEqual(live);
         });
 
         it('keeps the drafts of another org out, and answers for an account of the org only', async () => {

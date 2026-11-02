@@ -90,6 +90,14 @@ export function approvalPolicies(): Array<{ command: string; roles: readonly str
   return Object.entries(POLICIES).map(([command, p]) => ({ command, ...p, ledger: p === LEDGER }));
 }
 
+// The commands judged on the members of the org now, not on the snapshot taken at the request (CommandPolicy.live): the database's
+// crove_kernel.approval_command_live answers the same for each of them (apps/kernel/test/ads.db.test.ts pins both).
+export function liveApprovalCommands(): string[] {
+  return Object.entries(POLICIES)
+    .filter(([, p]) => p.live === true)
+    .map(([command]) => command);
+}
+
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.

@@ -97,7 +97,10 @@ export function validatePlan(draft: AdsCampaignPlanDraft, context: PlanContext):
       // A cap in another currency is not compared (a launch is refused with ADS_CAP_CURRENCY until every org cap that applies is in the account's).
       if (caps.some((c) => c.currency !== currency)) error('cap_currency', null, { currency });
       const usable = caps.filter((c) => c.currency === currency);
-      if (usable.length === 0 && !caps.some((c) => c.currency !== currency)) error('no_cap', null);
+      // A plan needs a daily and a monthly cap in force, the account's or the org's (no cap, no launch: plan section 3.3).
+      if (!caps.some((c) => c.currency !== currency)) {
+        for (const period of ['daily', 'monthly'] as const) if (!usable.some((c) => c.period === period)) error('no_cap', null, { period });
+      }
       for (const cap of usable.filter((c) => c.period === 'daily')) {
         if (budget.gt(cap.amount)) error('daily_cap_exceeded', 'dailyBudget', { scope: cap.scope, cap: cap.amount, budget: draft.dailyBudget });
       }

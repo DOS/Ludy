@@ -34,7 +34,7 @@ export const ADS_PLAN_LIMITS = {
 } as const;
 
 // A budget as a person types it: above zero, at most two decimals (the units the Ads screen shows).
-export const zAdsBudget = z.string().regex(/^(?!0+(\.0+)?$)\d{1,15}(\.\d{1,2})?$/, 'a decimal above zero');
+export const zAdsBudget = z.string().regex(/^(?!0+(\.0+)?$)\d{1,13}(\.\d{1,2})?$/, 'a decimal above zero, at most 13 digits before the point');
 const zCurrency = z.string().regex(/^[A-Z]{3}$/);
 
 export const zAdsLocation = z.strictObject({ country: z.string().regex(/^[A-Z]{2}$/, 'ISO 3166-1 alpha-2'), region: z.string().trim().min(1).max(100).optional() });
