@@ -19,6 +19,7 @@ import { GuidePage } from './routes/guide.tsx';
 import { InboxDetailPage } from './routes/inbox-detail.tsx';
 import { InboxPage } from './routes/inbox.tsx';
 import { OverviewPage } from './routes/overview.tsx';
+import { ReportsPage } from './routes/reports.tsx';
 import { InvitePage } from './routes/invite.tsx';
 import { JournalPage } from './routes/journal.tsx';
 import { NotificationsPage } from './routes/notifications.tsx';
@@ -52,6 +53,7 @@ import { parseJournalSearch, parseTextSearch } from './lib/search.ts';
 import { parseTasksSearch } from './lib/agents.ts';
 import { parseNotesSearch } from './lib/notes.ts';
 import { parseAdsSearch } from './lib/ads.ts';
+import { parseReportsSearch } from './lib/reports.ts';
 import { parseLedgerSearch } from './lib/ledger.ts';
 import { parseInboxSearch } from './lib/review.ts';
 import { parseAuditSearch } from './lib/audit.ts';
@@ -480,7 +482,26 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
+// The reports of the Engage app (#2435), the last item of its menu: ?tab= is the area shown (the conversations, the sales, the posts or the ads).
+const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'reports', validateSearch: parseReportsSearch, component: ReportsPage });
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
+
+// The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
+// rail's CRM app once opened on its bookings) open the screen itself, with the search it had.
+function crmAlias(path: string, to: '/o/$slug/bookings' | '/o/$slug/contacts' | '/o/$slug/contacts/import' | '/o/$slug/deals') {
+  return createRoute({
+    getParentRoute: () => orgRoute,
+    path,
+    beforeLoad: ({ params }) => {
+      throw redirect({ to, params: { slug: (params as { slug: string }).slug }, search: true });
+    },
+  });
+}
+const crmRoute = crmAlias('crm', '/o/$slug/bookings');
+const crmBookingsRoute = crmAlias('crm/bookings', '/o/$slug/bookings');
+const crmDealsRoute = crmAlias('crm/deals', '/o/$slug/deals');
+const crmContactsRoute = crmAlias('crm/contacts', '/o/$slug/contacts');
+const crmContactImportRoute = crmAlias('crm/contacts/import', '/o/$slug/contacts/import');
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -497,7 +518,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, notesRoute, myWorkRoute, adsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

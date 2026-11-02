@@ -41,8 +41,8 @@ const TARGET = {
 
 const APP_CARD = {
   accounting: { to: '/o/$slug/vat', icon: 'appAccounting' },
+  // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
   social: { to: '/o/$slug/social', icon: 'appSocial' },
-  crm: { to: '/o/$slug/bookings', icon: 'appCrm' },
 } as const satisfies Record<Exclude<AppId, 'home'>, { to: string; icon: NavIconName }>;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -57,9 +57,10 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
   const tn = useTranslations('nav');
   const periodLabel = usePeriodLabel();
   const modules = getConfig().modules;
-  // The Social app also holds Ads, so it can be installed without the social module: its card counts posts, which need it.
-  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social')));
-  const has = (id: AppId) => apps.some((a) => a.id === id);
+  // The Engage app also holds Ads, so it can be installed with neither the social nor the crm module: its card counts posts and
+  // bookings, which need them, so it shows only where one of the two runs.
+  const apps = installedApps(modules).filter((a) => a.id !== 'home' && (a.id !== 'social' || modules.includes('social') || modules.includes('crm')));
+  const has = (module: string) => modules.includes(module);
   // The next 7 days from the start of this hour: the query key holds within the hour and moves on with the clock, so a
   // tab left open does not count last week's posts.
   const hour = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
@@ -68,27 +69,33 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
   const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: 'mine', period: 'upcoming' } }), enabled: has('crm') });
   if (apps.length === 0) return null;
 
-  type Figure = { value: string | null; label: string; retry?: () => void };
-  const failed = (q: { refetch: () => unknown }): Figure => ({ value: '-', label: t('failed'), retry: () => void q.refetch() });
-  const figure = (id: Exclude<AppId, 'home'>): Figure => {
-    if (id === 'accounting') {
-      if (!vatLoaded) return { value: null, label: '' };
-      if (!vat) return { value: '-', label: t('accounting.noPeriod') };
-      return vat.daysLeft >= 0
-        ? { value: String(vat.daysLeft), label: t('accounting.vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) }) }
-        : { value: String(-vat.daysLeft), label: t('accounting.vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }) };
-    }
-    if (id === 'social') {
-      if (posts.isError) return failed(posts);
-      if (!posts.data) return { value: null, label: '' };
-      // The range holds every post with a time in it; only the scheduled ones are waiting to go out.
-      const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
-      return { value: counted(scheduled, posts.data.length), label: t('social.scheduled', { count: scheduled }) };
-    }
-    if (bookings.isError) return failed(bookings);
-    if (!bookings.data) return { value: null, label: '' };
+  type Figure = { key: string; value: string | null; label: string; retry?: () => void };
+  const failed = (key: string, q: { refetch: () => unknown }): Figure => ({ key, value: '-', label: t('failed'), retry: () => void q.refetch() });
+  const postsFigure = (): Figure => {
+    if (posts.isError) return failed('posts', posts);
+    if (!posts.data) return { key: 'posts', value: null, label: '' };
+    // The range holds every post with a time in it; only the scheduled ones are waiting to go out.
+    const scheduled = posts.data.filter((p) => p.status === 'scheduled').length;
+    return { key: 'posts', value: counted(scheduled, posts.data.length), label: t('social.scheduled', { count: scheduled }) };
+  };
+  const bookingsFigure = (): Figure => {
+    if (bookings.isError) return failed('bookings', bookings);
+    if (!bookings.data) return { key: 'bookings', value: null, label: '' };
     const upcoming = bookings.data.filter((b) => b.status === 'pending' || b.status === 'confirmed').length;
-    return { value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }) };
+    return { key: 'bookings', value: counted(upcoming, bookings.data.length), label: t('crm.upcoming', { count: upcoming }) };
+  };
+  // The key figures of an app's card: one for the accounting, and for Engage one for each of its modules that runs.
+  const figures = (id: Exclude<AppId, 'home'>): Figure[] => {
+    if (id === 'accounting') {
+      if (!vatLoaded) return [{ key: 'vat', value: null, label: '' }];
+      if (!vat) return [{ key: 'vat', value: '-', label: t('accounting.noPeriod') }];
+      return [
+        vat.daysLeft >= 0
+          ? { key: 'vat', value: String(vat.daysLeft), label: t('accounting.vatDue', { days: vat.daysLeft, period: periodLabel(vat.period) }) }
+          : { key: 'vat', value: String(-vat.daysLeft), label: t('accounting.vatOverdue', { days: -vat.daysLeft, period: periodLabel(vat.period) }) },
+      ];
+    }
+    return [...(has('social') ? [postsFigure()] : []), ...(has('crm') ? [bookingsFigure()] : [])];
   };
 
   return (
@@ -99,7 +106,8 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
       <ul className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {apps.map((app) => {
           const id = app.id as Exclude<AppId, 'home'>;
-          const { value, label, retry } = figure(id);
+          // Engage opens on its posts; with the social module off its card shows the bookings, so that is where it opens.
+          const to = id === 'social' && !has('social') ? '/o/$slug/bookings' : APP_CARD[id].to;
           return (
             <li key={id}>
               <Card className="flex h-full flex-col gap-2 p-4">
@@ -107,20 +115,22 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
                   <NavIcon name={APP_CARD[id].icon} className="text-muted-foreground" />
                   {tn(`appNames.${id}`)}
                 </span>
-                {value === null ? (
-                  <Spinner />
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
-                    {label}
-                    {retry && (
-                      <button type="button" className="ml-2 text-xs text-link hover:underline" onClick={retry}>
-                        {t('retry')}
-                      </button>
-                    )}
-                  </p>
+                {figures(id).map(({ key, value, label, retry }) =>
+                  value === null ? (
+                    <Spinner key={key} />
+                  ) : (
+                    <p key={key} className="text-sm text-muted-foreground">
+                      <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
+                      {label}
+                      {retry && (
+                        <button type="button" className="ml-2 text-xs text-link hover:underline" onClick={retry}>
+                          {t('retry')}
+                        </button>
+                      )}
+                    </p>
+                  ),
                 )}
-                <Link to={APP_CARD[id].to} params={{ slug }} className="mt-auto text-xs text-link hover:underline">
+                <Link to={to} params={{ slug }} className="mt-auto text-xs text-link hover:underline">
                   {t('open', { app: tn(`appNames.${id}`) })}
                 </Link>
               </Card>

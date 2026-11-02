@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_NAV, appOfPath, installedApps } from '../src/lib/apps.ts';
+import { screenInstalled } from '../src/lib/modules.ts';
 
 describe('apps of the shell (#1528)', () => {
   it('finds the app of a deep link from its screen', () => {
@@ -12,7 +13,8 @@ describe('apps of the shell (#1528)', () => {
     expect(appOfPath('/o/acme/guide')).toBe('accounting');
     expect(appOfPath('/o/acme/social')).toBe('social');
     expect(appOfPath('/o/acme/social/channels')).toBe('social');
-    expect(appOfPath('/o/acme/bookings')).toBe('crm');
+    // The CRM's screens are in the Engage app (#2435).
+    for (const path of ['bookings', 'deals', 'contacts', 'contacts/import', 'reports', 'ads']) expect(appOfPath(`/o/acme/${path}`), path).toBe('social');
   });
 
   it('puts the org own screens and paths outside an org in no app', () => {
@@ -24,9 +26,25 @@ describe('apps of the shell (#1528)', () => {
   it('lists only the apps whose module runs, each opening on its first screen', () => {
     expect(installedApps(['kernel']).map((a) => a.id)).toEqual(['home']);
     const all = installedApps(['kernel', 'finance', 'social', 'crm']);
-    expect(all.map((a) => a.id)).toEqual(['home', 'accounting', 'social', 'crm']);
+    // No CRM app on the rail: its screens are in the Engage app (#2435), which opens on its first group, the conversations; with only crm, on the contacts.
+    expect(all.map((a) => a.id)).toEqual(['home', 'accounting', 'social']);
     expect(all.find((a) => a.id === 'accounting')?.home).toBe('/o/$slug/documents');
     expect(all.find((a) => a.id === 'home')?.home).toBe('/o/$slug/overview');
+    expect(all.find((a) => a.id === 'social')?.home).toBe('/o/$slug/social/inbox');
+    expect(installedApps(['kernel', 'crm']).find((a) => a.id === 'social')?.home).toBe('/o/$slug/contacts');
+  });
+
+  // The accounting keeps its customers and vendors, with the crm module off and on (#2435): the shell's change touches no accounting item.
+  it('keeps the accounting menu the same with the crm module off and on', () => {
+    const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'accounting')?.groups.map((g) => [g.id, g.items.map((i) => i.to)]);
+    const off = menu(['kernel', 'finance']);
+    expect(off).toEqual(menu(['kernel', 'finance', 'crm']));
+    expect(off?.find(([id]) => id === 'parties')?.[1]).toEqual(['/o/$slug/customers', '/o/$slug/vendors']);
+    // Its links to a customer open the accounting's own screen, which no module but finance gates.
+    for (const modules of [['kernel', 'finance'], ['kernel', 'finance', 'crm']]) {
+      expect(screenInstalled(modules, '/o/acme/customers'), modules.join()).toBe(true);
+      expect(screenInstalled(modules, '/o/acme/vendors'), modules.join()).toBe(true);
+    }
   });
 
   it('keeps every screen in the palette, each in one place only', () => {

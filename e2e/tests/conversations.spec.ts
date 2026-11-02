@@ -12,6 +12,7 @@ test.use({ timezoneId: 'Asia/Ho_Chi_Minh' });
 // A post published to the sandbox through the screens, then due now so the worker's sweep publishes it; returns its id.
 async function publishOnSandbox(page: Page, channel: string, body: string): Promise<string> {
   await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill(channel);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
@@ -68,7 +69,7 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await page.goto(`/o/${slug}/social/comments`);
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?kind=comment_thread`));
   await expect(page.getByRole('heading', { name: 'Hộp thư', exact: true })).toBeVisible();
-  await expect(page.getByRole('navigation').getByRole('link', { name: 'Hộp thư' })).toBeVisible();
+  await expect(page.getByRole('navigation').getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại' })).toBeVisible();
   await page.getByTestId('conversation-tab-resolved').click();
   await expect(page.getByTestId('conversation-item')).toHaveCount(1);
   await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();

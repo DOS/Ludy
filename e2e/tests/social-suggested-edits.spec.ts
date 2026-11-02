@@ -24,6 +24,7 @@ test('a reviewer suggests an edit, the author accepts it by keyboard, and the po
   await signInNewUser(page, newEmail('social-suggest-owner'));
   const slug = await createOrg(page, 'Công ty Đề Xuất Sửa');
   await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Trang Đề Xuất');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

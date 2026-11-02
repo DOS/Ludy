@@ -22,11 +22,12 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotificatio
   social: 'socialPosts',
 };
 
-const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', crm: 'appCrm' };
+const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial' };
 
 // A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
-// the banknote of the vouchers, money spent; the type fails to compile for a label that has neither.
-const OWN_ICON = { ads: 'vouchers', socialInbox: 'inbox' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+// the banknote of the vouchers, money spent, and the reports take the spreadsheet of the VAT return; the type fails to
+// compile for a label that has neither.
+const OWN_ICON = { ads: 'vouchers', socialInbox: 'inbox', reports: 'vat' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
 const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
 
 export interface ShellNavProps {
@@ -148,8 +149,8 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
           )}
           {current?.groups.map((group, index) => {
             const labelId = `${orgSelectId}-${group.id}`;
-            // The app's first group needs no heading: the app's name above it says what it holds.
-            const heading = index > 0 && isHeadedGroup(group.id) ? group.id : null;
+            // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
+            const heading = isHeadedGroup(group.id) ? group.id : null;
             return (
               <section
                 key={group.id}
