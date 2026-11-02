@@ -3,8 +3,9 @@
 
 // The kinds a member can turn off, by module, in the order the settings list them.
 export const NOTIFICATION_KINDS = {
-  // A task that came to me because its holder can no longer read its legal entity (#1799).
-  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted'],
+  // A task that came to me because its holder can no longer read its legal entity (#1799); an original e-invoice attached
+  // to a posted invoice that differs from it or is not verified (#2335).
+  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged'],
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
@@ -47,6 +48,7 @@ export type NotificationTarget =
 export function notificationTarget(item: { kind: string; subjectId: string | null; detail: Record<string, string> }): NotificationTarget | null {
   switch (item.kind) {
     case 'kernel.approval_waiting':
+    case 'kernel.original_flagged':
       return item.subjectId ? { to: 'proposal', id: item.subjectId } : { to: 'inbox' };
     case 'kernel.file_unreadable':
       return { to: 'inbox' };
