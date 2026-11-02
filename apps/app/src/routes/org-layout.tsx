@@ -66,8 +66,9 @@ export function OrgLayout() {
     ...orpc.inbox.list.queryOptions({ input: { status: 'pending' } }),
     refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS),
   });
-  // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox.
-  const socialOn = NAV.some((n) => n.module === 'social');
+  // Social posts waiting for the viewer's review (#749) count on Social's menu item (#2234), not on the inbox. Asked of the modules, not of the
+  // menu: the reports item (#2435) is the social module's but shows where crm or ads runs alone, and Social's reads answer not installed there.
+  const socialOn = getConfig().modules.includes('social');
   const reviews = useQuery({ ...orpc.social.reviewInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
   // And what needs a person there (#771): channels to reconnect, posts that did not go out.
   const attention = useQuery({ ...orpc.social.attentionInbox.queryOptions({ input: {} }), enabled: socialOn, refetchInterval: pollEvery(live, 30_000, SAFETY_POLL_MS) });
@@ -85,7 +86,7 @@ export function OrgLayout() {
     reviews: reviews.data?.total ?? 0,
   });
   // The member's unread notifications (#637), where Social runs.
-  const notifications = useNotifications(NAV.some((n) => n.module === 'social'));
+  const notifications = useNotifications(socialOn);
   const unread = unreadLabel(notifications.data?.unread ?? 0);
   // The kernel's and finance's (#671).
   const work = useWorkNotifications();

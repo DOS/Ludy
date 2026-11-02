@@ -17,8 +17,8 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
   const nav = page.getByRole('navigation');
 
   await test.step('imports three contacts from a CSV', async () => {
-    await nav.getByRole('link', { name: 'CRM', exact: true }).click();
-    await nav.getByRole('link', { name: 'Liên hệ' }).click();
+    await nav.getByRole('link', { name: 'Engage', exact: true }).click();
+    await nav.getByRole('link', { name: 'Người liên hệ' }).click();
     await page.getByRole('link', { name: 'Nhập từ tệp' }).click();
     await page.getByLabel('Tệp Excel hoặc CSV').setInputFiles({ name: 'khach-hang.csv', mimeType: 'text/csv', buffer: Buffer.from(CSV, 'utf-8') });
     await page.getByRole('button', { name: 'Xem trước' }).click();
@@ -78,7 +78,7 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
   });
 
   await test.step("the contact's panel shows the deal and a timeline of what happened", async () => {
-    await nav.getByRole('link', { name: 'Liên hệ' }).click();
+    await nav.getByRole('link', { name: 'Người liên hệ' }).click();
     await page.getByRole('button', { name: 'Mở Công ty ABC' }).click();
     await expect(page.getByTestId('contact-deals')).toContainText('Gói kế toán năm');
     const timeline = page.getByTestId('contact-timeline');
