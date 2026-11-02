@@ -450,7 +450,8 @@ export class ZaloConversations implements ConversationAdapter {
       const users = new Set<string>();
       for (const chat of Array.isArray(chats) ? chats : []) {
         const m = chat as ZaloHistoryMessage;
-        const id = m.src === 1 ? idText(m.from_id) : idText(m.to_id);
+        // The customer is the sender of a message of theirs (src 1) and the receiver of one of the OA's (src 0); any other value is skipped.
+        const id = m.src === 1 ? idText(m.from_id) : m.src === 0 ? idText(m.to_id) : null;
         if (id) users.add(id);
       }
       // A full page of chats means there may be more than it shows: the history is not whole.
@@ -515,6 +516,9 @@ function historyTime(value: unknown): number | null {
 function historyEvent(m: ZaloHistoryMessage, customer: string, at: number): InboundConversationEvent | null {
   const messageId = idText(m.message_id);
   if (!messageId || messageId.length > 300) return null;
+  // Only the two values Zalo documents [U] are read: 1 the customer's (in, tainted), 0 the OA's (out). Anything else (the string "1", a missing
+  // field) is skipped, never taken for an untainted message of the org.
+  if (m.src !== 1 && m.src !== 0) return null;
   const incoming = m.src === 1;
   const raw = typeof m.message === 'string' ? m.message.replaceAll('\u0000', '').slice(0, 20_000) : '';
   const isText = m.type === 'text' || m.type === undefined;

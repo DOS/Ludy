@@ -251,6 +251,24 @@ describe('ZaloConversations.profile and history (CV5b, #2329; the answers shapes
     expect(got.kind === 'ok' && got.events.map((e) => e.text)).toEqual(['[Khách gửi một tệp đính kèm]', '[Trang đã gửi một tệp đính kèm]']);
   });
 
+  it('reads only the two documented values of `src` and skips the rest, so nothing unknown is taken for an untainted message of the org', async () => {
+    const chats = { body: { error: 0, data: [msg('l-1', 1, NOW - 1000, 'x')] } };
+    const odd = [
+      { ...msg('s-1', 1, NOW - 4000, 'của khách'), src: 1 },
+      { ...msg('s-2', 0, NOW - 3000, 'của trang'), src: 0 },
+      { ...msg('s-3', 1, NOW - 2000, 'chuỗi'), src: '1' },
+      { ...msg('s-4', 1, NOW - 1500, 'thiếu'), src: undefined },
+      { ...msg('s-5', 1, NOW - 1200, 'lạ'), src: 2 },
+    ];
+    const out = await new ZaloConversations(APP, zalo([chats, { body: { error: 0, data: odd } }]).fetchImpl).history({ externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 86_400_000), maxChats: 20 });
+    expect(out.kind === 'ok' && out.events.map((e) => [e.messageId, e.direction])).toEqual([['s-1', 'in'], ['s-2', 'out']]);
+    // A chat whose latest message has an unknown `src` names no customer to read.
+    const calls = zalo([{ body: { error: 0, data: [{ ...msg('l-2', 1, NOW - 1000, 'x'), src: '1' }] } }]);
+    const none = await new ZaloConversations(APP, calls.fetchImpl).history({ externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 86_400_000), maxChats: 20 });
+    expect(none.kind === 'ok' && none.events).toEqual([]);
+    expect(calls.calls).toHaveLength(1);
+  });
+
   it('fails a history read with a refused token as final and a lost connection as worth trying again, and returns nothing partial', async () => {
     const input = { externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 86_400_000), maxChats: 20 };
     expect(await new ZaloConversations(APP, zalo([{ body: { error: -216, message: 'x' } }]).fetchImpl).history(input)).toEqual({ kind: 'failed', retry: false, code: 'ZALO_TOKEN' });
