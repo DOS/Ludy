@@ -1084,7 +1084,7 @@ export const en = {
     followUp: 'Needs follow-up',
     nextSteps: {
       title: 'Next steps',
-      hint: 'Thy, the AI head of sales of Ludy CRM, flags here the deals nobody changed for a while or that are past their expected close, so the owner can decide what comes next. Editing, moving or closing the deal closes the step.',
+      hint: 'Deals nobody changed for a while, or that are past their expected close, show up here so the owner can decide what comes next. Editing, moving or closing the deal closes the step.',
       scopeLabel: 'Whose steps',
       mine: 'Mine',
       all: 'Everyone’s',
@@ -1096,8 +1096,8 @@ export const en = {
       loadMore: 'Show more',
       noActivityBadge: 'Quiet for a while',
       pastCloseBadge: 'Past close date',
-      noActivity: 'Thy reminds: this deal has had no change since {date}',
-      pastClose: 'Thy reminds: past the expected close date {date}',
+      noActivity: 'Reminder: this deal has had no change since {date}',
+      pastClose: 'Reminder: past the expected close date {date}',
       unowned: 'Nobody yet',
       done: 'Done',
       doneOne: 'Done: next step of the deal {title}',
@@ -1114,7 +1114,7 @@ export const en = {
       snoozeResult: '{count} snoozed.',
     },
     setting: {
-      title: 'Thy’s reminders for forgotten deals',
+      title: 'Reminders for forgotten deals',
       hint: 'An open deal with no change after this many days ({min} to {max}) shows in "Next steps". A deal past its expected close date always does. Applies from the next daily run.',
       days: 'Days',
       save: 'Save',

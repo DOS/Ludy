@@ -1082,7 +1082,7 @@ export const vi = {
     followUp: 'Cần theo dõi',
     nextSteps: {
       title: 'Việc tiếp theo',
-      hint: 'Thy, trưởng phòng kinh doanh AI của Ludy CRM, nhắc ở đây những cơ hội lâu không có thay đổi hoặc đã quá ngày dự kiến chốt, để người phụ trách quyết định bước tiếp theo. Sửa, chuyển giai đoạn hoặc đóng cơ hội thì việc tự đóng.',
+      hint: 'Những cơ hội lâu không có thay đổi hoặc đã quá ngày dự kiến chốt hiện ở đây, để người phụ trách quyết định bước tiếp theo. Sửa, chuyển giai đoạn hoặc đóng cơ hội thì việc tự đóng.',
       scopeLabel: 'Việc của ai',
       mine: 'Của tôi',
       all: 'Của mọi người',
@@ -1094,8 +1094,8 @@ export const vi = {
       loadMore: 'Xem thêm',
       noActivityBadge: 'Lâu chưa có thay đổi',
       pastCloseBadge: 'Quá ngày chốt',
-      noActivity: 'Thy nhắc: cơ hội này chưa có thay đổi từ ngày {date}',
-      pastClose: 'Thy nhắc: đã quá ngày dự kiến chốt {date}',
+      noActivity: 'Nhắc: cơ hội này chưa có thay đổi từ ngày {date}',
+      pastClose: 'Nhắc: đã quá ngày dự kiến chốt {date}',
       unowned: 'Chưa giao ai',
       done: 'Xong',
       doneOne: 'Xong: việc của cơ hội {title}',
@@ -1112,7 +1112,7 @@ export const vi = {
       snoozeResult: 'Đã hoãn {count} việc.',
     },
     setting: {
-      title: 'Thy nhắc cơ hội bị bỏ quên',
+      title: 'Nhắc cơ hội bị bỏ quên',
       hint: 'Cơ hội mở không có thay đổi sau chừng này ngày (từ {min} đến {max}) sẽ hiện ở "Việc tiếp theo". Cơ hội đã quá ngày dự kiến chốt luôn hiện. Áp dụng từ lần quét hằng ngày kế tiếp.',
       days: 'Số ngày',
       save: 'Lưu',
