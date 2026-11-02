@@ -220,7 +220,7 @@ import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
 import { zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
-import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealUpdate, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
+import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
 import {
   zNote,
@@ -513,6 +513,18 @@ export const contract = {
       update: oc.input(zDealUpdate).output(zDeal),
       move: oc.input(zDealMove).output(zDeal),
       delete: oc.input(zDealRef).output(zDealDeleted),
+    },
+    // The next steps the stale-deal rule raises for open deals (#2381, docs/plan/crm.md): everyone reads, owners, admins and members mark them done
+    // or snooze them (up to 20 at once); the rule itself runs in the worker.
+    nextSteps: {
+      list: oc.input(zNextStepListQuery).output(zNextStepPage),
+      done: oc.input(zNextStepDone).output(zNextStepChanged),
+      snooze: oc.input(zNextStepSnooze).output(zNextStepChanged),
+    },
+    // After how many days without a change an open deal raises a next step: everyone reads, owners and admins set it.
+    dealSetting: {
+      get: oc.input(z.strictObject({})).output(zDealSetting),
+      set: oc.input(zDealSettingSet).output(zDealSetting),
     },
     // A member's bookings as a feed for Google Calendar or Outlook (#1382): each host makes, replaces and revokes their
     // own address; the token is in the create answer only.

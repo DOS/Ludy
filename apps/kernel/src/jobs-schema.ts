@@ -58,6 +58,8 @@ export const QUEUES = {
   crmBookingLive: 'crm-booking-live',
   // Created by the contact import expiry migration (20261116100000): the daily sweep of staged import rows past 7 days.
   crmImportExpire: 'crm-import-expire',
+  // Created by the stale-deal next step migration (20261119220000): the daily rule that raises a next step for a stale open deal (#2381).
+  crmDealStale: 'crm-deal-stale',
   // Created by the period balance migration (20261101160000).
   periodBalanceVerify: 'finance-period-balance-verify',
   // Created by the notes core migration (20261103130000).
@@ -140,6 +142,7 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The live check reaches the calendar adapters (channels.calendars); the decision itself is a command.
   [QUEUES.crmBookingLive]: ['provider:channel'],
   [QUEUES.crmImportExpire]: 'none',
+  [QUEUES.crmDealStale]: 'none',
   [QUEUES.periodBalanceVerify]: 'none',
   [QUEUES.notesMemberPurge]: 'none',
   [QUEUES.notesTrash]: 'none',
