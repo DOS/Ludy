@@ -41,12 +41,11 @@ export function SiteHeader({ dict, linkToHome = false }: { dict: Dictionary; lin
           <a
             href={`?${LANG_PARAM}=${otherLang}`}
             rel="nofollow"
-            lang={otherLang}
             title={nav.otherLangLabel}
             className="inline-flex h-9 items-center rounded-md px-2 text-xs font-semibold text-muted transition-colors hover:bg-surface-2 hover:text-fg"
           >
             {/* The accessible name starts with the visible text (WCAG 2.5.3, label in name). */}
-            {nav.otherLang}
+            <span lang={otherLang}>{nav.otherLang}</span>
             <span className="sr-only">, {nav.otherLangLabel}</span>
           </a>
           <ThemeToggle toLight={nav.toLight} toDark={nav.toDark} />

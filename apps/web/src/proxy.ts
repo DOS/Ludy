@@ -35,8 +35,11 @@ export function proxy(request: NextRequest): NextResponse {
     target.pathname = legacy ?? pathname;
     target.searchParams.delete(LANG_PARAM);
     const lang: Lang = isLang(asked) ? asked : 'en';
-    // An old link is permanent; a toggle is a choice that can change, so it is not cached.
-    return varied(remember(NextResponse.redirect(target, legacy !== null ? 301 : 302), request, lang));
+    // An old link is permanent for search engines, but no browser should keep it: a repeat visit with the cookie
+    // cleared must still pass through here to set it. A toggle is a choice that can change.
+    const response = remember(NextResponse.redirect(target, legacy !== null ? 301 : 302), request, lang);
+    response.headers.set('Cache-Control', 'no-store');
+    return varied(response);
   }
 
   const lang = chooseLanguage(request.cookies.get(LANG_COOKIE)?.value, request.headers.get('accept-language'));

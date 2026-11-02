@@ -4,7 +4,7 @@
 // is checked in language.spec.ts.
 import { NextRequest } from 'next/server';
 import { describe, expect, it } from 'vitest';
-import { proxy } from '../src/proxy';
+import { config, proxy } from '../src/proxy';
 import { chooseLanguage, englishRoute, languageFromAcceptHeader, publicPathOfLegacy } from '../src/lib/language';
 import { APP_PAGES } from '../src/content/site';
 
@@ -26,6 +26,12 @@ describe('language of a request', () => {
 
   it('is English for a browser that names neither language', () => {
     expect(languageFromAcceptHeader('de-DE,de;q=0.9')).toBe('en');
+    expect(languageFromAcceptHeader('fr, *;q=0.5')).toBe('en');
+  });
+
+  it('skips a language the browser refuses (q=0) or gives a broken weight', () => {
+    expect(languageFromAcceptHeader('en;q=0, vi;q=0.5')).toBe('vi');
+    expect(languageFromAcceptHeader('vi;q=abc, en')).toBe('en');
   });
 
   it('lets the cookie decide over the browser, and ignores a cookie it does not know', () => {
@@ -93,10 +99,34 @@ describe('proxy', () => {
     expect(toVietnamese.cookies.get('ludy-lang')?.value).toBe('vi');
   });
 
+  it('never redirects a redirect: the answer for the address it sends back to is a page, not another redirect', () => {
+    for (const from of ['/en', '/en/accounting', '/crm?lang=en']) {
+      const to = new URL(proxy(visit(from)).headers.get('location')!, 'https://ludy.vn');
+      expect(proxy(visit(`${to.pathname}${to.search}`, { cookie: 'ludy-lang=en' })).headers.get('location'), from).toBeNull();
+    }
+  });
+
+  it('does not let a browser keep an old-link redirect, so the cookie is set again on a repeat visit', () => {
+    expect(proxy(visit('/en')).headers.get('cache-control')).toBe('no-store');
+  });
+
   it('ignores a language it does not know and leaves the social preview images alone', () => {
     expect(proxy(visit('/?lang=fr')).status).toBe(200);
     const image = proxy(visit('/en/opengraph-image-1abc', { 'accept-language': 'vi' }));
     expect(image.headers.get('x-middleware-next')).toBe('1');
     expect(image.headers.get('location')).toBeNull();
+  });
+});
+
+describe('proxy matcher', () => {
+  const matcher = new RegExp(`^${config.matcher[0]!.replace(/^\/\(/, '/(').replace(/\(\?!/, '(?!')}$`);
+  const matches = (path: string) => matcher.test(path);
+
+  it('runs on pages and on the social preview routes', () => {
+    for (const path of ['/', '/ke-toan', '/crm', '/notes', '/en', '/en/accounting', '/opengraph-image-35znhg', '/en/crm/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
+  });
+
+  it('skips Next.js internals and every file with an extension', () => {
+    for (const path of ['/_next/static/chunks/main.js', '/_next/image', '/robots.txt', '/sitemap.xml', '/favicon.svg', '/brand/favicon-32.png']) expect(matches(path), path).toBe(false);
   });
 });
