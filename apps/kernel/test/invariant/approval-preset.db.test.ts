@@ -286,20 +286,15 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const approvedAudit = await o.audit('kernel.proposal.approve', after);
-    expect(approvedAudit).toMatchObject({
+    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
+      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+      // 4: the launch of a drafted campaign was given its approval policy (#2295, W1; the allowance of 3 or 4 that step one gave is gone).
+      policy_version: 4,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
-    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 3: the ads commands that open the way to spend were given their approval policy (#2294, W0a-2). This is a dated allowance for
-    // #2295 (running ads, W1): 3, as before, or 4, which W1 raises it to with the approval policy of ads.campaign.launch, the launch of a
-    // drafted campaign. The step-two change of W1 pins 4 and removes this allowance; it expires with that PR and, failing that, fails on
-    // 2026-12-15.
-    expect(Date.now(), 'the allowance of #2295 for policy_version 3 or 4 has expired: pin the number').toBeLessThan(Date.parse('2026-12-15T00:00:00Z'));
-    expect([3, 4]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');

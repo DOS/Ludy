@@ -23,7 +23,7 @@ export * from './ai-budget.ts';
 export * from './usage-limits.ts';
 export * from './user-status.ts';
 export { WAITING_FOR_AI_BUDGET, WAITING_FOR_BUDGET } from './file-status.ts';
-export { approvalPolicies, decideAgentApproval, decideApproval, eligibleApprovers, HUMAN_REVIEW_RULES, LEDGER_APPROVE_PERMISSION } from './approval.ts';
+export { approvalPolicies, decideAgentApproval, decideApproval, eligibleApprovers, HUMAN_REVIEW_RULES, LEDGER_APPROVE_PERMISSION, liveApprovalCommands } from './approval.ts';
 export { ROLE_LABELS } from './roles.ts';
 export * from './archives.ts';
 export { PARTY_NAME_MAX_LENGTH, checkPartyFields, duplicateHints, nameCore, nameSimilarity, phoneKey, type DuplicateHint, type HintParty, type PartyFieldsCheck } from './parties.ts';
