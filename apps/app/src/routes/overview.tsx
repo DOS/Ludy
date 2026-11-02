@@ -117,7 +117,9 @@ function AppCards({ slug, vat, vatLoaded }: { slug: string; vat: { period: strin
                 </span>
                 {figures(id).map(({ key, value, label, retry }) =>
                   value === null ? (
-                    <Spinner key={key} />
+                    <div key={key}>
+                      <Spinner />
+                    </div>
                   ) : (
                     <p key={key} className="text-sm text-muted-foreground">
                       <span className="mr-1.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{value}</span>
