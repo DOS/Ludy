@@ -12,6 +12,17 @@ export interface AdsChangeText {
   detail: string;
 }
 
+// The plan fields the AI coworker may have drafted, in words (an unknown one is shown as it is).
+const AI_FIELD_KEYS: Readonly<Record<string, string>> = {
+  name: 'ads.change.aiField.name',
+  dailyBudget: 'ads.change.aiField.dailyBudget',
+  startOn: 'ads.change.aiField.startOn',
+  endOn: 'ads.change.aiField.endOn',
+  targeting: 'ads.change.aiField.targeting',
+  linkUrl: 'ads.change.aiField.linkUrl',
+  variants: 'ads.change.aiField.variants',
+};
+
 export function adsChangeText(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string): AdsChangeText {
   switch (change.change) {
     case 'write_enable':
@@ -30,9 +41,13 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
     }
     case 'campaign_launch':
       // The plan's name and account, and what the approver signs: the largest amount, the days and the daily budget, in the account's currency.
+      // A plan the AI coworker drafted says so, with the fields it drafted that nobody has changed since (AI output is tainted: DESIGN.md 2).
+      const spend = t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency) });
+      const drafted = change.aiFields.map((field) => (field in AI_FIELD_KEYS ? t(AI_FIELD_KEYS[field] as string) : field));
+      const ai = change.origin === 'ai' ? (drafted.length > 0 ? t('ads.change.campaignAi', { fields: drafted.join(', ') }) : t('ads.change.campaignAiEdited')) : '';
       return {
         title: t('ads.change.campaignLaunch', { name: change.plan.name, account: change.adAccountName }),
-        detail: t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency) }),
+        detail: ai === '' ? spend : `${spend} ${ai}`,
       };
   }
 }

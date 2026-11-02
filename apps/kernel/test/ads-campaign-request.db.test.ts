@@ -310,10 +310,30 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
       }
     };
     // A member cannot write a settled request, settle one, change the brief or delete a row (no grant), and an insert is stamped with their own name.
-    await expect(sqlAsMember("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, state, code, requested_by) VALUES ($1, $2, 'traffic', 'x', 'none', 'AI_OFF', $3)", [o.orgId, o.accountId, o.member])).rejects.toBeTruthy();
-    await expect(sqlAsMember("UPDATE crove_ads.ad_campaign_request SET state = 'none', code = 'AI_OFF' WHERE org_id = $1 AND id = $2", [o.orgId, asked.id])).rejects.toBeTruthy();
-    await expect(sqlAsMember('UPDATE crove_ads.ad_campaign_request SET brief = $3 WHERE org_id = $1 AND id = $2', [o.orgId, asked.id, 'đổi'])).rejects.toBeTruthy();
-    await expect(sqlAsMember('DELETE FROM crove_ads.ad_campaign_request WHERE org_id = $1 AND id = $2', [o.orgId, asked.id])).rejects.toBeTruthy();
+    await expect(sqlAsMember("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, state, code, requested_by) VALUES ($1, $2, 'traffic', 'x', 'none', 'AI_OFF', $3)", [o.orgId, o.accountId, o.member])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
+    await expect(sqlAsMember("UPDATE crove_ads.ad_campaign_request SET state = 'none', code = 'AI_OFF' WHERE org_id = $1 AND id = $2", [o.orgId, asked.id])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
+    // The brief and the keys have no UPDATE grant for a member, and nobody has DELETE: the database refuses before the guard.
+    await expect(sqlAsMember('UPDATE crove_ads.ad_campaign_request SET brief = $3 WHERE org_id = $1 AND id = $2', [o.orgId, asked.id, 'đổi'])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    await expect(sqlAsMember('DELETE FROM crove_ads.ad_campaign_request WHERE org_id = $1 AND id = $2', [o.orgId, asked.id])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+    // The loosened path: the system context may insert a request of its own org (the RLS matrix's own-org control needs it and no command does), but only in
+    // the name of a member of that org who may ask. A name that is no member, a member of another org, and a viewer are refused with the guard's own code.
+    const stranger = await org();
+    const asSystem = async (text: string, params: unknown[]) => {
+      const c = await workerPool.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+        return await c.query(text, params);
+      } finally {
+        await c.query('ROLLBACK').catch(() => {});
+        c.release();
+      }
+    };
+    const insert = "INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, requested_by) VALUES ($1, $2, 'traffic', 'x', $3)";
+    expect((await asSystem(insert, [o.orgId, o.accountId, o.other])).rowCount).toBe(1);
+    for (const [who, name] of [[randomUUID(), 'no member'], [stranger.member, 'a member of another org'], [o.viewer, 'a viewer of the org']] as const) {
+      await expect(asSystem(insert, [o.orgId, o.accountId, who]), name).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
+    }
     // Even the database owner's own insert (no context) is born waiting.
     await expect(rows("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, state, code, requested_by) VALUES ($1, $2, 'traffic', 'x', 'none', 'AI_OFF', $3)", [o.orgId, o.accountId, o.member])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
     // Nobody but the system records the answer: a member running the command is refused by its access list.

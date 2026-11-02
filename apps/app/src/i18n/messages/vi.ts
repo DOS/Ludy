@@ -1597,6 +1597,17 @@ export const vi = {
       capFromTo: 'Từ {previous} thành {amount}.',
       campaignLaunch: 'Duyệt kế hoạch chiến dịch “{name}” trên {account}.',
       campaignLaunchDetail: 'Nếu sau này được chạy, có thể chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}. Duyệt chỉ đánh dấu kế hoạch là đã duyệt: chưa gửi gì lên nền tảng.',
+      campaignAi: 'Do đồng nghiệp AI soạn: {fields}. Hãy đọc như mọi nội dung bạn không tự viết.',
+      campaignAiEdited: 'Ban đầu do đồng nghiệp AI soạn; một người đã sửa mọi trường mà AI soạn.',
+      aiField: {
+        name: 'tên',
+        dailyBudget: 'ngân sách mỗi ngày',
+        startOn: 'ngày bắt đầu',
+        endOn: 'ngày kết thúc',
+        targeting: 'đối tượng',
+        linkUrl: 'đường dẫn',
+        variants: 'nội dung quảng cáo',
+      },
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {

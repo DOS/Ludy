@@ -14,7 +14,9 @@
 -- crove_ads.campaign_request_guard  holds the row whatever path reaches it: a request is born waiting, in the name of the member who asks (an agent
 --                              never writes one); only the system settles it, once (requested to written, naming an AI draft of the same account and member, or
 --                              requested to none with a code), and a settled request never changes. A database owner's own statement has no
---                              context and is not held to it (the sweep and the org purge run that way).
+--                              context, so the rules that depend on who acts (who may write, whose name a system insert must carry) do not apply to it;
+--                              the rest holds for it too: born waiting, the account, the brief and the author never change, a settled request is final,
+--                              and a written request names an AI draft of the same account and author.
 --
 -- crove_ads.campaign_request_sweep  the sweep run by the worker whether or not a model is configured: a request the job never answered (older than
 --                              15 minutes) is settled as none with the code EXPIRED, so the member can ask again.
@@ -88,7 +90,7 @@ BEGIN
     NEW.requested_by := COALESCE(v_user, NEW.requested_by);
     -- In the name of a member of the org: a member's own id is stamped above, and the system's insert must name one (the database owner's own statement
     -- has no context and no org to check against, so it is held only to being born waiting).
-    IF v_actor = 'system' AND NOT EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = NEW.org_id AND m.user_id = NEW.requested_by) THEN
+    IF v_actor = 'system' AND NOT EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = NEW.org_id AND m.user_id = NEW.requested_by AND m.role IN ('owner', 'admin', 'member')) THEN
       RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a request is made in the name of a member of the org';
     END IF;
     NEW.requested_at := pg_catalog.clock_timestamp();

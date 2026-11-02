@@ -1527,6 +1527,8 @@ suite('ads on PostgreSQL (#2217)', () => {
           // The request names who wrote the plan and what the AI coworker drafted, for the approval card; a human's draft says none.
           const payload = async (proposal: string) => (await row<{ payload: { origin: string; aiFields: string[] } }>(`SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposal]))[0]?.payload;
           expect(await payload(asked)).toMatchObject({ origin: 'ai', aiFields: ['name', 'targeting', 'variants'] });
+          // The card reads it too: ads.proposal.change names the origin and the fields, for the Inbox card to say the plan is AI-written.
+          expect((await callAs(owner, 'ads/proposal', { id: asked })).body).toMatchObject({ change: { change: 'campaign_launch', draftId: id, origin: 'ai', aiFields: ['name', 'targeting', 'variants'] } });
           const human = await saved(owner, account, plan({ name: 'Của người' }));
           expect(await payload(proposalId(await submit(owner, human.id)))).toMatchObject({ origin: 'human', aiFields: [] });
           // The draft is frozen while the request waits, so the taint at the approval is the taint on the card: the approval goes through.

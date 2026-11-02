@@ -1599,6 +1599,17 @@ export const en = {
       capFromTo: 'From {previous} to {amount}.',
       campaignLaunch: 'Approve the plan of the campaign “{name}” on {account}.',
       campaignLaunchDetail: 'If it is launched later, it can spend at most {amount} over {days, plural, one {# day} other {# days}}, {daily} a day. Approving only marks the plan approved: nothing is sent to the platform yet.',
+      campaignAi: 'Drafted by the AI coworker: {fields}. Read it as you would any text you did not write.',
+      campaignAiEdited: 'It began as a draft of the AI coworker; a person has since changed every field it drafted.',
+      aiField: {
+        name: 'the name',
+        dailyBudget: 'the daily budget',
+        startOn: 'the start date',
+        endOn: 'the end date',
+        targeting: 'the audience',
+        linkUrl: 'the link',
+        variants: 'the texts',
+      },
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
