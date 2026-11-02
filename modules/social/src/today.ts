@@ -7,7 +7,7 @@
 //
 // Who sees what. Owners and admins decide and fix, so they get everything: the posts waiting for their approval (a proposal), the channels whose
 // sign-in expired or broke (a warning, as the multi-client home counts them, #1261), the posts that failed or are paused on a channel (a block)
-// and the posts scheduled in the next 24 hours that still wait for approval (a deadline per post). A member gets the last two on the channels
+// and the posts scheduled in the next 24 hours, or up to 7 days ago, that still wait for approval (a deadline per post; an overdue one says so). A member gets the last two on the channels
 // they may use (a failed post and a post still in review are theirs to chase), never a decision and never a channel to reconnect (they cannot).
 // A viewer can act on nothing and gets nothing.
 //
@@ -27,6 +27,8 @@ import { reviewWaiting } from './review-inbox.ts';
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 
 const DAY = 24 * 60 * 60 * 1000;
+// How long a post whose time has passed while it still waits for approval stays on Home: the owner decided 7 days (#2387).
+export const TODAY_SOCIAL_OVERDUE_DAYS = 7;
 // The most posts listed one by one for the next 24 hours, the soonest first; the rest are one item with their count.
 export const TODAY_SOCIAL_DUE = 20;
 const TITLE_MAX = 80;
@@ -50,6 +52,7 @@ export const socialToday = defineQuery({
     const manager = ctx.role === 'owner' || ctx.role === 'admin';
     const from = input.now ? new Date(input.now) : new Date();
     const to = new Date(from.getTime() + DAY);
+    const since = new Date(from.getTime() - TODAY_SOCIAL_OVERDUE_DAYS * DAY);
     const scope = await channelScope(ctx);
     const items: TodayItem[] = [];
 
@@ -90,7 +93,7 @@ export const socialToday = defineQuery({
     const failed = Number(attention.n);
     if (failed > 0) items.push({ kind: 'flag', app: 'social', id: 'attention', title: { key: 'social.attention', params: { count: failed } }, count: failed, severity: 'block', href: '/social?tab=attention' });
 
-    // Posts meant to go out in the next 24 hours that are still waiting for approval, one item per post: the earliest time of the post's variants in
+    // Posts meant to go out in the next 24 hours, or up to 7 days ago, that are still waiting for approval, one item per post: the earliest time of the post's variants in
     // review within the window, by the calendar's own time of a variant (queue slot, else its own time, else the post's). At most SOCIAL_FIGURE_MAX
     // posts are looked at, so "N more" is exact below that.
     const at = sql<Date>`coalesce(v.queue_slot_at, v.scheduled_at, p.scheduled_at)`;
@@ -102,7 +105,7 @@ export const socialToday = defineQuery({
       .where('v.status', '=', 'in_review')
       .where('p.archived_at', 'is', null)
       .where(connectionInScope(scope, 'v.channel_connection_id'))
-      .where(sql<boolean>`${at} >= ${from.toISOString()}::timestamptz AND ${at} < ${to.toISOString()}::timestamptz`)
+      .where(sql<boolean>`${at} >= ${since.toISOString()}::timestamptz AND ${at} < ${to.toISOString()}::timestamptz`)
       .groupBy(['p.id', 'p.title'])
       .orderBy(sql`min(${at})`)
       .orderBy('p.id')
@@ -115,7 +118,8 @@ export const socialToday = defineQuery({
         kind: 'deadline',
         app: 'social',
         id: `due:${p.postId}`,
-        title: title === null ? { key: 'social.due' } : { key: 'social.dueTitled', params: { title } },
+        // A time that has passed is said as such: "in the next 24 hours" would not be true of it.
+        title: p.at < from ? (title === null ? { key: 'social.dueOverdue' } : { key: 'social.dueOverdueTitled', params: { title } }) : title === null ? { key: 'social.due' } : { key: 'social.dueTitled', params: { title } },
         dueAt: p.at.toISOString(),
         href: `/social/${p.postId}`,
       });

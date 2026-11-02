@@ -171,7 +171,9 @@ export const vi = {
         attention: '{count, plural, other {# bài}} đăng lỗi hoặc đang tạm dừng',
         due: 'Một bài lên lịch trong 24 giờ tới vẫn chưa được duyệt',
         dueTitled: '“{title}” lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
-        dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
+        dueOverdue: 'Một bài đã đến giờ đăng mà vẫn chưa được duyệt',
+        dueOverdueTitled: '“{title}” đã đến giờ đăng mà vẫn chưa được duyệt',
+        dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới, hoặc đã quá giờ, mà vẫn chưa được duyệt',
       },
       ads: {
         paceOrg: 'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
