@@ -324,15 +324,14 @@ parity:
 rules:
   # Decided in DESIGN.md prose; each value must still appear in the text (the test checks that).
   type-scale-rem:
-    marketing-display: "3.25 to 4 (clamp), weight 600"
-    marketing-h1: "2.25 to 2.75"
-    marketing-h2: "1.75 to 2"
-    marketing-h3: "1.25"
-    marketing-body: "1.0625 to 1.125"
+    marketing-h1: "2.375, 3 from 640px, 3.75 from 1024px (3.5 on app pages), weight 600"
+    marketing-h2: "1.75, 2.25 from 640px"
+    marketing-h3: "1.125 to 1.5"
+    marketing-body: "1 to 1.125"
     marketing-small: "0.875"
-    app-h1: "1.5"
-    app-h2: "1.25"
-    app-h3: "1 (weight 600)"
+    app-h1: "1.25 (`PageHeader`; 1.125 on some older screens), weight 600"
+    app-h2: "1 or 0.875"
+    app-h3: "0.875"
     app-body: "0.875"
     app-small: "0.75"
   type-weights: "400 body, 500 UI labels, 600 headings"
@@ -345,13 +344,6 @@ rules:
   spacing-base: "4px base unit"
   spacing-scale-px: "4, 8, 12, 16, 20, 24, 32, 40, 48, 64, 96, 128"
   breakpoints-checked-px: "360, 768, 1280, 1920px"
-  motion-ms:
-    hover-press: "120ms"
-    open-close: "200ms"
-    page: "320ms"
-  motion-easing:
-    enter: "cubic-bezier(0.2, 0, 0, 1)"
-    exit: "cubic-bezier(0.4, 0, 1, 1)"
 ---
 
 # Ludy design system and UI/UX guidelines
@@ -365,7 +357,7 @@ Version 4.0 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), t
 - **App pages on ludy.vn.** Section 6.4 is new: the shared app page template, the `APP_PAGES` registry, the routes of each app in both languages, the call-to-action line for apps that are not on Ludy Cloud yet, and the rule that a claim needs a merged PR behind it ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282)). Section 6.1 is the home page as it is now.
 - **Rules added piecemeal are now in their places:** form field borders reach 3:1 ([#2114](https://github.com/DOS/Ludy/issues/2114), 3.1 and 7), every screen has a title, a skip link and a focus move on navigation ([#2115](https://github.com/DOS/Ludy/issues/2115), 7), `<Button loading>` ([#2116](https://github.com/DOS/Ludy/issues/2116), 4.1), reduced motion in the app's base layer ([#1605](https://github.com/DOS/Ludy/issues/1605), 3.6).
 - **Token block.** All colors per theme with their role, font families and weights, the radius scale, layout and motion values are in the front matter, taken from the two CSS files and held to them by `tools/test/design-tokens.test.ts`.
-- **Corrected.** The sample confidence line of 5.1 now says what the app says (a learned rule), not a counter it does not have. The marketing site's tokens equal the app's except the primary text color (3.1); the marketing site loads three Be Vietnam Pro weights, the app four (3.2); the domains and the repository have moved (1.1); the app shell has an app switcher with a short menu per app (3.4, 9); the sidebar, scrollbar, image and post-label tokens are in the roles table (3.1).
+- **Corrected.** The type scale and the motion durations are what the code ships (the v3 scale and the 120, 200 and 320ms values with their curves are dropped; the owner has seen and accepted the shipped sizes). The sample confidence line of 5.1 now says what the app says (a learned rule), not a counter it does not have. The marketing site's tokens equal the app's except the primary text color (3.1); the marketing site loads three Be Vietnam Pro weights, the app four (3.2); the domains and the repository have moved (1.1); the app shell has an app switcher with a short menu per app (3.4, 9); the sidebar, scrollbar, image and post-label tokens are in the roles table (3.1).
 
 ## Decision records
 
@@ -465,7 +457,7 @@ Roles (app token names; the marketing counterparts are in the token block):
 | `proposal` | AI-proposed data nobody has approved yet (below). |
 | `image-surface` | Behind an image made for a white page, in either theme (the tax portal's CAPTCHA, [#325](https://github.com/DOS/Ludy/issues/325)). |
 | `label-red` to `label-pink` | The hues a member picks for a Social post label ([#639](https://github.com/DOS/Ludy/issues/639)); gray uses the neutral tokens. |
-| `chart-1..5` | Data series. Sequential ramp for one measure; use semantic tokens for good/bad. |
+| `chart-1..5` | Reserved for data series (no chart uses them yet). Sequential ramp for one measure; use semantic tokens for good/bad. |
 
 Rules:
 
@@ -484,15 +476,14 @@ Rules:
 - Line length 60 to 75 characters for running text.
 - Numbers: `font-variant-numeric: tabular-nums` wherever digits line up.
 
-Target scale (rem at 16px root). The owner's v3 table; the code has not caught up everywhere. Measured on 2026-11-02: the app's `PageHeader` h1 is 1.25 (most screen headings are 1.125), h2 is 1 or 0.875 and h3 is 0.875 at weight 500; the marketing hero h1 runs 2.375 to 3.75 (3.5 on app pages) with no `clamp`, section h2 runs 1.75 to 2.25, h3 1.125 to 1.5, body 1 to 1.125. New screens follow the target.
+Scale as shipped (rem at 16px root, measured 2026-11-02; new screens follow it):
 
 | Role | Marketing | App |
 | :--- | :--- | :--- |
-| Display / hero | 3.25 to 4 (clamp), weight 600 | n/a |
-| H1 | 2.25 to 2.75 | 1.5 |
-| H2 | 1.75 to 2 | 1.25 |
-| H3 | 1.25 | 1 (weight 600) |
-| Body | 1.0625 to 1.125 | 0.875 |
+| H1 / hero | 2.375, 3 from 640px, 3.75 from 1024px (3.5 on app pages), weight 600 | 1.25 (`PageHeader`; 1.125 on some older screens), weight 600 |
+| H2 | 1.75, 2.25 from 640px | 1 or 0.875 |
+| H3 | 1.125 to 1.5 | 0.875 |
+| Body | 1 to 1.125 | 0.875 |
 | Small / caption | 0.875 | 0.75 |
 
 Weights: 400 body, 500 UI labels, 600 headings. 800 is not used; size and spacing make hierarchy, not extreme weight.
@@ -528,7 +519,7 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 
 ### 3.6 Motion
 
-- Target durations: 120ms (hover, press), 200ms (open, close, expand), 320ms (page-level transitions). Easing: `cubic-bezier(0.2, 0, 0, 1)` for entrances, `cubic-bezier(0.4, 0, 1, 1)` for exits. They are not tokens yet: the components use Tailwind's defaults (150ms transitions, 100ms for the dialog). No bounce or elastic on routine UI.
+- Durations are Tailwind's defaults: 150ms for transitions, 100ms for the dialog. There are no motion tokens and no custom easing curves. No bounce or elastic on routine UI.
 - Motion answers an action or shows what changed (a row moving to "Đã duyệt", a total reconciling). Status that is not changing does not pulse or blink.
 - Marketing pages get at most one orchestrated moment (for example the invoice becoming a balanced entry). Content is fully visible at rest; nothing waits at `opacity: 0` for a scroll observer.
 - The one ambient loop allowed is the hero chart's proposal path: a small dot travels slowly up the dashed line from an agent to its manager, the way a proposal goes up for approval. Scroll-linked motion may move decoration (the pipeline's check marks), never hide text.
@@ -537,7 +528,7 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 
 ### 3.7 Icons
 
-- `lucide-react`, stroke 1.5, 16px in dense UI and 20px elsewhere, colored with `currentColor`.
+- `lucide-react`, stroke 1.5 (`strokeWidth={1.5}`, as the nav icons set it), 16px in dense UI and 20px elsewhere, colored with `currentColor`. Spinners and check marks are the exceptions: they draw heavier (2 to 3) so they stay legible when small.
 - An icon sits beside its label. No icons inside colored rounded tiles above headings. No emoji as icons.
 
 ## 4. Components (`packages/ui`)
@@ -631,6 +622,8 @@ The home page is `/` (Vietnamese) and `/en`. The picks of 2026-10-19 (see the de
 7. Trust: AI proposes and people approve, the audit log, tenant isolation, open source with the `docker compose up` command (the `#tu-host` anchor).
 8. Pricing: only what is decided. No invented prices or discounts.
 9. FAQ (three to six questions), footer with the app pages, the license and the repository link.
+
+"One primary action per view" (principle 6) means the primary action of the content. The header's persistent call to action ("Tự cài đặt miễn phí") is site chrome and is exempt.
 
 ### 6.2 Claims and content
 
