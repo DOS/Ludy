@@ -216,7 +216,7 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
     const kernel = createKernel(config, { ...defaultAdapters(config), identity, ai: null, storage });
     expect(kernel.modules).toEqual(['kernel']);
     // As an earlier run with finance and notes left them (#1471): their cron schedules, and a tick each queued.
-    const crons = [QUEUES.periodBalanceVerify, QUEUES.crmImportExpire, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
+    const crons = [QUEUES.periodBalanceVerify, QUEUES.crmImportExpire, QUEUES.crmDealStale, QUEUES.notesTrash, QUEUES.notesRemind, QUEUES.adsSync];
     for (const queue of crons) {
       await adminQuery("INSERT INTO crove_jobs.schedule (name, cron) VALUES ($1, '0 3 * * *') ON CONFLICT DO NOTHING", [queue]);
       await adminQuery('INSERT INTO crove_jobs.job (name) VALUES ($1)', [queue]);
@@ -340,9 +340,11 @@ suite('module enablement on PostgreSQL (plan Decision 12, ADR-0031)', () => {
       expect(deal.status).toBe(200);
       const board = await rpc<{ columns: { stage: { name: string }; count: number }[] }>('crm/deals/board');
       expect(board.body.columns.find((c) => c.stage.name === 'Mới')?.count).toBe(1);
-      // The import sweep is scheduled with the module.
+      // The import sweep and the stale-deal rule are scheduled with the module.
       const [scheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmImportExpire]);
       expect(scheduled?.n).toBe('1');
+      const [staleScheduled] = await adminQuery<{ n: string }>('SELECT count(*)::text AS n FROM crove_jobs.schedule WHERE name = $1', [QUEUES.crmDealStale]);
+      expect(staleScheduled?.n).toBe('1');
     } finally {
       await stop();
     }

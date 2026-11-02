@@ -96,6 +96,7 @@ const zParty = z.strictObject({
   address: zText.nullable(),
   email: zText.nullable(),
   phone: zText.nullable(),
+  bankAccount: zText.nullable().optional(),
 });
 
 const zLine = z.strictObject({

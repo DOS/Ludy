@@ -711,6 +711,19 @@ export const PIPELINE_STAGE_KINDS = ['open', 'won', 'lost'] as const;
 export const DEAL_CURRENCIES = ['VND'] as const;
 export type CrmPipelineStageTable = Refine<G.CrmPipelineStageTable, { kind: (typeof PIPELINE_STAGE_KINDS)[number] }>;
 export type CrmDealTable = Refine<G.CrmDealTable, { currency: Generated<(typeof DEAL_CURRENCIES)[number]> }>;
+// The next step a stale deal raises (#2381): why it was raised, whether it is open, done by a person or closed by the deal's own change, and why it
+// closed. Written by the stale-deal rule (system context) and by the commands that mark it done, snooze it or close it.
+export const DEAL_NEXT_STEP_REASONS = ['no_activity', 'past_close'] as const;
+export const DEAL_NEXT_STEP_STATUSES = ['open', 'done', 'closed'] as const;
+export const DEAL_NEXT_STEP_CLOSE_REASONS = ['deal_edited', 'deal_moved', 'deal_closed'] as const;
+export type CrmDealNextStepTable = Refine<
+  G.CrmDealNextStepTable,
+  {
+    reason: (typeof DEAL_NEXT_STEP_REASONS)[number];
+    status: Generated<(typeof DEAL_NEXT_STEP_STATUSES)[number]>;
+    closed_reason: (typeof DEAL_NEXT_STEP_CLOSE_REASONS)[number] | null;
+  }
+>;
 // Contact import staging (#2229): a batch is staged until it is committed, cancelled or expired; a row is classified as
 // new, a duplicate of a party or of an earlier row, a conflict between two parties, or invalid.
 export const IMPORT_BATCH_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
@@ -819,6 +832,7 @@ type Refined = Tables<{
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.deal': CrmDealTable;
+  'crove_crm.deal_next_step': CrmDealNextStepTable;
   'crove_crm.event_type': CrmEventTypeTable;
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;

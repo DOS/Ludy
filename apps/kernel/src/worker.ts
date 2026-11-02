@@ -37,7 +37,7 @@ import { runPushJob, type PushSender } from './web-push.ts';
 import { DEFAULT_EXPORT_RETENTION_DAYS, runOrgExport } from './org-export.ts';
 import { archiveOutbox } from './outbox-retention.ts';
 import { RETENTION_CRON, RETENTION_TZ, expireExports, runRetention, sweepInboundBlobs, sweepStaging } from './retention.ts';
-import { CRM_IMPORT_EXPIRE_CRON, sweepCrmImports } from './crm-worker.ts';
+import { CRM_DEAL_STALE_CRON, CRM_IMPORT_EXPIRE_CRON, raiseCrmNextSteps, sweepCrmImports } from './crm-worker.ts';
 import { NOTES_REMIND_CRON, NOTES_TRASH_CRON, NOTES_TRASH_TZ, queueNotesMemberPurge, runNotesMemberPurge, sweepNotesFormerMembers, sweepNotesReminders, sweepNotesTrash, type NotesMemberPurgeJob } from './notes-worker.ts';
 import { PERIOD_BALANCE_VERIFY_CRON, runPeriodBalanceReconciliation } from './period-balance.ts';
 import { runYearArchive } from './year-archive.ts';
@@ -1012,8 +1012,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (removed > 0) console.log(`[crm-import-expire] removed ${removed} staged rows`);
     });
     await boss.schedule(QUEUES.crmImportExpire, CRM_IMPORT_EXPIRE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+    // Stale deals (#2381): once a day, a next step for the open deals nobody touched for N days or past their expected close.
+    await boss.work(QUEUES.crmDealStale, { batchSize: 1 }, async () => {
+      const { orgs, raised } = await raiseCrmNextSteps({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (raised > 0) console.log(`[crm-deal-stale] raised ${raised} next steps in ${orgs} orgs`);
+    });
+    await boss.schedule(QUEUES.crmDealStale, CRM_DEAL_STALE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.crmImportExpire);
+    await dropCron(QUEUES.crmDealStale);
   }
 
   // Notes (#1671): a former member's private notes 30 days after they left, the daily trash and the to-do reminders
