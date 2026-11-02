@@ -48,10 +48,10 @@ What it cannot do, and what the owner can do about it:
 - The org export (`kernel.org.offboard`, and the owner's export on request) lists `kernel.conversation`, `kernel.conversation_message`, `kernel.conversation_attachment` (metadata of a customer's images, never their bytes or the address they came from), `kernel.conversation_identity`, `kernel.conversation_note`, `kernel.conversation_setting` and `kernel.channel_access`. The messages are the org's data and personal data of third parties: the export is sealed, kept 35 to 90 days, and whoever downloads it takes on the duty of care. Read marks are per-member state and stay out; the keyed hash of who granted a connection is the deployment's and stays out too.
 - The org purge (offboarding, after the grace period) deletes the conversation tables and the settings with the rest of the org's rows.
 
-### Vy's reply drafts and the saved replies (CV8, #2310)
+### Duy's reply drafts and the saved replies (CV8, #2310)
 
 - A draft is `crove_kernel.conversation_draft`: its text exists only while the draft is **live** (a model wrote it from the customer's last messages; it is derived third-party text), and is dropped when the draft is used, discarded or stale; a used draft keeps three numbers (its length, the length sent and the size of the edit), never text. It goes with its thread (`ON DELETE CASCADE`): the erasure of the customer, the retention purge, the connection erasure and the org purge delete it with the thread, so a live draft of an erased customer is gone with the messages.
-- **Where the customer's text goes:** to the deployment's AI endpoint (`AI_BASE_URL`), the last 12 messages of the thread and at most five saved replies, when the org's drafting is on (`conversation_setting.auto_draft`, default on, switched by owners and admins on the conversations settings) or a member presses "Vy soạn". Tell the owner this: it is a processing of third-party personal data by the AI provider; turn the switch off to stop the automatic drafting. Nothing the customer or Vy wrote is in an audit row, an event, a job or a log (ids, lengths and codes only).
+- **Where the customer's text goes:** to the deployment's AI endpoint (`AI_BASE_URL`), the last 12 messages of the thread and at most five saved replies, when the org's drafting is on (`conversation_setting.auto_draft`, default on, switched by owners and admins on the conversations settings) or a member presses "Duy soạn". Tell the owner this: it is a processing of third-party personal data by the AI provider; turn the switch off to stop the automatic drafting. Nothing the customer or Duy wrote is in an audit row, an event, a job or a log (ids, lengths and codes only).
 - **Saved replies** are the org's own text (title, body, keywords): not personal data of a third party, kept until a member deletes them, deleted with the org.
 
 ### Customers' images
@@ -68,7 +68,7 @@ What it cannot do, and what the owner can do about it:
 - **The Meta callback finds nothing in production until a connector sets the hash:** no connection carries `granted_by_hash` yet (CV2 and CV7 set it), so until then a request completes with none; tests set the hash directly.
 
 - **Customers' images (CV5c, #2357)** are stored (below); videos, audio, files and stickers are not (a placeholder names their kind), so none are deleted here.
-- **Vy's drafts** (CV8, #2310) are built (below).
+- **Duy's drafts** (CV8, #2310) are built (below).
 - **A retention per channel or per kind** is not offered: one number for the org.
 
 ## 6. Live-channel gate
