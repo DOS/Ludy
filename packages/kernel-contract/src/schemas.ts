@@ -122,6 +122,9 @@ export const zAccountRule = z.object({
   ruleId: zId.optional(),
   scope: z.enum(['vendor', 'org']).optional(),
   matchKind: zRuleMatchKind.optional(),
+  // On a line a person changed (source 'user', #2379): the learned rule that had proposed another account. A learned rule's
+  // corrections are the lines of approved invoices that name it here.
+  correctedRuleId: zId.optional(),
 });
 export type AccountRule = z.infer<typeof zAccountRule>;
 
@@ -138,6 +141,9 @@ export const zCategorizationRule = z.object({
   confirmedBy: z.string().nullable(),
   confirmedAt: z.string(),
   sourceDocument: z.object({ documentId: zId, series: z.string(), number: z.string(), invoiceDate: zLocalDate }).nullable(),
+  // How many lines of approved invoices a person gave another account than this rule proposed (#2379): a rule that is
+  // often corrected stands out.
+  corrections: z.number().int().nonnegative(),
 });
 export type CategorizationRule = z.infer<typeof zCategorizationRule>;
 
@@ -492,6 +498,8 @@ export const zBulkApproveItems = z
   .max(MAX_BULK_APPROVE)
   .refine((items) => new Set(items.map((i) => i.id)).size === items.length, 'each proposal once');
 
+// The most learned rule ids an Inbox item lists; a proposal with more is not grouped by them.
+export const LEARNED_RULE_IDS_MAX = 50;
 export const zInboxItem = z.object({
   id: zId,
   kind: z.string(),
@@ -514,6 +522,10 @@ export const zInboxItem = z.object({
   // How many lines of an invoice proposal still wait for an account because no rule matched them (#2091); 0 for any
   // other kind. The Inbox's "Chưa phân loại" filter lists the proposals with at least one.
   unclassifiedLines: z.number().int().nonnegative(),
+  // The learned rules (#1399) that set the accounts of an invoice proposal's lines, each once, and how many lines no
+  // learned rule set (#2379): what the Inbox groups clean proposals by. Empty and 0 for any other kind.
+  learnedRuleIds: z.array(zId).max(LEARNED_RULE_IDS_MAX),
+  otherRuleLines: z.number().int().nonnegative(),
   // The invoice's signature verification (#674); null for other kinds and for invoices read before it.
   signatureStatus: zSignatureStatus.nullable(),
   duplicateOf: zId.nullable(),

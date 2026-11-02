@@ -16,11 +16,13 @@ import { AiMeter } from '../components/ai-meter.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
 import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
+import { ProposalGroups } from '../components/proposal-groups.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
 import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { listedEntity } from '../lib/legal-entity-choice.ts';
+import { cleanGroups } from '../lib/proposal-groups.ts';
 import { SM_UP, useMediaQuery } from '../lib/media.ts';
 import { browserCodec, needsShrink, preparePhotos } from '../lib/photo.ts';
 import { useReviewShortcuts } from '../lib/review-shortcuts.ts';
@@ -346,6 +348,11 @@ export function InboxPage() {
   const [bulk, setBulk] = useState<BulkRun | null>(null);
   const bulkEnabled = tab === 'pending' && canApproveProposals(org.data?.role, org.data?.permissions);
   const selectable = bulkEnabled ? listed.filter((item) => bulkSelectable(item, REVERSAL_KIND)) : [];
+  // Clean purchases grouped by vendor and learned rule (#2379), with the rules behind them of the entity chosen in the shell.
+  const shellEntity = useChosenEntity();
+  const groupsOn = bulkEnabled && config.modules.includes('finance');
+  const groups = groupsOn ? cleanGroups(listed, REVERSAL_KIND) : [];
+  const groupRules = useQuery({ ...orpc.accountRules.list.queryOptions({ input: { legalEntityId: shellEntity.legalEntityId } }), enabled: groupsOn && groups.length > 0 && shellEntity.ready });
   const chosen = selectable.filter((item) => selected.has(item.id));
   const sending = bulk?.sending ?? false;
   // Invoices whose digital signature is unverified (#674): approving them, in bulk as one by one, asks the approver to
@@ -371,21 +378,24 @@ export function InboxPage() {
     await queryClient.invalidateQueries();
   }
 
-  function startBulk() {
-    if (chosen.length === 0 || sending || !confirmUnverified) return;
-    const confirmed = confirmedUnverified;
-    setConfirmedUnverified(new Set());
+  // Approves the chosen proposals, or one clean group (#2379): its proposals have no unverified signature, so there is
+  // nothing to confirm, and it runs as any bulk approval does, under one step-up.
+  function startBulk(group?: InboxItem[]) {
+    const picked = group ?? chosen;
+    if (picked.length === 0 || sending || (group === undefined && !confirmUnverified)) return;
+    const confirmed = group === undefined ? confirmedUnverified : new Set<string>();
+    if (group === undefined) setConfirmedUnverified(new Set());
     void sendBulk({
       batches: planBatches(
-        chosen.map((item) => ({
+        picked.map((item) => ({
           id: item.id,
           revision: item.revision,
           ...(item.signatureStatus === 'unverified' && confirmed.has(confirmKey(item)) ? { acceptUnverifiedSignature: true } : {}),
         })),
       ),
       progress: { results: [], next: 0, error: null },
-      names: Object.fromEntries(chosen.map((item) => [item.id, proposalName(item)])),
-      total: chosen.length,
+      names: Object.fromEntries(picked.map((item) => [item.id, proposalName(item)])),
+      total: picked.length,
       sending: false,
       stopped: false,
     });
@@ -665,6 +675,7 @@ export function InboxPage() {
             </Button>
           </Card>
         )}
+        {groups.length > 0 && !bulk && <ProposalGroups groups={groups} rules={groupRules.data ?? []} slug={slug} sending={sending} onApprove={startBulk} />}
         {bulkEnabled && selectable.length > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-3">
             <Label className="font-normal text-muted-foreground">
@@ -689,7 +700,7 @@ export function InboxPage() {
                   {t('bulk.clear')}
                 </Button>
               )}
-              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={startBulk}>
+              <Button loading={sending} size="lg" disabled={chosen.length === 0 || sending || !confirmUnverified} onClick={() => startBulk()}>
                 {t('bulk.approve', { count: chosen.length })}
               </Button>
             </div>

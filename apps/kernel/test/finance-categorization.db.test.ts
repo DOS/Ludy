@@ -156,7 +156,7 @@ suite('learned account rules with provenance (#1399)', () => {
     expect(edited).toMatchObject({ status: 200, body: { changed: true } });
     const revised = await detail(id);
     for (const { lineNo } of lineAccounts) {
-      expect(revised.payload.lines.find((l) => l.lineNo === lineNo)?.accountRule).toEqual({ source: 'user' });
+      expect(revised.payload.lines.find((l) => l.lineNo === lineNo)?.accountRule).toMatchObject({ source: 'user' });
     }
     return approve(id, revised.revision);
   }
@@ -264,6 +264,10 @@ suite('learned account rules with provenance (#1399)', () => {
     const internet = lineOf(payload.lines, 'Cước dịch vụ internet');
     expect(internet).toMatchObject({ debitAccount: '242', accountRule: { source: 'learned', scope: 'vendor', matchKind: 'description' } });
     expect(internet.reason).toContain('quy tắc đã học');
+    // The Inbox groups by the learned rules behind the accounts (#2379): the one rule, and the two lines the vendor default or the keywords set.
+    const ruleId = String((internet.accountRule as { ruleId?: string } | undefined)?.ruleId);
+    const pending = (await rpc('inbox/list', owner, { status: 'pending' })).body as Array<{ id: string; learnedRuleIds: string[]; otherRuleLines: number }>;
+    expect(pending.find((i) => i.id === id)).toMatchObject({ learnedRuleIds: [ruleId], otherRuleLines: 2 });
     // The vendor default is the account of the largest line of the first invoice (242 too); the ad line follows it.
     expect(lineOf(payload.lines, 'Phí quảng cáo')).toMatchObject({ debitAccount: '242', accountRule: { source: 'vendor_default' } });
     // The approver puts the ad line back on 6421: a second rule for this vendor, and the first one is untouched.
@@ -282,7 +286,16 @@ suite('learned account rules with provenance (#1399)', () => {
 
   it('updates a rule when an approver changes its account again, with the new provenance', async () => {
     const id = await propose('9104');
+    type Listed = Array<{ id: string; matchText: string; corrections: number }>;
+    const before = (await rpc('accountRules/list', owner, undefined)).body as Listed;
+    // Nobody has corrected a rule yet: the lines an approver changed so far had no learned rule behind them (#2379).
+    expect(before.map((r) => r.corrections)).toEqual([0, 0]);
+    const internetRule = before.find((r) => r.matchText === 'cuoc dich vu internet thang');
+    expect(lineOf((await detail(id)).payload.lines, 'Cước dịch vụ internet').accountRule).toMatchObject({ source: 'learned', ruleId: internetRule?.id });
     const recorded = await editAndApprove(id, { 'Cước dịch vụ internet': '6422' });
+    // The correction counts once the invoice is approved, on the rule that had proposed the other account.
+    const after = (await rpc('accountRules/list', owner, undefined)).body as Listed;
+    expect(after.map((r) => [r.matchText, r.corrections])).toEqual(expect.arrayContaining([['cuoc dich vu internet thang', 1], ['phi quang cao facebook', 0]]));
     const internet = (await rules()).find((r) => r.match_text === 'cuoc dich vu internet thang');
     expect(internet).toMatchObject({ debit_account: '6422', source_document_id: recorded.documentId, confirmed_by: owner.userId });
     expect((await rules()).length).toBe(2);
