@@ -101,11 +101,11 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
     await expect(done).toBeVisible({ timeout: 60_000 });
     // Both left the pending list.
     await expect(page.getByRole('link', { name: SELLER })).toHaveCount(0);
-    const documents = sql<{ n: string }>(
+    const documents = sql<{ n: number }>(
       `SELECT count(*) AS n FROM crove_finance.purchase_document d JOIN crove_kernel.tenant t ON t.org_id = d.org_id WHERE t.slug = :'slug'`,
       { slug },
     );
-    expect(documents[0]?.n).toBe('3');
+    expect(documents[0]?.n).toBe(3);
   });
 
   await test.step('a later invoice whose rule line an approver corrects raises the rule\'s count in Settings', async () => {
