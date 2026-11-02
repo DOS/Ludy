@@ -13,6 +13,7 @@ export * from './offboarding.ts';
 export * from './personal-data.ts';
 export * from './agents.ts';
 export * from './channels.ts';
+export * from './conversations.ts';
 export * from './timeline.ts';
 export * from './proposal-reminders.ts';
 export * from './tax-calendar.ts';

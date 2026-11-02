@@ -718,6 +718,25 @@ export type CrmImportBatchTable = Refine<
   { status: Generated<(typeof IMPORT_BATCH_STATUSES)[number]>; on_duplicate: Generated<(typeof IMPORT_ON_DUPLICATE_CHOICES)[number]> }
 >;
 export type CrmImportRowTable = Refine<G.CrmImportRowTable, { kind: Generated<(typeof PARTY_KINDS)[number]>; outcome: (typeof IMPORT_ROW_OUTCOMES)[number] }>;
+// The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
+// while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
+export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
+export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
+export const MESSAGE_DIRECTIONS = ['in', 'out'] as const;
+export const MESSAGE_AUTHOR_KINDS = ['contact', 'member', 'system'] as const;
+export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
+export const MESSAGE_HIDE_REQUESTS = ['hide', 'unhide'] as const;
+export type ConversationTable = Refine<G.KernelConversationTable, { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]> }>;
+export type ConversationMessageTable = Refine<
+  G.KernelConversationMessageTable,
+  {
+    kind: (typeof CONVERSATION_KINDS)[number];
+    direction: (typeof MESSAGE_DIRECTIONS)[number];
+    author_kind: (typeof MESSAGE_AUTHOR_KINDS)[number];
+    send_state: (typeof MESSAGE_SEND_STATES)[number] | null;
+    hide_request: (typeof MESSAGE_HIDE_REQUESTS)[number] | null;
+  }
+>;
 // Bookings of the public booking page (#1318): requested, then confirmed or refused by the worker.
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
 export const BOOKING_REFUSALS = ['taken', 'unavailable'] as const;
@@ -816,6 +835,8 @@ type Refined = Tables<{
   'crove_kernel.kill_switch': KillSwitchTable;
   'crove_kernel.budget_policy': BudgetPolicyTable;
   'crove_kernel.channel_connection': ChannelConnectionTable;
+  'crove_kernel.conversation': ConversationTable;
+  'crove_kernel.conversation_message': ConversationMessageTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

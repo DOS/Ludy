@@ -74,7 +74,13 @@ export interface CroveKernelSchema {
   'crove_kernel.calendar_connection': KernelCalendarConnectionTable;
   'crove_kernel.calendar_event': KernelCalendarEventTable;
   'crove_kernel.calendar_event_link': KernelCalendarEventLinkTable;
+  'crove_kernel.channel_access': KernelChannelAccessTable;
   'crove_kernel.channel_connection': KernelChannelConnectionTable;
+  'crove_kernel.conversation': KernelConversationTable;
+  'crove_kernel.conversation_identity': KernelConversationIdentityTable;
+  'crove_kernel.conversation_message': KernelConversationMessageTable;
+  'crove_kernel.conversation_note': KernelConversationNoteTable;
+  'crove_kernel.conversation_read': KernelConversationReadTable;
   'crove_kernel.currency': KernelCurrencyTable;
   'crove_kernel.external_call': KernelExternalCallTable;
   'crove_kernel.extraction': KernelExtractionTable;
@@ -129,7 +135,6 @@ export interface CroveSocialSchema {
   'crove_social.brand_voice': SocialBrandVoiceTable;
   'crove_social.calendar_feed': SocialCalendarFeedTable;
   'crove_social.calendar_note': SocialCalendarNoteTable;
-  'crove_social.channel_access': SocialChannelAccessTable;
   'crove_social.channel_option': SocialChannelOptionTable;
   'crove_social.channel_policy': SocialChannelPolicyTable;
   'crove_social.channel_set': SocialChannelSetTable;
@@ -987,6 +992,16 @@ export interface KernelCalendarEventTable {
   external_id: string | null;
 }
 
+/** crove_kernel.channel_access */
+export interface KernelChannelAccessTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_kernel.channel_connection */
 export interface KernelChannelConnectionTable {
   org_id: string;
@@ -1000,6 +1015,90 @@ export interface KernelChannelConnectionTable {
   connected_by: string;
   expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   connected_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.conversation_identity */
+export interface KernelConversationIdentityTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  external_user_id: ColumnType<string, string, NotGranted>;
+  display_name: string | null;
+  party_id: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.conversation_message */
+export interface KernelConversationMessageTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  conversation_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  seq: ColumnType<number, number, NotGranted>;
+  direction: ColumnType<string, string, NotGranted>;
+  external_message_id: string | null;
+  sent_at: ColumnType<Date, Date | string, Date | string>;
+  received_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  author_kind: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string | null, string | null, NotGranted>;
+  body: string;
+  attachments: Generated<string[]>;
+  send_state: string | null;
+  send_attempt: Generated<number>;
+  send_error_code: string | null;
+  hidden_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  hidden_by: string | null;
+  hide_request: string | null;
+  hide_attempt: Generated<number>;
+  hide_error_code: string | null;
+  platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
+}
+
+/** crove_kernel.conversation_note */
+export interface KernelConversationNoteTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  conversation_id: ColumnType<string, string, NotGranted>;
+  author_user_id: ColumnType<string, string, NotGranted>;
+  body: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_kernel.conversation_read */
+export interface KernelConversationReadTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  conversation_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  last_read_seq: Generated<number>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.conversation */
+export interface KernelConversationTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  external_thread_id: ColumnType<string, string, NotGranted>;
+  external_post_id: ColumnType<string | null, string | null, NotGranted>;
+  parent_conversation_id: ColumnType<string | null, string | null, NotGranted>;
+  identity_id: string | null;
+  party_id: string | null;
+  status: Generated<string>;
+  assignee_user_id: string | null;
+  last_seq: Generated<number>;
+  last_inbound_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  last_message_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  reply_window_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  opened_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  resolved_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  resolved_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
@@ -1701,16 +1800,6 @@ export interface SocialCalendarNoteTable {
   updated_by: string;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
-/** crove_social.channel_access */
-export interface SocialChannelAccessTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  user_id: ColumnType<string, string, NotGranted>;
-  channel_connection_id: ColumnType<string, string, NotGranted>;
-  created_by: ColumnType<string, string, NotGranted>;
-  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_social.channel_option */

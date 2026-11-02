@@ -4,8 +4,8 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView, AdsChangeRequest } from '@crove/kernel-contract';
-import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, type OAuthConnector } from '@crove/channel';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent } from '@crove/kernel-contract';
+import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
   ALT_TEXT_IMAGE_TYPES,
@@ -38,6 +38,7 @@ import {
 import type { z } from 'zod';
 import type { zAgentBudget, zAgentTemplate, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
+import { sql } from 'kysely';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -287,6 +288,8 @@ export function createRpcHandler(
       throw toORPCError(error);
     }
   };
+  // Demo comments of the offline sandbox, by org, for the per-org cap on the intake they share.
+  const sandboxStamps = new Map<string, number[]>();
   const inOrg = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) =>
     guard(async () => fn(await resolveOrg(runtime, context.user, context.orgSlug), actorOf(context.user)));
   // A procedure of a module this deployment leaves out (CROVE_MODULES, plan Decision 12) answers like a route that
@@ -1814,6 +1817,37 @@ export function createRpcHandler(
       list: os.notifications.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.notification.list', {}, { actor, orgId }))),
       read: os.notifications.read.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.read', input, { actor, orgId }))),
       mute: os.notifications.mute.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.notification.mute', input, { actor, orgId }))),
+    },
+    conversations: {
+      list: os.conversations.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.list', input, { actor, orgId }))),
+      counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
+      get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
+      reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
+      settle: os.conversations.settle.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_settle', input, { actor, orgId }))),
+      hide: os.conversations.hide.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.hide', input, { actor, orgId }))),
+      assign: os.conversations.assign.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.assign', input, { actor, orgId }))),
+      resolve: os.conversations.resolve.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.resolve', input, { actor, orgId }))),
+      reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
+      note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
+      linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
+      // The command checks the connection and the role and returns the event; the body then takes the intake's own way, parked
+      // for the worker with no tenant context, as a platform's notice does.
+      sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          // The intake is shared by every org, so a demo comment is limited per org: thirty a minute.
+          const stamp = Date.now();
+          const recent = (sandboxStamps.get(orgId) ?? []).filter((t) => stamp - t < 60_000);
+          if (recent.length >= 30) throw new ORPCError('TOO_MANY_REQUESTS', { status: 429, message: 'Tạo bình luận thử quá nhanh, hãy thử lại sau một phút' });
+          sandboxStamps.set(orgId, [...recent, stamp]);
+          const made = await runtime.execute<{ accountId: string; events: ConversationEvent[] }>('kernel.conversation.sandbox_comment', input, { actor, orgId });
+          const body = sandboxNoticeBody({ ...made, connectionId: input.connectionId });
+          await runtime.orgless(async (db) => {
+            await sql`SELECT crove_kernel.conversation_inbound_enqueue('sandbox', ${body})`.execute(db);
+          });
+          return { queued: true as const };
+        }),
+      ),
     },
     savedViews: {
       list: os.savedViews.list.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.saved_view.list', input, { actor, orgId }))),

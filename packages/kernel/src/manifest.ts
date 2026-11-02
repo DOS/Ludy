@@ -27,9 +27,15 @@ export const kernelManifest = defineModule({
       calendar_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       calendar_event: columns(['org_id', 'id', 'user_id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind', 'status', 'created_by', 'created_at', 'cancelled_by', 'cancelled_at', 'source_id', 'external_id']),
       calendar_event_link: columns(['org_id', 'id', 'connection_id', 'event_id', 'user_id', 'external_id', 'state', 'synced_hash', 'attempts', 'last_error', 'updated_at']),
+      channel_access: columns(['org_id', 'id', 'user_id', 'channel_connection_id', 'created_by', 'created_at']),
       channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at'], { external_account_id: 'pii', display_name: 'pii' }),
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
+      conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
+      conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at'], { external_user_id: 'pii', display_name: 'pii' }),
+      conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted'], { external_message_id: 'pii', body: 'pii' }),
+      conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
+      conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
       credential: columns(['org_id', 'connection_id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       currency: columns(['code', 'minor_units']),
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
@@ -101,8 +107,11 @@ export const kernelManifest = defineModule({
       warning: columns(['id', 'type', 'message', 'data', 'created_on']),
     },
   },
-  // It owns no permission. The approval commands name finance.proposal.approve, which the finance manifest declares.
-  permissions: [],
+  // The approval commands name finance.proposal.approve, which the finance manifest declares. Its own: reading private messages
+  // (#2303, plan docs/plan/conversations.md section 8), which conversation_access asks of the database. No role holds it yet: the
+  // Service inbox (CV3) seeds it for desk.agent, with the invariant step that allows that seed; until then only owners and admins
+  // read a private message.
+  permissions: [{ key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: [] }],
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.
   entities: [
@@ -110,6 +119,8 @@ export const kernelManifest = defineModule({
     { type: 'kernel.ai_run', table: 'ai_run', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.calendar_connection', table: 'calendar_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.channel_connection', table: 'channel_connection', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.conversation', table: 'conversation', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.conversation_message', table: 'conversation_message', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.file', table: 'file', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.file_upload', table: 'file_upload', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.inbox_item', table: 'inbox_item', legalEntityScoped: false, audit: 'command' },

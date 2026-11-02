@@ -30,6 +30,7 @@ import {
 } from '@crove/kernel-runtime';
 import { agentCommands } from './agents.ts';
 import { channelCommands } from './channels.ts';
+import { conversationCommands } from './conversations.ts';
 import {
   actorRef,
   addAuthor,
@@ -1122,6 +1123,7 @@ const otherKernelCommands = [
   ...offboardingCommands,
   ...agentCommands,
   ...channelCommands,
+  ...conversationCommands,
   setTaxCode,
   setVatFilingPeriod,
   setApprovalPreset,

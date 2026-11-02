@@ -81,6 +81,8 @@ const SOCIAL_SCREENS = {
     { path: 'social/feeds' },
     { path: 'social/bio' },
     { path: 'social/notifications' },
+    // The comment inbox (#2303): the comments on the org's own posts, answered in Social.
+    { path: 'social/comments' },
     { path: 'social/$id' },
     // The content plan to print (#978), outside the org's frame so only the plan reaches the paper.
     { path: 'print/social-plan' },
@@ -97,6 +99,7 @@ const SOCIAL_SCREENS = {
   ],
   nav: [
     { app: 'social', group: 'social', path: 'social', label: 'social' },
+    { app: 'social', group: 'social', path: 'social/comments', label: 'comments' },
     { app: 'social', group: 'social', path: 'social/notifications', label: 'notifications' },
   ],
 } as const satisfies ModuleScreens;

@@ -282,7 +282,7 @@ export const digestSend = defineCommand({
     const limited = recipients.filter((r) => r.role === 'member').map((r) => r.user_id);
     const lists = new Map<string, Set<string>>();
     if (limited.length > 0) {
-      const access = await ctx.trx.selectFrom('crove_social.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', ctx.orgId).where('user_id', 'in', limited).execute();
+      const access = await ctx.trx.selectFrom('crove_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', ctx.orgId).where('user_id', 'in', limited).execute();
       for (const a of access) lists.set(a.user_id, (lists.get(a.user_id) ?? new Set<string>()).add(a.channel_connection_id));
     }
     const reviews = await reviewsFor(

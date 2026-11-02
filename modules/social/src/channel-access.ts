@@ -3,7 +3,7 @@
 // this one helper; nothing else decides it.
 //
 // Rules:
-// - A member or viewer with any row in crove_social.channel_access is limited to the channels of those rows; one with
+// - A member or viewer with any row in crove_kernel.channel_access is limited to the channels of those rows; one with
 //   none uses every channel. Any row counts, whatever the status of its connection: a revoked or expired connection
 //   still limits, so revoking a limited member's only channel never widens them to every channel.
 // - Owners and admins are never limited, whatever rows exist (a role change needs no cleanup). Neither are agents and
@@ -37,7 +37,7 @@ type ScopeContext = Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'role'>;
 // The rows of a member, whatever their role: what the list says, not whether it applies.
 async function listOf(trx: Trx, orgId: string, userId: string): Promise<string[]> {
   const rows = await trx
-    .selectFrom('crove_social.channel_access')
+    .selectFrom('crove_kernel.channel_access')
     .select('channel_connection_id')
     .where('org_id', '=', orgId)
     .where('user_id', '=', userId)
@@ -144,7 +144,7 @@ export async function usersInScope(trx: Trx, orgId: string, userIds: readonly st
   const free = new Set(roles.filter((r) => r.role === 'owner' || r.role === 'admin').map((r) => r.user_id));
   const rest = userIds.filter((u) => !free.has(u));
   if (rest.length === 0) return [...userIds];
-  const rows = await trx.selectFrom('crove_social.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', orgId).where('user_id', 'in', rest).execute();
+  const rows = await trx.selectFrom('crove_kernel.channel_access').select(['user_id', 'channel_connection_id']).where('org_id', '=', orgId).where('user_id', 'in', rest).execute();
   const lists = new Map<string, Set<string>>();
   for (const r of rows) lists.set(r.user_id, (lists.get(r.user_id) ?? new Set<string>()).add(r.channel_connection_id));
   const postChannels = about.postId
@@ -200,7 +200,7 @@ export const channelAccessSet = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
     const by = ctx.actor.userId;
     // One change of a member's list at a time, so two at once never leave a mix of both.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_social.channel_access:${ctx.orgId}:${input.userId}`}, 0))`.execute(ctx.trx);
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove_kernel.channel_access:${ctx.orgId}:${input.userId}`}, 0))`.execute(ctx.trx);
     const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).executeTakeFirst();
     if (!member) throw new DomainError('MEMBER_NOT_FOUND', 404, 'Người này không phải thành viên của tổ chức');
     const ids = [...new Set(input.channelConnectionIds.map((id) => id.toLowerCase()))].sort();
@@ -218,11 +218,11 @@ export const channelAccessSet = defineCommand({
     const removed = before.filter((id) => !ids.includes(id));
     const added = ids.filter((id) => !before.includes(id));
     if (removed.length > 0) {
-      await ctx.trx.deleteFrom('crove_social.channel_access').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).where('channel_connection_id', 'in', removed).execute();
+      await ctx.trx.deleteFrom('crove_kernel.channel_access').where('org_id', '=', ctx.orgId).where('user_id', '=', input.userId).where('channel_connection_id', 'in', removed).execute();
     }
     if (added.length > 0) {
       await ctx.trx
-        .insertInto('crove_social.channel_access')
+        .insertInto('crove_kernel.channel_access')
         .values(added.map((id) => ({ org_id: ctx.orgId, user_id: input.userId, channel_connection_id: id, created_by: by })))
         .execute();
     }
@@ -238,7 +238,7 @@ export const channelAccessList = defineQuery({
   access: ADMINS,
   handler: async (ctx): Promise<ChannelAccessEntry[]> => {
     const rows = await ctx.trx
-      .selectFrom('crove_social.channel_access')
+      .selectFrom('crove_kernel.channel_access')
       .select(['user_id', 'channel_connection_id'])
       .where('org_id', '=', ctx.orgId)
       .orderBy('user_id')

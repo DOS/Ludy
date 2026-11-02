@@ -1313,6 +1313,8 @@ export interface VariantView {
   queuePaused: boolean;
   attempt: number;
   externalUrl: string | null;
+  // The platform's own id of the published post: what the conversation core joins its comment threads to (#2303).
+  externalPostId: string | null;
   publishedAt: string | null;
   // Taken down from its platform (#860): when the platform confirmed it, and who asked and why. removal: where a
   // person's ask to remove a published channel stands, until it is removed.
@@ -1591,6 +1593,7 @@ async function viewPosts(ctx: QueryContext, requested: string[], options: { bann
               queuePaused: v.queue_slot_at !== null && v.scheduled_at === null && v.error_retry_at === null && pausedQueues.has(v.channel_connection_id),
               attempt: v.attempt,
               externalUrl: v.external_url,
+              externalPostId: v.external_post_id,
               publishedAt: iso(v.published_at),
               removedAt: iso(v.removed_at),
               removedBy: v.status === 'removed' ? v.removed_by : null,

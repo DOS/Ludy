@@ -6,6 +6,7 @@ import type { PostType } from './post-type.ts';
 import type { ChannelOptionsInput, ChannelOptionsResult } from './options.ts';
 import type { Audience } from './audience.ts';
 import type { DailyPerformance } from './performance.ts';
+import { SandboxConversations, type ConversationAdapter } from './conversation.ts';
 
 export * from './oauth.ts';
 export * from './calendar-google.ts';
@@ -26,6 +27,7 @@ export * from './pinterest.ts';
 export * from './discord.ts';
 export * from './wordpress.ts';
 export * from './comment.ts';
+export * from './conversation.ts';
 export * from './cover.ts';
 export * from './link-card.ts';
 export * from './post-type.ts';
@@ -415,6 +417,8 @@ export interface Publisher {
   accountMetrics?(input: AccountMetricsInput): Promise<AccountMetricsResult>;
   // Providers that list the account's own recent posts (#1054), so posts published outside Crove can be counted.
   listRecentPosts?(input: RecentPostsInput): Promise<RecentPostsResult>;
+  // Providers whose comments and private messages the org answers (#2303): the replies and hides of the conversation core.
+  readonly conversations?: ConversationAdapter;
   // Providers that post a first comment (#587). Never retried by itself: an unclear answer goes to a person.
   comment?(input: CommentInput): Promise<CommentResult>;
   // Providers that repost the account's own post (#773). Never retried by itself, like a comment.
@@ -447,6 +451,8 @@ interface SandboxPost {
 export class SandboxPublisher implements Publisher {
   readonly provider = 'sandbox' as const;
   readonly publishSafety: RetrySafety = 'reconcile_only';
+  // The sandbox's comments and private messages live in this process's memory too.
+  readonly conversations = new SandboxConversations();
   private readonly accounts = new Map<string, SandboxPost[]>();
 
   // A comment on a post the sandbox holds, or a reply to one of its comments (a thread's part, #742), kept beside it.

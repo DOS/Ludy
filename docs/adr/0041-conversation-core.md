@@ -48,7 +48,7 @@ Facts that shape the choices (sources and confidence tags in the [plan](../plan/
 
 ### 2. Intake: a signed webhook enqueues, a worker stores, a poll reconciles
 
-- A public route per provider family verifies the platform's signature (Meta `X-Hub-Signature-256`, Zalo `X-ZEvent-Signature`), caps the body, **only enqueues**, and answers within the platform's window. It writes no tenant row.
+- A public route per provider family verifies the platform's signature (Meta `X-Hub-Signature-256`, Zalo `X-ZEvent-Signature`), caps the body, **only parks it** in a pending table (a definer for the API login, as ADR-0039's pending rows; built in CV1, #2303, instead of a pg-boss queue, whose job history and dead letter queue would keep the body), and answers within the platform's window. It writes no tenant row.
 - A worker job finds the connections from the platform's own account id and runs a system command `kernel.conversation.ingest` per active connection of an active org. **The org comes from the stored connection, never from the notice** (ADR-0039).
 - **The signed body is stored**, unlike the bank feed, where a pull follows the notice, because these platforms offer no history to pull from (Meta: no history API, 36 hours of retries, 20 messages per conversation; Zalo: no retry on error). Idempotent on `(org, connection, external_message_id)`; ordered by the platform's time.
 - A reconcile job per connection (re-subscribe, read recent comments and recent messages) is the safety net, with a visible "events missed" marker when it had to fill a gap.
@@ -59,7 +59,7 @@ Facts that shape the choices (sources and confidence tags in the [plan](../plan/
 
 ### 4. Permissions follow the kind, in the database
 
-A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind = 'direct'`, not only in the screen. Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
+A comment thread is readable like the post it belongs to (owners, admins, and members and viewers who may read the channel). A direct message is readable only by owners, admins and holders of the `desk.agent` role (new permission `conversation.direct.read`), enforced by a restrictive policy on `kind = 'direct'`, not only in the screen (the permission is `kernel.conversation.direct.read`: a manifest permission carries its module's prefix, and no role holds it until the Service inbox seeds it for `desk.agent`). Social's per-channel member limit (`crove_social.channel_access`) moves to the kernel so the core can apply it.
 
 ### 5. Collision, assignment and availability
 

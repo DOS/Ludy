@@ -52,6 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
+import { failUnsendable, runConversationIntake, runConversationJob, sweepStaleReplies, type ConversationJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -1067,6 +1068,21 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await dropCron(QUEUES.adsSync);
   }
 
+  // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
+  // deployment's; the offline sandbox's reach nothing.
+  const conversationPublishers = deps.channels?.publishers;
+  const conversationBroker = deps.channels?.broker;
+  if (conversationPublishers && conversationBroker) {
+    await boss.work<ConversationJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const outcome = await runConversationJob(
+        { runtime: deps.runtime, broker: conversationBroker, adapter: (provider) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) },
+        job.data,
+      );
+      console.log(`[conversations] ${job.data.action} ${job.data.messageId}: ${outcome}`);
+    });
+  }
+
   // In-app notifications of the kernel and finance (#671): the module's dispatch reads the event from the outbox.
   await boss.work<AgentDispatchJob & { type: string }>(QUEUES.notify, { batchSize: 1 }, async ([job]) => {
     if (!job) return;
@@ -1831,6 +1847,25 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
+              // A reply or a hide of the conversation core (#2303): the job begins the call (committed as started), makes it
+              // with the connection's credential and records the answer. A reply is never repeated by a job after an unclear
+              // answer, and a retry only covers a failure before the call began; a hide is idempotent.
+              if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
+                const messageId = String(row.payload.messageId);
+                const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
+                const job = { orgId: row.org_id, messageId, connectionId: String(row.payload.connectionId), action } satisfies ConversationJob;
+                if (deps.channels?.publishers && deps.channels.broker) {
+                  await boss.send(QUEUES.conversationsReply, job, {
+                    singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${messageId}:${row.event_id}`),
+                    retryLimit: action === 'hide' ? 3 : 2,
+                    retryDelay: 5,
+                    retryBackoff: true,
+                  });
+                } else {
+                  // No channel to send through here: the message fails visibly instead of waiting for a job that will never exist.
+                  await failUnsendable(deps.runtime, job);
+                }
+              }
               // A visitor's booking (#1318): the worker confirms or refuses it as the system.
               if (crm && row.type === 'crm.booking.requested') {
                 const bookingId = String(row.payload.booking_id);
@@ -2032,6 +2067,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Meta's data deletion requests for the Ads connection (plan section 9, #2219): the ad accounts a request names are
       // closed and erased in their orgs, then the request is completed. Without the callback nothing is waiting.
       if (ads) await runAdsDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
+      // The notices the webhook parked (#2303): stored under their connections' orgs, then deleted. Nothing is waiting where
+      // no connection has a platform that sends them.
+      await runConversationIntake({ workerDb: deps.workerDb, runtime: deps.runtime });
+      await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
     } catch (error) {
       console.error('[relay]', error);
     } finally {

@@ -189,6 +189,25 @@ import {
 import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
+import {
+  zConversationAssign,
+  zConversationCounted,
+  zConversationCounts,
+  zConversationDetail,
+  zConversationGet,
+  zConversationHide,
+  zConversationId,
+  zConversationLinkContact,
+  zConversationList,
+  zConversationListed,
+  zConversationMarkRead,
+  zConversationNoteAdd,
+  zConversationReplied,
+  zConversationReply,
+  zConversationSandboxComment,
+  zConversationSandboxQueued,
+  zConversationSettle,
+} from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
 import { zFixedAsset, zFixedAssetCreate, zFixedAssetEnd } from './fixed-asset.ts';
@@ -1369,6 +1388,27 @@ export const contract = {
     rename: oc.input(zSavedViewRename).output(z.object({ viewId: zId })),
     setShared: oc.input(zSavedViewSetShared).output(z.object({ viewId: zId })),
     remove: oc.input(zSavedViewDelete).output(z.object({ viewId: zId })),
+  },
+  // The conversation core (#2303): comments under the org's posts and private messages, one store. Every role reads what the
+  // database lets it read (a comment thread of a channel it may use; a private message only owners, admins and holders of
+  // kernel.conversation.direct.read); owners, admins and members answer, hide, assign, resolve and note; a viewer only reads. A reply
+  // carries the last seq its sender saw (409 CONVERSATION_MOVED when a newer message exists).
+  conversations: {
+    list: oc.input(zConversationList).output(zConversationListed),
+    counts: oc.input(zConversationCounts).output(zConversationCounted),
+    get: oc.input(zConversationGet).output(zConversationDetail),
+    reply: oc.input(zConversationReply).output(zConversationReplied),
+    // A refused or unclear reply: send it again as a new attempt, or record that it did go out.
+    settle: oc.input(zConversationSettle).output(z.object({ messageId: zId, state: z.string() })),
+    hide: oc.input(zConversationHide).output(z.object({ messageId: zId })),
+    assign: oc.input(zConversationAssign).output(z.object({ conversationId: zId })),
+    resolve: oc.input(zConversationId).output(z.object({ conversationId: zId })),
+    reopen: oc.input(zConversationId).output(z.object({ conversationId: zId })),
+    note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
+    linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
+    markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
+    // A demo comment on a post of a sandbox connection (owners and admins): it goes through the same intake a platform's notice takes.
+    sandboxComment: oc.input(zConversationSandboxComment).output(zConversationSandboxQueued),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.

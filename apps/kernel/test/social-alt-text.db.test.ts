@@ -268,7 +268,7 @@ suite('AI alt text suggestions through the API (#1121)', () => {
     const mine = await connection(org.orgId, 'mastodon', owner.userId);
     await admin(async (c) => {
       await c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [org.orgId, member.userId]);
-      await c.query('INSERT INTO crove_social.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, mine, owner.userId]);
+      await c.query('INSERT INTO crove_kernel.channel_access (org_id, user_id, channel_connection_id, created_by) VALUES ($1, $2, $3, $4)', [org.orgId, member.userId, mine, owner.userId]);
     });
     const count = asked.length;
     const token = await tokenFor(member);
