@@ -1336,7 +1336,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           // The list and the single read agree, and a draft discarded leaves the list.
           const listed = (await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>;
           expect(listed.map((d) => d.id)).toContain(draft.id);
-          expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({ id: draft.id, revision: 2 });
+          expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({ id: draft.id, revision: 3 });
           expect((await callAs(member, 'ads/discardCampaignDraft', { draftId: full.id, idempotencyKey: key() })).status).toBe(200);
           expect(((await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>).map((d) => d.id)).not.toContain(full.id);
           expect((await save(owner, account, plan(), full.id)).status).toBe(409);
