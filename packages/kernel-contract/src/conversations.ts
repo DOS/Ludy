@@ -159,6 +159,30 @@ export type ConversationMessage = z.infer<typeof zConversationMessage>;
 export const zConversationNote = z.strictObject({ id: zId, authorUserId: zId, body: z.string(), createdAt: z.iso.datetime({ offset: true }) });
 export type ConversationNote = z.infer<typeof zConversationNote>;
 
+// Vy's draft of a reply (CV8, #2310): asked for (requested, the text is on its way) or live (the text). Always tainted: a model wrote it from a customer's
+// text, so the screen says so and a person reads it, edits it and sends it.
+export const CONVERSATION_DRAFT_STATES = ['requested', 'live', 'used', 'discarded', 'stale'] as const;
+export const zConversationDraftView = z.strictObject({
+  id: zId,
+  state: z.enum(['requested', 'live']),
+  source: z.enum(['auto', 'asked']),
+  // Null while requested.
+  body: z.string().nullable(),
+  tainted: z.literal(true),
+});
+export type ConversationDraftView = z.infer<typeof zConversationDraftView>;
+
+// A saved reply as the reply box offers it beside the draft: matched by the words of the customer's last message.
+export const SAVED_REPLY_TITLE_MAX = 100;
+export const SAVED_REPLY_BODY_MAX = 2000;
+export const SAVED_REPLY_KEYWORDS_MAX = 20;
+export const SAVED_REPLY_KEYWORD_MAX = 40;
+export const SAVED_REPLIES_MAX = 200;
+// How many of the thread's last messages a draft reads.
+export const CONVERSATION_DRAFT_MESSAGES = 12;
+export const zSavedReplyView = z.strictObject({ id: zId, title: z.string(), body: z.string(), keywords: z.array(z.string()), useCount: z.number().int() });
+export type SavedReplyView = z.infer<typeof zSavedReplyView>;
+
 export const zConversationDetail = z.strictObject({
   conversation: zConversationSummary,
   messages: z.array(zConversationMessage),
@@ -170,6 +194,9 @@ export const zConversationDetail = z.strictObject({
   // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
   // them): shown on a thread that was active after `from`.
   gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),
+  // Vy's draft for the last customer message, when one is in play (CV8), and the saved replies that answer its words (at most three, best first).
+  draft: zConversationDraftView.nullable(),
+  suggestions: z.array(zSavedReplyView),
 });
 export type ConversationDetail = z.infer<typeof zConversationDetail>;
 
@@ -208,6 +235,11 @@ export const zConversationReply = z.strictObject({
   body: z.string().trim().min(1).max(CONVERSATION_REPLY_MAX).refine(noNul, 'NUL character'),
   // The last message the sender saw: a newer one refuses the reply (CONVERSATION_MOVED).
   lastSeenSeq: z.number().int().min(0),
+  // The draft this reply began from (CV8): it is marked used, with the lengths and the size of the person's edit, never the text. Any other draft of
+  // the thread is discarded by a reply.
+  draftId: zId.optional(),
+  // The saved reply this reply began from: its use count goes up.
+  savedReplyId: zId.optional(),
 });
 export const zConversationReplied = z.strictObject({ messageId: zId, seq: z.number().int() });
 export const zConversationSettle = z.strictObject({ messageId: zId, action: z.enum(['retry', 'mark_sent']) });
@@ -279,6 +311,35 @@ const zRetentionMonths = z.union([z.literal(6), z.literal(12), z.literal(24)]).n
 export const zConversationRetentionSet = z.strictObject({ retentionMonths: zRetentionMonths });
 export const zConversationRetention = z.strictObject({ retentionMonths: zRetentionMonths, isDefault: z.boolean() });
 export type ConversationRetention = z.infer<typeof zConversationRetention>;
+
+// Vy's drafts (CV8, #2310). A member asks for one (kernel.conversation.draft_request) or the relay does when a conversation is new
+// (draft_enqueue, system); a worker job reads the draft's source (draft_source, system query), calls the model and records the answer
+// (draft_record, system). A member discards one (draft_discard). The owner's switch for drafting on arrival is auto_draft_set.
+export const zConversationDraftRequest = z.strictObject({ conversationId: zId });
+export const zConversationDraftEnqueue = z.strictObject({ conversationId: zId });
+export const zConversationDraftSource = z.strictObject({ draftId: zId });
+export const zConversationDraftDiscard = z.strictObject({ draftId: zId });
+export const zConversationDraftRecord = z.discriminatedUnion('outcome', [
+  // The draft's text (1 to the thread's channel limit), and the model call's tokens for the org's AI cost limit.
+  z.strictObject({ outcome: z.literal('written'), draftId: zId, body: z.string().trim().min(1).max(2000).refine(noNul, 'NUL character') }),
+  // No draft: the model gave none, was refused or failed; `code` is a short code, never a platform's or a model's words.
+  z.strictObject({ outcome: z.literal('none'), draftId: zId, code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }),
+]);
+export const zConversationAutoDraft = z.strictObject({ autoDraft: z.boolean() });
+export const zConversationAutoDraftSet = z.strictObject({ autoDraft: z.boolean() });
+export type ConversationAutoDraft = z.infer<typeof zConversationAutoDraft>;
+
+// Saved replies: the org's own text for common answers. `keywords` are the words the reply answers, matched against the customer's text.
+export const zSavedReplyInput = z.strictObject({
+  title: z.string().trim().min(1).max(SAVED_REPLY_TITLE_MAX).refine(noNul, 'NUL character'),
+  body: z.string().trim().min(1).max(SAVED_REPLY_BODY_MAX).refine(noNul, 'NUL character'),
+  keywords: z.array(z.string().trim().min(1).max(SAVED_REPLY_KEYWORD_MAX).refine(noNul, 'NUL character')).max(SAVED_REPLY_KEYWORDS_MAX).default([]),
+});
+export const zSavedReplyUpdate = zSavedReplyInput.extend({ id: zId });
+export const zSavedReplyId = z.strictObject({ id: zId });
+export const zSavedReplyList = z.strictObject({});
+export const zSavedReplyListed = z.strictObject({ replies: z.array(zSavedReplyView) });
+export type SavedReplyListed = z.infer<typeof zSavedReplyListed>;
 // Erasing a customer: every thread of the same person (their identity on the platform) goes, with its messages, notes and read marks.
 // The thread the button is on names the person; a thread with no identity goes alone. `confirm` is the screen's confirmation.
 // `messageId`: a customer message of that thread whose author is the person to erase (a customer who only replied in someone else's

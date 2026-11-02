@@ -211,6 +211,15 @@ import {
   zConversationSandboxComment,
   zConversationSandboxQueued,
   zConversationSettle,
+  zConversationAutoDraft,
+  zConversationAutoDraftSet,
+  zConversationDraftDiscard,
+  zConversationDraftRequest,
+  zSavedReplyId,
+  zSavedReplyInput,
+  zSavedReplyList,
+  zSavedReplyListed,
+  zSavedReplyUpdate,
 } from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -1418,6 +1427,17 @@ export const contract = {
     retention: oc.input(z.strictObject({})).output(zConversationRetention),
     setRetention: oc.input(zConversationRetentionSet).output(zConversationRetention),
     eraseContact: oc.input(zConversationEraseContact.extend({ idempotencyKey: zId })).output(zConversationErased),
+    // Vy's drafts (CV8, #2310): a member asks for one ("Vy soạn": the draft arrives in the thread's detail within seconds, written by the worker) or sets
+    // one aside; owners and admins switch the drafting of new conversations on or off (a customer's message goes to the AI endpoint for it).
+    draftRequest: oc.input(zConversationDraftRequest).output(z.object({ draftId: zId, queued: z.boolean() })),
+    draftDiscard: oc.input(zConversationDraftDiscard).output(z.object({ discarded: z.boolean() })),
+    autoDraft: oc.input(z.strictObject({})).output(zConversationAutoDraft),
+    setAutoDraft: oc.input(zConversationAutoDraftSet).output(zConversationAutoDraft),
+    // The org's saved replies: every member reads them; owners, admins and members write them.
+    savedReplies: oc.input(zSavedReplyList).output(zSavedReplyListed),
+    createSavedReply: oc.input(zSavedReplyInput).output(z.object({ id: zId })),
+    updateSavedReply: oc.input(zSavedReplyUpdate).output(z.object({ id: zId })),
+    deleteSavedReply: oc.input(zSavedReplyId).output(z.object({ id: zId })),
   },
   // Every role (#673): parties by name or tax code, documents by series, number or party, journal entries by
   // description or amount. Vietnamese marks and case are ignored, and each word matches the start of a word.

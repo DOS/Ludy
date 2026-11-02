@@ -18,6 +18,7 @@ import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { StepUpPrompt } from './two-factor.tsx';
+import { DraftPanel } from './conversation-drafts.tsx';
 
 const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
@@ -447,11 +448,15 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   const t = useTranslations('conversations');
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
+  // The draft or the saved reply the text in the box began from: the reply names it, so the draft is marked used (its length and the size of the
+  // edit are kept, never the text) and the saved reply is counted. Typing everything away forgets it.
+  const [from, setFrom] = useState<{ draftId?: string; savedReplyId?: string }>({});
   const id = detail.conversation.id;
   const send = useMutation({
-    mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen }),
+    mutationFn: () => client.conversations.reply({ conversationId: id, body: text.trim(), lastSeenSeq: seen, ...from }),
     onSuccess: (done) => {
       setText('');
+      setFrom({});
       setMovedNote(false);
       onMoved(done.seq);
       refresh();
@@ -477,7 +482,29 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   return (
     <form onSubmit={submit} className="space-y-2" aria-label={t('replyLabel')}>
       <p className="text-xs text-muted-foreground">{t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}</p>
-      <Textarea aria-label={t('replyLabel')} rows={3} maxLength={CONVERSATION_REPLY_MAX} value={text} placeholder={t('replyPlaceholder')} onChange={(e) => setText(e.target.value)} data-testid="conversation-reply-text" />
+      <DraftPanel
+        detail={detail}
+        onUse={(draft) => {
+          setText(draft.body ?? '');
+          setFrom({ draftId: draft.id });
+        }}
+        onUseSaved={(reply) => {
+          setText(reply.body);
+          setFrom((prev) => ({ ...prev, savedReplyId: reply.id }));
+        }}
+      />
+      <Textarea
+        aria-label={t('replyLabel')}
+        rows={3}
+        maxLength={CONVERSATION_REPLY_MAX}
+        value={text}
+        placeholder={t('replyPlaceholder')}
+        onChange={(e) => {
+          setText(e.target.value);
+          if (e.target.value === '') setFrom({});
+        }}
+        data-testid="conversation-reply-text"
+      />
       {movedNote && <p role="status" className="text-sm text-muted-foreground">{t('movedAfterSend')}</p>}
       {send.error && !movedNote && <ErrorText>{errorMessage(send.error)}</ErrorText>}
       <Button type="submit" size="sm" loading={send.isPending} disabled={text.trim() === ''} data-testid="conversation-send">

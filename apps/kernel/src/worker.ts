@@ -7,7 +7,7 @@ import type { Database, Db } from '@crove/db';
 import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, runAgentWake, sweepProposalNudges, type UsageLimits } from '@crove/kernel';
-import { aiDocumentFailure, type InvoiceReader } from '@crove/agent';
+import { aiDocumentFailure, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
@@ -52,7 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { failUndraftable, requestDueConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -341,6 +341,8 @@ export interface WorkerDeps {
   runtime: Runtime;
   store: BlobStore;
   extractor: InvoiceReader | null;
+  // Vy's reply drafts (CV8, #2310): the model that reads a conversation's text and writes a draft; null runs without AI (a draft asked for is settled as none).
+  conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
@@ -1098,6 +1100,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
       const outcome = await runConversationJob(sendDeps, job.data);
       console.log(`[conversations] ${job.data.action} ${job.data.messageId}: ${outcome}`);
+    });
+  }
+
+  // Vy's reply drafts (CV8, #2310): the model reads a thread's text and a system command records the draft. Only where an AI endpoint is configured;
+  // elsewhere a draft asked for is settled as none by the relay below.
+  const draftWriter = deps.conversationWriter;
+  if (draftWriter) {
+    await boss.work<ConversationDraftJob>(QUEUES.conversationsDraft, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, aiPrice: deps.aiPrice }, job.data);
+      console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
     });
   }
 
@@ -1882,6 +1895,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
                 await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
               }
+              // Vy's draft of a reply (CV8): ids only in the job; with no model here the draft is settled as none at once.
+              if (row.type === 'kernel.conversation.draft_queued') {
+                const draftJob: ConversationDraftJob = { orgId: row.org_id, draftId: String(row.payload.draftId), conversationId: String(row.payload.conversationId) };
+                if (deps.conversationWriter) {
+                  await boss.send(QUEUES.conversationsDraft, draftJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsDraft, draftJob.draftId), retryLimit: 2, retryDelay: 30, retryBackoff: true });
+                } else {
+                  await failUndraftable(deps.runtime, draftJob);
+                }
+              }
               if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
                 const messageId = String(row.payload.messageId);
                 const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
@@ -2115,6 +2137,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
         await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));
       }
+      // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
+      if (deps.conversationWriter) await requestDueConversationDrafts({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.
       await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
     } catch (error) {

@@ -75,7 +75,7 @@ Social, Service and Ads are **groups of one rail app** (working name "Kênh"), e
 
 ### 8. AI drafts and taint
 
-Every inbound item is tainted external text. An agent may write a **draft** into `conversation_draft` (a one-line addition to ADR-0029's write allowlist, flagged for the security review); it never sends, hides, resolves or links a contact. A person presses Send. No auto-reply to messages in v1.
+Every inbound item is tainted external text. A **draft** reply is written by the **system context**, not by an org-chart agent (#2310): a worker job reads the end of the thread, calls the model in `packages/agent` and records the draft through a system command into `conversation_draft` (always tainted, its text only while live). A person asks for one or the relay does for a new conversation, and a person reads it, edits it and presses Send; the draft is text only and nothing of a send, hide, resolve or contact link is reachable from it. ADR-0029's write allowlist is therefore unchanged: an agent context stays refused on every conversation table (the guard `apply_tenant_rls` installs, and `conversation_access`). No auto-reply to messages in v1.
 
 ### 9. Personal data
 

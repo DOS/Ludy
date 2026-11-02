@@ -23,12 +23,18 @@ import {
   CONVERSATION_PREVIEW_CHARS,
   conversationRules,
   zConversationAssign,
+  zConversationAutoDraftSet,
   zConversationAttachmentGet,
   zConversationAttachmentRecord,
   zConversationAttachmentRequest,
   zConversationAttachmentSource,
   zConversationCounted,
   zConversationCounts,
+  zConversationDraftDiscard,
+  zConversationDraftEnqueue,
+  zConversationDraftRecord,
+  zConversationDraftRequest,
+  zConversationDraftSource,
   zConversationEraseConnection,
   zConversationEraseContact,
   zConversationGet,
@@ -49,8 +55,15 @@ import {
   zConversationSandboxComment,
   zConversationSyncRequest,
   zConversationSettle,
+  zSavedReplyId,
+  zSavedReplyInput,
+  zSavedReplyList,
+  zSavedReplyUpdate,
+  SAVED_REPLIES_MAX,
+  CONVERSATION_DRAFT_MESSAGES,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationAttachmentView,
+  type ConversationAutoDraft,
   type ConversationCounted,
   type ConversationErased,
   type ConversationPurged,
@@ -62,6 +75,8 @@ import {
   type ConversationIngested,
   type ConversationListed,
   type ConversationSummary,
+  type SavedReplyListed,
+  type SavedReplyView,
 } from '@crove/kernel-contract';
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
@@ -79,6 +94,7 @@ export const REPLY_QUEUED = 'kernel.conversation.reply_queued';
 export const HIDE_QUEUED = 'kernel.conversation.hide_queued';
 export const SYNC_QUEUED = 'kernel.conversation.sync_queued';
 export const ATTACHMENT_QUEUED = 'kernel.conversation.attachment_queued';
+export const DRAFT_QUEUED = 'kernel.conversation.draft_queued';
 
 const requireUser = (ctx: Pick<CommandContext, 'actor'>): string => {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -479,6 +495,16 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
   // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
   if (event.direction === 'in' && event.attachments && event.attachments.length > 0) await addAttachments(ctx, stored.id, connectionId, event.kind, event.attachments);
+  // A draft answers the message that was last when it was asked for: a newer customer message makes it stale, its text dropped (a new draft may be made).
+  if (event.direction === 'in') {
+    await ctx.trx
+      .updateTable('crove_kernel.conversation_draft')
+      .set({ state: 'stale', body: null, decided_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', conversation.id)
+      .where('state', 'in', ['requested', 'live'])
+      .execute();
+  }
 
   const inbound = event.direction === 'in';
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
@@ -704,8 +730,20 @@ export const conversationGet = defineQuery({
       const g = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['gap_from', 'gap_to']).where('org_id', '=', ctx.orgId).where('id', '=', row.channel_connection_id).executeTakeFirst();
       if (g?.gap_from && g.gap_to && lastAt.getTime() >= g.gap_from.getTime()) gap = { from: g.gap_from.toISOString(), to: g.gap_to.toISOString() };
     }
+    // Vy's draft in play for the last customer message, and the saved replies that answer its words (offered beside it, at most three).
+    const draftRow = await ctx.trx
+      .selectFrom('crove_kernel.conversation_draft')
+      .select(['id', 'state', 'source', 'body'])
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', input.conversationId)
+      .where('state', 'in', ['requested', 'live'])
+      .executeTakeFirst();
+    const lastCustomer = [...messages].find((m) => m.direction === 'in' && m.platform_removed_at === null && m.body.trim() !== '');
+    const suggestions = lastCustomer && lastCustomer.seq === row.last_seq ? matchSavedReplies(lastCustomer.body, await savedRepliesOf(ctx), 3) : [];
     return {
       conversation,
+      draft: draftRow ? { id: draftRow.id, state: draftRow.state as 'requested' | 'live', source: draftRow.source, body: draftRow.state === 'live' ? draftRow.body : null, tainted: true as const } : null,
+      suggestions,
       // Oldest first on screen.
       messages: messages
         .reverse()
@@ -814,8 +852,35 @@ export const conversationReply = defineCommand({
       .where('id', '=', conversation.id)
       .execute();
     await markRead(ctx, conversation.id, me, seq);
+    // The drafts of the thread end with this reply: the one it began from is used (its length, the length sent and the size of the edit are kept, never the
+    // text), any other is discarded; a saved reply it began from is counted.
+    const open = await ctx.trx
+      .selectFrom('crove_kernel.conversation_draft')
+      .select(['id', 'state', 'body'])
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', conversation.id)
+      .where('state', 'in', ['requested', 'live'])
+      .forUpdate()
+      .execute();
+    let usedDraft = false;
+    for (const d of open) {
+      if (d.id === input.draftId && d.state === 'live' && d.body !== null) {
+        usedDraft = true;
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_draft')
+          .set({ state: 'used', body: null, draft_length: d.body.length, final_length: input.body.length, edit_size: editSize(d.body, input.body), decided_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', d.id)
+          .execute();
+      } else {
+        await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', d.id).execute();
+      }
+    }
+    if (input.savedReplyId) {
+      await ctx.trx.updateTable('crove_kernel.saved_reply').set({ use_count: sql<number>`use_count + 1` }).where('org_id', '=', ctx.orgId).where('id', '=', input.savedReplyId).execute();
+    }
     await ctx.emit(REPLY_QUEUED, { conversationId: conversation.id, messageId: message.id, connectionId: conversation.channel_connection_id });
-    ctx.audit({ conversation_id: conversation.id, message_id: message.id, length: input.body.length });
+    ctx.audit({ conversation_id: conversation.id, message_id: message.id, length: input.body.length, ...(usedDraft ? { draft_id: input.draftId } : {}) });
     return { messageId: message.id, seq };
   },
 });
@@ -1861,6 +1926,357 @@ export const conversationAttachmentGet = defineQuery({
   },
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Vy's drafts and the saved replies (CV8, #2310). A draft is written by the system context, never by an org-chart agent: a worker job reads the end of
+// the thread (customer text: tainted), calls the model in packages/agent and records the answer. A member asks for a draft and decides about it; the text
+// and the tainted mark are the system's alone (crove_kernel.conversation_draft_guard). Nothing the customer or Vy wrote is in an audit row, an event or a
+// job: those carry ids, lengths and codes.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The words of a text as saved replies are matched by them: lower case, no diacritics (Vietnamese "đ" is "d"), letters and digits only.
+export function replyWords(text: string): string[] {
+  return text
+    .normalize('NFD')
+    .replace(/\p{M}+/gu, '')
+    .replaceAll('đ', 'd')
+    .replaceAll('Đ', 'd')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w !== '');
+}
+
+// The saved replies that answer a customer's text, best first (at most `limit`): a reply scores one for each of its keywords the text contains as a
+// whole word or phrase (a keyword may be several words: "giờ mở cửa"), and a reply that matches none is not offered.
+export function matchSavedReplies<T extends { keywords: readonly string[]; useCount: number; title: string }>(text: string, replies: readonly T[], limit = 3): T[] {
+  const words = replyWords(text);
+  if (words.length === 0) return [];
+  const padded = ` ${words.join(' ')} `;
+  return replies
+    .map((r) => ({ r, score: new Set(r.keywords.map((k) => replyWords(k).join(' ')).filter((k) => k !== '' && padded.includes(` ${k} `))).size }))
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score || b.r.useCount - a.r.useCount || a.r.title.localeCompare(b.r.title))
+    .slice(0, limit)
+    .map((x) => x.r);
+}
+
+// How far a sent reply is from the draft it began from: the characters between their common beginning and common ending, the larger of the two. A
+// number for later learning; it says nothing of what was written.
+export function editSize(draft: string, sent: string): number {
+  const a = Array.from(draft);
+  const b = Array.from(sent);
+  let start = 0;
+  while (start < a.length && start < b.length && a[start] === b[start]) start++;
+  let end = 0;
+  while (end < a.length - start && end < b.length - start && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+  return Math.max(a.length - start - end, b.length - start - end);
+}
+
+interface SavedReplyRow {
+  id: string;
+  title: string;
+  body: string;
+  keywords: string[];
+  use_count: number;
+}
+const toSavedReplyView = (r: SavedReplyRow): SavedReplyView => ({ id: r.id, title: r.title, body: r.body, keywords: r.keywords, useCount: r.use_count });
+const savedRepliesOf = async (ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<SavedReplyView[]> =>
+  (await ctx.trx.selectFrom('crove_kernel.saved_reply').select(['id', 'title', 'body', 'keywords', 'use_count']).where('org_id', '=', ctx.orgId).orderBy('title').orderBy('id').execute()).map(toSavedReplyView);
+
+const savedReplyNotFound = () => new DomainError('SAVED_REPLY_NOT_FOUND', 404, 'Không tìm thấy câu trả lời mẫu này');
+// A keyword is one short phrase: the empty ones and the repeats (after the matching's own reading) are dropped.
+const cleanKeywords = (keywords: readonly string[]): string[] => [...new Map(keywords.map((k) => [replyWords(k).join(' '), k.trim()] as const).filter(([key]) => key !== '')).values()];
+
+export const conversationSavedReplyList = defineQuery({
+  name: 'kernel.conversation.saved_reply_list',
+  input: zSavedReplyList,
+  access: ALL,
+  handler: async (ctx): Promise<SavedReplyListed> => ({ replies: await savedRepliesOf(ctx) }),
+});
+
+export const conversationSavedReplyCreate = defineCommand({
+  name: 'kernel.conversation.saved_reply_create',
+  input: zSavedReplyInput,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<{ id: string }> => {
+    const me = requireUser(ctx);
+    const have = await ctx.trx.selectFrom('crove_kernel.saved_reply').select(sql<string>`count(*)::text`.as('n')).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    if (Number(have.n) >= SAVED_REPLIES_MAX) throw new DomainError('SAVED_REPLY_LIMIT', 409, `Mỗi tổ chức lưu tối đa ${SAVED_REPLIES_MAX} câu trả lời mẫu`, { max: String(SAVED_REPLIES_MAX) });
+    const row = await ctx.trx
+      .insertInto('crove_kernel.saved_reply')
+      .values({ org_id: ctx.orgId, title: input.title, body: input.body, keywords: cleanKeywords(input.keywords), created_by: me, created_at: ctx.now, updated_at: ctx.now })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    ctx.audit({ saved_reply_id: row.id, title_length: input.title.length, body_length: input.body.length, keywords: input.keywords.length });
+    return { id: row.id };
+  },
+});
+
+export const conversationSavedReplyUpdate = defineCommand({
+  name: 'kernel.conversation.saved_reply_update',
+  input: zSavedReplyUpdate,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.saved_reply', id: input.id }),
+  handler: async (ctx, input): Promise<{ id: string }> => {
+    requireUser(ctx);
+    const res = await ctx.trx
+      .updateTable('crove_kernel.saved_reply')
+      .set({ title: input.title, body: input.body, keywords: cleanKeywords(input.keywords), updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.id)
+      .executeTakeFirst();
+    if (Number(res.numUpdatedRows) === 0) throw savedReplyNotFound();
+    ctx.audit({ saved_reply_id: input.id, title_length: input.title.length, body_length: input.body.length, keywords: input.keywords.length });
+    return { id: input.id };
+  },
+});
+
+export const conversationSavedReplyDelete = defineCommand({
+  name: 'kernel.conversation.saved_reply_delete',
+  input: zSavedReplyId,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.saved_reply', id: input.id }),
+  handler: async (ctx, input): Promise<{ id: string }> => {
+    requireUser(ctx);
+    const res = await ctx.trx.deleteFrom('crove_kernel.saved_reply').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
+    if (Number(res.numDeletedRows) === 0) throw savedReplyNotFound();
+    ctx.audit({ saved_reply_id: input.id });
+    return { id: input.id };
+  },
+});
+
+const autoDraftOf = async (ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<boolean> => {
+  const row = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('auto_draft').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  return row ? row.auto_draft : true;
+};
+
+export const conversationAutoDraft = defineQuery({
+  name: 'kernel.conversation.auto_draft',
+  input: z.strictObject({}),
+  access: ALL,
+  handler: async (ctx): Promise<ConversationAutoDraft> => ({ autoDraft: await autoDraftOf(ctx) }),
+});
+
+// Whether Vy drafts a reply when a new conversation arrives. A customer's message goes to the deployment's AI endpoint for it, so owners and admins
+// decide (a draft a member asks for is theirs). On by default.
+export const conversationAutoDraftSet = defineCommand({
+  name: 'kernel.conversation.auto_draft_set',
+  input: zConversationAutoDraftSet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ADMINS,
+  handler: async (ctx, input): Promise<ConversationAutoDraft> => {
+    const me = requireUser(ctx);
+    await ctx.trx
+      .insertInto('crove_kernel.conversation_setting')
+      .values({ org_id: ctx.orgId, auto_draft: input.autoDraft, set_by: me })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet({ auto_draft: input.autoDraft, set_by: me, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ auto_draft: input.autoDraft });
+    return { autoDraft: input.autoDraft };
+  },
+});
+
+// Asks for a draft of the thread's last customer message: a row requested (no text) and the event the draft queue takes, with ids only. At most one
+// draft is in play per thread, so asking again returns the one that is. Nothing is asked of a thread whose last message is not a customer's.
+async function openDraft(ctx: CommandContext, conversation: ConversationRow, source: 'auto' | 'asked', requestedBy: string | null): Promise<{ draftId: string; queued: boolean }> {
+  const last = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message')
+    .select(['direction', 'platform_removed_at'])
+    .where('org_id', '=', ctx.orgId)
+    .where('conversation_id', '=', conversation.id)
+    .where('seq', '=', conversation.last_seq)
+    .executeTakeFirst();
+  if (!last || last.direction !== 'in' || last.platform_removed_at) throw new DomainError('DRAFT_NOT_NEEDED', 409, 'Chưa có tin nhắn mới của khách để soạn câu trả lời');
+  const open = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select(['id', 'basis_seq']).where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('state', 'in', ['requested', 'live']).executeTakeFirst();
+  if (open && open.basis_seq === conversation.last_seq) return { draftId: open.id, queued: false };
+  if (open) {
+    await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'stale', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', open.id).execute();
+  }
+  const row = await ctx.trx
+    .insertInto('crove_kernel.conversation_draft')
+    .values({
+      org_id: ctx.orgId,
+      conversation_id: conversation.id,
+      channel_connection_id: conversation.channel_connection_id,
+      kind: conversation.kind,
+      basis_seq: conversation.last_seq,
+      source,
+      requested_by: requestedBy,
+      created_at: ctx.now,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  await ctx.emit(DRAFT_QUEUED, { draftId: row.id, conversationId: conversation.id });
+  ctx.audit({ conversation_id: conversation.id, draft_id: row.id, source, basis_seq: conversation.last_seq });
+  return { draftId: row.id, queued: true };
+}
+
+// "Vy soạn": a member asks for a draft of the thread's last customer message. R2 and external like a reply: the call it leads to reaches the AI
+// endpoint. The member who may not read the thread finds none (row-level security).
+export const conversationDraftRequest = defineCommand({
+  name: 'kernel.conversation.draft_request',
+  input: zConversationDraftRequest,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<{ draftId: string; queued: boolean }> => {
+    const me = requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    return openDraft(ctx, conversation, 'asked', me);
+  },
+});
+
+// The relay's own request, for a new conversation (crove_kernel.conversation_draft_due lists them): the same as a member's, unless the org turned
+// drafting off or the thread is no longer new.
+export const conversationDraftEnqueue = defineCommand({
+  name: 'kernel.conversation.draft_enqueue',
+  input: zConversationDraftEnqueue,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<{ draftId: string | null; queued: boolean }> => {
+    requireSystem(ctx);
+    const conversation = (await ctx.trx.selectFrom('crove_kernel.conversation').select(CONVERSATION_COLUMNS).where('org_id', '=', ctx.orgId).where('id', '=', input.conversationId).forUpdate().executeTakeFirst()) as ConversationRow | undefined;
+    if (!conversation || conversation.status !== 'new' || !(await autoDraftOf(ctx))) return { draftId: null, queued: false };
+    try {
+      return await openDraft(ctx, conversation, 'auto', null);
+    } catch (error) {
+      if (error instanceof DomainError && error.code === 'DRAFT_NOT_NEEDED') return { draftId: null, queued: false };
+      throw error;
+    }
+  },
+});
+
+export interface DraftSource {
+  conversationId: string;
+  provider: string;
+  // The most characters the channel takes in one reply.
+  maxChars: number;
+  customerName: string | null;
+  orgName: string | null;
+  // The end of the thread, oldest first: customer text (tainted) and the business's own.
+  messages: Array<{ from: 'customer' | 'business'; text: string }>;
+  // The org's saved replies that answer the customer's last message, best first.
+  savedReplies: Array<{ title: string; body: string }>;
+}
+
+// What the draft job reads for a requested draft: the end of its thread and the saved replies that fit. Null when there is nothing to draft (the draft was
+// decided, the thread went, its channel is not active, or a newer message made it stale), so a job that outlived its row stops. System only.
+export const conversationDraftSource = defineQuery({
+  name: 'kernel.conversation.draft_source',
+  input: zConversationDraftSource,
+  access: 'system',
+  handler: async (ctx, input): Promise<DraftSource | null> => {
+    const draft = await ctx.trx
+      .selectFrom('crove_kernel.conversation_draft')
+      .select(['conversation_id', 'channel_connection_id', 'basis_seq', 'state'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.draftId)
+      .executeTakeFirst();
+    if (!draft || draft.state !== 'requested') return null;
+    const conversation = await ctx.trx
+      .selectFrom('crove_kernel.conversation as c')
+      .leftJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
+      .select(['c.last_seq', 'i.display_name as customer_name'])
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', draft.conversation_id)
+      .executeTakeFirst();
+    const connection = await connectionOf(ctx, draft.channel_connection_id);
+    if (!conversation || conversation.last_seq !== draft.basis_seq || !connection || connection.status !== 'active') return null;
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.conversation_message')
+      .select(['direction', 'body', 'platform_removed_at', 'seq'])
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', draft.conversation_id)
+      .where('seq', '<=', draft.basis_seq)
+      .orderBy('seq', 'desc')
+      .limit(CONVERSATION_DRAFT_MESSAGES)
+      .execute();
+    const messages = rows
+      .filter((m) => !m.platform_removed_at && m.body.trim() !== '')
+      .reverse()
+      .map((m) => ({ from: m.direction === 'in' ? ('customer' as const) : ('business' as const), text: m.body }));
+    const lastCustomer = [...messages].reverse().find((m) => m.from === 'customer');
+    const rules = conversationRules(connection.provider);
+    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
+    const matched = lastCustomer ? matchSavedReplies(lastCustomer.text, await savedRepliesOf(ctx), 5) : [];
+    return {
+      conversationId: draft.conversation_id,
+      provider: connection.provider,
+      maxChars: rules?.replyMax ?? 2000,
+      customerName: conversation.customer_name,
+      orgName: tenant?.name ?? null,
+      messages,
+      savedReplies: matched.map((r) => ({ title: r.title, body: r.body })),
+    };
+  },
+});
+
+// The job's answer: Vy's text (the draft goes live, always tainted) or none (the model gave nothing usable, was refused or failed: the draft is
+// discarded, and the thread is not drafted again for that message). A draft whose thread got a newer message meanwhile is stale and keeps no text.
+export const conversationDraftRecord = defineCommand({
+  name: 'kernel.conversation.draft_record',
+  input: zConversationDraftRecord,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation_draft', id: input.draftId }),
+  handler: async (ctx, input): Promise<{ recorded: boolean }> => {
+    requireSystem(ctx);
+    const draft = await ctx.trx
+      .selectFrom('crove_kernel.conversation_draft')
+      .select(['conversation_id', 'basis_seq', 'state'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.draftId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!draft || draft.state !== 'requested') return { recorded: false };
+    const conversation = await ctx.trx.selectFrom('crove_kernel.conversation').select('last_seq').where('org_id', '=', ctx.orgId).where('id', '=', draft.conversation_id).executeTakeFirst();
+    const current = conversation !== undefined && conversation.last_seq === draft.basis_seq;
+    if (input.outcome === 'written' && current) {
+      await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'live', body: input.body, written_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
+      ctx.audit({ draft_id: input.draftId, outcome: 'written', length: input.body.length });
+      return { recorded: true };
+    }
+    await ctx.trx
+      .updateTable('crove_kernel.conversation_draft')
+      .set({ state: input.outcome === 'written' ? 'stale' : 'discarded', body: null, decided_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.draftId)
+      .execute();
+    ctx.audit({ draft_id: input.draftId, outcome: input.outcome === 'written' ? 'stale' : 'none', ...(input.outcome === 'none' ? { code: input.code } : {}) });
+    return { recorded: true };
+  },
+});
+
+// A member sets a draft aside: a draft that is live or still asked for is discarded and its text dropped. A draft already decided is left as it is.
+export const conversationDraftDiscard = defineCommand({
+  name: 'kernel.conversation.draft_discard',
+  input: zConversationDraftDiscard,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation_draft', id: input.draftId }),
+  handler: async (ctx, input): Promise<{ discarded: boolean }> => {
+    requireUser(ctx);
+    const draft = await ctx.trx.selectFrom('crove_kernel.conversation_draft').select('state').where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).forUpdate().executeTakeFirst();
+    if (!draft) throw new DomainError('DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp này');
+    if (draft.state !== 'live' && draft.state !== 'requested') return { discarded: false };
+    await ctx.trx.updateTable('crove_kernel.conversation_draft').set({ state: 'discarded', body: null, decided_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.draftId).execute();
+    ctx.audit({ draft_id: input.draftId });
+    return { discarded: true };
+  },
+});
+
+
 export const conversationCommands = [
   conversationIngest,
   conversationReply,
@@ -1888,5 +2304,13 @@ export const conversationCommands = [
   conversationSyncRequest,
   conversationAttachmentRequest,
   conversationAttachmentRecord,
+  conversationSavedReplyCreate,
+  conversationSavedReplyUpdate,
+  conversationSavedReplyDelete,
+  conversationAutoDraftSet,
+  conversationDraftRequest,
+  conversationDraftEnqueue,
+  conversationDraftRecord,
+  conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet];
+export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];
