@@ -324,7 +324,7 @@ suite('the Inbox: routing a new conversation, the replying marker, availability,
       const today = (user: string) => query<TodayItem[]>(o, user, 'kernel.conversation.today', {});
       const owner = await today(o.owner);
       expect(zTodayItems.safeParse(owner).success).toBe(true);
-      expect(owner[0]).toMatchObject({ kind: 'message', app: 'conversations', id: 'unanswered', count: 2, title: { key: 'conversations.unanswered' }, href: '/social/inbox?status=new' });
+      expect(owner[0]).toMatchObject({ kind: 'message', app: 'conversations', id: 'unanswered', count: 2, title: { key: 'conversations.unanswered', params: { count: 2 } }, href: '/social/inbox?status=new' });
       expect(owner.slice(1).map((i) => i.id).sort()).toEqual([`conversation:${t1}`, `conversation:${t2}`].sort());
       expect(owner.find((i) => i.id === `conversation:${t1}`)).toMatchObject({ title: { key: 'conversations.oneUnanswered', params: { provider: 'sandbox' } }, href: `/social/inbox?c=${t1}` });
       // The comment thread only for a member with no desk role, both for the desk member; none for a viewer.

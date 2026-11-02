@@ -177,8 +177,12 @@ export const en = {
         dueTitled: '“{title}” is scheduled in the next 24 hours and is still waiting for approval',
         dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled in the next 24 hours and still waiting for approval',
       },
+      conversations: {
+        unanswered: '{count, plural, one {# customer message is} other {# customer messages are}} waiting for a reply',
+        oneUnanswered: '{provider, select, facebook_page {A customer on Facebook is} instagram {A customer on Instagram is} zalo_oa {A customer on Zalo is} other {A customer is}} waiting for a reply',
+      },
       ads: {
-        paceOrg: 'At this pace the org passes its monthly spend cap',
+        paceOrg:'At this pace the org passes its monthly spend cap',
         paceAccount: 'At this pace {account} passes its monthly spend cap',
         dayOrgDaily: 'The org spent {ratio} times its share of the daily spend cap on {day}',
         dayOrgMonthly: 'The org spent {ratio} times its share of the monthly spend cap on {day}',

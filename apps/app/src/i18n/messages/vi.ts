@@ -175,8 +175,12 @@ export const vi = {
         dueTitled: '“{title}” lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
         dueMore: '{count, plural, other {# bài khác}} lên lịch trong 24 giờ tới mà vẫn chưa được duyệt',
       },
+      conversations: {
+        unanswered: '{count, plural, other {# tin nhắn của khách}} đang chờ bạn trả lời',
+        oneUnanswered: '{provider, select, facebook_page {Một khách trên Facebook} instagram {Một khách trên Instagram} zalo_oa {Một khách trên Zalo} other {Một khách}} đang chờ bạn trả lời',
+      },
       ads: {
-        paceOrg: 'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
+        paceOrg:'Với tốc độ này, tổ chức sẽ vượt hạn mức chi tiêu tháng',
         paceAccount: 'Với tốc độ này, {account} sẽ vượt hạn mức chi tiêu tháng',
         dayOrgDaily: 'Tổ chức đã chi gấp {ratio} lần phần của một ngày theo hạn mức ngày vào {day}',
         dayOrgMonthly: 'Tổ chức đã chi gấp {ratio} lần phần của một ngày theo hạn mức tháng vào {day}',

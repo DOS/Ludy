@@ -1601,7 +1601,7 @@ export const conversationToday = defineQuery({
     if (count === 0) return [];
     const { rows } = await sql<{ id: string; provider: string; reply_window_until: Date | null }>`
       SELECT c.id, ch.provider, c.reply_window_until ${waiting} ORDER BY c.last_inbound_at ASC NULLS LAST, c.id LIMIT ${TODAY_CONVERSATIONS}`.execute(ctx.trx);
-    const items: TodayItem[] = [{ kind: 'message', app: 'conversations', id: 'unanswered', title: { key: 'conversations.unanswered' }, count, href: '/social/inbox?status=new' }];
+    const items: TodayItem[] = [{ kind: 'message', app: 'conversations', id: 'unanswered', title: { key: 'conversations.unanswered', params: { count } }, count, href: '/social/inbox?status=new' }];
     for (const r of rows) {
       items.push({
         kind: 'message',
