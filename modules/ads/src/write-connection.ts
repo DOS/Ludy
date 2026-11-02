@@ -62,16 +62,18 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
 // connected again for reading. Two ways to know a token is one.
 // - Its recorded scopes hold a spend permission (it was accepted while the switch was on). A connection that was made but not linked
 //   (the sign-in's link was refused or never ran) is found by its scopes too.
-// - The org has made a write connection of a real platform at some time. A Meta permission belongs to the pair of the app and the
-//   person, and with the one app that serves reading and writing every reading token of the person who granted it holds the permission,
-//   whatever scopes were recorded when the token was made. Who that person is cannot be told reliably afterwards (a second owner
-//   replaced them on the account, the account was removed, Meta did not name the person), so the close fails safe: every reading
-//   connection of that platform is closed, the ones of people who never granted it come back with one reconnect, and the person who did
-//   must first remove the app in the platform's settings (the at-platform revoke is W2's). A write connection's row stays after it is
-//   closed or its account is removed, so the evidence does not go with the account.
+// - Running ads was on, or the org has made a write connection of a real platform at some time. A Meta permission belongs to the pair
+//   of the app and the person, and with the one app that serves reading and writing every reading token of the person who granted
+//   it holds the permission, whatever scopes were recorded when the token was made. Who that person is cannot be told reliably
+//   afterwards (a second owner replaced them on the account, the account was removed, Meta did not name the person), and a consent
+//   at Meta may never have reached Ludy at all (a switch-off between the dialog and its callback, an expired state, a failed
+//   exchange, a closed tab), so the close fails safe: every reading connection of that platform is closed, the ones of people who
+//   never granted it come back with one reconnect, and the person who did must first remove the app in the platform's settings (the
+//   at-platform revoke is W2's). A write connection's row stays after it is closed or its account is removed, so the evidence does
+//   not go with the account; a switch that was on is evidence enough by itself, since the owner could have consented while it was.
 // It is the caller who closes them: the kernel's disconnect.
 const SHARED_APP_WRITE_PROVIDERS = AD_WRITE_PROVIDERS.filter((provider) => provider !== 'sandboxwrite_ads');
-export async function closeSpendCapableReadConnections(ctx: CommandContext): Promise<number> {
+export async function closeSpendCapableReadConnections(ctx: CommandContext, options: { switchWasOn: boolean }): Promise<number> {
   const spend = [...ADS_SPEND_SCOPES];
   const madeWrite = await ctx.trx
     .selectFrom('crove_kernel.channel_connection')
@@ -80,7 +82,7 @@ export async function closeSpendCapableReadConnections(ctx: CommandContext): Pro
     .where('provider', 'in', SHARED_APP_WRITE_PROVIDERS)
     .limit(1)
     .executeTakeFirst();
-  const sharedApp = madeWrite ? SHARED_APP_WRITE_PROVIDERS.map((provider) => READ_PROVIDER_OF_WRITE[provider]) : [];
+  const sharedApp = madeWrite || options.switchWasOn ? SHARED_APP_WRITE_PROVIDERS.map((provider) => READ_PROVIDER_OF_WRITE[provider]) : [];
   const open = await ctx.trx
     .selectFrom('crove_kernel.channel_connection as c')
     .select('c.id')

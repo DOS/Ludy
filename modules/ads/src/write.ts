@@ -362,8 +362,9 @@ export const adsWriteDisable = defineCommand({
     // No sealed token that can change campaigns stays: each write connection is closed by the kernel's own command (one audit row each).
     const connectionsClosed = await closeWriteConnections(ctx, {});
     // And no reading connection whose token can change campaigns either (W0b-2): by its recorded scopes, and every Meta reading
-    // connection once the org has made a Meta write connection, since a Meta permission is the person's for the app.
-    const readConnectionsClosed = await closeSpendCapableReadConnections(ctx);
+    // connection once running ads was on or the org has made a Meta write connection, since a Meta permission is the person's for the
+    // app and a consent at Meta may never have reached Ludy.
+    const readConnectionsClosed = await closeSpendCapableReadConnections(ctx, { switchWasOn: setting.write_enabled });
     ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed, wasEnabled: setting.write_enabled });
     return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed };
   },
