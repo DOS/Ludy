@@ -25,6 +25,8 @@ import {
   zConversationAssign,
   zConversationCounted,
   zConversationCounts,
+  zConversationEraseConnection,
+  zConversationEraseContact,
   zConversationGet,
   zConversationHide,
   zConversationId,
@@ -33,10 +35,16 @@ import {
   zConversationList,
   zConversationMarkRead,
   zConversationNoteAdd,
+  zConversationPurgeExpired,
   zConversationReply,
+  zConversationRetentionSet,
   zConversationSandboxComment,
   zConversationSettle,
+  CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationCounted,
+  type ConversationErased,
+  type ConversationPurged,
+  type ConversationRetention,
   type ConversationDetail,
   type ConversationEvent,
   type ConversationKind,
@@ -202,6 +210,9 @@ export const conversationIngest = defineCommand({
   },
 });
 
+const customerLock = (ctx: CommandContext, provider: string, externalUserId: string) =>
+  sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.conversation.customer:${ctx.orgId}:${provider}:${externalUserId}`}, 0))`.execute(ctx.trx);
+
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
@@ -222,6 +233,21 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     }
     return 'duplicates';
   }
+  // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
+  // that was in flight is checked against the tombstone after the erasure commits, not before it.
+  await customerLock(ctx, provider, event.contact.id);
+  // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
+  // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
+  const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
+  const tomb = await ctx.trx
+    .selectFrom('crove_kernel.conversation_identity')
+    .select('erased_at')
+    .where('org_id', '=', ctx.orgId)
+    .where('provider', '=', provider)
+    .where('external_user_id', '=', `erased:${hashed.rows[0]?.h ?? ''}`)
+    .executeTakeFirst();
+  if (tomb?.erased_at && new Date(event.at).getTime() <= tomb.erased_at.getTime()) return 'ignored';
+
   // A removal of a message never seen: a blank tombstone takes the message's id, so the add that arrives later (the platform does not
   // order its notices) finds it and never stores the body.
   if (event.removed) {
@@ -235,16 +261,16 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .where('external_thread_id', '=', event.threadId)
         .forUpdate()
         .executeTakeFirst()) as ConversationRow | undefined;
+    const who = await ctx.trx
+      .insertInto('crove_kernel.conversation_identity')
+      .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
+      .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
+      .returning(['id'])
+      .executeTakeFirstOrThrow();
     let thread = await findThread();
     if (!thread) {
       // No thread yet: it is made, already resolved (a thread of one removed message needs no answer), so the add that arrives later
       // finds the tombstone and the body is never stored. A later real message reopens it as usual.
-      const who = await ctx.trx
-        .insertInto('crove_kernel.conversation_identity')
-        .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
-        .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({ updated_at: ctx.now }))
-        .returning(['id'])
-        .executeTakeFirstOrThrow();
       await ctx.trx
         .insertInto('crove_kernel.conversation')
         .values({
@@ -283,6 +309,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         send_state: event.direction === 'in' ? null : 'sent',
         tainted: event.direction === 'in',
         platform_removed_at: ctx.now,
+        author_identity_id: event.direction === 'in' ? who.id : null,
       })
       .execute();
     await ctx.trx.updateTable('crove_kernel.conversation').set({ last_seq: next, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', thread.id).execute();
@@ -404,6 +431,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       received_at: ctx.now,
       author_kind: event.direction === 'in' ? 'contact' : 'system',
       body: event.text,
+      author_identity_id: event.direction === 'in' ? identity.id : null,
       send_state: event.direction === 'in' ? null : 'sent',
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
@@ -569,12 +597,19 @@ export const conversationGet = defineQuery({
     if (!row) throw notFound();
     const messages = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
-      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
+      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'author_identity_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
       .orderBy('seq', 'desc')
       .limit(CONVERSATION_MESSAGES_MAX)
       .execute();
+    // Who wrote each customer message: in a comment thread the replies are other people's, not the thread's contact.
+    const authorIds = [...new Set(messages.map((m) => m.author_identity_id).filter((id): id is string => id !== null))];
+    const authors = new Map<string, { name: string | null; tail: string }>();
+    if (authorIds.length > 0) {
+      const found = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['id', 'display_name', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
+      for (const a of found) authors.set(a.id, { name: a.display_name, tail: a.external_user_id.slice(-4) });
+    }
     const notes = await ctx.trx
       .selectFrom('crove_kernel.conversation_note')
       .select(['id', 'author_user_id', 'body', 'created_at'])
@@ -613,6 +648,8 @@ export const conversationGet = defineQuery({
           direction: m.direction as 'in' | 'out',
           authorKind: m.author_kind as 'contact' | 'member' | 'system',
           authorUserId: m.author_user_id,
+          authorName: m.author_identity_id ? (authors.get(m.author_identity_id)?.name ?? null) : null,
+          authorTail: m.author_identity_id ? (authors.get(m.author_identity_id)?.tail ?? null) : null,
           body: m.body,
           attachments: m.attachments,
           sentAt: m.sent_at.toISOString(),
@@ -1271,6 +1308,184 @@ export const conversationSandboxComment = defineCommand({
   },
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Retention, erasure and purge (CV6, #2305). Nothing here reads a message out: the audit rows, the counts returned and the logs
+// carry ids and numbers only.
+// ---------------------------------------------------------------------------------------------------------------------
+
+async function retentionOf(ctx: QueryContext | CommandContext): Promise<ConversationRetention> {
+  const row = await ctx.trx.selectFrom('crove_kernel.conversation_setting').select('retention_months').where('org_id', '=', ctx.orgId).executeTakeFirst();
+  if (!row) return { retentionMonths: CONVERSATION_RETENTION_DEFAULT_MONTHS as 24, isDefault: true };
+  const months = row.retention_months;
+  return { retentionMonths: months === 6 || months === 12 || months === 24 ? months : null, isDefault: false };
+}
+
+export const conversationRetention = defineQuery({
+  name: 'kernel.conversation.retention',
+  input: z.strictObject({}),
+  access: ALL,
+  handler: async (ctx): Promise<ConversationRetention> => retentionOf(ctx),
+});
+
+// How long the org keeps a thread after its last message (6, 12 or 24 months), or until a person deletes it. The daily retention job
+// deletes the threads past it. Shortening it deletes the older threads at the next run, so it is R2 and for owners and admins.
+export const conversationRetentionSet = defineCommand({
+  name: 'kernel.conversation.retention_set',
+  input: zConversationRetentionSet,
+  risk: 'R2',
+  sideEffect: 'internal',
+  access: ADMINS,
+  handler: async (ctx, input): Promise<ConversationRetention> => {
+    const me = requireUser(ctx);
+    await ctx.trx
+      .insertInto('crove_kernel.conversation_setting')
+      .values({ org_id: ctx.orgId, retention_months: input.retentionMonths, set_by: me })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet({ retention_months: input.retentionMonths, set_by: me, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ retention_months: input.retentionMonths });
+    return { retentionMonths: input.retentionMonths, isDefault: false };
+  },
+});
+
+// Deletes threads and what hangs on them (messages, notes and read marks go with a thread by the foreign keys). Returns counts.
+async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>): Promise<{ threads: number; messages: number }> {
+  const { rows } = await sql<{ threads: string; messages: string }>`
+    WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
+    SELECT (SELECT count(*) FROM gone)::text AS threads,
+           (SELECT count(*) FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id IN (SELECT id FROM gone))::text AS messages`.execute(ctx.trx);
+  return { threads: Number(rows[0]?.threads ?? 0), messages: Number(rows[0]?.messages ?? 0) };
+}
+
+// Identities left with no thread: nothing the org holds names them any more.
+async function deleteOrphanIdentities(ctx: CommandContext): Promise<number> {
+  const { rows } = await sql<{ n: string }>`
+    WITH gone AS (
+      DELETE FROM crove_kernel.conversation_identity i
+      WHERE i.org_id = ${ctx.orgId}::uuid AND i.erased_at IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation c WHERE c.org_id = i.org_id AND c.identity_id = i.id)
+        -- A person who only replied in other customers' threads is still named by what they wrote there.
+        AND NOT EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = i.org_id AND m.author_identity_id = i.id)
+      RETURNING i.id)
+    SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
+  return Number(rows[0]?.n ?? 0);
+}
+
+// Erases one customer at the org's request (a data subject asking, or the org's own decision): every thread of the person whose
+// thread this is, with its messages, notes and read marks, and the person's identity. A comment thread that others replied in goes
+// whole, since a reply is stored with its thread, not with its author. Irreversible, so R3 (a fresh second factor), owners and
+// admins only. If the customer writes again, a new thread opens: erasing is not blocking. A copy of a message in a backup is
+// outside this command's reach and goes with the backup's own retention (the runbook says so).
+export const conversationEraseContact = defineCommand({
+  name: 'kernel.conversation.erase_contact',
+  input: zConversationEraseContact,
+  risk: 'R3',
+  sideEffect: 'irreversible',
+  access: ADMINS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<ConversationErased> => {
+    requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    // The person: the thread's own customer, or the author of the message named (a customer who only replied in this thread).
+    let subject = conversation.identity_id;
+    if (input.messageId) {
+      const m = await ctx.trx
+        .selectFrom('crove_kernel.conversation_message')
+        .select('author_identity_id')
+        .where('org_id', '=', ctx.orgId)
+        .where('conversation_id', '=', conversation.id)
+        .where('id', '=', input.messageId)
+        .executeTakeFirst();
+      if (!m?.author_identity_id) throw new DomainError('MESSAGE_NOT_FOUND', 404, 'Không tìm thấy tin của khách này');
+      subject = m.author_identity_id;
+    }
+    // The customer's lock first: an intake of theirs in flight finishes before this reads or deletes, and one that starts later sees the tombstone.
+    const subjectRow = subject
+      ? await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['provider', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', '=', subject).executeTakeFirst()
+      : undefined;
+    if (subjectRow) await customerLock(ctx, subjectRow.provider, subjectRow.external_user_id);
+    const filter = subject ? sql`c.identity_id = ${subject}::uuid` : sql`c.id = ${conversation.id}::uuid`;
+    const erased = await deleteThreads(ctx, filter);
+    if (subject) {
+      // What the customer wrote in other people's comment threads goes too, wherever it is (a reply is stored with the thread, not with
+      // its author).
+      const others = await sql<{ n: string }>`
+        WITH gone AS (DELETE FROM crove_kernel.conversation_message m WHERE m.org_id = ${ctx.orgId}::uuid AND m.author_identity_id = ${subject}::uuid RETURNING 1)
+        SELECT count(*)::text AS n FROM gone`.execute(ctx.trx);
+      erased.messages += Number(others.rows[0]?.n ?? 0);
+      // The identity stays as a tombstone: no name, no party, and no platform id, only a keyed hash of it, so the intake still recognises
+      // the customer (and refuses anything dated at or before now) while a copy of the database or the export cannot name them.
+      const who = subjectRow;
+      if (who) {
+        const h = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${who.provider}, ${who.external_user_id}) AS h`.execute(ctx.trx);
+        const key = `erased:${h.rows[0]?.h ?? ''}`;
+        // A customer erased before, who came back and is erased again within the tombstone's 30 days: the old tombstone is replaced by
+        // this one (the key is unique), which carries the later erasure time.
+        await ctx.trx.deleteFrom('crove_kernel.conversation_identity').where('org_id', '=', ctx.orgId).where('external_user_id', '=', key).where('id', '<>', subject).execute();
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_identity')
+          .set({ display_name: null, party_id: null, external_user_id: key, erased_at: ctx.now, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', subject)
+          .execute();
+      }
+    }
+    ctx.audit({ threads: erased.threads, messages: erased.messages, kind: conversation.kind });
+    return erased;
+  },
+});
+
+// The retention purge of the org in context (the worker, as the system): the threads whose last message is past the org's
+// retention, oldest first, at most `limit` a call, and the identities left with no thread. `more` says the batch was full, so the
+// job calls again. It deletes nothing of an org that keeps threads (retention NULL), and it never touches a thread of another org.
+export const conversationPurgeExpired = defineCommand({
+  name: 'kernel.conversation.purge_expired',
+  input: zConversationPurgeExpired,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<ConversationPurged> => {
+    // An erase tombstone older than 30 days is longer than any redelivery: its identity goes if no thread names it.
+    await sql`UPDATE crove_kernel.conversation_identity SET erased_at = NULL WHERE org_id = ${ctx.orgId}::uuid AND erased_at < ${ctx.now}::timestamptz - interval '30 days'`.execute(ctx.trx);
+    const retention = await retentionOf(ctx);
+    if (retention.retentionMonths === null) {
+      const left = await deleteOrphanIdentities(ctx);
+      if (left > 0) ctx.audit({ threads: 0, messages: 0, identities: left, retention_months: null });
+      return { threads: 0, messages: 0, identities: left, more: false };
+    }
+    const { rows } = await sql<{ id: string }>`
+      SELECT c.id FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid
+        AND COALESCE(c.last_message_at, c.opened_at) < ${ctx.now}::timestamptz - pg_catalog.make_interval(months => ${retention.retentionMonths}::int)
+      ORDER BY COALESCE(c.last_message_at, c.opened_at), c.id LIMIT ${input.limit}
+      FOR UPDATE SKIP LOCKED`.execute(ctx.trx);
+    if (rows.length === 0) {
+      const left = await deleteOrphanIdentities(ctx);
+      if (left > 0) ctx.audit({ threads: 0, messages: 0, identities: left, retention_months: retention.retentionMonths });
+      return { threads: 0, messages: 0, identities: left, more: false };
+    }
+    const erased = await deleteThreads(ctx, sql`c.id = ANY (${rows.map((r) => r.id)}::uuid[])`);
+    const identities = await deleteOrphanIdentities(ctx);
+    ctx.audit({ threads: erased.threads, messages: erased.messages, identities, retention_months: retention.retentionMonths });
+    return { ...erased, identities, more: rows.length >= input.limit };
+  },
+});
+
+// Erases every conversation of one connection of the org in context and the identities left with no thread (the worker, as the
+// system, on Meta's data deletion callback: the person who granted the connection asked for their data to go). Idempotent.
+export const conversationEraseConnection = defineCommand({
+  name: 'kernel.conversation.erase_connection',
+  input: zConversationEraseConnection,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<ConversationPurged> => {
+    const erased = await deleteThreads(ctx, sql`c.channel_connection_id = ${input.connectionId}::uuid`);
+    const identities = await deleteOrphanIdentities(ctx);
+    ctx.audit({ connection_id: input.connectionId, threads: erased.threads, messages: erased.messages, identities });
+    return { ...erased, identities, more: false };
+  },
+});
+
 export const conversationCommands = [
   conversationIngest,
   conversationReply,
@@ -1287,5 +1502,9 @@ export const conversationCommands = [
   conversationLinkContact,
   conversationMarkRead,
   conversationSandboxComment,
+  conversationRetentionSet,
+  conversationEraseContact,
+  conversationPurgeExpired,
+  conversationEraseConnection,
 ];
-export const conversationQueries = [conversationList, conversationCounts, conversationGet];
+export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention];

@@ -1,6 +1,6 @@
 // Nothing slides, zooms, fades or pulses for a user whose system asks for reduced motion (#1605; DESIGN.md §7). A
 // recorder in every page looks at the running animations and transitions every few milliseconds and notes the ones
-// that last longer than a frame, the spinner aside (it is the only sign that work is running) and so are scroll-linked
+// that last longer than a frame, the spinners aside, the standalone one and the one of a loading Button (they are the only sign that work is running) and so are scroll-linked
 // fades, which follow the user's own scroll. The walk loads every sidebar screen and hovers its controls, and opens the
 // command palette and the account menu once. A probe, an element given a one-second transition, shows the recorder
 // works: with the setting the stylesheet cuts it short and nothing is noted, without it the recorder notes it. Its own
@@ -23,7 +23,7 @@ function recordMotion(frameMs: number): void {
       const duration = typeof timing?.duration === 'number' ? timing.duration : 0;
       if (duration <= frameMs && timing?.iterations !== Infinity) continue;
       const target = (animation.effect as KeyframeEffect | null)?.target;
-      if (target?.closest('[data-slot="spinner"]')) continue;
+      if (target?.closest('[data-slot="spinner"], [data-slot="button-spinner"]')) continue;
       const what = animation instanceof CSSAnimation ? animation.animationName : animation instanceof CSSTransition ? animation.transitionProperty : 'script';
       seen.add(`${what} (${Math.round(duration)} ms) on ${target?.tagName.toLowerCase()} "${(target?.getAttribute('class') ?? '').slice(0, 60)}"`);
     }

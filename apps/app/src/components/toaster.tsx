@@ -81,7 +81,7 @@ export function Toaster() {
             if (!e.currentTarget.matches(':hover')) resumeToast(item.id);
           }}
           className={cn(
-            'pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover px-4 py-3 text-sm text-popover-foreground shadow-md',
+            'pointer-events-auto flex items-start gap-3 rounded-lg border bg-popover px-4 py-3 text-sm text-popover-foreground',
             'motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-2',
             item.tone === 'error' && 'border-destructive/40',
           )}

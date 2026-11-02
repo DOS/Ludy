@@ -100,7 +100,7 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'name',
     handling: 'keep_record',
     reason:
-      'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact) and the retention purge of the conversation core remove it, both built in CV6 (#2305); until then it goes with the org (offboarding), and no live channel takes a real customer before CV6 is accepted',
+      'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
   },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
