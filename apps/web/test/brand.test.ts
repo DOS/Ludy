@@ -75,9 +75,10 @@ describe('brand on the landing page (#1683)', () => {
   });
 
   it('presents the AI assistant as Vy in both languages', () => {
-    expect(vi.hero.title).toBe('Vy, trợ lý AI, làm việc dưới quyền của bạn.');
-    expect(en.hero.title).toBe('Vy, your AI assistant, works under your authority.');
+    expect(vi.hero.title).toBe('Hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn');
+    expect(en.hero.title).toBe('The all-in-one business OS where AI agents are your coworkers');
     for (const dict of [vi, en]) {
+      expect(dict.hero.lead, dict.lang).toMatch(/^Vy /);
       expect(dict.trust.title, dict.lang).toMatch(/^Vy /);
       expect(dict.faq.items[1]?.a, dict.lang).toMatch(/\bVy\b/);
       expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bVy\b/);

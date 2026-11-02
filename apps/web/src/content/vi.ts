@@ -5,9 +5,9 @@ export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const vi = {
   lang: 'vi',
   meta: {
-    title: 'Ludy: hoá đơn về là có bút toán, bạn chỉ cần duyệt',
+    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
     description:
-      'Business OS mã nguồn mở cho người làm chủ và doanh nghiệp nhỏ. Ludy đọc hoá đơn điện tử, kiểm tra từng con số, đề xuất bút toán TT133 và chỉ ghi sổ khi có người duyệt. Có thêm ghi chú, việc cần làm và lịch hẹn.',
+      'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.',
   },
   nav: {
     label: 'Điều hướng chính',
@@ -26,8 +26,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Vy, trợ lý AI, làm việc dưới quyền của bạn.',
-    lead: 'Vy làm việc qua các agent AI, mỗi agent là một vị trí trong sơ đồ tổ chức: có người quản lý, ngân sách tháng, giới hạn rủi ro và nút dừng. Agent Kế toán đọc hoá đơn và soạn sẵn bút toán; chỉ người có thẩm quyền mới duyệt và ghi sổ.',
+    title: 'Hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
+    lead: 'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.',
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',
@@ -579,7 +579,7 @@ export const vi = {
   },
   footer: {
     navLabel: 'Liên kết chân trang',
-    tagline: 'Business OS mã nguồn mở cho người làm chủ và doanh nghiệp nhỏ. Việt Nam trước.',
+    tagline: 'Hệ điều hành doanh nghiệp mã nguồn mở cho người làm chủ và doanh nghiệp nhỏ. Việt Nam trước.',
     license: 'Mã nguồn mở theo giấy phép AGPL-3.0',
     github: 'GitHub',
     docs: 'Tài liệu',
