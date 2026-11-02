@@ -2034,6 +2034,14 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => runtime.execute('finance.misa_goods_code.remove', input, { actor, orgId })),
       ),
     },
+    bankPartyRules: {
+      list: os.bankPartyRules.list.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank_party_rules.list', input ?? {}, { actor, orgId })),
+      ),
+      remove: os.bankPartyRules.remove.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
+      ),
+    },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.categorization_rules.list', input ?? {}, { actor, orgId })),

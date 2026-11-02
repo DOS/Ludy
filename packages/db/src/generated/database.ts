@@ -39,6 +39,7 @@ export interface CroveFinanceSchema {
   'crove_finance.bank_feed_account': FinanceBankFeedAccountTable;
   'crove_finance.bank_feed_listed_account': FinanceBankFeedListedAccountTable;
   'crove_finance.bank_line': FinanceBankLineTable;
+  'crove_finance.bank_party_rule': FinanceBankPartyRuleTable;
   'crove_finance.cash_voucher': FinanceCashVoucherTable;
   'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
   'crove_finance.chart': FinanceChartTable;
@@ -509,6 +510,20 @@ export interface FinanceBankLineTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+}
+
+/** crove_finance.bank_party_rule */
+export interface FinanceBankPartyRuleTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  key_hash: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  confirmed_by: ColumnType<string | null, string | null, NotGranted>;
+  confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  source_voucher_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.cash_voucher */

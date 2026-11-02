@@ -570,6 +570,19 @@ export const vi = {
     reset: 'Dùng lại mặc định',
     resetOf: 'Bỏ mã đã đặt của tài khoản {code}',
   },
+  // Learned bank-line rules in Settings (#2402).
+  bankRules: {
+    title: 'Quy tắc khớp dòng sao kê đã học',
+    intro: 'Khi bạn tự chọn đối tượng cho chứng từ của một dòng sao kê rồi duyệt, {brand} nhớ cách nội dung chuyển khoản trỏ tới đối tượng đó và gợi ý nó ở lần sau. Chỉ lưu mã băm của các từ chính, không lưu nội dung. Quy tắc chỉ là gợi ý: chứng từ vẫn do người dùng lập và duyệt.',
+    empty: 'Chưa có quy tắc nào. Quy tắc sẽ có khi bạn tự chọn đối tượng cho chứng từ của một dòng sao kê rồi duyệt.',
+    forParty: 'Nội dung chuyển khoản như lần trước thì khớp với {party}',
+    learnedFrom: 'Do {name} xác nhận ngày {date}, khi duyệt chứng từ {code}',
+    formerMember: 'người đã rời tổ chức',
+    remove: 'Xóa',
+    removeOf: 'Xóa quy tắc khớp {party}',
+    confirmRemove: 'Xóa quy tắc này? Từ nay dòng sao kê mới sẽ không được gợi ý theo quy tắc này nữa.',
+    confirm: 'Xóa quy tắc',
+  },
   accountRules: {
     title: 'Quy tắc định khoản đã học',
     intro:
@@ -2452,6 +2465,7 @@ export const vi = {
         taxCodeInvoice: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản, và số tiền bằng hóa đơn {number}',
         taxCode: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản',
         invoice: 'Gợi ý khớp: số hóa đơn {number} và số tiền có trong nội dung chuyển khoản',
+        learned: 'Gợi ý khớp: theo quy tắc đã học từ lần duyệt trước',
         name: 'Gợi ý khớp: tên đối tượng có trong nội dung chuyển khoản',
         balance: 'Gợi ý khớp: số tiền bằng công nợ còn mở của đối tượng',
         none: 'Chưa rõ cách khớp',
@@ -2734,6 +2748,7 @@ export const vi = {
     reasons: {
       tax_code: 'mã số thuế có trong nội dung chuyển khoản',
       invoice: 'hóa đơn số {number} đúng số tiền này có trong nội dung chuyển khoản',
+      learned: 'theo quy tắc đã học từ lần duyệt trước',
       name: 'tên có trong nội dung chuyển khoản',
       balance: 'số dư công nợ bằng đúng số tiền này',
     },
@@ -7250,6 +7265,12 @@ export const vi = {
         record_pull: 'Ghi một lần lấy giao dịch của tài khoản nguồn ngân hàng',
         map: 'Liên kết tài khoản của nguồn giao dịch ngân hàng',
         unmap: 'Gỡ liên kết tài khoản của nguồn giao dịch ngân hàng',
+      },
+      bank_party_rule: {
+        remove: 'Xóa quy tắc khớp dòng sao kê',
+      },
+      bank_party_rules: {
+        list: 'Xem các quy tắc khớp dòng sao kê',
       },
       categorization_rule: {
         create: 'Thêm quy tắc định khoản',

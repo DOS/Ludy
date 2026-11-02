@@ -6,8 +6,9 @@
 import type { BankLookWhy, BankMatchReason } from '@crove/kernel-contract';
 
 // The reasons strong enough for a clean line: what the description itself names (the party's tax code, or an invoice of
-// the line's amount). The name and the open balance only point at a party.
-export const CLEAN_REASONS: readonly BankMatchReason[] = ['tax_code', 'invoice'];
+// the line's amount) and what a person taught by matching such a line by hand (#2402). The name and the open balance only
+// point at a party. A line still needs one exact invoice of the party to be clean, and two parties on a rule make it a look.
+export const CLEAN_REASONS: readonly BankMatchReason[] = ['tax_code', 'invoice', 'learned'];
 
 export interface LineFacts {
   // The matcher's suggestion (one party stands out by its strongest reason), or null when none does.

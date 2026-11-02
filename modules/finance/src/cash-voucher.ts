@@ -51,6 +51,7 @@ import {
   voucherTotal,
   type VoucherProblem,
 } from './domain/cash-voucher.ts';
+import { learnFromVoucher } from './bank-rules.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
@@ -181,6 +182,8 @@ export const recordVoucher = defineCommand({
     // database checks it once more under the line's lock when the voucher is inserted. The voucher is in the line's
     // legal entity (#1280), else in the one stored with the proposal (resolved again, so the approver must see it).
     let legalEntityId: string;
+    // The text of the bank line a person's own choice of party was made from (#2402), kept to teach a rule below.
+    let taughtBy: string | null = null;
     if (payload.bankLineId) {
       const line = await checkBankLineVoucher(
         ctx,
@@ -191,6 +194,7 @@ export const recordVoucher = defineCommand({
       // The line's entity, checked against the caller's scope like a named one (the line's own policy already hides
       // another entity's lines).
       legalEntityId = await resolveLegalEntity(ctx, line.legalEntityId);
+      if (payload.matchedBy?.kind === 'manual') taughtBy = line.description;
     } else {
       legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
     }
@@ -246,7 +250,9 @@ export const recordVoucher = defineCommand({
         memo: j.memo,
       })),
     });
-    ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId });
+    // The person chose the party themselves for a bank line: the line's words now point at it (#2402).
+    const learned = taughtBy !== null && party ? await learnFromVoucher(ctx, { voucherId: voucher.id, partyId: party.id, legalEntityId, description: taughtBy }) : null;
+    ctx.audit({ voucher_type: payload.type, number: voucher.number, amount: total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(learned ? { learned_bank_rule: learned.ruleId } : {}) });
     await ctx.activity('finance.cash_voucher', voucher.id, 'voucher.recorded', `Ghi sổ ${VOUCHER_LABELS[payload.type].toLowerCase()} ${code}`);
     await ctx.emit('finance.voucher.recorded', { voucherId: voucher.id, journalEntryId, type: payload.type, number: voucher.number });
     return { voucherId: voucher.id, journalEntryId, code };
