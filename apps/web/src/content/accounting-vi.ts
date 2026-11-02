@@ -26,7 +26,7 @@ export const accountingVi = {
     title: 'Bốn bước từ hộp thư đến sổ cái',
     lead: 'Ludy làm ba bước đầu và ghi lại từng bước. Bước cuối luôn do người có thẩm quyền duyệt bằng mã xác thực hai lớp.',
     steps: [
-      { name: 'Nhận', body: 'Tải lên hoặc chuyển tiếp email. XML được đọc trực tiếp; PDF và ảnh chụp do Vy đọc.', outcome: 'Đã nhận', tone: 'neutral' },
+      { name: 'Nhận', body: 'Tải lên hoặc chuyển tiếp email. XML được đọc trực tiếp; PDF và ảnh chụp do Ly đọc.', outcome: 'Đã nhận', tone: 'neutral' },
       { name: 'Kiểm tra', body: 'Quy tắc cố định đối chiếu tổng tiền, thuế, mã số thuế và hoá đơn trùng. Lỗi tổng tiền thì hoá đơn dừng lại.', outcome: 'Đạt hoặc giữ lại', tone: 'ok' },
       { name: 'Đề xuất', body: 'Bút toán theo TT133 vào hộp chứng từ chờ duyệt, kèm lý do chọn tài khoản. Chưa vào sổ.', outcome: 'Đề xuất, chưa ghi sổ', tone: 'accent' },
       { name: 'Duyệt', body: 'Người duyệt xem, sửa tài khoản nếu cần, nhập mã hai lớp. Lúc đó bút toán mới vào sổ.', outcome: 'Đã ghi sổ', tone: 'ok' },
@@ -98,16 +98,16 @@ export const accountingVi = {
       { title: 'Kết nối ngân hàng trực tiếp', body: 'Hôm nay sao kê được nhập từ file Excel, CSV hoặc email.' },
     ],
   },
-  assistant: {
-    title: 'Vy làm gì trong Ludy Kế toán',
-    lead: 'Vy là trợ lý AI của Ludy. Trong kế toán, Vy làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.',
-    doesTitle: 'Vy làm',
+  coworker: {
+    title: 'Ly làm gì trong Ludy Kế toán',
+    lead: 'Ly là giám đốc tài chính AI, đồng nghiệp của bạn trong kế toán, làm việc dưới sự điều phối của Vy. Ly làm phần đọc; quyết định đúng sai là của quy tắc cố định và của người.',
+    doesTitle: 'Ly làm',
     does: [
       'Đọc PDF và ảnh chụp hoá đơn thành số liệu có cấu trúc',
       'Đưa kết quả vào hộp chứng từ chờ duyệt, ghi rõ là đọc bằng AI và cần người kiểm tra',
       'Chủ sở hữu bấm nút "Dừng AI", cần mã hai lớp, để tắt mọi việc AI của công ty; các lần đọc PDF và ảnh mới chờ đến khi bật lại',
     ],
-    doesNotTitle: 'Vy không làm',
+    doesNotTitle: 'Ly không làm',
     doesNot: [
       'Không ghi sổ và không duyệt thay người',
       'Không quyết định hoá đơn đúng hay sai: việc đó do quy tắc cố định',

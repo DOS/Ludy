@@ -1,4 +1,4 @@
-// The landing page names the product Ludy and the AI assistant Vy (#1683): no copy, metadata or component text says
+// The landing page names the product Ludy and its AI coworkers, Vy the general manager (#1683, #2409): no copy, metadata or component text says
 // Crove, the old name, but the places listed below, each waiting for a step of #1682 that is not this one.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -74,15 +74,29 @@ describe('brand on the landing page (#1683)', () => {
     }
   });
 
-  it('presents the AI assistant as Vy in both languages', () => {
-    expect(vi.hero.title).toBe('Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn');
-    expect(en.hero.title).toBe('The all-in-one business OS where AI agents are your coworkers');
+  it('presents the AI as a team of coworkers led by Vy, in both languages', () => {
+    const NB = String.fromCharCode(0xa0);
+    expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Cả doanh nghiệp trong một bộ ứng dụng, mỗi phòng ban có một đồng nghiệp AI.');
+    expect(vi.hero.lead).toBe('Vy điều phối cả đội: Ly lo tài chính, My lo marketing, Thy lo bán hàng, Duy lo khách hàng. Bạn chỉ duyệt.');
+    expect(en.hero.title).toBe('Your whole business in one suite, with an AI coworker in every department.');
+    expect(en.hero.lead).toBe('Vy coordinates the whole team: Ly handles finance, My marketing, Thy sales and Duy customers. You only approve.');
     for (const dict of [vi, en]) {
-      expect(dict.hero.lead, dict.lang).toMatch(/^Vy /);
-      expect(dict.trust.title, dict.lang).toMatch(/^Vy /);
-      expect(dict.faq.items[1]?.a, dict.lang).toMatch(/\bVy\b/);
-      expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bVy\b/);
+      expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(['Vy', 'Ly', 'My', 'Thy', 'Duy', 'Hy']);
+      expect(dict.meta.title, dict.lang).toContain(dict.lang === 'vi' ? 'đồng nghiệp AI' : 'AI coworker');
+      expect(dict.modules.crm.suggest, dict.lang).toMatch(/\bThy\b/);
+      expect(dict.faq.items[1]?.a, dict.lang).toMatch(/\bLy\b/);
     }
+  });
+
+  it('never calls the AI an assistant: no "assistant" or "trợ lý" in the copy or the pages that render it', () => {
+    // The copy files, the app pages' copy and the components that print any of it (owner decision 2026-11-02, #2409).
+    const files = [...sourceFiles(join(src, 'content')), ...sourceFiles(join(src, 'components')), ...sourceFiles(join(src, 'app'))];
+    const found = files.flatMap((file) =>
+      readFileSync(file, 'utf8')
+        .split('\n')
+        .flatMap((text, i) => (/assistant|trợ lý/i.test(text) ? [`${relative(src, file)}:${i + 1}: ${text.trim().slice(0, 100)}`] : [])),
+    );
+    expect(found).toEqual([]);
   });
 
   it('names the products Ludy Accounting and Ludy CRM', () => {

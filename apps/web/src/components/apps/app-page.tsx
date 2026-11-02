@@ -10,7 +10,7 @@ import { SiteHeader } from '../landing/site-header';
 import { ButtonLink, Chip, Section, SectionHead } from '../landing/ui';
 
 // The page of one app (DESIGN.md 6.1 anatomy, per app): the promise with the product working, how it works, what it
-// does today grouped by job, what is coming, what the AI assistant does here, who it is for, questions and the call to
+// does today grouped by job, what is coming, what the AI coworker does here, who it is for, questions and the call to
 // action. Server-rendered, no client JavaScript of its own. An app supplies its copy (AppPageCopy), its product visual
 // for the hero and one visual per group of features.
 export interface AppPageProps {
@@ -24,7 +24,7 @@ export interface AppPageProps {
 export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
   const home = '/';
   const selfHost = `${home}#tu-host`;
-  const { soon, assistant } = copy;
+  const { soon, coworker } = copy;
   return (
     <>
       <SiteHeader dict={dict} linkToHome />
@@ -123,14 +123,14 @@ export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
           </Section>
         ) : null}
 
-        {assistant ? (
+        {coworker ? (
           <Section id="vy" labelledBy="vy-title" tinted={!soon}>
-            <SectionHead id="vy-title" title={assistant.title} lead={assistant.lead} />
+            <SectionHead id="vy-title" title={coworker.title} lead={coworker.lead} />
             <div className="grid gap-8 md:grid-cols-2 md:gap-12">
               <div className="min-w-0">
-                <h3 className="font-display text-lg font-semibold">{assistant.doesTitle}</h3>
+                <h3 className="font-display text-lg font-semibold">{coworker.doesTitle}</h3>
                 <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
-                  {assistant.does.map((line) => (
+                  {coworker.does.map((line) => (
                     <li key={line} className="flex gap-3">
                       <Check className="mt-0.5 size-4 shrink-0 text-ok" strokeWidth={2.5} aria-hidden="true" />
                       <span>{line}</span>
@@ -139,9 +139,9 @@ export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
                 </ul>
               </div>
               <div className="min-w-0">
-                <h3 className="font-display text-lg font-semibold">{assistant.doesNotTitle}</h3>
+                <h3 className="font-display text-lg font-semibold">{coworker.doesNotTitle}</h3>
                 <ul className="mt-4 flex flex-col gap-3 text-sm text-muted">
-                  {assistant.doesNot.map((line) => (
+                  {coworker.doesNot.map((line) => (
                     <li key={line} className="flex gap-3">
                       <Minus className="mt-0.5 size-4 shrink-0 text-subtle" strokeWidth={2.5} aria-hidden="true" />
                       <span>{line}</span>

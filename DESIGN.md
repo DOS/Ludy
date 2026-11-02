@@ -1,6 +1,6 @@
 ---
 name: "Ludy"
-version: "4.1"
+version: "4.2"
 date: "2026-11-02"
 # Machine-readable tokens of the design system, for design tools and coding agents. Everything outside `rules` is copied
 # from the CSS files and checked against them by tools/test/design-tokens.test.ts, so it cannot drift: when a value here
@@ -348,11 +348,12 @@ rules:
 
 # Ludy design system and UI/UX guidelines
 
-Version 4.1 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
+Version 4.2 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), the web app (`apps/app`) and the component package (`packages/ui`). Written for engineers, designers and coding agents. The machine-readable tokens are the block at the top of this file; the research behind each rule, with sources and measurements, is summarized in [docs/design/ui-ux-research-2026-10.vi.html](docs/design/ui-ux-research-2026-10.vi.html).
 
 ## What changed since 3.0 (2026-10-18)
 
-- **Names and logo.** Ludy is the suite and Vy the AI assistant (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
+- **AI coworkers** (4.2, [#2409](https://github.com/DOS/Ludy/issues/2409), owner decision 2026-11-02): the AI is a coworker, never an "assistant"; Vy is the general manager and each department has its own coworker (Ly, My, Thy, Duy, Hy). Section 1.1 has the roster and the rule; the home hero and the agents section follow it.
+- **Names and logo.** Ludy is the suite and Vy the AI general manager (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
 - **AI-first for OPC and SME** (4.1, owner decision 2026-11-02). Section 1 says how AI belongs in each core feature: Vy proposes in place, and a person approves, in batches where possible. The reference study of the leading AI products is in [docs/research/ai-first-reference-study.md](docs/research/ai-first-reference-study.md).
 - **What Ludy is.** Section 1 describes the apps as they are today (Ludy Kế toán, Ludy CRM, Ludy Notes, Social, Vy) and the focus on one-person companies and SMEs first (owner decision, 2026-10-31).
 - **One URL per page in both languages** ([#2360](https://github.com/DOS/Ludy/issues/2360)): the language comes from a cookie or the browser, the toggle keeps the path, old `/en` links redirect (6.5, 6.4, 8).
@@ -372,10 +373,11 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | 2026-10-19 | Option C (paper invoice, seal and routing slip) dropped. Per element from one page: the hero of E (headline centered on top, the live org chart at full width under it), the how-it-works pipeline of E (four stages of equal height, each with a small piece of the app), the module grid of E (each module with its people and agents). | 6.1 |
 | 2026-10-19 | Light is the default theme everywhere; the app lets each user pick light, dark or system. | 3.1 |
 | 2026-10-19 | Be Vietnam Pro for headings, body and UI; JetBrains Mono for amounts and codes. | 3.2 |
-| 2026-10-28 | The product is Ludy, the AI assistant is Vy ([#1682](https://github.com/DOS/Ludy/issues/1682), [#1683](https://github.com/DOS/Ludy/issues/1683)). | 1.1 |
+| 2026-10-28 | The product is Ludy, the AI is Vy ([#1682](https://github.com/DOS/Ludy/issues/1682), [#1683](https://github.com/DOS/Ludy/issues/1683)). | 1.1 |
 | 2026-10-30 | The landing page is served on ludy.vn (canonical) and ludy.so, the hosted app on app.ludy.vn (ADR-0027). | 1.1, 6 |
 | 2026-10-31 | One-person companies and SMEs first; enterprise models wait. | 1 |
 | 2026-11-02 | AI-first for OPC and SME: core SME features first, each with AI built into its workflow (Vy proposes in place, a person approves, in batches where possible). | 1 |
+| 2026-11-02 | The AI is a coworker, never an "assistant". Vy is the general manager across every app; Ly (CFO, Kế toán), My (CMO, Social and Ads), Thy (head of sales, CRM), Duy (head of customer care, the inbox) and Hy (CTO, integrations and settings) each hold a department ([#2409](https://github.com/DOS/Ludy/issues/2409), [#2410](https://github.com/DOS/Ludy/issues/2410)). | 1.1, 6.1 |
 | 2026-11-01 | The logo is four keys that spell L, U, D and Y. Interim: the owner is still choosing among the round-2 options of the logo canvas. | 1.2 |
 | 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (Ludy CRM and Ludy Notes use the exact line of 6.4, Ludy Kế toán says the same in its own words). | 6.4 |
 | 2026-11-02 | Frontend PO ruling ([#2351](https://github.com/DOS/Ludy/issues/2351)): all three app pages use that line, with the app's own name; Ludy Kế toán's page changed to match. | 6.4 |
@@ -394,7 +396,7 @@ Ludy is an open-source, AI-native Business OS for one-person companies, solo fou
 - **Ludy CRM**: contacts shared with Ludy Kế toán, deals on a board by stage, the public booking page and the calendar.
 - **Ludy Notes**: notes and personal to-dos, linked to the records they are about. A product of its own on ludy.vn; its screens sit in the app's Home.
 - **Social**: posts and channels, with an Ads group; paused under decision D5 except the Facebook Page and Zalo OA slice (see the decision records).
-- **Vy**, the AI assistant, works inside these apps: it reads, proposes, suggests and drafts, and a person approves.
+- **The AI coworkers** work inside these apps: they read, propose, suggest and draft, and a person approves. Vy is the general manager across every app; Ly (CFO), My (CMO), Thy (head of sales), Duy (head of customer care) and Hy (CTO) each belong to a department (1.1).
 
 The shell's apps are Home (the overview, the AI Inbox, Tasks, Notes, "Việc của tôi" and notifications), Ludy Kế toán, Ludy CRM and Social. The organization's own screens (the org chart with its AI settings, and Settings) belong to no app.
 
@@ -419,15 +421,15 @@ The reference study [docs/research/ai-first-reference-study.md](docs/research/ai
 The owner renamed the product on 2026-10-28 ([#1682](https://github.com/DOS/Ludy/issues/1682)); what users see follows it ([#1683](https://github.com/DOS/Ludy/issues/1683)).
 
 - **Ludy** is the suite, the Business OS. It is the default of `BRAND_NAME`; a deployment that sets its own name shows that name everywhere instead, and no screen names both.
-- **Vy** is the AI assistant. Copy names Vy wherever the AI is the one acting: Vy reads, proposes, suggests, drafts and rewrites. The first mention on a screen says what Vy is ("Vy, the AI assistant", "trợ lý AI Vy"). App messages write `{assistant}`, never the name itself (`apps/app/src/i18n/brand.ts`).
-- "AI" stays where it labels the technology rather than the assistant: the badges and marks on AI-written content, the kill switch, AI budgets, a server's AI configuration, the "AI agent" label every agent in the org chart carries, and platform labels such as TikTok's AI-generated content.
+- **The AI is a coworker, never an "assistant"** (owner decision 2026-11-02, [#2409](https://github.com/DOS/Ludy/issues/2409)). The word "assistant" (Vietnamese "trợ lý") appears in no copy, on ludy.vn or in the app. The team: **Vy**, general manager (tổng quản) across every app; **Ly**, CFO, Ludy Kế toán; **My**, CMO, Social and Ads; **Thy**, head of sales, Ludy CRM; **Duy**, head of customer care, the conversations inbox; **Hy**, CTO, integrations, settings and the system. Copy names the coworker wherever it is the one acting, in its own department (Ly reads invoices, Thy suggests meeting times), and says Vy for work that spans apps. The first mention on a screen says what the coworker is ("Ly, the AI CFO", "Ly, giám đốc tài chính AI"). A coworker is named for work that ships (6.2): a department with no shipped work yet is listed with its role only, and Ludy Notes has no coworker of its own. App messages take the name of the one acting from a placeholder, never write it themselves (`apps/app/src/i18n/brand.ts`; the app follows in [#2410](https://github.com/DOS/Ludy/issues/2410)).
+- "AI" stays where it labels the technology rather than the coworker: the badges and marks on AI-written content, the kill switch, AI budgets, a server's AI configuration, the "AI agent" label every agent in the org chart carries, and platform labels such as TikTok's AI-generated content.
 - Products are named "Ludy" and the area: **Ludy CRM**, **Ludy Accounting** (Vietnamese: **Ludy Kế toán**, the word the app's menu and its users already say), **Ludy Notes**. App messages write `{brand} CRM`, so a deployment's own name carries over. The short label under an app's icon stays the area alone.
 - **Ludy Cloud** is the hosted edition, not live yet; copy says "coming soon" and promises nothing more (6.4). DOS-only services belong to the private cloud layer (ADR-0027), never to this repository's copy.
 - Domains: ludy.vn (canonical) and ludy.so for the landing page, app.ludy.vn for the hosted app (2026-10-30, ADR-0027). The repository is `DOS/Ludy`. Code identifiers keep the code name `crove` (`@crove/*`, `crove_*`, `CROVE_*`, file names, the `[Crove]` log prefix), as the README says; users never see it.
 
 ### 1.2 Logo
 
-The mark is interim: the owner is still choosing among the round-2 options of the logo canvas. Since 2026-11-01 ([#2293](https://github.com/DOS/Ludy/issues/2293)) it is four violet rounded keycaps in a 2 by 2 grid that spell L, U, D and Y in capitals, the Y key teal. The teal key is Vy, the AI assistant. The brand name stays "Ludy"; capitals are for the keys only, and the Y is not a Vietnamese Ý, since the brand is meant for markets abroad too. It replaces the same keys with an accented lowercase y ([#2200](https://github.com/DOS/Ludy/issues/2200)), and before that three tiles in an L with a spark ([#2052](https://github.com/DOS/Ludy/issues/2052)).
+The mark is interim: the owner is still choosing among the round-2 options of the logo canvas. Since 2026-11-01 ([#2293](https://github.com/DOS/Ludy/issues/2293)) it is four violet rounded keycaps in a 2 by 2 grid that spell L, U, D and Y in capitals, the Y key teal. The teal key is Vy, the AI general manager. The brand name stays "Ludy"; capitals are for the keys only, and the Y is not a Vietnamese Ý, since the brand is meant for markets abroad too. It replaces the same keys with an accented lowercase y ([#2200](https://github.com/DOS/Ludy/issues/2200)), and before that three tiles in an L with a spark ([#2052](https://github.com/DOS/Ludy/issues/2052)).
 
 - Files: `apps/web/public/brand/` holds the mark and the wordmark (the mark and "Ludy" in Be Vietnam Pro SemiBold, as outlines, the y in teal), each in a light and a dark version, the 16 and 32 px favicons, the 512 px app icon and the Apple touch icon. `favicon.svg` (landing page and app) draws the four keys without letters and switches to the dark colors when the browser is dark. The app's install icons are `apps/app/public/assets/icon-*.png`. The social preview is drawn from the dark mark by `apps/web/src/components/og-image.tsx`.
 - Colors: the three violet keys take `brand` (#612BD3, dark #7C4DEB) and their lips `brand-lip` (#44209A, dark #5A33B5); the Y key takes `brand-spark` (#0F8F7A, dark #13A58A) and its lip `brand-spark-lip` (#0A6A5B, dark #0B7563). The letters L, U and D are `brand-ink` and the Y is `brand-spark-ink`, white in both themes; the dark theme's teal is deep enough for white to reach 3.1:1 (white on #0F8F7A is 4:1). The six tokens are for the mark only, never for UI.

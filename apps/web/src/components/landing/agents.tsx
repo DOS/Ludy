@@ -2,18 +2,33 @@ import { Lock } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { Section, SectionHead } from './ui';
 
-// What an agent may do (the org chart itself is the hero): which risk levels it handles alone and which go to a
-// person, plus what agents can never touch.
+// The AI team (Vy and the department coworkers with their roles), then what an agent may do (the org chart itself is
+// the hero): which risk levels it handles alone and which go to a person, plus what agents can never touch.
 export function Agents({ dict }: { dict: Dictionary }) {
   const a = dict.agents;
   const m = a.matrix;
   return (
     <Section id="agents" labelledBy="agents-title">
-      <SectionHead id="agents-title" title={m.title} lead={m.lead} />
+      <SectionHead id="agents-title" title={a.team.title} lead={a.team.lead} />
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {a.team.members.map((member) => (
+          <li key={member.name} className="rounded-lg border border-line bg-surface p-4">
+            <div className="flex items-baseline gap-2">
+              <span className="font-display text-lg font-semibold">{member.name}</span>
+              <span className="text-sm text-accent-ink">{member.role}</span>
+            </div>
+            <p className="mt-1 text-sm text-muted">{member.scope}</p>
+          </li>
+        ))}
+      </ul>
+      <h3 id="agents-rules-title" className="mt-12 font-display text-xl font-semibold">
+        {m.title}
+      </h3>
+      <p className="mt-2 mb-6 max-w-[62ch] text-muted">{m.lead}</p>
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-10">
         <div className="min-w-0">
           {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1, #1629). */}
-          <div role="group" aria-labelledby="agents-title" tabIndex={0} className="overflow-x-auto rounded-lg border border-line bg-surface">
+          <div role="group" aria-labelledby="agents-rules-title" tabIndex={0} className="overflow-x-auto rounded-lg border border-line bg-surface">
             <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
                 <tr className="text-left text-xs">

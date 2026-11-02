@@ -23,7 +23,7 @@ export const accountingEn: AccountingCopy = {
     title: 'Four steps from the inbox to the ledger',
     lead: 'Ludy does the first three steps and records each one. The last step is always approved by a person with the authority, with a two-factor code.',
     steps: [
-      { name: 'Receive', body: 'Upload, or forward an email. XML is read directly; PDFs and photos are read by Vy.', outcome: 'Received', tone: 'neutral' },
+      { name: 'Receive', body: 'Upload, or forward an email. XML is read directly; PDFs and photos are read by Ly.', outcome: 'Received', tone: 'neutral' },
       { name: 'Check', body: 'Fixed rules compare the totals, the VAT, the tax code and duplicates. An error in the totals stops the invoice.', outcome: 'Passed or held', tone: 'ok' },
       { name: 'Propose', body: 'A TT133 entry lands in the inbox of documents to approve, with the reason for the accounts. Nothing is posted yet.', outcome: 'Proposed, not posted', tone: 'accent' },
       { name: 'Approve', body: 'The approver looks, changes an account if needed and enters the two-factor code. Only then does the entry reach the books.', outcome: 'Posted', tone: 'ok' },
@@ -95,16 +95,16 @@ export const accountingEn: AccountingCopy = {
       { title: 'A direct bank connection', body: 'Today statements are imported from an Excel file, a CSV file or an email.' },
     ],
   },
-  assistant: {
-    title: 'What Vy does in Ludy Accounting',
-    lead: 'Vy is the AI assistant of Ludy. In accounting Vy does the reading; whether a number is right is decided by fixed rules and by people.',
-    doesTitle: 'Vy does',
+  coworker: {
+    title: 'What Ly does in Ludy Accounting',
+    lead: 'Ly is the AI CFO, your coworker in accounting, working under Vy’s coordination. Ly does the reading; whether a number is right is decided by fixed rules and by people.',
+    doesTitle: 'Ly does',
     does: [
       'Reads PDF and photo invoices into structured data',
       'Puts the result in the inbox of documents to approve, marked as read by AI and needing a person’s check',
       'An owner presses "Stop AI", with a two-factor code, to switch off all AI work of the company; new PDF and photo reads wait until it is turned back on',
     ],
-    doesNotTitle: 'Vy does not',
+    doesNotTitle: 'Ly does not',
     doesNot: [
       'Post to the books or approve in place of a person',
       'Decide whether an invoice is right: fixed rules do that',

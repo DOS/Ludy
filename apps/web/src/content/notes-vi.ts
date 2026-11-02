@@ -77,12 +77,12 @@ export const notesVi = {
       },
     ],
   },
-  assistant: {
+  coworker: {
     title: 'Vy và ghi chú',
-    lead: 'Ghi chú của bạn ở lại với bạn.',
-    doesTitle: 'Vy và agent làm',
-    does: ['Nhận một việc bạn giao cho vị trí do agent AI giữ, sau khi bạn sửa tên và mô tả'],
-    doesNotTitle: 'Vy và agent không',
+    lead: 'Ghi chú của bạn ở lại với bạn. Ludy Notes chưa có đồng nghiệp AI riêng.',
+    doesTitle: 'Vy và các đồng nghiệp AI làm',
+    does: ['Nhận một việc bạn giao cho vị trí do đồng nghiệp AI giữ, sau khi bạn sửa tên và mô tả'],
+    doesNotTitle: 'Vy và các đồng nghiệp AI không',
     doesNot: ['Không đọc ghi chú của bạn', 'Không viết hay sửa ghi chú'],
   },
   audience: {

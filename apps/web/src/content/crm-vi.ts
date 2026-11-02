@@ -74,26 +74,26 @@ export const crmVi = {
       },
       {
         id: 'lich-va-vy',
-        title: 'Lịch Google và Vy',
+        title: 'Lịch Google và Thy',
         lead: 'Nối lịch của bạn để giờ bận không bị hẹn trùng.',
         points: [
           'Nối Google Calendar: giờ bận chặn giờ hẹn, chỉ đọc giờ chứ không đọc tiêu đề. Cần khoá Google do người cài đặt cấu hình',
           'Có thể bật ghi lịch hẹn mới vào Google Calendar; tiêu đề gồm loại hẹn và tên khách',
           'Địa chỉ đăng ký để xem lịch hẹn trong Google Calendar, Outlook hoặc Lịch của Apple',
-          'Vy đọc tin nhắn của khách, chọn giờ trống thật và soạn sẵn thư trả lời kèm liên kết đặt lịch. Bạn xem rồi tự gửi. Cần model AI do người cài đặt cấu hình',
+          'Thy đọc tin nhắn của khách, chọn giờ trống thật và soạn sẵn thư trả lời kèm liên kết đặt lịch. Bạn xem rồi tự gửi. Cần model AI do người cài đặt cấu hình',
         ],
       },
     ],
   },
-  assistant: {
-    title: 'Vy làm gì trong Ludy CRM',
-    lead: 'Vy giúp phần hẹn lịch. Danh sách liên hệ và cơ hội do bạn quản lý.',
-    doesTitle: 'Vy làm',
+  coworker: {
+    title: 'Thy làm gì trong Ludy CRM',
+    lead: 'Thy là trưởng phòng bán hàng AI, đồng nghiệp của bạn trong phần hẹn lịch, làm việc dưới sự điều phối của Vy. Danh sách liên hệ và cơ hội do bạn quản lý.',
+    doesTitle: 'Thy làm',
     does: [
       'Gợi ý giờ hẹn từ tin nhắn của khách và soạn sẵn thư trả lời',
       'Khi khách huỷ hẹn, Agent Điều phối lịch hẹn (nếu bạn thêm vào sơ đồ tổ chức) ghi 3 giờ trống gần nhất vào một việc và chuyển cho người phụ trách',
     ],
-    doesNotTitle: 'Vy không làm',
+    doesNotTitle: 'Thy không làm',
     doesNot: ['Không tự đặt lịch và không tự gửi thư', 'Không ghi vào danh sách liên hệ hay cơ hội'],
   },
   audience: {

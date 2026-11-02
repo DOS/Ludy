@@ -71,26 +71,26 @@ export const crmEn: CrmCopy = {
       },
       {
         id: 'calendar-and-vy',
-        title: 'Google Calendar and Vy',
+        title: 'Google Calendar and Thy',
         lead: 'Connect your calendar so busy times are never double booked.',
         points: [
           'Connect Google Calendar: busy times block bookings, and only times are read, never titles. It needs Google keys that the installer has configured',
           'You can turn on writing new bookings to Google Calendar; the title holds the meeting type and the client’s name',
           'A subscription address to see your bookings in Google Calendar, Outlook or Apple Calendar',
-          'Vy reads a client’s message, picks real free times and drafts a reply with the booking link. You read it and send it yourself. It needs an AI model that the installer has configured',
+          'Thy reads a client’s message, picks real free times and drafts a reply with the booking link. You read it and send it yourself. It needs an AI model that the installer has configured',
         ],
       },
     ],
   },
-  assistant: {
-    title: 'What Vy does in Ludy CRM',
-    lead: 'Vy helps with scheduling. The contact list and the deals are yours to manage.',
-    doesTitle: 'Vy does',
+  coworker: {
+    title: 'What Thy does in Ludy CRM',
+    lead: 'Thy is the AI head of sales, your coworker in scheduling, working under Vy’s coordination. The contact list and the deals are yours to manage.',
+    doesTitle: 'Thy does',
     does: [
       'Suggests meeting times from a client’s message and drafts the reply',
       'When a client cancels, the appointment scheduler agent (if you add it to the org chart) writes the 3 nearest free times into a task and passes it to the person in charge',
     ],
-    doesNotTitle: 'Vy does not',
+    doesNotTitle: 'Thy does not',
     doesNot: ['Book a meeting or send an email on its own', 'Write to the contact list or the deals'],
   },
   audience: {
