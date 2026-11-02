@@ -55,6 +55,7 @@ const MACHINERY = new Set([
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_campaign_draft',
+  'crove_ads.ad_campaign_request',
   'crove_kernel.conversation_composing',
   'crove_kernel.member_availability',
   'crove_notes.link',
@@ -344,6 +345,22 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
         ],
         row: { org_id: o.id, id: randomUUID(), ad_account_id: account, name: 'RLS matrix draft', objective: 'traffic', created_by: o.owner },
+      };
+    },
+  },
+  // A request to the AI coworker for a campaign draft (W1b, #2295): the member's brief and objective for one ad account, in the account's
+  // entity (b_legal_entity, the composite foreign key). A member inserts it in their own name (the guard stamps who and when and holds the
+  // state to requested); only the system context settles it, and no tenant role updates or deletes a row, so there is no update probe.
+  'crove_ads.ad_campaign_request': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, objective: 'traffic', brief: 'RLS matrix request', requested_by: o.owner },
       };
     },
   },

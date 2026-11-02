@@ -1,6 +1,6 @@
-# Ludy conversations: one core for comments (Social) and private messages (Service)
+# Ludy conversations: one core and one inbox (Hộp thư) for comments, private messages and email
 
-> Design for a shared conversation core, 2026-11-01 (#2213). Owner decision of 2026-11-01: "Trả lời bình luận thì nên trong Social. Tin nhắn riêng trong Service." (reply to comments in Social, private messages in Service), and share as much core as possible. Focus per the owner's decision of 2026-10-31: one-person companies and SMEs first. **This is a design: nothing here is built, the build issues listed in section 13 are not opened, and nothing is built until the owner approves** (section 15). Decision record: [ADR-0041](../adr/0041-conversation-core.md). Vietnamese summary for the owner: [conversations.vi.md](conversations.vi.md). It changes [social.md](social.md) ("Not in Social") and the kernel plan's Service and Social paragraph to the owner's decision. Where the Ads module sits is [ads.md](ads.md) section 2; section 3 here makes it one story.
+> Design for a shared conversation core, 2026-11-01 (#2213). Owner decisions: 2026-11-01, "Trả lời bình luận thì nên trong Social. Tin nhắn riêng trong Service." (reply to comments in Social, private messages in Service) and share as much core as possible; **2026-11-03 (#2437), which replaces the split: the inbox follows Crisp and Intercom, not Zendesk, so comments, private messages and email are all conversations in one inbox, Hộp thư (section 1).** Focus per the owner's decision of 2026-10-31: one-person companies and SMEs first. **This is a design: nothing here is built, the build issues listed in section 13 are not opened, and nothing is built until the owner approves** (section 15). Decision record: [ADR-0041](../adr/0041-conversation-core.md). Vietnamese summary for the owner: [conversations.vi.md](conversations.vi.md). It changes [social.md](social.md) ("Not in Social") and the kernel plan's Service and Social paragraph to the owner's decision. Where the Ads module sits is [ads.md](ads.md) section 2; section 3 here makes it one story.
 
 How facts are tagged. Research was done on 2026-11-01:
 - **[C]** stated on an official page that was read.
@@ -11,34 +11,41 @@ Meta's official pages were readable (the `.md` form of the `/documentation/` pat
 
 ## 1. The decision and what it means
 
-- **Comments on the org's own posts** (a Facebook Page post, an Instagram media): read and answered **in Social**, under the post and in a comment inbox.
-- **Private messages** (Messenger, Instagram DMs, Zalo OA chat; WhatsApp later): read and answered **in Service** (shown as Desk), with cases.
-- **One core underneath**, so either module can be sold and run alone and the second one adds screens, not a second copy of the data.
+Owner decision of 2026-11-03 (recorded on #2213, built from #2437), which replaces the split of 2026-11-01 (comments in Social, private messages in Service): **the inbox follows Crisp and Intercom, not Zendesk.**
 
-Today the plan says the opposite for comments: [social.md](social.md) "Not in Social: comments and messages" and kernel plan section 5.7 "Messages and comments land in Service's inbox; Social only publishes". Both change (section 14).
+- **One model, the conversation** (`crove_kernel.conversation`), for every customer interaction: chat (Messenger, Instagram DMs, Zalo OA chat; WhatsApp later), comments on the org's own posts (a Facebook Page post, an Instagram media) and customer email, in and out.
+- **One inbox, Hộp thư.** Every conversation is a chat thread with the tabs **New, Pending and Resolved**. An email shows as chat bubbles too (the quoted history folded, section 6.7). Staff reply in the same box, whatever the channel; the reply box names the channel.
+- **No cases, tickets or SLA timers.** A conversation that needs internal follow-up links to a task (`crove_kernel.task`, section 4); it never becomes a numbered record, and nothing counts reply time against a promise.
+- **The post page keeps its Bình luận tab**: the same conversations, filtered to the post. It is a view of the inbox, not a second inbox, so a comment has one unread count and one place to answer it.
+- **One core underneath**, so the inbox and the posting side each run from the same data and neither holds a second copy.
+- **The AI coworker in Hộp thư** (Dy in Ludy Engage, who also covers Khách hàng & Bán hàng; Uy covers Marketing, Bài đăng and Quảng cáo; the names stay behind the roster map and the i18n keys, DESIGN.md 1.1, and the as-built sections below still say Vy) sorts the intent of a conversation, suggests the matching contact profile and drafts a reply that a person sends (section 5.6). No auto-send, and the core works with AI off.
 
-What exists today: Social publishes and reads metrics, can post a first comment and an auto-reply under its own post, and keeps internal review comments (a different thing, `post_comment`). The kernel has `channel_connection`, sealed credentials, `external_call`, `party`, `task`, `activity` and `inbound_message` (email, a record of arrival only). There is no Service module and no store for platform comments or messages. So this design adds the store, and both modules' screens come after it.
+The plan said the opposite at first: [social.md](social.md) "Not in Social: comments and messages" and kernel plan section 5.7 "Messages and comments land in Service's inbox; Social only publishes". Both changed on 2026-11-01 and change again for the decision above (section 14).
+
+What exists today: Social publishes and reads metrics, can post a first comment and an auto-reply under its own post, and keeps internal review comments (a different thing, `post_comment`). The kernel has `channel_connection`, sealed credentials, `external_call`, `party`, `task`, `activity` and `inbound_message` (email, a record of arrival only). There is no Service module and no store for platform comments or messages. So this design adds the store, and the screens come after it.
 
 ## 2. What is shared, and what is not
 
 | Shared (the core, in the kernel) | Why shared | Owned by one module |
 |---|---|---|
 | Channel connections and sealed credentials (exist, ADR-0025) | One login per page | |
-| The conversation and its messages, one store, with a **kind** (`comment_thread`, `direct`) | Same shape: a thread of messages with an external id, a status and an author | |
+| The conversation and its messages, one store, with a **kind** (`comment_thread`, `direct`, `email`) | Same shape: a thread of messages with an external id, a status and an author | |
 | The contact (a `party` link, an identity per platform) | One customer, whichever door they use | |
 | Assignment, status (New, Pending, Resolved), read state, internal notes | Same work habits in both | |
 | Saved replies | A reply to "how much is shipping?" is the same text on a comment or a message | |
 | AI reply drafts (tainted, a person sends) | One drafting path, one set of safety rules | |
 | The reply pipeline (one send, exactly once, `external_call`) | Same platform call risks as publishing | |
 | The conversation screen (list, thread, contact panel), as one component | One UI to build and test | |
-| | | **Social:** posts, the per-post comment tab, the comment inbox, hide and unhide, reply to a comment |
-| | | **Service:** the direct-message inbox, cases and tickets, SLA, availability and assignment rules |
+| | | **Social:** posts and the per-post Bình luận tab (a filtered view of the same conversations) |
+| | | **The inbox** (module `service`, shown as Hộp thư): the screens for every kind, the availability and assignment rules; follow-up work is a kernel `task` linked to the conversation |
 
-## 3. Layout: one story for Social, Service and Ads
+## 3. Layout: one app, Ludy Engage
 
 **Reference (the owner, 2026-11-01, Hootsuite).** One left rail where each product is its own item: Perch (publishing: Plan, Analytics, Ads, Boost), Nest (social inbox and customer care: Conversations with New and Pending, Resolved, Search, Streams, DM automations), and others. Nest takes comments as well as DMs.
 
 **How Ludy's shell works today.** The shell builds its apps, groups and items from each module's entry in `MODULE_SCREENS` (`packages/kernel-contract/src/screens.ts`). A nav item declares `{ app, group, path, label }` (`NavDeclaration` in `manifest.ts`), `apps.ts` lists an app with its groups, and `installedItems` drops every group whose module the deployment does not run (`CROVE_MODULES`); an app with no group left disappears. The rail has four apps today: home, accounting, social, crm. So "an app with groups, each group shown only when its module is enabled" is how the shell already works, and a module can contribute a group to an app another module also contributes to. (This answers the open point in [ads.md](ads.md): a module's nav can sit inside another module's app, no shell change is needed; only a new app id is, if the app is renamed.)
+
+The comparison as first put on 2026-11-01, kept as the record of the options:
 
 | | (a) One rail app with groups | (b) Social, Service, Ads as separate rail items (Hootsuite style) |
 |---|---|---|
@@ -49,17 +56,26 @@ What exists today: Social publishes and reads metrics, can post a first comment 
 | Moving between a comment and the private reply it started | Inside one app, one click | Switches app |
 | Matches Hootsuite | Partly (Perch holds Plan, Analytics and Ads as groups) | Fully |
 
-**Recommendation: (a), one rail app with three groups.** It is one story for all three: the app holds **Đăng bài** (Social: calendar, posts, comments), **Hộp thư** (Service: private messages and cases) and **Quảng cáo** (Ads), each shown only when its module is enabled, so either module can be sold and run alone and a Service-only org sees only the inbox group. It is the shape Hootsuite itself uses inside Perch (Ads is a group there, not a product), it needs no new shell concept, and it keeps the rail short for the people Ludy is for. The name of the app is the owner's call with the Frontend line (working name **Kênh**, "Channels"; JOY suggested "Ludy Channels"); the groups' names are copy. [ads.md](ads.md) says "a group inside the Social (posting) app": that app is this app, so the two documents agree. The cost of (a) is one rename of the existing Social app id and its menu messages; no URL changes, because routes are `/o/$slug/<screen>` and only the app id in the nav declarations moves.
+**Decided: (a), one rail app (owner: the shape on 2026-11-01, the name on 2026-11-02, the groups on 2026-11-03).** The app is **Ludy Engage** (app id `social`; the name stays behind i18n keys) and it holds CRM, the inbox, posting and ads, each group shown only when its module is enabled (data and module switches unchanged). Its sidebar groups:
 
-## 4. Does a comment also show in the Service inbox?
+| Group | Holds |
+|---|---|
+| **Hộp thư** | Every conversation: chat, comments and email, with New, Pending and Resolved (sections 1 and 11) |
+| **Khách hàng & Bán hàng** | **Người liên hệ** (people), **Công ty** (companies; the tax id is shared with Kế toán, and a person may belong to a company, CRM-Q5 in [crm.md](crm.md)), **Cơ hội** (deals, a Kanban board), **Lịch hẹn** (bookings) |
+| **Marketing** | **Bài đăng** (Social: calendar, posts), **Quảng cáo** (Ads) |
+| **Báo cáo** | One group with a tab per area |
 
-**Recommendation: no, a comment lives only in Social; Service shows private messages.** That is the owner's decision applied as written, and it avoids the same item in two inboxes with two sets of unread counts and two people answering it. Three connections keep the two sides together:
+It is the shape Hootsuite itself uses inside Perch (Ads is a group there, not a product), it needs no new shell concept beyond the rename, and it keeps the rail short for the people Ludy is for. The shell work (the rename, the groups, the redirects from the old CRM routes) is [#2435](https://github.com/DOS/Ludy/issues/2435), after [#2416](https://github.com/DOS/Ludy/issues/2416); the inbox screens are CV3 ([#2306](https://github.com/DOS/Ludy/issues/2306)). [ads.md](ads.md) says "a group inside the Social (posting) app": that app is this app, so the documents agree. No URL changes beyond the CRM redirects, because routes are `/o/$slug/<screen>` and only the app id in the nav declarations moves.
 
-1. **Reply privately.** On a comment, Social offers "reply privately" (Meta allows one private message to the commenter within 7 days of the comment [C]; Instagram likewise [C]). It creates a **direct conversation** linked to the comment thread. From that moment the thread is a private message, so it appears in Service's inbox (and in Social the comment keeps a "continued in a private message" link when the person can read both).
-2. **Send to Service.** When both modules are enabled, a comment can be handed to Service as a case (the case links back to the comment). Cases come with Service; until then the button is a task for a person (kernel `task`), linked to the comment.
-3. **The contact.** Both threads link to the same party, so the contact panel shows a person's comments and messages together for a user who can read both.
+## 4. Comments in the inbox, and the bridges
 
-A **Service-only** org gets no comments in v1: it did not enable Social, and the owner's decision puts comment replies in Social. Whether Service should show comments as a filter when Social is off is Q2; the design keeps it cheap (the core already stores them; it would be a screen filter and a permission).
+**Decided (owner, 2026-11-03): yes, a comment is a conversation like any other and shows in Hộp thư.** A care person gets one list for everything a customer wrote, on any channel. The post page's Bình luận tab shows the same thread under its post: one store, one unread count, two doors to the same conversation. Three connections link the pieces:
+
+1. **Reply privately.** On a comment, the reply box offers "reply privately" (Meta allows one private message to the commenter within 7 days of the comment [C]; Instagram likewise [C]). It creates a **direct conversation** linked to the comment thread (`parent_conversation_id`). Both threads are in Hộp thư and each keeps a link to the other.
+2. **Follow-up work is a task.** From any conversation, "Create task" makes a kernel `task` (a title, an assignee, a due date) that links back to the conversation, and the conversation lists its open tasks. The conversation stays New, Pending or Resolved on its own and the task is ordinary work in the org's task list; how the link is stored (a reference column or a `record_link`) is the build issue's call.
+3. **The contact.** Every thread links to the same party, so the contact panel shows a person's comments, messages and emails together for a user who can read them.
+
+An org that has the inbox but not the posting side still sees the comments of the Pages it connects, in Hộp thư, with no post page to open them from. Q2 is settled by the decision above (the options stay in section 16 as the record).
 
 ## 5. The core
 
@@ -75,9 +91,9 @@ Every table has `org_id`, `PRIMARY KEY (org_id, id)`, RLS via `apply_tenant_rls`
 
 | Table | Key columns |
 |---|---|
-| `conversation` | `channel_connection_id`, `kind` (`comment_thread`, `direct`), `external_thread_id` (the platform's thread or the top comment's id), `external_post_id` (comment threads: the platform's post or media id; Social joins it to its own `post_variant` on `(channel_connection_id, external_post_id)`, so there is no foreign key across schemas), `parent_conversation_id` (a private reply points at its comment thread), `contact_identity_id`, `party_id` (set only by a person, section 5.4), `status` (`new`, `pending`, `resolved`), `assignee_user_id`, `last_inbound_at`, `last_message_at`, `reply_window_until` (when the platform's free-reply window closes, from the last inbound message), `opened_at`, `resolved_at`, `resolved_by` |
-| `conversation_message` | `conversation_id`, `direction` (`in`, `out`), `external_message_id` (unique per `(org_id, channel_connection_id)`), `sent_at` (the platform's time; ordering uses it), `received_at`, `author_kind` (`contact`, `member`, `agent`, `system`), `author_user_id`, `body`, `attachments` (file ids), `send_state` (`queued`, `sent`, `failed`, `unknown`, for `out`), `hidden_at` and `hidden_by` (a comment hidden on the platform), `platform_removed_at` (the author or platform removed it; the body is blanked, section 10), `tainted` (always true for `in`) |
-| `conversation_identity` | `provider`, `external_user_id` (a page-scoped id on Meta, an OA-scoped id on Zalo), `display_name`, `avatar_file_id`, `party_id`, `consent`, unique per `(org_id, provider, external_user_id)`; **every column that names a person is classed `pii`** in the manifest |
+| `conversation` | `channel_connection_id`, `kind` (`comment_thread`, `direct`, `email`), `external_thread_id` (the platform's thread, the top comment's id, or an email thread's root Message-ID), `external_post_id` (comment threads: the platform's post or media id; Social joins it to its own `post_variant` on `(channel_connection_id, external_post_id)`, so there is no foreign key across schemas), `parent_conversation_id` (a private reply points at its comment thread), `contact_identity_id`, `subject` (email only: the line the sender wrote, shown in the thread header), `party_id` (set only by a person, section 5.4), `status` (`new`, `pending`, `resolved`), `assignee_user_id`, `last_inbound_at`, `last_message_at`, `reply_window_until` (when the platform's free-reply window closes, from the last inbound message), `opened_at`, `resolved_at`, `resolved_by` |
+| `conversation_message` | `conversation_id`, `direction` (`in`, `out`), `external_message_id` (unique per `(org_id, channel_connection_id)`), `sent_at` (the platform's time; ordering uses it), `received_at`, `author_kind` (`contact`, `member`, `agent`, `system`), `author_user_id`, `body`, `attachments` (file ids), `email_refs` (email only: the Message-IDs named by In-Reply-To and References, ids and no text, section 6.7), `send_state` (`queued`, `sent`, `failed`, `unknown`, for `out`), `hidden_at` and `hidden_by` (a comment hidden on the platform), `platform_removed_at` (the author or platform removed it; the body is blanked, section 10), `tainted` (always true for `in`) |
+| `conversation_identity` | `provider`, `external_user_id` (a page-scoped id on Meta, an OA-scoped id on Zalo, the lower-cased address of an email sender), `display_name`, `avatar_file_id`, `party_id`, `consent`, unique per `(org_id, provider, external_user_id)`; **every column that names a person is classed `pii`** in the manifest |
 | `conversation_note` | `conversation_id`, `author_user_id`, `body`, `created_at`: an internal note, never sent |
 | `saved_reply` | `title`, `body`, `shortcut`, `created_by`, `channel_kinds` |
 | `conversation_draft` | `conversation_id`, `basis_seq` (the last message when it was asked for), `source` (`auto`, `asked`), `state` (`requested`, `live`, `used`, `discarded`, `stale`), `body` (only while live), `tainted` (always true), the lengths of a used draft (`draft_length`, `final_length`, `edit_size`): Vy's draft of a reply, **written by the system context** (a worker job), never by an org-chart agent; at most one draft in play per conversation (see "CV8 as built") |
@@ -89,7 +105,7 @@ Assignment, status changes and resolves also write an `activity` row (ids only, 
 
 ### 5.3 Statuses
 
-- **New**: the last message is inbound and nobody has replied since. **Pending**: a person replied and the contact has not answered. **Resolved**: closed by a person (comment threads need a person too). A new inbound message on a resolved conversation reopens it as New. These are Hootsuite Nest's states (New and Pending, Resolved) and need no SLA.
+- **New**: the last message is inbound and nobody has replied since. **Pending**: a person replied and the contact has not answered. **Resolved**: closed by a person (comment threads need a person too). A new inbound message on a resolved conversation reopens it as New. These are the states of the Crisp and Intercom inbox (and Hootsuite Nest's): the tabs only say whose turn it is, and there is no due time and no escalation. An email thread works the same way: a new email on a resolved thread reopens it as New.
 - A comment thread is one conversation per **top-level comment** (its replies are its messages), so a busy post does not become one giant thread.
 
 ### 5.4 Contact
@@ -103,13 +119,14 @@ The Nest references (a "You are replying" marker, an availability switch, assign
 1. **Assignment is the soft lock.** Opening a New conversation and starting a reply assigns it to the replier unless it is already assigned to someone else (then a banner names them).
 2. **Composing marker.** While a person types, an R1 command `kernel.conversation.composing` (at most one per 20 seconds per conversation) upserts `conversation_composing` with a 60-second expiry; the stream drops an invalidation hint to the others who can read the conversation, and the list shows "Linh is replying". A sweep prunes expired rows.
 3. **A hard check on send.** `kernel.conversation.reply` carries the id of the last message the sender saw. If a newer message (inbound, or another person's reply, including one sent from the platform's own inbox and seen as an echo) exists, it refuses with `CONVERSATION_MOVED`; the screen shows the new messages and asks again. This is the guarantee; the marker only prevents most clashes.
-4. **Availability** is a per-member switch, shown in Service and used to decide whom to notify about an unassigned New conversation (the assignee if there is one, else the available members who can read it, else owners and admins). No automatic round-robin in v1.
+4. **Availability** is a per-member switch, shown in Hộp thư and used to decide whom to notify about an unassigned New conversation (the assignee if there is one, else the available members who can read it, else owners and admins). No automatic round-robin in v1.
 
 ### 5.6 Replies, drafts, saved replies
 
 - A person writes, or picks a saved reply (placeholders for the contact's name only), or takes an AI draft and edits it; **a person presses Send**. The command is R2 (visible to customers); for a user it runs on the UI confirmation (the Send button) per the actor table in the kernel plan, with no approval step in v1 (Q4 is whether members' comment replies need one).
 - An AI draft is written by the **system context**, not by an agent: a worker job reads the end of the thread (tainted external text), calls the model in `packages/agent` and records the draft through a system command into `conversation_draft` (always tainted, text only while live). A person asks ("Vy soạn") or the relay asks for a new conversation, and a person reads the draft, edits it and sends it: no send tool exists for it, and an agent context stays refused everywhere (decision on #2310: no change to ADR-0029's allowlist, no invariant edit). No auto-reply to messages in v1.
 - An agent never sends, hides or resolves. Vy's draft is text only.
+- **Intent sorting and the contact match** (the same AI coworker, behind the roster map; built under [#2306](https://github.com/DOS/Ludy/issues/2306), CV3, for intent sorting and reply drafts and [#2438](https://github.com/DOS/Ludy/issues/2438) for the contact and company match, not under a build item of this plan). For a new conversation the system context records two advisory things next to the draft, through the same worker path: an **intent label** from a short fixed list (price or order, complaint, invoice or payment, appointment, other; the list is copy that the build issue fixes) shown as a chip in the list and the thread, and a **suggested contact**, the existing `party` that best matches the identity by phone, email or name, shown in the contact panel with a "Link" button that a person presses. Both are tainted suggestions and never actions: nothing is linked, assigned, answered or resolved by them, and a person can ignore or correct them (a correction is recorded as lengths and codes, never text, as for drafts). They run behind the AI budget meter like the draft (`metered(...)` under `withAiScope`, one key per feature, named by the build issue). With AI off the chip and the suggestion are absent and the inbox works as before.
 
 ## 6. How comments and messages arrive
 
@@ -162,11 +179,23 @@ Comments: webhook field `comments` (and `live_comments`), reply `POST /{ig-comme
 | Comments | **No comment API or webhook found.** The only related field is an article's `comment` (`show` or `hide`) set at create or update | [S], "none found" is not proof |
 | Errors | -216 token, -201 parameter, -223 quota, -32 rate limit, -213 not a follower, -232 blocked | [S] |
 
-So v1 on Zalo is **direct messages only, in Service**; Zalo comments have no home until an API is found. Zalo's refresh token is single use, and the existing refresh sweep (hourly scan, 6-hour horizon) already handles it.
+So v1 on Zalo is **direct messages only, in Hộp thư**; Zalo comments have no home until an API is found. Zalo's refresh token is single use, and the existing refresh sweep (hourly scan, 6-hour horizon) already handles it.
 
 ### 6.6 Later providers
 
-TikTok (comments exist on its Display side; not researched), Threads replies, YouTube comments and WhatsApp: the same core and the same intake; each is an adapter capability (`readInbound`, `reply`) and a build issue of its own.
+TikTok (comments exist on its Display side; not researched), Threads replies, YouTube comments and WhatsApp: the same core and the same intake; each is an adapter capability (`readInbound`, `reply`) and a build issue of its own. Customer email is the next family (section 6.7).
+
+### 6.7 Email (a conversation channel; design, not built)
+
+Customer email joins the same model: a conversation of kind `email`, shown as a chat thread in Hộp thư and answered in the same box. Nothing here is built, and the build item CV10 (section 13) is not opened.
+
+- **Intake.** It reuses the machinery of the inbound mail path (a shared secret, a size limit, MIME parsing in the sandboxed `crove-extract`, the org found from a stored address and never from a header, address rotation #37) with a **conversation address of its own per org**, separate from the document address, so a customer's mail is never read by the invoice extractor [U]. Parsing hands the message to a worker job that runs `kernel.conversation.ingest` for the org that owns the address. Whether a customer's mailbox is forwarded to that address or read from a connected mailbox (IMAP, Gmail, Microsoft 365 through the channel layer) is the build issue's first question [U]; forwarding comes first because the inbound path exists.
+- **Threading.** A message joins the conversation that holds any Message-ID named in its `In-Reply-To` or `References` headers; with none it opens a new conversation whose `external_thread_id` is its own Message-ID. The Message-ID is `external_message_id`, so a redelivery is a no-op (the same unique key as every channel), and the ids a message names are kept in `email_refs` (ids only). A subject match with no header link does not merge threads in v1, because a wrong merge shows one customer another's mail [U].
+- **Display.** A message shows as a chat bubble: the new text on top, the quoted history and the signature folded behind "show quoted text". The stored body is the whole text (plain text, or HTML reduced to text; HTML is never rendered), so the trimming is a display rule and a wrong trim loses nothing.
+- **Attachments.** Images go through the conversation attachment store ("CV5c as built": a row bound to its message, a size cap, the type read from the bytes, never rendered as HTML), taken from the parsed mail instead of fetched from a platform address. Other types show their name, size and type with no bytes in v1; whether PDFs and office files are stored under the same rules is the build issue's call [U].
+- **Replies.** `kernel.conversation.reply` on an `email` thread queues a mail through the kernel mail pipeline ([ADR-0034](../adr/0034-outbound-email.md): the `mail_message` row before the provider call, the suppression check, one send per mail, the `external_call` key `mail:<message>:<attempt>`) on the transactional stream, with `In-Reply-To` and `References` set so the customer's client threads it. Email has no reply window and no private-reply limit. A bounce or a complaint event marks the message `failed`, and the suppression list applies as for every sender. The send is R2, a person presses Send, and an agent never sends.
+- **Loops and noise.** A message marked auto-submitted or bulk, or sent from the org's own address, opens no conversation and gets no reply; a conversation never replies by itself (no auto-send, section 5.6).
+- **Permissions and personal data.** The sender's address is the identity (`external_user_id`, class `pii`). The body and attachments follow section 10 (retention, `erase_contact`, export, purge), and an `email` thread is read, answered and erased by the same people as a direct message (section 8): mail to a business is private.
 
 ## 7. How replies go out
 
@@ -175,12 +204,13 @@ TikTok (comments exist on its Display side; not researched), Threads replies, Yo
 - **Window check before the send.** `reply_window_until` is computed from `last_inbound_at` (24 hours on Meta, 48 on Zalo [S]). Inside it, send. On Meta past it, only a person's reply with the HUMAN_AGENT tag up to 7 days [C, [U] for approval]; past that, the Send button is disabled with the reason. On Zalo past 48 hours a message may be charged against the OA's quota [S]; v1 refuses it with a message and does not send paid messages.
 - **Rate limits and typed errors** as section 6.2 and 6.5; the channel layer's `rate_limited` result delays the job to the retry time. A `token_expired` result sets the connection `expired`, pauses sending, and alerts, as for publishing; inbound events already stored are not lost.
 - **Comment replies** have the same pipeline with the comment id as the target; **hide and unhide** are R2 commands with the same pipeline, reversible; **delete** is out of v1.
+- **Email replies** use the kernel mail pipeline instead of a platform call (section 6.7); the rest, a person's Send and the check for a newer message, is the same.
 
 ## 8. Permissions
 
 Kind decides who may read, because a public comment and a private message are different in what they expose.
 
-| Action | Comment thread | Direct message |
+| Action | Comment thread | Direct message or email |
 |---|---|---|
 | Read | owner, admin, member and viewer who may read the channel (the existing per-channel limit applies) | owner, admin, and members holding the `desk.agent` role (a new permission `conversation.direct.read`); the per-channel limit applies; viewers never |
 | Reply, hide, resolve, assign, write a note | owner, admin, member who may read it (R2, user confirmation) | owner, admin, `desk.agent` role holders |
@@ -189,13 +219,14 @@ Kind decides who may read, because a public comment and a private message are di
 | Erase a contact's data (section 10) | owner, admin, R3 | owner, admin, R3 |
 | Retention and saved-reply settings, connect the inbox scopes | owner, admin | owner, admin |
 
+- **Email follows the direct message rule.** An `email` conversation is read, answered and erased by the same people as a direct message, and the database enforces it with the same restrictive policy (`kind <> 'comment_thread'`).
 - **Roles.** `desk.agent` exists in `BUILTIN_ROLE_KEYS` and grants nothing yet; it gains the direct-message permissions. Social has no role key yet and uses the member rule it has today. The permissions are declared in the manifests, checked by `manifest-permissions.test.ts`, and enforced by the database (a restrictive policy on `kind = 'direct'` that asks the same role-assignment check the finance permissions use), not only in the screen.
 - **The per-channel limit moves to the kernel.** Social's `channel_access` (one row per member and channel, #1081) is in `crove_social`, which the kernel cannot read, so the core cannot apply it. A build step copies it to `crove_kernel.channel_access` and Social reads it from there (a one-time migration, no behaviour change). Without it a freelancer limited to one client's channels would read every channel's messages.
 - **Customer care roles for a freelancer or an agency:** the client-side reading of conversations is out of v1.
 
 ## 9. Tenancy, writes, audit, agents
 
-- **One write path.** Every write is a command through `Runtime.execute()`: `kernel.conversation.ingest` (system, worker only), `reply`, `hide`, `assign`, `resolve`, `reopen`, `link_contact`, `note`, `composing`, `erase_contact`, `purge_expired`, `set_availability`, plus the draft write by an agent. The roles' direct SQL writes are zero.
+- **One write path.** Every write is a command through `Runtime.execute()`: `kernel.conversation.ingest` (system, worker only), `reply`, `hide`, `assign`, `resolve`, `reopen`, `link_contact`, `note`, `follow_up` (R1, creates the linked task), `composing`, `erase_contact`, `purge_expired`, `set_availability`, plus the draft write by an agent. The roles' direct SQL writes are zero.
 - **No text in audit rows or activity.** Audit rows and the WORM stream cannot be erased later, so a command's audit target is the conversation and message ids and lengths, never a body or a name (the rule of ADR-0037). Activity rows carry ids only. Logs carry no bodies.
 - **Taint.** Every inbound message and comment is tainted external text (`source_trust external`). An agent reading it gets the tainted-run rules: R1 writes go to review, send tools are hidden, and its only conversation write is a draft (section 5.6).
 - **Agent allowlist.** Unchanged (#2310). A draft is written by the system context, so `conversation_draft` is not added to the tables agent contexts may write: `apply_tenant_rls` installs the agent write guard on it like every new tenant table, and `conversation_access` is false for an agent.
@@ -218,11 +249,11 @@ Comments and messages are **personal data of third parties** under the PDPL (Law
 
 ## 11. What each module shows
 
-**Social** (group **Đăng bài**): the post page gets a **Bình luận** tab (the thread of each top-level comment, reply, hide, resolve, "reply privately", "send to Service"); a **Hộp bình luận** screen lists comments across posts (New, Pending, Resolved; filter by channel and post; saved replies; AI draft); counts on the post and the calendar chip. Facebook Page and Instagram only in v1; the existing comment counts stay.
+**Hộp thư** (the inbox group): the three-pane view from the Nest reference, the one Crisp and Intercom use. Left: the conversation list for every channel (a channel icon on each row) with New, Pending and Resolved tabs, filters by channel, kind and assignee, a search box, a "Linh is replying" marker and unread dots. Middle: the thread as chat bubbles (an email's quoted history folded), a reply box that names the channel ("private message", "public comment", "email"), the saved replies and the AI draft, an intent chip, a Resolve button, an availability switch. Right: the contact panel (the party and the suggested match, the identity, the other conversations, internal notes, open tasks and "Create task", link to contact, erase).
 
-**Service** (group **Hộp thư**): the three-pane view from the Nest reference. Left: the conversation list with New, Pending and Resolved tabs, a search box, a "Linh is replying" marker and unread dots. Middle: the thread, a reply box that names the channel and says "private message", the saved replies and the AI draft, a Resolve button, an availability switch. Right: the contact panel (the party, the identity, the other conversations, internal notes, link to contact, erase). Cases and SLA are Service's own later work and link to a conversation.
+**Bài đăng** (Social, in the group Marketing): the post page keeps its **Bình luận** tab, the same conversations filtered to the post (reply, hide, resolve, "reply privately"), with counts on the post and the calendar chip. Facebook Page and Instagram only in v1; the existing comment counts stay. There is no separate comment inbox in the end state: Hộp thư filtered to comments is that screen, and the comment inbox CV1 built stays until CV3 folds it in.
 
-**Ads** (group **Quảng cáo**) as in [ads.md](ads.md). One shared component renders both inboxes, so the conversation screen is built once and each module passes the kind filter and the permission.
+**Quảng cáo** (Ads, in the group Marketing) as in [ads.md](ads.md). One shared component renders the inbox and the post tab, so the conversation screen is built once and each place passes its filter and the permission.
 
 ## 12. What the owner sets up
 
@@ -239,15 +270,17 @@ Priority P2 for CV1 to CV5, P3 after; the milestone is the Marketing line's curr
 |---|---|---|
 | **CV1** Core, sandbox, comments in Social | On `docker compose up`, the `sandbox` channel produces comments on a post; a member opens the post's **Bình luận** tab, replies, hides, resolves, assigns, adds a note; the comment inbox lists them | Kernel migration and manifest for the tables of section 5.2 (comment kind and the shared tables); `ingest`, `reply`, `hide`, `assign`, `resolve`, `note`; the `external_call` reply pipeline with a killed-worker test (no double send); RLS matrix rows; redaction test; the per-channel access moved to the kernel with Social unchanged; Playwright covers reply and resolve |
 | **CV2** Facebook Page comments, live | A real Page's comments appear within seconds and a reply shows on Facebook | Webhook route (signature, enqueue only, public list), connect opt-in scopes, subscribe and reconcile jobs, reply and hide adapters, recorded-answer tests with Meta's payloads, a live-check runbook like [social-live-check.md](../runbooks/social-live-check.md) (the live run is the PO's with the owner); [U] items settled |
-| **CV3** The Kênh app and the Service inbox on the sandbox | The rail shows one app with the groups of the enabled modules; Service shows the three-pane inbox for sandbox direct messages with New, Pending, Resolved, assignment, availability, "is replying", contact panel, notes, saved replies | App id rename and menu messages; the shared conversation component; the direct kind and its read permission (`conversation.direct.read`) enforced in the database; `composing` and `CONVERSATION_MOVED`; tests for collision and the permission |
-| **CV4** Messenger direct messages, live, and reply privately | A real customer message appears in Service, a person answers it, and "reply privately" on a comment starts a conversation that Service shows | `messages` and `message_echoes` webhooks, Send API with window rules and HUMAN_AGENT, private reply, echo-based reconcile, the Page Inbox ownership question settled, a live-check runbook |
-| **CV5** Zalo OA direct messages, live | A Zalo OA chat appears in Service and is answered within the free window | Webhook route with the OA signature (formula tested against a real event), `message/cs`, window and plan errors mapped to clear messages, history on reconnect, a live-check runbook |
+| **CV3** The Ludy Engage app and the Hộp thư inbox on the sandbox | The rail shows one app with the groups of the enabled modules; Hộp thư shows the three-pane inbox for sandbox conversations of every kind (comments and direct messages) with New, Pending, Resolved, assignment, availability, "is replying", contact panel, notes, saved replies and "Create task"; the comment inbox of CV1 folds into it | App id rename and menu messages (the shell work is #2435); the shared conversation component; the direct kind and its read permission (`conversation.direct.read`) enforced in the database; `composing`, `CONVERSATION_MOVED` and `follow_up`; tests for collision and the permission |
+| **CV4** Messenger direct messages, live, and reply privately | A real customer message appears in Hộp thư, a person answers it, and "reply privately" on a comment starts a conversation that Hộp thư shows next to the comment | `messages` and `message_echoes` webhooks, Send API with window rules and HUMAN_AGENT, private reply, echo-based reconcile, the Page Inbox ownership question settled, a live-check runbook |
+| **CV5** Zalo OA direct messages, live | A Zalo OA chat appears in Hộp thư and is answered within the free window | Webhook route with the OA signature (formula tested against a real event), `message/cs`, window and plan errors mapped to clear messages, history on reconnect, a live-check runbook |
 | **CV6** Retention, erasure and the deletion callback | The owner sets a retention, a person's data can be erased from the contact panel, Meta's callback disconnects and purges | `purge_expired` job, `erase_contact` (R3), callback route with `signed_request` verification, org purge and export cover the tables, audit rows with ids only, test that no body reaches audit or logs |
-| **CV7** Instagram comments and direct messages | Instagram comments in Social, DMs in Service | After the connector's login model is read; webhook `comments` and `messages`, reply, hide, private reply, live-check runbook |
+| **CV7** Instagram comments and direct messages | Instagram comments and DMs in Hộp thư, the comments also under their post | After the connector's login model is read; webhook `comments` and `messages`, reply, hide, private reply, live-check runbook |
 | **CV8** AI reply drafts and saved replies | A draft appears in the reply box, tainted, and a person sends it | `conversation_draft` and `saved_reply` (built, see "CV8 as built"); the draft is the system's, so no allowlist change; `ConversationWriter` in `packages/agent` over tainted thread text; tests that an agent cannot send, hide, resolve or link a contact |
-| **CV9** Send to Service as a case, and Service-only comments filter | Depends on Service's tickets and Q2 | Later |
+| **CV9** Dropped (owner, 2026-11-03, #2311) | Was the hand-off of a comment to a numbered record in Service; the follow-up is a task linked to the conversation (section 4), built with CV3 | None: nothing of the numbered-record model is built |
+| **CV10** Customer email as a conversation channel (section 6.7) | A customer's email appears in Hộp thư as a chat thread, a person answers in the same box, and the customer gets an email that threads in their mail client | Not opened. A conversation address per org through the sandboxed parser; threading by Message-ID and References; the quoted history folded on display; images through the attachment store; replies through the mail pipeline with the suppression check; retention, erasure, export and purge cover the `email` kind; tests that a customer's mail never reaches the invoice extractor and that no body reaches audit, activity, events or logs. [U]: forwarding or a connected mailbox, non-image attachments, subject-based threading |
+| **CV11** Not a build item of this plan | Intent sorting and reply drafts are in #2306 (CV3); the contact and company match is #2438 | See those two issues; section 5.6 says what the advisory suggestions must and must not do |
 
-**Order** (Q7): CV1, CV2, CV3, CV4, CV5, CV6, then CV7 to CV9. Zalo can move ahead of Messenger if the owner prefers it. **No live channel (CV2, CV4, CV5) handles a real customer's messages before CV6 is accepted**: until retention, erasure, export and purge exist, those channels run only on the owner's own Page and OA with test accounts, and CV6 can be built in the same sitting as CV2 if the owner wants a customer earlier.
+**Order** (Q7): CV1, CV2, CV3, CV4, CV5, CV6, then CV7, CV8 and CV10 (CV9 is dropped; intent sorting and the contact match are #2306 and #2438). Zalo can move ahead of Messenger if the owner prefers it. **No live channel (CV2, CV4, CV5) handles a real customer's messages before CV6 is accepted**: until retention, erasure, export and purge exist, those channels run only on the owner's own Page and OA with test accounts, and CV6 can be built in the same sitting as CV2 if the owner wants a customer earlier.
 
 ### CV8 as built (#2310): Vy's reply drafts and the saved replies
 
@@ -260,7 +293,7 @@ Priority P2 for CV1 to CV5, P3 after; the milestone is the Marketing line's curr
 - **The org's AI limit and cost.** The model call is rationed by the existing per-minute draft budget of the deployment (`apps/kernel/src/ai-draft-limit.ts`, #386): the API takes a ticket per member and org when a member asks (`RATE_LIMITED` over it), and the worker takes the org's part for every draft (over it the draft is dropped with `RATE_LIMITED` and the person can ask again); this feature has no counter of its own. Before the call the job asks `kernel.usage.over` for `ai_cost` at **half** the org's daily limit (so a customer who writes a lot cannot use up what invoice reading needs): over it there is no draft and no mail (`AI_LIMIT`); the call itself goes through the AI budget meter (#2382: `metered('conversation.draft', ...)` in `ConversationWriter`, the job running under `withAiScope` with the system meter), which refuses it when the org's monthly AI budget is spent (`AI_BUDGET`, no draft, no mail) and records its tokens and cost as a usage row, so the job records none of its own; the half-limit check above reads the same rows. The model call site is `ConversationWriter.draft` in `packages/agent/src/conversation.ts` (its default generator), called by `runConversationDraft` in `apps/kernel/src/conversations-worker.ts`. The org's owners and admins switch drafting of new conversations on or off (`auto_draft_set`): a customer's message goes to the deployment's AI endpoint for it, so the switch is the org's control of that processing (a draft a member asks for is theirs to ask).
 - **No text in audit rows, events, jobs or logs.** The audit rows carry draft and conversation ids, lengths and codes; the event and the job carry the draft and conversation ids; a model error (which may quote the prompt) is never logged. Tested.
 - **Export and purge.** The export lists both tables (a live draft's text is third-party-derived personal data, like the messages); the org purge deletes both (carried from the newest definition); an erasure or the retention purge deletes drafts with their thread.
-- **Not in this slice:** the reply-box part moving into the Service inbox (CV3 #2306 reuses `DraftPanel`), learning from the recorded edits, a per-channel voice for Vy, placeholders in saved replies, drafts for comment threads on Social (the table and the job do not care about the kind; the Social comment inbox shows the same panel).
+- **Not in this slice:** the reply-box part moving into the Hộp thư inbox (CV3 #2306 reuses `DraftPanel`), learning from the recorded edits, a per-channel voice for Vy, placeholders in saved replies, drafts for comment threads on Social (the table and the job do not care about the kind; the Social comment inbox shows the same panel).
 
 ### CV5c as built (#2357): customers' images
 
@@ -277,7 +310,7 @@ Priority P2 for CV1 to CV5, P3 after; the milestone is the Marketing line's curr
 
 What differs from the table above, each for a reason found while building:
 - **Retention** is `crove_kernel.conversation_setting` (one row an org, `retention_months` 6, 12 or 24, NULL keeps; no row means 24). Owners and admins set it (`retention_set`, R2); every member reads it. The daily retention job runs `purge_expired` per org that holds a thread past it (a definer lists the orgs for the worker login), 200 threads a batch, and deletes the identities left with no thread. The audit row has counts and the number of months only.
-- **Erasure** is `erase_contact` (R3, owners and admins): the thread the button is on names the customer, and every thread of that identity goes with its messages, notes and read marks, then the identity. The button is in the thread header of the Social inbox (and of Service's inbox when CV3 lands, which uses the same component). The contact-panel placement and the party link stay with CV3.
+- **Erasure** is `erase_contact` (R3, owners and admins): the thread the button is on names the customer, and every thread of that identity goes with its messages, notes and read marks, then the identity. The button is in the thread header of the Social inbox (and of the Hộp thư inbox when CV3 lands, which uses the same component). The contact-panel placement and the party link stay with CV3.
 - **Erase tombstones (#2348).** `erase_contact` keeps the identity as a tombstone (`conversation_identity.erased_at`, no name, no party link); the intake refuses a message of that customer dated at or before the erasure, so a replayed signed body cannot restore it, and the nightly job drops the tombstone after 30 days.
 - **One Meta callback.** The Ads route `/api/ads/meta/data-deletion` is generalised, not duplicated: the signed request is checked against each Meta app secret held (`CHANNEL_META_ADS_APP_SECRET`, `CHANNEL_META_APP_SECRET`) and fanned out under one confirmation code to `crove_ads.deletion_request` and the new `crove_kernel.conversation_deletion_request` (a copy of the Ads machinery table and its definers, keyed by the hash `channel_connection.granted_by_hash`). The worker erases the conversations of each connection the hash names (`erase_connection`, system) after closing it; the status page is complete when both sides are. A reconnect by an owner or admin clears the hash (taking the connection over keeps its conversations); connectors set it when they link an account (CV2 and CV7, noted on their issues). The Ads tests and the route stay as they were.
 - **Export and purge:** the six conversation tables and the settings are in `EXPORT_TABLES` (read marks and the keyed hash are left out) and in `org_purge` (carried from the newest definition).
@@ -301,15 +334,15 @@ What differs from the table above, each for a reason found while building:
 What differs from the table above, each for a reason found while building:
 - **Tables.** CV1 builds `conversation`, `conversation_message`, `conversation_identity`, `conversation_note`, `conversation_read` and the moved `channel_access`. `saved_reply` moves to CV8 (its screens), `conversation_composing` and `member_availability` to CV3 (the commands that use them), so no table ships unused.
 - **Rows are org-level.** A channel connection belongs to no legal entity yet, so a conversation does not carry `legal_entity_id`; the channel limit and the kind rule are the policies (`crove_kernel.conversation_access`). Follow-up: `legal_entity_id` and its `le_scope` policy come with the issue that gives connections an entity.
-- **The permission is `kernel.conversation.direct.read`** (a manifest permission is prefixed by its module, and the conversation core is the kernel's). No role holds it yet: CV3 seeds it for `desk.agent` (the roles invariant lists the seeded permissions, so that is a two-step change), and until then a private message is read only by owners and admins, so a live Zalo channel (CV5) is safe before the Service inbox exists. The policy is tested now with the permission seeded as a fixture.
+- **The permission is `kernel.conversation.direct.read`** (a manifest permission is prefixed by its module, and the conversation core is the kernel's). No role holds it yet: CV3 seeds it for `desk.agent` (the roles invariant lists the seeded permissions, so that is a two-step change), and until then a private message is read only by owners and admins, so a live Zalo channel (CV5) is safe before the Hộp thư inbox exists. The policy is tested now with the permission seeded as a fixture.
 - **Hide and unhide** are idempotent calls (`hide_request`, `hide_attempt` on the message), so a job may repeat them; a reply is never repeated after an unclear answer.
 - **No activity rows** for assign or resolve yet: an activity row is read by every member of the org, which would show a private message's existence to a member who may not read it. CV3 decides it with the permission.
 - **Real-time** is a short poll (six seconds) in the screens; stream hints for conversations wait, since a hint reaches every member of the org.
 
 ## 14. Edits to existing documents (in the same PR)
 
-- [social.md](social.md) "Not in Social" now says: comments on the org's own posts are read and answered in Social (this plan), private messages stay in Service, both on one conversation core in the kernel.
-- The kernel plan's Service and Social paragraph (section 5.7) says: comments in Social, private messages in Service, one core underneath. The module table row for Service, the Phase 4 scope line, the Phase 5 line and the fork table row are updated to match. ADR-0041 is added to the ADR index.
+- [social.md](social.md) "Not in Social" says since 2026-11-01 that comments are answered in Social and private messages are not; it follows the decision of 2026-11-03 (every conversation in Hộp thư, the post page showing its comments) in the CV3 pull request, outside the four files of #2437.
+- The kernel plan (#2437, in the same pull request as this change): the Service and Social paragraph (section 5.7), the module table row for Service, the CRM timeline line, the Phase 4 heading, scope and exit criteria, and the fork table row now say: one inbox of conversations on the Crisp and Intercom model (chat, comments and email), follow-up as a task, no auto-send, one rail app, Ludy Engage. ADR-0041 is amended in the same way.
 
 ## 15. Risks
 
@@ -334,6 +367,7 @@ Nothing is built until the owner approves. Each question: what is decided, why i
 - B. Separate rail items for Social, Service and Ads, like Hootsuite's rail. Matches the screenshot, but a longer rail and a context switch between a comment and the private reply it started.
 
 Without an answer: A, with the working name "Kênh".
+**Answered** (JOY, 2026-11-01): A. The groups are those of section 3.
 
 **Q2. Should a comment also appear in the Service inbox?** (Who acts: JOY.) It decides whether care teams see comments.
 - **A. No: comments only in Social, with "reply privately" and "send to Service" bridges (recommended).** Your decision as written; one place per item.
@@ -341,8 +375,9 @@ Without an answer: A, with the working name "Kênh".
 - C. Always show comments in both. Two unread counts and two people answering the same comment.
 
 Without an answer: A.
+**Answered, differently** (JOY, 2026-11-03): comments show in Hộp thư, with the post tab as a second door. The options above are the record of the question as put on 2026-11-01.
 
-**Q3. What is the app called?** (Who acts: JOY with the Frontend line.) It decides the rail label and the menus. Options: **Kênh** (recommended, short, "channels"), Ludy Channels, a name per customer type. Without an answer: "Kênh" as a working name, changeable later because it is only a label.
+**Q3. What is the app called?** (Who acts: JOY with the Frontend line.) It decides the rail label and the menus. Options: **Kênh** (recommended, short, "channels"), Ludy Channels, a name per customer type. Without an answer: "Kênh" as a working name, changeable later because it is only a label. **Answered** (JOY, 2026-11-02): **Ludy Engage**.
 
 **Q4. Do members' public replies to comments need approval?** (Who acts: JOY.) It decides whether replying in the org's name is as fast as in Hootsuite or as controlled as publishing.
 - **A. No approval in v1: a member who may read the channel can reply; an AI draft always needs a person to press Send (recommended).** Speed matters in care; owners can limit a freelancer to some channels already.
@@ -364,7 +399,7 @@ Without an answer: A, and a lawyer reads Meta's rule on stored customer messages
 Without an answer: A, and the live check confirms the plan names and quotas.
 
 **Q7. In what order do we build?** (Who acts: JOY.) It decides what you can try first.
-- **A. Core and comments on the sandbox, Facebook Page comments, the app and Service inbox on the sandbox, Messenger, then Zalo, then retention (recommended).** You see comments in Social first, as decided; each step runs without any platform review.
-- B. Zalo OA messages before Messenger, because Zalo is Vietnam's first channel. Needs the Service inbox first (CV3), so the first visible result is later.
+- **A. Core and comments on the sandbox, Facebook Page comments, the app and the Hộp thư inbox on the sandbox, Messenger, then Zalo, then retention (recommended).** You see comments first; each step runs without any platform review.
+- B. Zalo OA messages before Messenger, because Zalo is Vietnam's first channel. Needs the Hộp thư inbox first (CV3), so the first visible result is later.
 
 Without an answer: A.
