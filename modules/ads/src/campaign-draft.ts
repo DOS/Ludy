@@ -347,6 +347,8 @@ export const adsCampaignPrepareLaunch = defineCommand({
         currency: account.currency,
         days: checked.days,
         planHash: planHash(plan, account.id, account.currency),
+        origin: row.origin as 'human' | 'ai',
+        aiFields: row.ai_fields,
         plan,
       }),
       // The proposal belongs to the account's legal entity (#1538).
@@ -388,7 +390,10 @@ export const adsCampaignLaunch = defineCommand({
       planHash(plan, account.id, account.currency) !== payload.planHash ||
       canonicalJson(plan) !== canonicalJson(payload.plan) ||
       payload.adAccountId.toLowerCase() !== account.id ||
-      proposal?.legal_entity_id !== account.legalEntityId
+      proposal?.legal_entity_id !== account.legalEntityId ||
+      // The taint the card showed (who wrote the plan, which fields the AI coworker drafted) is the draft's now.
+      payload.origin !== row.origin ||
+      canonicalJson([...payload.aiFields].sort()) !== canonicalJson([...row.ai_fields].sort())
     ) {
       throw new DomainError('ADS_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     }

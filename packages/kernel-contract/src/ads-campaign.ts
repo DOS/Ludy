@@ -151,6 +151,10 @@ export const zAdsCampaignLaunchPayload = z.strictObject({
   currency: zCurrency,
   days: z.number().int().positive(),
   planHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  // Who wrote the plan and which of its fields the AI coworker drafted and nobody has changed since: AI output is tainted, so the approval card says it
+  // (W1b, #2295). The draft is frozen while this request waits, so what is stored here is what stands at the approval.
+  origin: z.enum(ADS_DRAFT_ORIGINS).default('human'),
+  aiFields: z.array(z.string().max(64)).max(20).default([]),
   plan: zAdsCampaignPlan,
 });
 export type AdsCampaignLaunchPayload = z.infer<typeof zAdsCampaignLaunchPayload>;
