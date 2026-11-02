@@ -374,7 +374,8 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | 2026-10-30 | The landing page is served on ludy.vn (canonical) and ludy.so, the hosted app on app.ludy.vn (ADR-0027). | 1.1, 6 |
 | 2026-10-31 | One-person companies and SMEs first; enterprise models wait. | 1 |
 | 2026-11-01 | The logo is four keys that spell L, U, D and Y. Interim: the owner is still choosing among the round-2 options of the logo canvas. | 1.2 |
-| 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (the exact line of 6.4). | 6.4 |
+| 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (Ludy CRM and Ludy Notes use the exact line of 6.4, Ludy Kế toán says the same in its own words). | 6.4 |
+| 2026-11-02 | Frontend PO ruling ([#2351](https://github.com/DOS/Ludy/issues/2351)): all three app pages use that line, with the app's own name; Ludy Kế toán's page changed to match. | 6.4 |
 | decision D5 | Social is paused, except the slice the owner reopened on 2026-11-01 (the Facebook Page and Zalo OA channels, [#236](https://github.com/DOS/Ludy/issues/236)). Screens of the paused part are the only exceptions to the rules below that say so (4.1). | 4.1 |
 
 The visual direction in one line: the brand violet is the single, restrained accent, and teal marks done and approved states (`ok` on the marketing site, `success` in `packages/ui`); controls use a 6px radius; the marketing site implements it in `apps/web` (tokens in `apps/web/src/app/globals.css`) and the web app's `packages/ui` tokens use the same values (3.1), with the `proposal` token for AI proposals nobody has approved yet.
@@ -516,7 +517,7 @@ Never more than 12px on a container, never pill on a primary action. Radius foll
 ### 3.5 Elevation
 
 - Hairline borders define surfaces. Shadows are reserved for things that float: popovers, menus, dialogs, toasts, the command palette. One shadow style per level, neutral, never colored.
-- Never combine a hairline border or ring with a wide soft shadow on the same element: a floating element takes its hairline and at most `shadow-sm`. The app's dialogs, command palette, toasts and pickers take the hairline alone, since a shadow does not show on the dark theme; a deal card takes its border alone. `packages/ui/test/no-border-with-shadow.test.ts` fails on the combination.
+- Never combine a hairline border or ring with a wide soft shadow on the same element: a floating element takes its hairline and at most `shadow-sm`. In the app, per component, the dialogs, command palette, toasts and pickers take the hairline alone and a deal card takes its border alone. The marketing site's product mockups (the sample command palette and the phone frame) are not covered by the test yet. `packages/ui/test/no-border-with-shadow.test.ts` fails on the combination.
 
 ### 3.6 Motion
 

@@ -50,7 +50,7 @@ function NodeCard({ node, selected, onSelect, a }: { node: Node; selected: boole
       ) : null}
       {node.chip ? (
         <Chip tone={toneOf(node.chip.tone)} wrap className="self-start text-[11px] leading-snug hyphens-auto [overflow-wrap:anywhere] sm:text-xs">
-          {node.chip.tone === 'ok' ? <Check className="size-3 shrink-0" aria-hidden="true" /> : null}
+          {node.chip.tone === 'ok' ? <Check className="size-3 shrink-0" strokeWidth={3} aria-hidden="true" /> : null}
           {node.chip.label}
         </Chip>
       ) : null}
