@@ -1081,7 +1081,7 @@ export const en = {
     followUp: 'Needs follow-up',
     nextSteps: {
       title: 'Next steps',
-      hint: 'A deal nobody changed for a while, or past its expected close, shows up here so its owner can decide what comes next. Editing, moving or closing the deal closes the step.',
+      hint: 'Thy, the AI head of sales of Ludy CRM, flags here the deals nobody changed for a while or that are past their expected close, so the owner can decide what comes next. Editing, moving or closing the deal closes the step.',
       scopeLabel: 'Whose steps',
       mine: 'Mine',
       all: 'Everyone’s',
@@ -1093,8 +1093,8 @@ export const en = {
       loadMore: 'Show more',
       noActivityBadge: 'Quiet for a while',
       pastCloseBadge: 'Past close date',
-      noActivity: 'No change since {date}',
-      pastClose: 'Past the expected close date {date}',
+      noActivity: 'Thy reminds: this deal has had no change since {date}',
+      pastClose: 'Thy reminds: past the expected close date {date}',
       unowned: 'Nobody yet',
       done: 'Done',
       doneOne: 'Mark the step of the deal {title} done',
@@ -1111,7 +1111,7 @@ export const en = {
       snoozeResult: '{count} snoozed.',
     },
     setting: {
-      title: 'Reminders for forgotten deals',
+      title: 'Thy’s reminders for forgotten deals',
       hint: 'An open deal with no change after this many days ({min} to {max}) shows in "Next steps". A deal past its expected close date always does. Applies from the next daily run.',
       days: 'Days',
       save: 'Save',
@@ -6959,6 +6959,10 @@ export const en = {
         move: 'Move a deal to another stage',
         update: 'Edit a deal',
       },
+      deal_setting: {
+        get: 'Read after how many days without a change a deal counts as forgotten',
+        set: 'Set after how many days without a change a deal counts as forgotten',
+      },
       event_type: {
         create: 'Create a booking type',
         list: 'List booking types',
@@ -6971,6 +6975,12 @@ export const en = {
         expire: 'Delete contact import rows older than 7 days',
         preview: 'Preview a contact import',
         stage: 'Stage a contact file for preview',
+      },
+      next_step: {
+        done: 'Mark the next steps of deals done',
+        list: 'List the next steps of deals',
+        raise: 'Raise next steps for forgotten deals',
+        snooze: 'Snooze the next steps of deals',
       },
       party: {
         deals: 'List the deals of a customer',
@@ -6986,6 +6996,7 @@ export const en = {
         rename: 'Rename a stage of the sales pipeline',
         reorder: 'Reorder the stages of the sales pipeline',
       },
+      today: 'Read the CRM items that need you today',
     },
     finance: {
       account: {

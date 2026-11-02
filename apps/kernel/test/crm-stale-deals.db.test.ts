@@ -497,10 +497,10 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const stepOfOverdue = (await o.stepsOf(overdue.id))[0] as StepRow;
       const byId = new Map(items.map((i) => [i.id, i]));
       expect([...byId.keys()].sort()).toEqual([`next-step:${stepOfQuiet.id}`, `next-step:${stepOfOverdue.id}`, `deal-closes:${closing.id}`, `booking:${mine}`].sort());
-      expect(byId.get(`next-step:${stepOfQuiet.id}`)).toMatchObject({ kind: 'flag', app: 'crm', severity: 'info', amount: '15000000.00', currency: 'VND', title: { key: 'crm.today.noActivity' }, href: '/deals?tab=next' });
-      expect(byId.get(`next-step:${stepOfOverdue.id}`)).toMatchObject({ kind: 'deadline', title: { key: 'crm.today.pastClose', params: { days: 1 } }, dueAt: `${yesterday}T00:00:00+07:00` });
+      expect(byId.get(`next-step:${stepOfQuiet.id}`)).toMatchObject({ kind: 'flag', app: 'crm', severity: 'info', amount: '15000000.00', currency: 'VND', title: { key: 'crm.noActivity' }, href: '/deals?tab=next' });
+      expect(byId.get(`next-step:${stepOfOverdue.id}`)).toMatchObject({ kind: 'deadline', title: { key: 'crm.pastClose', params: { days: 1 } }, dueAt: `${yesterday}T00:00:00+07:00` });
       expect(byId.get(`deal-closes:${closing.id}`)).toMatchObject({ kind: 'deadline', amount: '2500000.50', currency: 'VND', dueAt: `${today}T23:59:00+07:00`, href: '/deals' });
-      expect(byId.get(`booking:${mine}`)).toMatchObject({ kind: 'deadline', title: { key: 'crm.today.booking' }, href: '/bookings' });
+      expect(byId.get(`booking:${mine}`)).toMatchObject({ kind: 'deadline', title: { key: 'crm.booking' }, href: '/bookings' });
       expect(byId.get(`booking:${mine}`)?.dueAt).toBeDefined();
       // Another member's deals, steps and bookings never appear, nor any text a person typed.
       const text = JSON.stringify(items);
@@ -525,7 +525,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       await o.raise();
       const items = await o.query<TodayItem[]>(o.member, 'crm.today', {});
       expect(items.filter((i) => i.id.startsWith('next-step:'))).toHaveLength(20);
-      expect(items.find((i) => i.id === 'next-steps-more')).toMatchObject({ kind: 'flag', count: 3, title: { key: 'crm.today.nextStepsMore' } });
+      expect(items.find((i) => i.id === 'next-steps-more')).toMatchObject({ kind: 'flag', count: 3, title: { key: 'crm.nextStepsMore' } });
     });
   });
 });

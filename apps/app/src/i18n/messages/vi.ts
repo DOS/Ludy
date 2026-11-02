@@ -1079,7 +1079,7 @@ export const vi = {
     followUp: 'Cần theo dõi',
     nextSteps: {
       title: 'Việc tiếp theo',
-      hint: 'Cơ hội lâu không có thay đổi, hoặc đã quá ngày dự kiến chốt, tự hiện ở đây để người phụ trách quyết định bước tiếp theo. Sửa, chuyển giai đoạn hoặc đóng cơ hội thì việc tự đóng.',
+      hint: 'Thy, trưởng phòng kinh doanh AI của Ludy CRM, nhắc ở đây những cơ hội lâu không có thay đổi hoặc đã quá ngày dự kiến chốt, để người phụ trách quyết định bước tiếp theo. Sửa, chuyển giai đoạn hoặc đóng cơ hội thì việc tự đóng.',
       scopeLabel: 'Việc của ai',
       mine: 'Của tôi',
       all: 'Của mọi người',
@@ -1091,8 +1091,8 @@ export const vi = {
       loadMore: 'Xem thêm',
       noActivityBadge: 'Lâu chưa có thay đổi',
       pastCloseBadge: 'Quá ngày chốt',
-      noActivity: 'Không có thay đổi từ ngày {date}',
-      pastClose: 'Đã quá ngày dự kiến chốt {date}',
+      noActivity: 'Thy nhắc: cơ hội này chưa có thay đổi từ ngày {date}',
+      pastClose: 'Thy nhắc: đã quá ngày dự kiến chốt {date}',
       unowned: 'Chưa giao ai',
       done: 'Xong',
       doneOne: 'Đánh dấu xong việc của cơ hội {title}',
@@ -1109,7 +1109,7 @@ export const vi = {
       snoozeResult: 'Đã hoãn {count} việc.',
     },
     setting: {
-      title: 'Nhắc cơ hội bị bỏ quên',
+      title: 'Thy nhắc cơ hội bị bỏ quên',
       hint: 'Cơ hội mở không có thay đổi sau chừng này ngày (từ {min} đến {max}) sẽ hiện ở "Việc tiếp theo". Cơ hội đã quá ngày dự kiến chốt luôn hiện. Áp dụng từ lần quét hằng ngày kế tiếp.',
       days: 'Số ngày',
       save: 'Lưu',
@@ -6958,6 +6958,10 @@ export const vi = {
         move: 'Chuyển giai đoạn của cơ hội bán hàng',
         update: 'Sửa cơ hội bán hàng',
       },
+      deal_setting: {
+        get: 'Xem số ngày không thay đổi thì cơ hội bị coi là bỏ quên',
+        set: 'Đặt số ngày không thay đổi thì cơ hội bị coi là bỏ quên',
+      },
       event_type: {
         create: 'Tạo loại lịch hẹn',
         list: 'Xem danh sách loại lịch hẹn',
@@ -6970,6 +6974,12 @@ export const vi = {
         expire: 'Xóa các dòng nhập liên hệ quá 7 ngày',
         preview: 'Xem trước lần nhập liên hệ',
         stage: 'Đọc tệp liên hệ để xem trước',
+      },
+      next_step: {
+        done: 'Đánh dấu xong việc tiếp theo của cơ hội',
+        list: 'Xem danh sách việc tiếp theo của cơ hội',
+        raise: 'Tạo việc tiếp theo cho các cơ hội bị bỏ quên',
+        snooze: 'Hoãn việc tiếp theo của cơ hội',
       },
       party: {
         deals: 'Xem các cơ hội của một khách hàng',
@@ -6985,6 +6995,7 @@ export const vi = {
         rename: 'Đổi tên giai đoạn của quy trình bán hàng',
         reorder: 'Sắp xếp lại các giai đoạn của quy trình bán hàng',
       },
+      today: 'Xem việc CRM cần bạn trong hôm nay',
     },
     finance: {
       account: {

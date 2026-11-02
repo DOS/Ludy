@@ -49,7 +49,7 @@ export const crmToday = defineQuery({
           kind: 'deadline',
           app: 'crm',
           id: `next-step:${step.id}`,
-          title: { key: 'crm.today.pastClose', params: { days } },
+          title: { key: 'crm.pastClose', params: { days } },
           amount: step.amount,
           currency: 'VND',
           dueAt: `${step.sinceOn}T00:00:00${VIETNAM_OFFSET}`,
@@ -60,7 +60,7 @@ export const crmToday = defineQuery({
           kind: 'flag',
           app: 'crm',
           id: `next-step:${step.id}`,
-          title: { key: 'crm.today.noActivity', params: { days } },
+          title: { key: 'crm.noActivity', params: { days } },
           amount: step.amount,
           currency: 'VND',
           severity: 'info',
@@ -70,7 +70,7 @@ export const crmToday = defineQuery({
     }
     if (steps.next) {
       const rest = (await countNextSteps(ctx)).mine - steps.items.length;
-      if (rest > 0) items.push({ kind: 'flag', app: 'crm', id: 'next-steps-more', title: { key: 'crm.today.nextStepsMore' }, count: rest, severity: 'info', href: '/deals?tab=next' });
+      if (rest > 0) items.push({ kind: 'flag', app: 'crm', id: 'next-steps-more', title: { key: 'crm.nextStepsMore' }, count: rest, severity: 'info', href: '/deals?tab=next' });
     }
 
     // The member's own open deals that are to close today.
@@ -89,7 +89,7 @@ export const crmToday = defineQuery({
         kind: 'deadline',
         app: 'crm',
         id: `deal-closes:${deal.id}`,
-        title: { key: 'crm.today.dealClosesToday' },
+        title: { key: 'crm.dealClosesToday' },
         amount: deal.amount,
         currency: 'VND',
         dueAt: `${today}T23:59:00${VIETNAM_OFFSET}`,
@@ -105,7 +105,7 @@ export const crmToday = defineQuery({
         kind: 'deadline',
         app: 'crm',
         id: `booking:${booking.id}`,
-        title: { key: 'crm.today.booking', params: { time: clockTime(new Date(booking.startsAt)) } },
+        title: { key: 'crm.booking', params: { time: clockTime(new Date(booking.startsAt)) } },
         dueAt: booking.startsAt,
         href: '/bookings',
       });

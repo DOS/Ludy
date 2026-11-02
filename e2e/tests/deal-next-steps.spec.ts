@@ -54,7 +54,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     const steps = page.getByTestId('next-step');
     await expect(steps).toHaveCount(4);
     await expect(steps.first()).toContainText('Lâu chưa có thay đổi');
-    await expect(steps.first()).toContainText('Không có thay đổi từ ngày');
+    await expect(steps.first()).toContainText('Thy nhắc: cơ hội này chưa có thay đổi từ ngày');
     await page.getByRole('button', { name: 'Đánh dấu xong việc của cơ hội Tư vấn thuế' }).click();
     await expect(steps).toHaveCount(3);
     await expect(page.getByRole('status').filter({ hasText: 'Đã đánh dấu xong 1 việc.' })).toBeVisible();
