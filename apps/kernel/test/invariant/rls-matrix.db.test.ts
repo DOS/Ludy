@@ -54,6 +54,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_kernel.conversation_attachment',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -139,6 +140,9 @@ interface RowFactory {
   noInsertControl?: string;
   // The 42501 denial a privileged actor gets for another org's row, when a trigger refuses before RLS does.
   insertDenied?: RegExp;
+  // The table is written by the system context alone (a RESTRICTIVE policy with a WITH CHECK on the actor): a member context's own-org
+  // insert and update are refused (42501) instead of being the controls, and the system actor runs the controls. The reason is why.
+  systemWritesOnly?: string;
   // For a role that may update some columns but not org_id: the assignment (and extra row filter) the update
   // probes use, when a no-op assignment would be refused by a trigger. Defaults to "<first column> = <itself>".
   update?: { set: string; where?: string };
@@ -821,6 +825,30 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, kind: 'comment_thread', external_thread_id: `rls-${tag()}`, external_post_id: `post-${tag()}` },
+      };
+    },
+  },
+  // A customer's image of a message (CV5c, #2357): read by those who read its message (the thread's own rule), written, updated and deleted
+  // by the system context alone (systemWritesOnly), so the owner's member context the probes enter as reads its row but its insert and
+  // update are refused and its delete finds no row (the row policies). Its channel and kind are the message's (composite foreign key), so
+  // every row gets a fresh connection, thread and message. The update probes assign a column of a pending row to itself.
+  'crove_kernel.conversation_attachment': {
+    update: { set: 'fetch_attempts = fetch_attempts' },
+    systemWritesOnly: 'only the system context writes an image (the intake and the worker), so a member context is refused',
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      const message = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+          {
+            table: 'crove_kernel.conversation_message',
+            values: { org_id: o.id, id: message, conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', seq: 1, direction: 'in', external_message_id: `rls-${tag()}`, sent_at: '2026-11-02T03:00:00Z', author_kind: 'contact', body: 'RLS matrix image' },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), message_id: message, channel_connection_id: connection.id, kind: 'direct', source_url: `https://cdn.zdn.vn/rls-${tag()}.png`, storage_key: `conversation/${o.id}/${hex64()}` },
       };
     },
   },
@@ -2068,6 +2096,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             const q = insertSql({ table, values: built.row });
             return c.query(q.text, q.values);
           };
+          if (factory.systemWritesOnly && !actor.system) {
+            // Written by the system context alone: the member's own-org insert is refused by the row policy.
+            expect(await probe(actor, insertOwn), `${actor.name} inserting into ${table} for its own org: ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
+            continue;
+          }
           let controlActor = actor;
           if (actor.system && AUTHOR_ONLY.has(table)) {
             // AUTHOR_ONLY: the system context writes no row of its own org either. Its parents are committed first as
@@ -2152,6 +2185,11 @@ suite('generated cross-org RLS matrix on PostgreSQL (T8)', () => {
             else expect(mine.rowCount, `${where}: own rows updated (AUTHOR_ONLY)`).toBe(0);
             const control = await probe(member, updateOwn);
             expect(expectRows(control, `${member.name} updating ${table} (own rows, control for ${actor.name})`).rowCount, `${where}: own rows updated by the member`).toBeGreaterThan(0);
+            continue;
+          }
+          if (factory.systemWritesOnly && !actor.system) {
+            // Written by the system context alone: a member context's update of its own org's rows is refused by the row policy.
+            expect(await probe(actor, updateOwn), `${where} (own rows): ${factory.systemWritesOnly}`).toMatchObject({ ok: false, code: '42501' });
             continue;
           }
           // Control: the same update on its own rows runs, so the zero above is the org filter.
