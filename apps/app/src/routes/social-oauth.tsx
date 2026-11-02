@@ -9,6 +9,7 @@ import { Card } from '@crove/ui/components/card';
 import { ErrorText, ScreenTitle, Spinner } from '../components/ui.tsx';
 import { adProviderName, isAdOAuthProvider, isAdWriteOAuthProvider } from '../lib/ads.ts';
 import { client, errorMessage, queryClient, setCurrentOrg } from '../lib/api.ts';
+import { kernelErrorMessage } from '../lib/kernel-errors.ts';
 import { takeOAuthAttempt } from '../lib/oauth.ts';
 import { providerName } from '../lib/social.ts';
 
@@ -31,6 +32,7 @@ export function OAuthCallbackPage() {
   const { provider } = useParams({ strict: false }) as { provider: string };
   const t = useTranslations('social');
   const ta = useTranslations('ads');
+  const root = useTranslations();
   // An ad platform (Meta ads, #2218) is connected from the Ads screen and goes back to it; Social keeps its own words. The
   // connection that can run ads (ADR-0043, W0b) has its own words in the same place: it reads no figures, it can change campaigns.
   const ads = isAdOAuthProvider(provider);
@@ -97,6 +99,8 @@ export function OAuthCallbackPage() {
         )}
         {finish.data && <p className="text-sm text-foreground">{connectedText(finish.data.connections.map((c) => c.displayName).join(', '))}</p>}
         {finish.data && (finish.data.failed?.length ?? 0) > 0 && <ErrorText>{failedText((finish.data.failed ?? []).map((c) => c.displayName).join(', '))}</ErrorText>}
+        {/* An account refused because its token can change campaigns while running ads is off: the person is told to remove the app, not only that it failed. */}
+        {finish.data?.failed?.some((c) => c.code === 'OAUTH_WRITE_PERMISSION') && <ErrorText>{kernelErrorMessage('OAUTH_WRITE_PERMISSION', undefined, root, { server: null })}</ErrorText>}
         {finish.data && (finish.data.skipped ?? 0) > 0 && <p className="text-sm text-muted-foreground">{ads ? ta('oauth.skipped', { count: String(finish.data.skipped), max: String(OAUTH_MAX_ACCOUNTS_PER_GRANT) }) : t('oauthSkipped', { count: finish.data.skipped, max: OAUTH_MAX_ACCOUNTS_PER_GRANT })}</p>}
         {finish.error && <ErrorText>{errorMessage(finish.error)}</ErrorText>}
         {!busy && back}
