@@ -134,6 +134,12 @@ export async function fetchFile(fileId: string): Promise<Blob> {
   return (await apiFetch(`/api/files/${fileId}`)).blob();
 }
 
+// A customer's image of a conversation message (#2357): the kernel streams it after the same authorization as the thread (a member who may
+// not read the thread gets a 404), and it is shown as an image only, from an object URL, never as a page.
+export async function fetchConversationImage(attachmentId: string): Promise<Blob> {
+  return (await apiFetch(`/api/conversations/attachments/${attachmentId}`)).blob();
+}
+
 type Uploaded = { fileId: string; duplicate: boolean };
 
 // A Social upload may be a video of up to 100 MB (#409); the server checks each type's own limit.

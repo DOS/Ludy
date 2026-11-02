@@ -52,7 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { dueConversationSync, failUnsendable, requestConversationSync, purgeExpiredConversations, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepStaleReplies, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
+import { dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -370,6 +370,8 @@ export interface WorkerDeps {
     // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY): off until the live check has settled the
     // shapes of the platform's history answers (docs/runbooks/zalo-conversations-live-check.md).
     conversationHistory?: boolean;
+    // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
+    conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
@@ -1079,8 +1081,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
   if (conversationPublishers && conversationBroker) {
-    await boss.work<ConversationJob | ConversationSyncJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+    await boss.work<ConversationJob | ConversationSyncJob | ConversationAttachmentJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
+      // A customer's image (CV5c): fetched through the egress guard from the platform's media hosts; the log names the image by id only.
+      if (job.data.action === 'attachment') {
+        const outcome = await runConversationAttachment({ runtime: deps.runtime, store: deps.store, hosts: deps.channels?.conversationMediaHosts }, job.data);
+        console.log(`[conversations] attachment ${job.data.attachmentId}: ${outcome}`);
+        return;
+      }
       const sendDeps = { runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) };
       // A history read or a name lookup (CV5b) shares the queue of a reply: ids only in the job, and only the action and ids in the log.
       if (job.data.action === 'history' || job.data.action === 'profile') {
@@ -1869,6 +1877,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                     : { orgId: row.org_id, connectionId: String(row.payload.connectionId), action };
                 await boss.send(QUEUES.conversationsReply, syncJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
               }
+              // A customer's image to fetch (CV5c, #2357): ids only in the job, never the platform's address.
+              if (row.type === 'kernel.conversation.attachment_queued' && deps.channels?.publishers && deps.channels.broker) {
+                const attachmentJob: ConversationAttachmentJob = { orgId: row.org_id, connectionId: String(row.payload.connectionId), action: 'attachment', attachmentId: String(row.payload.attachmentId) };
+                await boss.send(QUEUES.conversationsReply, attachmentJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `attachment:${attachmentJob.attachmentId}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
               if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
                 const messageId = String(row.payload.messageId);
                 const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
@@ -2099,7 +2112,11 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         const withMethod = (method: 'history' | 'profile') => Object.entries(conversationPublishers).filter(([, p]) => typeof p.conversations?.[method] === 'function').map(([id]) => id);
         const due = await dueConversationSync(deps.workerDb, { history: deps.channels?.conversationHistory ? withMethod('history') : [], profile: withMethod('profile') });
         await requestConversationSync(deps.runtime, due);
+        // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
+        await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));
       }
+      // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.
+      await sweepConversationBlobs({ workerDb: deps.workerDb, store: deps.store });
     } catch (error) {
       console.error('[relay]', error);
     } finally {

@@ -905,6 +905,7 @@ export const en = {
     member: 'Member',
     platformSide: 'Your page',
     removed: 'The platform says this was removed.',
+    imageAlt: 'Image the customer sent',
     sendState: { queued: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Could not send', unknown: 'Not clear whether it was sent' },
     sendError: {
       ZALO_TOKEN: "Zalo does not accept this channel's access token, reconnect the channel",
@@ -6540,6 +6541,7 @@ export const en = {
       TOO_MANY_REQUESTS: 'Too many requests, try again in a minute',
       CONVERSATION_NOT_FOUND: 'This conversation was not found',
       MESSAGE_NOT_FOUND: 'This message was not found',
+      ATTACHMENT_NOT_FOUND: 'This image was not found',
       CONVERSATION_MOVED: 'The conversation has a new message, read it before you reply',
       REPLY_NOT_SUPPORTED: 'This channel does not support replies here yet',
       REPLY_TOO_LONG: 'The reply is longer than this channel allows',
@@ -7172,6 +7174,10 @@ export const en = {
       },
       conversation: {
         assign: 'Assign a conversation to a member',
+        attachment_get: 'View an image a customer sent in a conversation',
+        attachment_record: "Record the result of fetching a customer's image from a platform",
+        attachment_request: "Hand out the fetch of a customer's image from a platform",
+        attachment_source: "Read a customer's image address to fetch it",
         counts: 'Count conversations by status',
         erase_connection: "Erase a channel's conversations on Meta's data deletion request",
         erase_contact: 'Erase a customer and all their conversations',

@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -16,7 +16,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 
 const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
@@ -356,6 +356,32 @@ function ResolveButton({ conversation }: { conversation: ConversationSummary }) 
   );
 }
 
+// A customer's image, fetched with the member's own session (the route answers 404 to one who may not read the thread) and drawn as an image
+// from an object URL: never as HTML. While it loads, or when it cannot be read, nothing is drawn and the message's placeholder text stands.
+function MessageImage({ attachment }: { attachment: ConversationAttachmentView }) {
+  const t = useTranslations('conversations');
+  const blob = useQuery({ queryKey: ['conversation-image', attachment.id], queryFn: () => fetchConversationImage(attachment.id), staleTime: Infinity, retry: false });
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob.data) return;
+    const next = URL.createObjectURL(blob.data);
+    setUrl(next);
+    return () => URL.revokeObjectURL(next);
+  }, [blob.data]);
+  if (!url) return null;
+  return (
+    <img
+      src={url}
+      alt={t('imageAlt')}
+      width={attachment.width ?? undefined}
+      height={attachment.height ?? undefined}
+      loading="lazy"
+      className="h-auto max-h-72 w-auto max-w-full rounded-md border border-border"
+      data-testid="conversation-image"
+    />
+  );
+}
+
 function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string }) {
   const t = useTranslations('conversations');
   const f = useFormat();
@@ -373,6 +399,7 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
           {author} · {f.dateTime(m.sentAt)}
         </p>
         {m.removed ? <p className="italic text-muted-foreground">{t('removed')}</p> : <p className="whitespace-pre-wrap break-words text-foreground">{m.body}</p>}
+        {!m.removed && m.attachments.map((a) => <MessageImage key={a.id} attachment={a} />)}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {m.sendState && m.sendState !== 'sent' && (
             <Badge variant={m.sendState === 'failed' || m.sendState === 'unknown' ? 'destructive' : 'outline'} data-testid="conversation-send-state">

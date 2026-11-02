@@ -27,6 +27,8 @@ const CONTROL_PLANE: ModuleManifest = {
     crove_kernel: {
       auth_email_send: columns(['id', 'client_hash', 'target_hash', 'reserved_at']),
       auth_session: columns(['user_id', 'session_id', 'status', 'first_seen_at', 'last_seen_at', 'revoked_at', 'revoked_by', 'reason', 'evidence_at']),
+      // The keys of the blobs of deleted images (#2357), emptied by the worker once each object is gone: no tenant column, no personal data.
+      conversation_blob_doomed: columns(['storage_key', 'queued_at', 'not_before', 'claimed_until', 'attempts']),
       conversation_deletion_request: columns(['code', 'requested_at', 'completed_at', 'connections', 'sibling_codes', 'next_attempt_at'], { user_hash: 'sensitive' }),
       conversation_inbound_pending: columns(['seq', 'provider', 'received_at', 'claimed_until', 'attempts'], { body: 'pii' }),
       global_kill_switch: columns(['id', 'key', 'engaged', 'reason', 'changed_by', 'changed_at']),
