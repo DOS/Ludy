@@ -7423,6 +7423,7 @@ export const vi = {
         get: 'Xem thông tin thuế',
         save: 'Lưu thông tin thuế',
       },
+      today: 'Xem việc cần bạn hôm nay',
       usage: {
         defer: 'Hoãn việc vì vượt hạn mức',
         over: 'Kiểm tra hạn mức sử dụng',

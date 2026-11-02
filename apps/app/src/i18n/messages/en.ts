@@ -7424,6 +7424,7 @@ export const en = {
         get: 'Read the tax profile',
         save: 'Save the tax profile',
       },
+      today: 'Read what needs you today',
       usage: {
         defer: 'Defer an item over a usage limit',
         over: 'Check the usage limits',
