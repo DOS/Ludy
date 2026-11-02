@@ -94,6 +94,15 @@ describe('brand on the landing page (#1683)', () => {
     }
   });
 
+  it('shows Dy for the Inbox, customers and sales, and Uy for marketing, in both languages (#2440)', () => {
+    const scopeOf = (lang: 'vi' | 'en', name: string) => team(lang).find((m) => m.name === name)?.scope ?? '';
+    expect(scopeOf('en', N.sales)).toMatch(/Inbox.*customers.*sales/);
+    expect(scopeOf('vi', N.sales)).toMatch(/[Hh]ộp thư.*khách hàng.*bán hàng/);
+    expect(scopeOf('en', N.marketing)).toMatch(/marketing/);
+    expect(scopeOf('vi', N.marketing)).toMatch(/marketing/);
+    for (const lang of ['vi', 'en'] as const) expect(team(lang).map((m) => m.name), lang).not.toContain(N.system);
+  });
+
   it('keeps the roster by role and no name written in the copy', () => {
     expect(Object.keys(ROSTER).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
     // The copy reads names from content/roster.ts (`${N.finance}`): a name typed into a string is the edit a rename must not need.
