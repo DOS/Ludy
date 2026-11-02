@@ -54,6 +54,7 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_campaign_draft',
   'crove_ads.ad_flag_setting',
   'crove_crm.deal_next_step',
   'crove_crm.deal_setting',
@@ -329,6 +330,23 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
         row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' },
+      };
+    },
+  },
+  // A campaign draft of an ad account (W1, #2295): one campaign with its ad set and its ad, the plan an owner or admin submits for approval. The
+  // entity is the account's (b_legal_entity, the composite foreign key). Tenant roles update the plan's columns and its status (the guard trigger
+  // holds the status to its transitions and freezes a submitted plan), so the update probes assign the name to itself.
+  'crove_ads.ad_campaign_draft': {
+    update: { set: 'name = name' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, name: 'RLS matrix draft', objective: 'traffic', created_by: o.owner },
       };
     },
   },
