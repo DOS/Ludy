@@ -29,7 +29,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
-const SECRET = 'attachments-jwt-secret-for-the-test-0123456789';
+const SECRET = 'test-only-jwt-secret-for-attachments-0123456789';
 const ISSUER = 'https://issuer.test';
 const DIRECT_READ = 'kernel.conversation.direct.read';
 
