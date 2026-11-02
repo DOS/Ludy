@@ -292,6 +292,8 @@ The template has no "Người nộp" column, so the payer named on the voucher i
 The exports record an audit row like the others, with `format: 'misa_sme_bank_credits'` or `'misa_sme_bank_debits'`,
 before the file is sent. A voucher whose entry was reversed is left out, as for the cash vouchers.
 
+**Voucher numbers changed in #2346.** Cash and bank vouchers of a series with a yearly or monthly reset now carry the period in `Số chứng từ`. A file exported before that change numbered the same voucher `CRBN00001`, now `CRBN202600001`; importing the new file after the old one in MISA creates a second voucher instead of replacing the first. Vouchers numbered before the series resets (period `-`) keep their old number.
+
 ## Value rules
 
 - **Multi-line vouchers:** one row per invoice line; the voucher columns repeat on every row (S1).
