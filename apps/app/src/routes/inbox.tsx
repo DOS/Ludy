@@ -12,6 +12,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { cn } from '@crove/ui/lib/utils';
 import { UploadEntityPicker, useChosenEntity, useLegalEntity } from '../components/entity-switcher.tsx';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { IntakePanel, useIntake } from '../components/intake.tsx';
 import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
@@ -467,6 +468,7 @@ export function InboxPage() {
           </div>
         }
       />
+      <AiMeter module="finance" className="mb-3" />
       <input
         ref={inputRef}
         type="file"

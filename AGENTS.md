@@ -2,6 +2,14 @@
 
 Ludy is the open-source Business OS (AGPL). It must run with `docker compose up` and no DOS service. Anything DOS-specific belongs in the private Crove Cloud layer, never here.
 
+## Who Ludy is for: OPC and SME, AI-first (owner decisions 2026-10-31 and 2026-11-02)
+
+Ludy is for one-person companies and SMEs in Vietnam. Every issue, plan and PR must pass this gate; details and examples are in [docs/product/scope.md](docs/product/scope.md).
+- **Fit:** it serves a task a small business does at least monthly. Enterprise models (several entities, SSO, agency consoles and the like) go to the Icebox. When fit is unclear, the owner decides.
+- **Smallest slice:** one person can use it with the defaults and no setup.
+- **AI part named:** the acceptance says what the AI coworker does in that screen. Model calls go through the AI budget meter, the core works with AI off, and a person approves money, messages and spend.
+- **AI is a coworker, never an "assistant":** Vy leads across the apps, and each app has its own coworker (DESIGN.md 1.1).
+
 ## Picking up work (GitHub Project "Crove")
 
 - Work comes from the board https://github.com/orgs/DOS/projects/8 (issues in DOS/Ludy). One task = one issue = one worktree = one PR. Split work by feature, not by layer: a task goes end to end (migration, server, contract, UI, tests).

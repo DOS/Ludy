@@ -1,7 +1,7 @@
 // Shared by the AI suites: the endpoint from the environment and the synthetic extraction fixtures.
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { zExtractionFixture, type AiConfig, type ExpectedInvoice } from '../src/index.ts';
+import { UNMETERED, withAiScope, zExtractionFixture, type AiConfig, type ExpectedInvoice } from '../src/index.ts';
 
 // The same variables the kernel reads. Without AI_BASE_URL and AI_MODEL the live suites are skipped.
 export function aiConfigFromEnv(env: NodeJS.ProcessEnv = process.env): AiConfig | null {
@@ -38,3 +38,6 @@ export function loadExtractionFixtures(): ExtractionFixture[] {
       return { id, description: spec.description, text: readFileSync(join(FIXTURE_DIR, `${id}.txt`), 'utf8'), expected: spec.expected };
     });
 }
+
+// The live suites measure the model itself against no org: their calls count nowhere (#2382).
+export const unmetered = <T>(fn: () => Promise<T>): Promise<T> => withAiScope({ orgId: 'eval', meter: UNMETERED }, fn);
