@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The roster of AI coworkers by app, and the default name of an agent installed from a template (#2410).
+// The roster of AI coworkers by what they cover, and the default name of an agent installed from a template (#2410).
 import { describe, expect, it } from 'vitest';
 import { COWORKER_BY_MODULE, COWORKER_KEYS, COWORKER_ROSTER, defaultCoworkerName } from '../src/coworkers.ts';
 
@@ -21,8 +21,8 @@ describe('the roster', () => {
 describe('defaultCoworkerName', () => {
   it('is the name of the coworker of the module’s app, whatever the names are', () => {
     expect(defaultCoworkerName('finance')).toBe(COWORKER_ROSTER.finance);
-    expect(defaultCoworkerName('crm')).toBe(COWORKER_ROSTER.crm);
-    for (const module of ['social', 'ads', 'conversations']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.engage);
+    for (const module of ['crm', 'conversations']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.sales);
+    for (const module of ['social', 'ads']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.marketing);
   });
 
   it('has none for a module without one, such as Notes (Vy covers it) or the kernel (Hy is hidden)', () => {

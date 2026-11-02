@@ -93,7 +93,7 @@ describe('AgentsPage', () => {
     const html = page('owner', oneEntity, [finance, crm, notes]);
     const cards = html.split('data-testid="template"').slice(1);
     expect(cards[0]).toContain(`Default name: ${COWORKERS.finance}`);
-    expect(cards[1]).toContain(`Default name: ${COWORKERS.crm}`);
+    expect(cards[1]).toContain(`Default name: ${COWORKERS.sales}`);
     expect(cards[2]).not.toContain('Default name');
   });
 
