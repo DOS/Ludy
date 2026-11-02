@@ -54,6 +54,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_kernel.conversation_draft',
+  'crove_kernel.saved_reply',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -851,6 +853,24 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // Vy's reply draft of a thread (CV8, #2310): read by those who read the thread (its own rule), asked for by a member (a row requested, no text,
+  // in their own name: the owner the member-context probes enter as) and written by the system (the text, the move to live), which the guard
+  // trigger holds each to. The factory's row is such a request, so the member's own-org insert and update controls pass, and the update probes
+  // assign a column to itself. Its channel and kind are the thread's (composite foreign key), so every row gets a fresh connection and thread.
+  'crove_kernel.conversation_draft': {
+    update: { set: 'state = state' },
+    make: (o) => {
+      const connection = channelConnectionRow(o);
+      const thread = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_kernel.conversation', values: { org_id: o.id, id: thread, channel_connection_id: connection.id, kind: 'direct', external_thread_id: `rls-${tag()}` } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), conversation_id: thread, channel_connection_id: connection.id, kind: 'direct', basis_seq: 1, source: 'asked', requested_by: o.owner },
+      };
+    },
+  },
   // Who wrote: the platform's id for the person, once per provider; a party is linked by a person, never by the intake.
   'crove_kernel.conversation_identity': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', external_user_id: `rls-${tag()}`, display_name: 'RLS matrix commenter' } }),
@@ -1104,6 +1124,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // row gives the org's owner the chief accountant role for the whole org (no legal entity).
   'crove_kernel.role_assignment': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, role_key: 'finance.chief_accountant', granted_by: o.owner } }),
+  },
+  // An org's saved reply (CV8, #2310): the org's own text, written by owners, admins and members (the owner the probes enter as) and the system.
+  'crove_kernel.saved_reply': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: `rls-${tag()}`, body: 'RLS matrix saved reply' } }),
   },
   // A member's saved view of a list (#2227): a name, the filter conditions and sort it applies, private or shared with the
   // org, under restrictive policies that show a private view to its owner alone, as crove_social.saved_view does; the

@@ -222,7 +222,7 @@ against the partner's own template all the same (open question 9).
 |---|---|
 | Hiển thị trên sổ | blank: both books |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
-| Số chứng từ (*) | `CR` + Crove's voucher code: `CRPT00001`, `CRPC00001` (the firm's MISA numbers its own vouchers PT00001, PC00001 ...) |
+| Số chứng từ (*) | `CR` + the two letters of Crove's voucher code + the series' period + the code's number: `CRPT202600001`, `CRPC202600001` (the firm's MISA numbers its own vouchers PT00001, PC00001 ...). The series restarts every year (#1401), and MISA groups rows by this number, so the year is in it (#2346): `CRPT202700001` is another voucher than `CRPT202600001`. A monthly series gives `CRPT20271000001`, a series that never resets `CRPT00001` |
 | Mã đối tượng, Đối tượng | blank (MISA catalog codes) |
 | Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
 | Lý do nộp / Lý do chi | blank: MISA reads 13 (Thu khác) / 23 (Chi khác) |
@@ -248,13 +248,13 @@ in the cash templates (S6) and are unconfirmed for these files. The headers are 
 including the trailing space of `Diễn giải lý do thu `, since MISA matches columns by header name (S2). Check them
 against the partner's own downloaded templates first (open question 12).
 
-**Báo Có**, sheet `Chứng từ thu tiền`, 25 columns, voucher number `CRBC00001`:
+**Báo Có**, sheet `Chứng từ thu tiền`, 25 columns, voucher number `CRBC202600001`:
 
 | Header | Crove fills |
 |---|---|
 | Hiển thị trên sổ | blank: both books |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
-| Số chứng từ (*) | `CR` + Crove's voucher code (max 20) |
+| Số chứng từ (*) | `CR` + code letters + the series' period + number, as for the cash vouchers (max 20; a longer number is refused with 422, never cut): `CRBC202600001`, or `CRBC20261000001` for October 2026 under a monthly reset |
 | Mã đối tượng, Đối tượng | blank (MISA catalog) |
 | Tên đối tượng (max 128), Địa chỉ (max 255) | the voucher's party, when it has one |
 | Nộp vào TK, Mở tại NH | blank: a MISA bank account catalog entry |
@@ -268,13 +268,13 @@ against the partner's own downloaded templates first (open question 12).
 
 The template has no "Người nộp" column, so the payer named on the voucher is not exported.
 
-**Báo Nợ**, sheet `Chứng từ Chi tiền gửi`, 47 columns, voucher number `CRBN00001`:
+**Báo Nợ**, sheet `Chứng từ Chi tiền gửi`, 47 columns, voucher number `CRBN202600001`:
 
 | Header | Crove fills |
 |---|---|
 | Hiển thị trên sổ, Phương thức thanh toán | blank: both books; the payment method is a MISA code |
 | Ngày hạch toán (*), Ngày chứng từ (*) | voucher date |
-| Số chứng từ (*) | `CR` + Crove's voucher code (max 20) |
+| Số chứng từ (*) | as the báo Có: `CRBN202600001` |
 | Tài khoản chi, Mở tại NH | blank: a MISA bank account catalog entry |
 | Nội dung thanh toán | blank (a MISA code) |
 | Diễn giải nội dung thanh toán | the voucher's reason (max 255) |
@@ -291,6 +291,8 @@ The template has no "Người nộp" column, so the payer named on the voucher i
 
 The exports record an audit row like the others, with `format: 'misa_sme_bank_credits'` or `'misa_sme_bank_debits'`,
 before the file is sent. A voucher whose entry was reversed is left out, as for the cash vouchers.
+
+**Voucher numbers changed in #2346.** Cash and bank vouchers of a series with a yearly or monthly reset now carry the period in `Số chứng từ`. A file exported before that change numbered the same voucher `CRBN00001`, now `CRBN202600001`; importing the new file after the old one in MISA creates a second voucher instead of replacing the first. Vouchers numbered before the series resets (period `-`) keep their old number.
 
 ## Value rules
 

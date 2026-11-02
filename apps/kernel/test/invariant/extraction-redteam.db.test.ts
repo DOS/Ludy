@@ -199,7 +199,11 @@ suite('prompt-injection red team for document extraction (#893)', () => {
     );
     model.answer.next = answer;
     const calls = model.calls.length;
-    const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor, extract, today: () => TODAY }, orgId, fileId);
+    // The worker hands extraction the AI budget meter its model calls count against (#2382). This test measures how far the model
+    // obeys a hidden instruction, not a budget, so its meter admits every call and counts none. Spread, so the file also runs
+    // before the extraction deps take a meter, and the PR that adds the meter needs no change here.
+    const unmetered = { meter: { admit: async () => {}, record: async () => {} } };
+    const { proposalId } = await extractAndPropose({ runtime: worker, store, extractor, extract, today: () => TODAY, ...unmetered }, orgId, fileId);
     return { fileId, proposalId, call: model.calls[calls] };
   }
 

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Meta's data deletion callback, one URL for every Meta connection of the deployment (a Meta app has exactly one callback URL;
-// ads plan section 9 #2219, conversations plan CV6 #2305). The signed request is checked against each Meta app secret the deployment
-// holds (the Ads app's and the Pages app's, which may be one app or two), and a verified one is fanned out: the Ads accounts the
+// ads plan section 9 #2219, conversations plan CV6 #2305, separate write app #2366). The signed request is checked against each Meta
+// app secret the deployment holds (the read Ads app's, the write app's that runs ads, and the Pages app's, which may be one app or
+// several), and a verified one is fanned out: the Ads accounts the
 // person granted (crove_ads.deletion_request) and the conversations of the connections they granted
 // (crove_kernel.conversation_deletion_request) each get a request under the same confirmation code. The Meta user id and the body
 // are stored nowhere; each side keeps only the keyed hash its connections carry. The worker erases; the status page Meta shows the
@@ -15,6 +16,10 @@ import { verifySignedRequest, type AdsDeletionOutcome } from './ads-deletion.ts'
 export interface MetaDeletionApps {
   // The Ads app's secret, when the Ads module is installed and its app configured.
   ads?: string | undefined;
+  // The secret of the app that runs ads (the write connection's), when the Ads module is installed and the app configured. It may be the
+  // Ads app or a separate one: the hash of a person who granted the write connection is keyed with this secret, and the request is
+  // queued under the hash of the secret that verified it, so the worker finds the right grant whichever app the person removed.
+  adsWrite?: string | undefined;
   // The Pages app's secret (the conversations of Facebook Pages and Instagram), when configured.
   conversations?: string | undefined;
 }
@@ -26,9 +31,14 @@ export async function acceptMetaDeletion(runtime: Runtime, apps: MetaDeletionApp
   const signed = new URLSearchParams(body).get('signed_request');
   if (!signed) return { status: 400, code: 'DELETION_MALFORMED' };
   const targets: Array<{ side: 'ads' | 'conversations'; secret: string; userId: string }> = [];
-  for (const side of ['ads', 'conversations'] as const) {
-    const secret = apps[side];
-    if (!secret) continue;
+  // The Ads side has two apps at most (read and write); one that is the same app as the other is asked once.
+  const candidates: Array<{ side: 'ads' | 'conversations'; secret: string | undefined }> = [
+    { side: 'ads', secret: apps.ads },
+    { side: 'ads', secret: apps.adsWrite },
+    { side: 'conversations', secret: apps.conversations },
+  ];
+  for (const { side, secret } of candidates) {
+    if (!secret || targets.some((t) => t.side === side && t.secret === secret)) continue;
     const userId = verifySignedRequest(signed, secret, now);
     if (userId !== null) targets.push({ side, secret, userId });
   }
@@ -119,7 +129,10 @@ export function renderMetaDeletionStatus(status: MetaDeletionStatus | null): str
               vi: 'Số liệu quảng cáo, nhật ký cập nhật và các tài khoản quảng cáo bạn đã cấp quyền cho Ludy đã được xóa, và mã truy cập của chúng đã bị hủy.',
               en: 'The ad figures, update logs and ad accounts you granted to Ludy have been deleted, and their access tokens destroyed.',
             }
-          : { vi: 'Yêu cầu đã được xử lý: không còn tài khoản quảng cáo nào bạn đã cấp quyền nằm trong Ludy.', en: 'The request has been handled: no ad account you granted is left in Ludy.' }
+          : {
+              vi: 'Yêu cầu đã được xử lý: không còn tài khoản quảng cáo nào bạn đã cấp quyền nằm trong Ludy, và quyền chạy quảng cáo bạn đã cấp (nếu có) đã được đóng cùng mã truy cập của nó.',
+              en: 'The request has been handled: no ad account you granted is left in Ludy, and any permission to run ads you granted has been closed with its access token.',
+            }
         : conversations && !ads
           ? convDone
             ? {

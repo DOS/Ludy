@@ -401,4 +401,84 @@ suite('the original XML after the posting on PostgreSQL (#2320)', () => {
     ).rejects.toMatchObject({ code: '42501' });
     expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
   });
+  // #2335: a person is told when the attached original differs from the posting or its signature is not verified. The
+  // dispatch runs as the worker's kernel-notify job does; the ledger is not touched by any of it.
+  const SYSTEM = { type: 'system' as const, component: 'test.notify' };
+  const flaggedEvents = (proposalId: string) =>
+    admin(async (c) => (await c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.proposal.original_flagged' AND payload ->> 'proposalId' = $2 ORDER BY id`, [orgId, proposalId])).rows.map((r) => r.id));
+  async function dispatchFlagged(proposalId: string): Promise<number> {
+    let sent = 0;
+    for (const eventId of await flaggedEvents(proposalId)) {
+      sent += (await worker.execute<{ sent: number }>('kernel.notification.dispatch', { eventId }, { actor: SYSTEM, orgId })).sent;
+      // A replay of the same event writes nothing.
+      expect((await worker.execute<{ sent: number }>('kernel.notification.dispatch', { eventId }, { actor: SYSTEM, orgId })).sent).toBe(0);
+    }
+    return sent;
+  }
+  const flaggedFor = async (userId: string, proposalId: string) =>
+    (await rt.query<{ items: Array<{ kind: string; subjectId: string | null; detail: Record<string, string> }> }>('kernel.notification.list', {}, { actor: asUser(userId), orgId })).items.filter(
+      (n) => n.kind === 'kernel.original_flagged' && n.subjectId === proposalId,
+    );
+
+  it('notifies the uploader and the approver when the original differs from the posting, and changes nothing in the books (#2335)', async () => {
+    const wrong = {
+      fromText: async () => {
+        const invoice = { ...structuredClone(PARSED), source: 'ai' as const, number: '6020', subtotal: '1900000', vatTotal: '190000', total: '2090000' };
+        const discount = invoice.lines.find((l) => l.nature === 'discount');
+        if (discount) discount.amount = '100000';
+        invoice.taxBreakdown = [{ rate: '10%', taxableAmount: '1900000', vatAmount: '190000' }];
+        return invoice;
+      },
+      fromImage: async () => null,
+    };
+    // The owner uploaded the PDF, the approver posted it, the admin uploads the original.
+    const pdf = await postPdf('6020', users.owner, undefined, wrong);
+    const before = await ledger('6020');
+    const xml = await readXml('6020', users.admin);
+    expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: true });
+    expect(await flaggedEvents(pdf.proposalId)).toHaveLength(1);
+    // Two people: the original's uploader and the posting's approver. Not the owner, who only uploaded the PDF.
+    expect(await dispatchFlagged(pdf.proposalId)).toBe(2);
+    for (const who of [users.admin, users.approver]) {
+      expect(await flaggedFor(who, pdf.proposalId), who).toEqual([expect.objectContaining({ detail: expect.objectContaining({ differs: 'true' }) })]);
+    }
+    expect(await flaggedFor(users.owner, pdf.proposalId)).toEqual([]);
+    // Never a change of the books, and the notice carries the proposal's entity.
+    expect(await ledger('6020')).toEqual(before);
+    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string; detail: Record<string, string> }>(`SELECT legal_entity_id, detail FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
+    const entity = (await proposals('6020'))[0]?.legal_entity_id;
+    expect(rows.map((r) => r.legal_entity_id)).toEqual([entity, entity]);
+    // Ids and codes only: no title, no file name.
+    expect(Object.keys(rows[0]?.detail ?? {}).sort()).toEqual(['differs', 'signature']);
+  });
+
+  it('notifies for an original whose amounts match but whose signature is not verified, and keeps the entity of a branch posting (#2335)', async () => {
+    const pdf = await postPdf('6021', users.owner, branch);
+    const xml = await readXml('6021', users.admin, branch);
+    expect((await runOf(xml.fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
+    expect(await dispatchFlagged(pdf.proposalId)).toBe(2);
+    expect(await flaggedFor(users.admin, pdf.proposalId)).toEqual([expect.objectContaining({ detail: expect.objectContaining({ differs: 'false', signature: expect.stringMatching(/^(unverified|none)$/) }) })]);
+    const rows = await admin(async (c) => (await c.query<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_kernel.notification WHERE org_id = $1 AND kind = 'kernel.original_flagged' AND subject_id = $2`, [orgId, pdf.proposalId])).rows);
+    expect(rows.map((r) => r.legal_entity_id)).toEqual([branch, branch]);
+  });
+
+  it('says nothing when the original matches the posting and its signature is verified (#2335)', async () => {
+    const pdf = await postPdf('6022');
+    // The reading service answers a verified signature for this XML.
+    const verified: ExtractClient = {
+      extract: async (kind, bytes) => {
+        const answer = (await extract.extract(kind, bytes)) as { ok: boolean; kind: string; invoice?: Record<string, unknown> };
+        if (answer.ok && answer.kind === 'einvoice_xml' && answer.invoice) {
+          answer.invoice.signature = { status: 'verified', reason: null, signer: 'Công ty bán hàng', issuer: 'CA test', signedAt: '2026-10-01T08:00:00+07:00' };
+        }
+        return answer as never;
+      },
+    };
+    const { fileId } = await ingest(users.admin, xmlOf('6022'), 'hd-6012.xml', 'application/xml');
+    const read = await extractAndPropose({ runtime: worker, store, extractor: null, extract: verified, today: () => '2026-10-13' }, orgId, fileId);
+    expect(read.proposalId).toBeNull();
+    expect((await runOf(fileId))[0]).toMatchObject({ original_of_proposal_id: pdf.proposalId, original_differs: false });
+    expect(await flaggedEvents(pdf.proposalId)).toEqual([]);
+    expect(await flaggedFor(users.admin, pdf.proposalId)).toEqual([]);
+  });
 });

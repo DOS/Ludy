@@ -26,6 +26,7 @@ import {
   type DecimalValue,
 } from '@crove/l10n-vn';
 import { isStockAccount, resolveMisaGoodsCodes, type AccountParents, type MisaGoodsCode, type ResolvedMisaGoodsCodes, type VoucherType } from '@crove/kernel-contract';
+import { DomainError } from '@crove/kernel-runtime';
 import { canonical, roundToCurrency } from './domain/money.ts';
 import { decimalCell, textCell } from './export.ts';
 import { pace, streamWorkbook, type StreamedWorkbook } from './xlsx-stream.ts';
@@ -95,6 +96,11 @@ export interface CashVoucher {
   type: VoucherType;
   /** Crove's voucher code, PT00001, PC00001, BC00001 or BN00001. */
   code: string;
+  /**
+   * The key of the number series' period the code was taken in (#1401): `2026` for a yearly reset (the default),
+   * `2026-10` for a monthly one, `-` for a series that never resets. PT00001 of 2026 and of 2027 are two vouchers.
+   */
+  numberPeriod: string;
   /** Voucher date, which is its journal entry's date. */
   date: string;
   /** The account the money moves on: 111x for a cash voucher, 112x for a bank voucher. */
@@ -298,15 +304,35 @@ export interface CashRow {
 }
 
 /**
- * Cash and bank vouchers keep Crove's own number behind this prefix (CRPT00001, CRPC00001, CRBC00001, CRBN00001): the
- * firm's MISA numbers its own vouchers PT00001, PC00001 ..., so the bare code could collide with one of them. Same
- * number on every export.
+ * Cash and bank vouchers keep Crove's own number behind this prefix: the firm's MISA numbers its own vouchers PT00001,
+ * PC00001 ..., so the bare code could collide with one of them. Same number on every export.
  */
 export const CASH_VOUCHER_PREFIX = 'CR';
 
+/** MISA's limit for "Số chứng từ (*)". */
+const CASH_VOUCHER_NO_MAX = 20;
+
+/**
+ * "Số chứng từ (*)" of a cash or bank voucher: `CR`, the two letters of the code, the digits of the number series' period
+ * (#2346), then the code's number: `CRBN202700001` for BN00001 of 2027 under a yearly reset, `CRBN20271000001` for
+ * October 2027 under a monthly one, `CRBN00001` for a series that never resets. A series restarts at 1 in each period,
+ * and MISA groups rows by this number, so two vouchers of one type from two periods must not share it. The period is in
+ * the number whatever range is exported, so a voucher keeps its number from one export to the next. At most 20
+ * characters, MISA's limit: up to 12 digits of number under a yearly reset, 10 under a monthly one. A longer number is
+ * refused, never cut: two vouchers that differ in their last digits would export under one number.
+ */
+export function cashVoucherNo(voucher: Pick<CashVoucher, 'code' | 'numberPeriod'>): string {
+  const period = voucher.numberPeriod.replace(/\D/g, '');
+  const number = `${CASH_VOUCHER_PREFIX}${voucher.code.slice(0, 2)}${period}${voucher.code.slice(2)}`;
+  if (number.length > CASH_VOUCHER_NO_MAX) {
+    throw new DomainError('EXPORT_VOUCHER_NUMBER_TOO_LONG', 422, `Số chứng từ ${voucher.code} quá dài để xuất cho MISA (tối đa ${CASH_VOUCHER_NO_MAX} ký tự)`, { code: voucher.code });
+  }
+  return number;
+}
+
 /** One row per voucher line: the cash account on one side, the line's account on the other. */
 export function cashRows(voucher: CashVoucher): CashRow[] {
-  const voucherNo = `${CASH_VOUCHER_PREFIX}${voucher.code}`;
+  const voucherNo = cashVoucherNo(voucher);
   return voucher.lines.map((line) => ({ voucher, line, voucherNo }));
 }
 
