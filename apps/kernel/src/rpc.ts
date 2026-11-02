@@ -36,9 +36,10 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { zAgentBudget, zAgentTemplate, zTask } from '@crove/kernel-contract';
+import type { zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter } from '@crove/agent';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -281,6 +282,9 @@ export function createRpcHandler(
   blueskyLogins: BlueskyLoginBudget = new BlueskyLoginBudget(),
   portalSync?: PortalSync,
   bookingReader?: BookingReader,
+  // The AI budget meter of this request's model calls (#2382) as the member who made it; aiEnabled: the deployment has a model.
+  aiMeter?: (actor: UserActor) => AiMeter,
+  aiEnabled = false,
 ) {
   const os = implement(contract).$context<RpcContext>();
 
@@ -293,8 +297,24 @@ export function createRpcHandler(
   };
   // Demo comments of the offline sandbox, by org, for the per-org cap on the intake they share.
   const sandboxStamps = new Map<string, number[]>();
+  // Every model call a handler makes counts against the org's AI budget (@crove/agent's metered(), #2382): the scope names
+  // the org and the meter that asks in this member's own authority.
   const inOrg = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) =>
-    guard(async () => fn(await resolveOrg(runtime, context.user, context.orgSlug), actorOf(context.user)));
+    guard(async () => {
+      const orgId = await resolveOrg(runtime, context.user, context.orgSlug);
+      const actor = actorOf(context.user);
+      return aiMeter ? withAiScope({ orgId, meter: aiMeter(actor) }, () => fn(orgId, actor)) : fn(orgId, actor);
+    });
+  // A model call refused because the org's AI budget of the month is spent: said as it is, so the Inbox and the panels
+  // show "Vy đã hết ngân sách tháng này" and the owner knows what to do. Posting, reading and exports are unaffected.
+  const refuseBudget = (error: unknown): void => {
+    if (error instanceof AiBudgetExhaustedError) {
+      throw new DomainError('AI_BUDGET_EXHAUSTED', 422, 'Vy đã hết ngân sách tháng này; chủ tổ chức có thể nâng ngân sách hoặc đợi sang tháng mới. Sổ sách và mọi việc không cần AI vẫn chạy bình thường', {
+        scope: error.scope,
+        ...(error.retryAt ? { retryAt: error.retryAt } : {}),
+      });
+    }
+  };
   // A procedure of a module this deployment leaves out (CROVE_MODULES, plan Decision 12) answers like a route that
   // does not exist, before any database work. The contract is shared, so the procedure stays in the router.
   const finance = runtime.installed('finance');
@@ -731,6 +751,8 @@ export function createRpcHandler(
             try {
               reading = await bookingReader.read({ message: input.message, today, days, timeZone: next.timeZone });
             } catch (error: unknown) {
+              // The budget is spent (#2382): the next free slots still come, and the member is told why Vy did not read the message.
+              if (error instanceof AiBudgetExhaustedError) return { ai: 'budget' as const, asksForMeeting: null, windows: [], ...next };
               // Neither the message nor the answer is logged.
               console.error('[crm-ai] suggest failed', error instanceof Error ? error.name : typeof error);
               return { ai: 'failed' as const, asksForMeeting: null, windows: [], ...next };
@@ -869,6 +891,7 @@ export function createRpcHandler(
                     )
                   : await socialWriter.draft(request);
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] draft failed', error instanceof Error ? error.name : typeof error);
               // A photo that could not be read as recorded, or a failed vision call, has its own words (#1126).
               if (photos.length > 0) throw new DomainError('AI_DRAFT_VISION_FAILED', 503, 'Vy chưa đọc được ảnh để soạn bài lúc này, hãy thử lại sau');
@@ -926,6 +949,7 @@ export function createRpcHandler(
               const voice = voices ? ((input.connectionId ? voices.byChannel.get(input.connectionId) : undefined) ?? voices.org) : null;
               result = await socialWriter.rewrite({ text: input.text, title: input.title ?? null, action: input.action, ...(channel ? { channel } : {}), ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               // The check after a proofread (#1167) found a changed link, hashtag, mention, number or price, or emoji.
               if (error instanceof ProofreadChangedError) {
                 throw new DomainError('AI_PROOFREAD_CHANGED', 422, 'Vy đã sửa cả liên kết, hashtag, tài khoản được nhắc (@), con số, giá hoặc emoji nên bản sửa bị bỏ; nội dung của bạn vẫn giữ nguyên', { changed: [...error.kinds] });
@@ -980,6 +1004,7 @@ export function createRpcHandler(
             try {
               altText = await socialWriter.describeStored({ key: file.storageKey, generation: file.generation, sha256: file.sha256, sizeBytes: file.sizeBytes }, file.contentType, input.language, maxChars);
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] describe failed', error instanceof Error ? error.name : typeof error);
               throw new DomainError('AI_ALT_TEXT_FAILED', 503, 'Vy chưa gợi ý được mô tả ảnh lúc này, hãy thử lại sau');
             } finally {
@@ -1014,6 +1039,7 @@ export function createRpcHandler(
             try {
               return { hashtags: await socialWriter.hashtags({ text: input.text, language: input.language, ...(channel ? { channel } : {}), exclude: input.exclude }) };
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] hashtags failed', error instanceof Error ? error.name : typeof error);
               throw new DomainError('AI_DRAFT_FAILED', 503, 'Vy không soạn được bài lúc này, hãy thử lại sau');
             } finally {
@@ -1071,6 +1097,7 @@ export function createRpcHandler(
               const voice = (only ? voices.byChannel.get(only) : undefined) ?? voices.org;
               text = await socialWriter.summary({ ...summaryInput, language: language ?? 'vi', ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               // The check after the call found a number that is not one of the period's figures.
               if (error instanceof SummaryFigureError) {
                 throw new DomainError('AI_SUMMARY_FIGURE_INVENTED', 422, 'Vy đã viết một con số không có trong số liệu của kỳ nên bản tóm tắt bị bỏ; hãy thử lại', { numbers: error.numbers.length });
@@ -1138,6 +1165,7 @@ export function createRpcHandler(
               const voice = (input.connectionId ? voices.byChannel.get(input.connectionId) : undefined) ?? voices.org;
               ideas = await socialWriter.ideas({ theme: input.theme, occasion: input.occasion ?? null, count: input.count, language: input.language ?? 'vi', ...(voice ? { voice } : {}) });
             } catch (error: unknown) {
+              refuseBudget(error);
               console.error('[social-ai] ideas failed', error instanceof Error ? error.name : typeof error);
               throw new DomainError('AI_IDEAS_FAILED', 503, 'Vy chưa gợi ý được ý tưởng lúc này, hãy thử lại sau');
             } finally {
@@ -2308,6 +2336,8 @@ export function createRpcHandler(
         }),
       ),
       // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
+      // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins.
+      flags: os.ads.flags.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flags', {}, { actor, orgId }))),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
       // Asking for a change that opens the way to spend: a proposal in the Inbox, approved there (kernel.proposal.request).
       requestChange: os.ads.requestChange.handler(({ context, input }) =>
@@ -2354,6 +2384,14 @@ export function createRpcHandler(
       setBudget: os.agents.setBudget.handler(({ context, input }) => keyed(context, 'kernel.agent.budget.set', input)),
       stop: os.agents.stop.handler(({ context, input }) => keyed(context, 'kernel.agent.kill_switch.engage', input)),
       release: os.agents.release.handler(({ context, input }) => keyed(context, 'kernel.agent.kill_switch.release', input)),
+    },
+    ai: {
+      meter: os.ai.meter.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => ({ aiOn: aiEnabled, ...(await runtime.query<Omit<z.infer<typeof zAiMeter>, 'aiOn'>>('kernel.ai.meter.status', input, { actor, orgId })) })),
+      ),
+      usage: os.ai.usage.handler(({ context }) =>
+        inOrg(context, async (orgId, actor) => ({ aiOn: aiEnabled, ...(await runtime.query<Omit<z.infer<typeof zAiUsageReport>, 'aiOn'>>('kernel.ai.usage.report', {}, { actor, orgId })) })),
+      ),
     },
     tasks: {
       list: os.tasks.list.handler(({ context, input }) =>

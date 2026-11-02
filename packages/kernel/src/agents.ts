@@ -29,6 +29,7 @@ import { decideAgentApproval, eligibleApprovers, type ActorRef } from './approva
 import { refuseWhileReextracting } from './extraction.ts';
 import { kernelManifest } from './manifest.ts';
 import { preparedEntity } from './proposal-resubmit.ts';
+import { releaseWaitingFiles } from './ai-budget.ts';
 import { memberProfiles } from './profiles.ts';
 import { lockChartChanges, rerouteStrandedTasks } from './task-reroute.ts';
 
@@ -507,7 +508,9 @@ export const setAgentBudget = defineCommand({
   name: 'kernel.agent.budget.set',
   input: z.object({ scope: zScope, target: z.string().min(1).max(100), monthlyLimit: zAmount, warnPercent: z.number().int().min(1).max(100).optional(), hardStop: z.boolean().optional() }),
   risk: 'R3',
-  sideEffect: 'internal',
+  // External: a raised budget sends the documents that waited for the model to be read again, and the extract queue reaches the
+  // AI endpoint (the egress invariant counts the emitter's side effect, #1653, #2382).
+  sideEffect: 'external',
   access: OWNER,
   handler: async (ctx, input) => {
     const userId = requireUser(ctx);
@@ -534,8 +537,10 @@ export const setAgentBudget = defineCommand({
       )
       .returning('id')
       .executeTakeFirstOrThrow();
-    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true });
     await rewakePending(ctx);
+    // Documents that waited for the AI budget (#2382) are read again at once when the new limit lets them in.
+    const released = await releaseWaitingFiles(ctx);
+    ctx.audit({ budget: row.id, scope: input.scope, target, monthly_limit: input.monthlyLimit, hard_stop: input.hardStop ?? true, released_files: released });
     await ctx.activity('kernel.agent', row.id, 'agent.budget_set', `Đặt ngân sách AI (${input.scope} ${target}): ${input.monthlyLimit}`);
     return { budgetId: row.id };
   },
@@ -1128,11 +1133,7 @@ export const startAgentRun = defineCommand({
         EXISTS (SELECT 1 FROM crove_kernel.budget_policy b
                 WHERE b.org_id = ${ctx.orgId}::uuid AND b.hard_stop
                   AND (b.scope = 'org' OR (b.scope = 'module' AND b.target = ${position.module}) OR (b.scope = 'agent' AND b.target = ${agent.id}))
-                  AND (SELECT coalesce(sum(r.cost), 0) FROM crove_kernel.ai_run r
-                       WHERE r.org_id = b.org_id
-                         AND r.started_at >= date_trunc('month', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-                         AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target)))
-                      >= b.monthly_limit) AS spent,
+                  AND crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target) >= b.monthly_limit) AS spent,
         (SELECT count(*)::int FROM crove_kernel.ai_run r WHERE r.org_id = ${ctx.orgId}::uuid AND r.agent_id = ${agent.id}::uuid
            AND r.started_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh') AS today`.execute(ctx.trx);
     const gate = gates[0];
@@ -1489,8 +1490,8 @@ export const templateList = defineQuery({
   },
 });
 
-// The monthly AI budgets with what this month's runs they cover cost so far (the month in Asia/Ho_Chi_Minh, as the
-// run gate counts it). Amounts are decimal strings. Owners and admins: costs are management data.
+// The monthly AI budgets with what this month's model calls they cover cost so far (the month in Asia/Ho_Chi_Minh, read
+// through crove_kernel.ai_budget_spent as the run gate and the meter read it). Amounts are decimal strings. Owners and admins: costs are management data.
 export const budgetList = defineQuery({
   name: 'kernel.agent.budgets.list',
   input: z.object({}),
@@ -1507,10 +1508,7 @@ export const budgetList = defineQuery({
       spent: string;
     }>`
       SELECT b.id, b.scope, b.target, b.monthly_limit::text AS monthly_limit, b.warn_percent, b.hard_stop, b.updated_at,
-        (SELECT coalesce(sum(r.cost), 0)::text FROM crove_kernel.ai_run r
-         WHERE r.org_id = b.org_id
-           AND r.started_at >= pg_catalog.date_trunc('month', pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh'
-           AND (b.scope = 'org' OR (b.scope = 'module' AND r.module = b.target) OR (b.scope = 'agent' AND r.agent_id::text = b.target))) AS spent
+        crove_kernel.ai_budget_spent(b.org_id, b.scope, b.target)::text AS spent
       FROM crove_kernel.budget_policy b
       WHERE b.org_id = ${ctx.orgId}::uuid
       ORDER BY b.scope, b.target`.execute(ctx.trx);

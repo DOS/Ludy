@@ -345,10 +345,13 @@ export type MailEventTable = Refine<G.KernelMailEventTable, { kind: (typeof MAIL
 // Per-org abuse limits (#675): what an org used, and the items kept for its next day's budget.
 export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost'] as const;
 export type UsageMetric = (typeof USAGE_METRICS)[number];
+// What a deferral may wait for: a limit above, or the AI budget of the month (#2382).
+export const USAGE_DEFERRAL_METRICS = [...USAGE_METRICS, 'ai_budget'] as const;
+export type UsageDeferralMetric = (typeof USAGE_DEFERRAL_METRICS)[number];
 export const USAGE_DEFERRAL_SUBJECTS = ['inbound_email', 'file'] as const;
 export type UsageDeferralSubject = (typeof USAGE_DEFERRAL_SUBJECTS)[number];
 export type OrgUsageTable = Refine<G.KernelOrgUsageTable, { metric: UsageMetric }>;
-export type UsageDeferralTable = Refine<G.KernelUsageDeferralTable, { metric: UsageMetric; subject_type: UsageDeferralSubject }>;
+export type UsageDeferralTable = Refine<G.KernelUsageDeferralTable, { metric: UsageDeferralMetric; subject_type: UsageDeferralSubject }>;
 
 export const AGENT_WAKEUP_STATUSES = ['pending', 'claimed', 'done'] as const;
 export type AgentWakeupTable = Refine<G.KernelAgentWakeupTable, { status: Generated<(typeof AGENT_WAKEUP_STATUSES)[number]> }>;

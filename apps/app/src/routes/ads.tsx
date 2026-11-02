@@ -21,6 +21,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
+import { AdsFlagsCard } from '../components/ads-flags.tsx';
 import { AdsWriteCard } from '../components/ads-write.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
@@ -66,8 +67,13 @@ type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 const RESULT_KIND_FIELD = 'ads-result-kind';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() });
+// The spend flags are worked out from the same figures and caps, so they follow them.
 const refreshFigures = () =>
-  Promise.all([queryClient.invalidateQueries({ queryKey: orpc.ads.summary.key() }), queryClient.invalidateQueries({ queryKey: orpc.ads.syncRuns.key() })]);
+  Promise.all([
+    queryClient.invalidateQueries({ queryKey: orpc.ads.summary.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.syncRuns.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+  ]);
 
 // The name of a result kind: our own words for the kinds the sandbox offers, the platform's key for any other.
 function useKindName(): (kind: string) => string {
@@ -927,6 +933,7 @@ export function AdsPage() {
             </Card>
           )}
           {canManage && metaOffered && <ConnectMeta slug={slug} another />}
+          {canManage && <AdsFlagsCard />}
           {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
           {list.length > 1 && (
             <Field label={t('accountLabel')} className="max-w-sm">

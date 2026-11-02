@@ -30,6 +30,7 @@ import { MISSING_INVOICE_SWEEP_MS, sweepMissingInvoiceReminders } from './missin
 import { ExportSealer } from './export-seal.ts';
 import { AVAILABLE_MODULES } from './config.ts';
 import { JOB_SCHEMA, QUEUES, SOCIAL_PUBLISH_QUEUES, socialPublishQueue } from './jobs-schema.ts';
+import { systemMeter } from './ai-meter.ts';
 import { jobGroup, jobKey, systemJobKey } from './job-keys.ts';
 import { runLinkPreviewJob } from './link-preview.ts';
 import { runPushJob, type PushSender } from './web-push.ts';
@@ -98,6 +99,7 @@ const CHAT_ALERT_TEST_SINGLETON_SECONDS = 10;
 // module this deployment does not enable are left out, so the sweep writes no refused start for them.
 export const AGENT_SWEEP_CRON = '*/10 * * * *';
 const AGENT_SWEEP_LIMIT = 200;
+const AI_BUDGET_SWEEP_LIMIT = 200;
 
 function sendAgentWake(boss: JobSender, orgId: string, agentId: string) {
   return boss.send(QUEUES.agentWake, { orgId, agentId } satisfies AgentWakeJob, {
@@ -405,8 +407,10 @@ export interface WorkerDeps {
   // Detective security alerts (#996): the alert webhook (null: the log only) and the thresholds (default
   // DEFAULT_SECURITY_THRESHOLDS).
   securityAlerts?: { target: WebhookTarget | null; thresholds?: SecurityThresholds };
-  // The AI model's price per million input and output tokens, in the unit of the ai_cost limit. Unset: AI costs 0.
-  aiPrice?: { inputPerMTok: string; outputPerMTok: string };
+  // The AI model's price per million input and output tokens, in the unit of the ai_cost limit. Unset: AI costs 0. Its
+  // defaultMonthlyBudget (AI_DEFAULT_MONTHLY_BUDGET, #2382) is the monthly AI budget an org with none of its own gets;
+  // unset: none.
+  aiPrice?: { inputPerMTok: string; outputPerMTok: string; defaultMonthlyBudget?: string | null };
   // Back-pressure (#894): above this outbox lag the agent, bulk mail, archive and retention queues stop fetching
   // (default DEFAULT_OUTBOX_LAG_PAUSE_SECONDS).
   outboxLagPauseSeconds?: number;
@@ -625,6 +629,36 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const background = new PausableWork(boss);
 
   if (finance) console.log(`[extract] up to ${extractWorkers(deps.extract)} extract job(s) at once`);
+  // The AI budget meter of the worker's own model calls (#2382): an extraction counts against its org as the system.
+  const defaultAiBudget = deps.aiPrice?.defaultMonthlyBudget ?? null;
+  const aiMeter = systemMeter(deps.runtime, { price: deps.aiPrice, defaultMonthlyBudget: defaultAiBudget });
+  // Run with the agent sweep: gives an org with no budget the deployment's default, and tells the owners and admins once
+  // when a budget crossed its warning percentage or 100%. Documents waiting for the budget need no sweep: their own read
+  // is asked again every few minutes (extractAndPropose). Each step is best effort and never stops the other.
+  const aiBudgetSweep = async (): Promise<void> => {
+    const system = { type: 'system' as const, component: 'kernel.ai_meter' };
+    const attempt = async (what: string, step: () => Promise<number>) => {
+      try {
+        const n = await step();
+        if (n > 0) console.log(`[ai-budget] sweep: ${what} ${n}`);
+      } catch (error) {
+        console.error(`[ai-budget] sweep: ${what} failed`, error instanceof Error ? error.message : error);
+      }
+    };
+    if (defaultAiBudget) {
+      await attempt('gave the default budget to', async () => {
+        const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.ai_budget_seed_due(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+        for (const row of rows) await deps.runtime.execute('kernel.ai.budget.ensure_default', { monthlyLimit: defaultAiBudget }, { actor: system, orgId: row.org_id });
+        return rows.length;
+      });
+    }
+    await attempt('told owners of', async () => {
+      const { rows } = await sql<{ org_id: string; scope: string; target: string; level: string }>`SELECT org_id, scope, target, level FROM crove_kernel.ai_budget_crossings(${AI_BUDGET_SWEEP_LIMIT}::int)`.execute(deps.workerDb);
+      for (const row of rows) await deps.runtime.execute('kernel.ai.budget.notify', { scope: row.scope, target: row.target, level: row.level }, { actor: system, orgId: row.org_id });
+      return rows.length;
+    });
+  };
+
   // version: a requested re-extraction (kernel.file.reextract_requested); absent for the first read of a new file.
   // pg-boss waits the polling interval between fetches (2 s by default, less the job's run time), so a batch of 200
   // documents (bulk intake, #314) would wait about 400 s; 0.5 s, the shortest it allows, lets one sandbox call follow
@@ -656,7 +690,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.log(`[extract] archive ${fileId}: ${fileIds.length} file(s)`);
       } else {
         const done = await extractAndPropose(
-          { runtime: deps.runtime, store: deps.store, extractor: deps.extractor, extract: deps.extract, limits: deps.usageLimits, aiPrice: deps.aiPrice },
+          { runtime: deps.runtime, store: deps.store, extractor: deps.extractor, extract: deps.extract, limits: deps.usageLimits, meter: aiMeter },
           orgId,
           fileId,
           version,
@@ -670,7 +704,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             retryDelay: 20,
             retryBackoff: true,
           });
-          console.log(`[extract] file ${fileId}: over the org's daily limit, deferred to ${done.deferred}`);
+          console.log(`[extract] file ${fileId}: over the org's limit or AI budget, deferred to ${done.deferred}`);
         }
       }
     } catch (error) {
@@ -1118,7 +1152,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (draftWriter) {
     await boss.work<ConversationDraftJob>(QUEUES.conversationsDraft, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, aiPrice: deps.aiPrice, budget: draftBudget }, job.data);
+      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, meter: aiMeter, budget: draftBudget }, job.data);
       console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
     });
   }
@@ -1205,6 +1239,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     const { rows } = await sql<{ org_id: string; agent_id: string }>`SELECT * FROM crove_kernel.agent_wakeups_due(${AGENT_SWEEP_LIMIT}::int, ${deps.runtime.modules()}::text[])`.execute(deps.workerDb);
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
+    await aiBudgetSweep();
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 

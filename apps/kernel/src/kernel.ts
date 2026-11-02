@@ -3,6 +3,7 @@
 // configuration (defaultAdapters); a Crove Cloud entrypoint wires its own adapters into the same factory.
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
+import { memberMeter } from './ai-meter.ts';
 import { ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
@@ -511,6 +512,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           authenticate,
           pool,
           aiEnabled: resolved.ai !== null,
+          aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
           ...(resolved.writer ? { socialWriter: socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null) } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
@@ -583,7 +585,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             archive: { store: archiveStore, lagSeconds: config.ARCHIVE_LAG_SECONDS, restoreAlertDays: config.ARCHIVE_RESTORE_ALERT_DAYS },
             usageLimits: usageLimits(config),
             securityAlerts: alerts,
-            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK },
+            aiPrice: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK, defaultMonthlyBudget: config.AI_DEFAULT_MONTHLY_BUDGET ?? null },
             outboxLagPauseSeconds: config.OUTBOX_LAG_PAUSE_SECONDS,
             ...(vapid ? { push: { sender: createPushSender(vapid), brand: config.BRAND_NAME } } : {}),
           }),

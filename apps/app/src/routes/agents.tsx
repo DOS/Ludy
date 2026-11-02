@@ -13,6 +13,7 @@ import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { AiMeter } from '../components/ai-meter.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, FieldError, fieldControl, focusFirstInvalid, ListSkeleton, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -859,6 +860,71 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
   );
 }
 
+// The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'kernel_unattributed'] as const;
+
+// This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
+function AiUse({ agents }: { agents: Agent[] }) {
+  const t = useTranslations('agents');
+  const tf = useTranslations('aiMeter.features');
+  const f = useFormat();
+  const report = useQuery(orpc.ai.usage.queryOptions());
+  // A feature a newer server added keeps its key until the app has a name for it.
+  const feature = (key: string) => {
+    const name = key.replace('.', '_');
+    return (AI_FEATURE_NAMES as readonly string[]).includes(name) ? tf(name as (typeof AI_FEATURE_NAMES)[number]) : key;
+  };
+  return (
+    <section className="mt-8" data-testid="ai-use">
+      <h2 className="text-sm font-semibold text-foreground">{t('aiUseTitle')}</h2>
+      <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('aiUseHint')}</p>
+      {report.isPending ? (
+        <TableSkeleton columns={4} rows={3} />
+      ) : report.error ? (
+        <ErrorText>{errorMessage(report.error)}</ErrorText>
+      ) : (
+        <>
+          {!report.data.aiOn && <p className="mb-3 text-xs text-muted-foreground">{t('aiUseOff')}</p>}
+          <AiMeter className="mb-3" />
+          <p className="mb-3 text-xs text-muted-foreground" data-testid="ai-use-total">
+            {t('aiUseTotal', { spent: f.aiAmount(report.data.spent), calls: report.data.calls, date: f.date(report.data.resetAt) })}
+          </p>
+          {report.data.byFeature.length === 0 ? (
+            <Empty title={t('aiUseEmpty')} />
+          ) : (
+            <DataTable head={[t('colFeature'), t('colCalls'), t('colTokens'), t('colCost')]}>
+              {report.data.byFeature.map((row) => (
+                <TableRow key={row.feature} data-testid="ai-use-feature">
+                  <TableCell className="px-4">{feature(row.feature)}</TableCell>
+                  <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
+                  <TableCell className="px-4 tabular-nums">
+                    {f.number(row.inputTokens)} / {f.number(row.outputTokens)}
+                  </TableCell>
+                  <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                </TableRow>
+              ))}
+            </DataTable>
+          )}
+          {report.data.byAgent.length > 0 && (
+            <>
+              <h3 className="mt-4 mb-2 text-xs font-semibold text-foreground">{t('byAgentTitle')}</h3>
+              <DataTable head={[t('colAiAgent'), t('colCalls'), t('colCost')]}>
+                {report.data.byAgent.map((row) => (
+                  <TableRow key={row.agentId} data-testid="ai-use-agent">
+                    <TableCell className="px-4">{agents.find((a) => a.id === row.agentId)?.displayName ?? row.name ?? row.agentId}</TableCell>
+                    <TableCell className="px-4 tabular-nums">{f.number(row.calls)}</TableCell>
+                    <TableCell className="px-4 tabular-nums">{f.aiAmount(row.cost)}</TableCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function Budgets({ agents, perms }: { agents: Agent[]; perms: AgentPermissions }) {
   const t = useTranslations('agents');
   const moduleName = useModuleName();
@@ -969,6 +1035,7 @@ export function AgentsPage() {
             )}
           </section>
           <Templates perms={perms} entities={entities} entitiesReady={entitiesReady} />
+          {perms.budgets && <AiUse agents={chart.data.agents} />}
           {perms.budgets && <Budgets agents={chart.data.agents} perms={perms} />}
         </>
       )}

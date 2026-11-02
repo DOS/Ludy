@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { AiUsage, ReplyDraftRequest, ReplyDraftResult } from '@crove/agent';
+import { metered, type AiUsage, type ReplyDraftRequest, type ReplyDraftResult } from '@crove/agent';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { EXPORT_TABLE_NAMES, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -16,6 +16,7 @@ import type { ConversationDetail, ConversationEvent, SavedReplyListed } from '@c
 import { Runtime } from '@crove/kernel-runtime';
 import { failUndraftable, requestDueConversationDrafts, runConversationDraft, sweepConversationDrafts, type ConversationDraftJob } from '../src/conversations-worker.ts';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
+import { systemMeter } from '../src/ai-meter.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
 import { contextToken } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -109,7 +110,12 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     const asked: ReplyDraftRequest[] = [];
     const writer = {
       draft: async (req: ReplyDraftRequest, onUsage?: (u: AiUsage) => void): Promise<ReplyDraftResult> => {
-        asked.push(req);
+        // The model call goes through the AI budget meter's door, as the default generator of the writer does (#2382): the meter counts its cost
+        // and refuses it before the model is asked when the budget is spent.
+        await metered('conversation.draft', async () => {
+          asked.push(req);
+          return { usage };
+        });
         onUsage?.(usage);
         if (answer instanceof Error) throw answer;
         return answer;
@@ -121,7 +127,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
   const PRICE = { inputPerMTok: '1000', outputPerMTok: '3000' };
   const jobOf = (o: Org, draftId: string, conversationId: string): ConversationDraftJob => ({ orgId: o.orgId, draftId, conversationId });
   const run = (o: Org, w: ReturnType<typeof model>['writer'], draftId: string, conversationId: string, limits?: { ai_cost: string }) =>
-    runConversationDraft({ runtime: worker, writer: w, aiPrice: PRICE, ...(limits ? { limits: limits as never } : {}) }, jobOf(o, draftId, conversationId));
+    runConversationDraft({ runtime: worker, writer: w, meter: systemMeter(worker, { price: PRICE }), ...(limits ? { limits: limits as never } : {}) }, jobOf(o, draftId, conversationId));
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -291,15 +297,30 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
         return { id, asked: await request(o, id) };
       };
       const one = await make('r1');
-      expect(await runConversationDraft({ runtime: worker, writer: m.writer, aiPrice: PRICE, budget }, jobOf(o, one.asked.draftId, one.id))).toBe('written');
+      expect(await runConversationDraft({ runtime: worker, writer: m.writer, meter: systemMeter(worker, { price: PRICE }), budget }, jobOf(o, one.asked.draftId, one.id))).toBe('written');
       const two = await make('r2');
-      expect(await runConversationDraft({ runtime: worker, writer: m.writer, aiPrice: PRICE, budget }, jobOf(o, two.asked.draftId, two.id))).toBe('rate');
+      expect(await runConversationDraft({ runtime: worker, writer: m.writer, meter: systemMeter(worker, { price: PRICE }), budget }, jobOf(o, two.asked.draftId, two.id))).toBe('rate');
       // One call was made; the refused draft is discarded with its code, and the thread can be asked about again (the member's own ask is rationed in the API).
       expect(m.asked).toHaveLength(1);
       expect((await drafts(o)).map((d) => d.state)).toEqual(['live', 'discarded']);
       const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'RATE_LIMITED'", [o.orgId]);
       expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'RATE_LIMITED' });
       expect((await request(o, two.id)).queued).toBe(true);
+    });
+
+    it('makes no draft once the AI budget of the month is spent, and says so', async () => {
+      const o = await org();
+      await admin((c) => c.query("INSERT INTO crove_kernel.budget_policy (org_id, scope, target, monthly_limit, updated_by) VALUES ($1, 'org', '*', 0, $2)", [o.orgId, o.owner]));
+      await ingest(o, [event('spent')]);
+      const id = await threadOf(o, 'spent');
+      const asked = await request(o, id);
+      const m = model(written);
+      expect(await run(o, m.writer, asked.draftId, id)).toBe('budget');
+      // The meter refused before the model was asked; the draft is discarded with its code, and the thread can be asked about again.
+      expect(m.asked).toHaveLength(0);
+      expect((await drafts(o)).at(-1)?.state).toBe('discarded');
+      const [audit] = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.conversation.draft_record' AND detail->>'code' = 'AI_BUDGET'", [o.orgId]);
+      expect(audit?.detail).toMatchObject({ outcome: 'none', code: 'AI_BUDGET' });
     });
 
     it('settles a draft asked for where this worker has no model as none, so nothing waits for a job that will never exist', async () => {

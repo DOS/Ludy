@@ -74,7 +74,7 @@ export const kernelManifest = defineModule({
       number_series_policy: columns(['org_id', 'id', 'legal_entity_id', 'doc_type', 'reset', 'updated_by', 'updated_at', 'schedule']),
       number_void: columns(['org_id', 'id', 'allocation_id', 'legal_entity_id', 'reason', 'voided_by', 'voided_at']),
       oauth_state: columns(['org_id', 'id', 'user_id', 'provider', 'state_hash', 'created_at', 'expires_at', 'consumed_at'], { code_verifier: 'sensitive' }),
-      org_usage: columns(['org_id', 'id', 'metric', 'amount', 'created_at']),
+      org_usage: columns(['org_id', 'id', 'metric', 'amount', 'created_at', 'feature', 'module', 'agent_id', 'input_tokens', 'output_tokens']),
       outbox_archive: columns(['org_id', 'day', 'object_key', 'sha256', 'row_count', 'archived_at', 'purged_at', 'purged_rows']),
       outbox_event: columns(['org_id', 'id', 'type', 'actor_id', 'command_id', 'created_at', 'actor_type', 'agent_id', 'agent_run'], { payload: 'pii' }),
       outbox_pending: columns(['seq', 'org_id', 'event_id', 'attempts', 'last_error', 'held_type']),

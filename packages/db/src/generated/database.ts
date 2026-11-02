@@ -1495,6 +1495,11 @@ export interface KernelOrgUsageTable {
   metric: ColumnType<string, string, NotGranted>;
   amount: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  feature: ColumnType<string | null, string | null, NotGranted>;
+  module: ColumnType<string | null, string | null, NotGranted>;
+  agent_id: ColumnType<string | null, string | null, NotGranted>;
+  input_tokens: ColumnType<number | null, number | null, NotGranted>;
+  output_tokens: ColumnType<number | null, number | null, NotGranted>;
 }
 
 /** crove_kernel.outbox_event */
