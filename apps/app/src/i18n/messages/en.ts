@@ -6553,6 +6553,7 @@ export const en = {
       EXPORT_EXPIRED: 'The data export has expired. Request a new one.',
       EXPORT_PENDING: 'Data is being exported. Wait for the current export to finish, then try again.',
       EXPORT_TOO_LARGE: 'Too many journal entries to export at once. Choose a shorter date range.',
+      EXPORT_VOUCHER_NUMBER_TOO_LONG: 'A voucher number is too long for the MISA file (20 characters at most). Narrow the date range to leave that voucher out.',
       AUDIT_EXPORT_TOO_LARGE: 'More than 10,000 log rows match the filters. Narrow the filters and export again.',
       AUDIT_RANGE: 'The start date must be on or before the end date.',
       PERIOD_TOO_LARGE: 'This period has too many invoices or entries to report at once; choose a shorter period.',

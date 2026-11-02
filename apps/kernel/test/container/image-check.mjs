@@ -262,6 +262,7 @@ try {
   const voucher = {
     type: 'cash_receipt',
     code: 'PT00001',
+    numberPeriod: '2026',
     date: '2026-10-01',
     cashAccount: '1111',
     party: null,
