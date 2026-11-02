@@ -9,7 +9,7 @@
 // An item that does not match the shape is dropped and counted, never shown. Nothing here approves, sends or changes
 // anything: an item only links to the screen where it is acted on.
 import { z } from 'zod';
-import { sortTodayItems, zTodayItem, type TodayItem, type TodayList } from '@crove/kernel-contract';
+import { TODAY_ITEMS_MAX, sortTodayItems, zTodayItem, type TodayItem, type TodayList } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery } from '@crove/kernel-runtime';
 
@@ -29,6 +29,7 @@ export function todayQuery(options: { reads?: readonly string[] } = {}) {
       const seen = new Set<string>();
       const items: TodayItem[] = [];
       let dropped = 0;
+      let failed = 0;
       for (const name of reads) {
         let answer;
         try {
@@ -36,6 +37,12 @@ export function todayQuery(options: { reads?: readonly string[] } = {}) {
         } catch (error) {
           // Thrown before any SQL, so the transaction is still usable: the read is simply not registered yet.
           if (error instanceof DomainError && error.code === 'QUERY_NOT_FOUND') continue;
+          // A line that refuses (a role its read does not list, say) costs its own items, not the whole list. Anything
+          // else, such as a database error, may have left the transaction unusable and fails the answer.
+          if (error instanceof DomainError) {
+            failed += 1;
+            continue;
+          }
           throw error;
         }
         if (answer.status !== 'ok') continue;
@@ -56,7 +63,9 @@ export function todayQuery(options: { reads?: readonly string[] } = {}) {
           items.push(item.data);
         }
       }
-      return { items: sortTodayItems(items), dropped };
+      // At most TODAY_ITEMS_MAX items: the list is sorted most urgent first, so the cut ones are the least urgent.
+      const sorted = sortTodayItems(items);
+      return { items: sorted.slice(0, TODAY_ITEMS_MAX), dropped, truncated: Math.max(0, sorted.length - TODAY_ITEMS_MAX), failed };
     },
   });
 }

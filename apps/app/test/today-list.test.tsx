@@ -99,6 +99,23 @@ describe('TodayList', () => {
     expect(html).toContain(en.today.fallback.message);
   });
 
+  it('falls back for a key that names a group of messages, or a message whose parameters are missing', () => {
+    const html = render({
+      data: {
+        items: [
+          { ...base, kind: 'flag', id: 'g', title: { key: 'finance' } },
+          { ...base, kind: 'proposal', id: 'x', title: { key: 'finance.byVendor' } },
+          { ...base, kind: 'message', id: 'p', title: { key: 'constructor' }, app: 'conversations' },
+        ],
+        dropped: 0,
+      },
+    });
+    expect(html).toContain(en.today.fallback.flag);
+    expect(html).toContain(en.today.fallback.proposal);
+    expect(html).toContain(en.today.fallback.message);
+    expect(html).not.toContain('today.items');
+  });
+
   it('shows the empty state when no line has anything, and a skeleton while it loads', () => {
     expect(render({ data: { items: [], dropped: 0 } })).toContain(en.today.empty);
     const loading = render();

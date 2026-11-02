@@ -151,8 +151,8 @@ describe('sortTodayItems', () => {
   });
 
   it('is the shape of the list answer, with a count of dropped items', () => {
-    expect(zTodayList.safeParse({ items: [item()], dropped: 0 }).success).toBe(true);
-    expect(zTodayList.safeParse({ items: [], dropped: -1 }).success).toBe(false);
+    expect(zTodayList.safeParse({ items: [item()], dropped: 0, truncated: 0, failed: 0 }).success).toBe(true);
+    expect(zTodayList.safeParse({ items: [], dropped: -1, truncated: 0, failed: 0 }).success).toBe(false);
   });
 });
 

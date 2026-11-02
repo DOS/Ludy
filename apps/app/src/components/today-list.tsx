@@ -25,9 +25,19 @@ function useTitle() {
   const items = useTranslations('today.items');
   return (item: TodayItem): string => {
     const params = item.title.params ?? {};
-    // The keys are runtime strings from the lines, so they are checked with has() rather than by the catalog's types.
-    const has = (items as unknown as { has: (key: string) => boolean }).has(item.title.key);
-    return has ? (items as unknown as (key: string, values: Record<string, string | number>) => string)(item.title.key, params) : t(`fallback.${item.kind}`);
+    // The keys are runtime strings from the lines, so they are looked up in the catalog directly, not through its types.
+    // A key that is not a message (missing, or a group of messages) or a message the parameters do not fit gets the
+    // kind's sentence, so one line's mistake never blanks Home.
+    const translate = items as unknown as { raw: (key: string) => unknown; (key: string, values: Record<string, string | number>): string };
+    try {
+      if (typeof translate.raw(item.title.key) === 'string') {
+        const text = translate(item.title.key, params);
+        if (!text.endsWith(item.title.key)) return text;
+      }
+    } catch {
+      // Not a message of the catalog.
+    }
+    return t(`fallback.${item.kind}`);
   };
 }
 
@@ -57,7 +67,7 @@ function TodayRow({ item, slug }: { item: TodayItem; slug: string }) {
             {item.severity && <Badge variant={SEVERITY_VARIANT[item.severity]}>{t(`severity.${item.severity}`)}</Badge>}
             {item.count !== undefined && <span className="tabular-nums">{t('count', { count: item.count })}</span>}
             {item.amount !== undefined && <span className="font-mono tabular-nums">{f.money(item.amount, item.currency)}</span>}
-            {item.dueAt !== undefined && <span className="tabular-nums">{t('due', { when: f.date(item.dueAt) })}</span>}
+            {item.dueAt !== undefined && <span className="tabular-nums">{t('due', { when: item.kind === 'message' ? f.dateTime(item.dueAt) : f.date(item.dueAt) })}</span>}
           </span>
         </span>
         {/* The whole row is the link; on a phone the word would only squeeze the title. */}

@@ -41,8 +41,8 @@ describe('kernel.today', () => {
   });
 
   it('shows nothing when no read is registered yet, and when the modules are off', async () => {
-    expect(await run({})).toEqual({ items: [], dropped: 0 });
-    expect(await run({}, { absent: ['finance', 'crm', 'social', 'ads'] })).toEqual({ items: [], dropped: 0 });
+    expect(await run({})).toEqual({ items: [], dropped: 0, truncated: 0, failed: 0 });
+    expect(await run({}, { absent: ['finance', 'crm', 'social', 'ads'] })).toEqual({ items: [], dropped: 0, truncated: 0, failed: 0 });
   });
 
   it('merges the reads that are registered, flags first, and skips the ones that are not', async () => {
@@ -80,11 +80,37 @@ describe('kernel.today', () => {
     expect(result.items.map((i) => `${i.app}:${i.id}`)).toEqual(['finance:same', 'social:same']);
   });
 
-  it('lets a real failure of a read fail the list, since the transaction may be unusable', async () => {
+  it('cuts the merged list at 200, keeping the most urgent, and says how many it cut', async () => {
+    const many = (app: string, n: number) => Array.from({ length: n }, (_, i) => item({ app, id: `${app}-${i}` }));
+    const result = await run({ 'finance.today': [item({ kind: 'flag', severity: 'block', id: 'urgent' }), ...many('finance', 150)], 'crm.today': many('crm', 150) });
+    expect(result.items).toHaveLength(200);
+    expect(result.items[0]?.id).toBe('urgent');
+    expect(result.truncated).toBe(101);
+  });
+
+  it('skips a line that refuses, and counts it, while a database error still fails the list', async () => {
+    const result = await run({
+      'finance.today': () => {
+        throw new DomainError('FORBIDDEN', 403, 'no');
+      },
+      'crm.today': [item({ app: 'crm' })],
+    });
+    expect(result.items.map((i) => i.app)).toEqual(['crm']);
+    expect(result.failed).toBe(1);
     await expect(
       run({
         'finance.today': () => {
-          throw new DomainError('INTERNAL', 500, 'boom');
+          throw new Error('current transaction is aborted');
+        },
+      }),
+    ).rejects.toThrow(/aborted/);
+  });
+
+  it('lets an error that is not a refusal fail the list, since the transaction may be unusable', async () => {
+    await expect(
+      run({
+        'finance.today': () => {
+          throw new Error('boom');
         },
       }),
     ).rejects.toThrow(/boom/);
