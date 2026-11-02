@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Inbox (CV3, #2306, plan docs/plan/conversations.md section 11): the three panes of the Hộp thư group of the Social app. Left: the conversations, with
 // the New, Pending and Resolved tabs, a search, the filters (comments or private messages, channel, assignee), unread dots and "X is replying". Middle: the
-// thread with its reply box, saved replies, Duy's draft and the notes. Right: the contact panel. Comments and private messages are listed together, one
+// thread with its reply box, saved replies, the draft and the notes. Right: the contact panel. Comments and private messages are listed together, one
 // unread mark for each; a private message is in the list only for those the database lets read it. The open thread, the tab and the filters live in the
 // address, so a link (Home's, a notification's) opens the screen where it should.
 import { useQuery } from '@tanstack/react-query';
