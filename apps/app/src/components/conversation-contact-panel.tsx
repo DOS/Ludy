@@ -27,7 +27,9 @@ function ContactSuggestions({ conversationId, lastSeq }: { conversationId: strin
   const matches = useQuery({
     queryKey: ['conversation-contact-matches', conversationId, lastSeq],
     queryFn: () => client.conversations.contactMatches({ conversationId }),
-    staleTime: MATCHES_STALE_MS,
+    // An answer that is not one yet (busy) is asked again soon, a few times.
+    staleTime: (query) => (query.state.data?.ai === 'busy' ? 0 : MATCHES_STALE_MS),
+    refetchInterval: (query) => (query.state.data?.ai === 'busy' && query.state.dataUpdateCount < 6 ? 4_000 : false),
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -42,7 +44,7 @@ function ContactSuggestions({ conversationId, lastSeq }: { conversationId: strin
           <li key={c.partyId} className="flex items-center justify-between gap-2 px-2 py-1.5">
             <span className="min-w-0">
               <span className="block truncate text-foreground">{c.name}</span>
-              <Badge variant="proposal">{t(`reason.${c.reason}`)}</Badge>
+              <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
             </span>
             <Button type="button" size="sm" variant="outline" loading={link.isPending && link.variables === c.partyId} onClick={() => link.mutate(c.partyId)}>
               {t('linkThis')}

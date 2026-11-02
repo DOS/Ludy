@@ -39,7 +39,7 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
+import type { ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
@@ -298,7 +298,8 @@ export function createRpcHandler(
   // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
   const briefs = new DraftBudget();
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
-  const conversationAi: ConversationAi = { reader: conversationReader ?? null, budget: new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 }), cache: new IntentCache() };
+  const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
+  const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -1954,11 +1955,22 @@ export function createRpcHandler(
       setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
       // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
       // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.
+      // The org's switch for AI on its customers' messages (conversation_setting.auto_draft, ADR-0041 section 8) covers these too: with it off no word of a
+      // customer or name of a contact reaches the model, and the answer is `off`.
       suggestIntents: os.conversations.suggestIntents.handler(({ context, input }) =>
-        inOrg(context, async (orgId, actor) => suggestIntents(conversationAi, orgId, actor.userId, await runtime.query<IntentSource[]>('kernel.conversation.intent_source', input, { actor, orgId }))),
+        inOrg(context, async (orgId, actor) => {
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          if (!autoDraft) return { ai: 'off' as const, suggestions: [] };
+          return suggestIntents(conversationAi, orgId, actor.userId, await runtime.query<IntentSource[]>('kernel.conversation.intent_source', input, { actor, orgId }));
+        }),
       ),
+      // The contacts by phone come first whatever the switch says (no model reads anything); only the ranking of name matches needs it.
       contactMatches: os.conversations.contactMatches.handler(({ context, input }) =>
-        inOrg(context, async (orgId, actor) => matchContacts(conversationAi, orgId, actor.userId, await runtime.query<ContactCandidates>('kernel.conversation.contact_candidates', input, { actor, orgId }))),
+        inOrg(context, async (orgId, actor) => {
+          const found = await runtime.query<ContactCandidates>('kernel.conversation.contact_candidates', input, { actor, orgId });
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          return matchContacts(autoDraft ? conversationAi : { ...conversationAi, reader: null }, orgId, actor.userId, found);
+        }),
       ),
       markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
       // The inbox (CV3, #2306): the "you are replying" marker and the availability switch.

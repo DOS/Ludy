@@ -15,8 +15,17 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { shownIntent } from '../lib/conversation-intent.ts';
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
-// A suggestion is read again only for a new message (the server keeps what the model said for an hour), so the screen's poll costs nothing.
+// A suggestion is read again only for a new message (the server keeps what the model said for an hour), so the screen's poll costs nothing. An answer
+// that is not an answer yet (the member's AI calls were busy, or the call failed) is not kept: it is asked again soon, a few times.
 const SUGGEST_STALE_MS = 10 * 60_000;
+const SUGGEST_RETRY_MS = 4_000;
+const answered = (data: { ai: string } | undefined) => data !== undefined && data.ai !== 'busy' && data.ai !== 'failed';
+const suggestOptions = {
+  staleTime: (query: { state: { data: { ai: string } | undefined } }) => (answered(query.state.data) ? SUGGEST_STALE_MS : 0),
+  refetchInterval: (query: { state: { data: { ai: string } | undefined; dataUpdateCount: number } }) => (query.state.data?.ai === 'busy' && query.state.dataUpdateCount < 6 ? SUGGEST_RETRY_MS : false),
+  retry: false,
+  refetchOnWindowFocus: false,
+} as const;
 
 // The suggestions for the top of a list: the threads with no label yet, at most one call's worth, for a member who may write them. The answers of earlier
 // pages stay, so a thread that slides down the list keeps its suggestion. `ai` says why there is none, for the one case worth a line (the budget).
@@ -27,9 +36,7 @@ export function useIntentSuggestions(items: readonly ConversationSummary[], enab
     queryKey: ['conversation-intents', key],
     queryFn: () => client.conversations.suggestIntents({ conversationIds: asked.map((c) => c.id) }),
     enabled: enabled && asked.length > 0,
-    staleTime: SUGGEST_STALE_MS,
-    retry: false,
-    refetchOnWindowFocus: false,
+    ...suggestOptions,
   });
   const [known, setKnown] = useState<ReadonlyMap<string, ConversationIntent | null>>(new Map());
   useEffect(() => {
@@ -60,10 +67,9 @@ export function IntentBar({ conversation: c }: { conversation: ConversationSumma
   const suggestion = useQuery({
     queryKey: ['conversation-intents', `${c.id}:${c.lastSeq}`],
     queryFn: () => client.conversations.suggestIntents({ conversationIds: [c.id] }),
-    enabled: c.intent === null,
-    staleTime: SUGGEST_STALE_MS,
-    retry: false,
-    refetchOnWindowFocus: false,
+    // Only a thread waiting for an answer (New) is read by the model: clicking through the other tabs costs nothing.
+    enabled: c.intent === null && c.status === 'new',
+    ...suggestOptions,
   });
   const set = useMutation({ mutationFn: (intent: ConversationIntent | null) => client.conversations.setIntent({ conversationId: c.id, intent }), onSuccess: refresh });
   const suggested = suggestion.data?.suggestions.find((s) => s.conversationId === c.id)?.intent ?? null;
@@ -81,7 +87,7 @@ export function IntentBar({ conversation: c }: { conversation: ConversationSumma
       {shown && !shown.applied && (
         <>
           <IntentBadge intent={shown.intent} applied={false} />
-          <Button type="button" size="sm" variant="outline" loading={set.isPending} data-testid="intent-apply" onClick={() => set.mutate(shown.intent)}>
+          <Button type="button" size="sm" variant="outline" loading={set.isPending} data-testid="intent-apply" aria-label={t('applyLabel', { intent: t(`label.${shown.intent}`) })} onClick={() => set.mutate(shown.intent)}>
             {t('apply')}
           </Button>
         </>

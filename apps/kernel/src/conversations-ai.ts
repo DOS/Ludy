@@ -18,7 +18,10 @@ import type { DraftBudget } from './ai-draft-limit.ts';
 // The part of the reader the API uses; tests give a fake.
 export type ConversationReader = Pick<InboxReader, 'intents' | 'rank'>;
 
+// An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
+// skipped is asked again soon.
 const CACHE_TTL_MS = 60 * 60_000;
+const CACHE_NONE_TTL_MS = 2 * 60_000;
 const CACHE_MAX = 2_000;
 
 // What the model answered for a thread's newest message: an intent, or none. Keyed by the org, the thread and its last seq, so a newer message is read again.
@@ -38,7 +41,7 @@ export class IntentCache {
     const key = this.key(orgId, conversationId, lastSeq);
     const entry = this.entries.get(key);
     if (!entry) return undefined;
-    if (this.now() - entry.at > CACHE_TTL_MS) {
+    if (this.now() - entry.at > (entry.intent === null ? CACHE_NONE_TTL_MS : CACHE_TTL_MS)) {
       this.entries.delete(key);
       return undefined;
     }
@@ -60,8 +63,10 @@ export class IntentCache {
 
 export interface ConversationAi {
   reader: ConversationReader | null;
-  // The model calls of the Inbox's suggestions have a budget of their own, apart from the reply drafts'.
-  budget: DraftBudget;
+  // The model calls of the Inbox's suggestions have budgets of their own, apart from the reply drafts' and from each other (a member's suggestion of
+  // intents and the ranking of contacts for the thread they opened can run at the same time).
+  intentBudget: DraftBudget;
+  contactBudget: DraftBudget;
   cache: IntentCache;
 }
 
@@ -84,7 +89,7 @@ export async function suggestIntents(ai: ConversationAi, orgId: string, userId: 
   const missing = sources.filter((s) => !known.has(s.id));
   if (missing.length === 0) return answer('used');
   if (!ai.reader) return answer('off');
-  const ticket = ai.budget.take(orgId, userId);
+  const ticket = ai.intentBudget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
     const intents = await ai.reader.intents(missing.map((s) => ({ texts: s.texts })));
@@ -111,7 +116,7 @@ export async function matchContacts(ai: ConversationAi, orgId: string, userId: s
   // One name or none needs no ranking: nothing is asked of the model.
   if (found.names.length < 2 || found.customerName === null) return result('used', found.names);
   if (!ai.reader) return result('off', found.names);
-  const ticket = ai.budget.take(orgId, userId);
+  const ticket = ai.contactBudget.take(orgId, userId);
   if (!ticket.allowed) return result('busy', found.names);
   try {
     const order = await ai.reader.rank(

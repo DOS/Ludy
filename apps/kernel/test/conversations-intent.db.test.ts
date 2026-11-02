@@ -275,7 +275,7 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
             "INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id, intent, intent_set_by, intent_set_at) VALUES ($1, $2, 'comment_thread', 'born-labelled', 'spam', $3, now())",
             [org.orgId, org.connectionId, lan.userId],
           ),
-        ).rejects.toMatchObject({ code: '42501' });
+        ).rejects.toThrow(/INTENT_FORBIDDEN/);
       });
       // The label is one of the five, in the database as in the contract.
       await expect(rows("UPDATE crove_kernel.conversation SET intent = 'greeting', intent_set_at = now() WHERE id = $1", [g1])).rejects.toMatchObject({ code: '23514' });
@@ -365,11 +365,38 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
     });
   });
 
+  describe('the org’s switch for AI on its customers’ conversations', () => {
+    it('keeps every word of a customer and every name of a contact from the model while it is off, answers off, and still lists the contacts by phone', async () => {
+      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Đặng Thu Hà', '0933 222 111'), ($1, 'person', 'Đặng Thị Hà', NULL), ($1, 'person', 'Hà Đặng Văn', NULL)", [org.orgId]);
+      await ingest([event('direct', 'sw1', 'Cho mình hỏi giá, số mình 0933.222.111', 'Hà Đặng')]);
+      const sw1 = await threadOf('sw1');
+      const [intentCalls, rankCalls] = [askedIntents.length, askedRanks.length];
+      expect((await rpc('conversations/setAutoDraft', viewer, { autoDraft: false })).status).toBe(403);
+      expect((await rpc('conversations/setAutoDraft', owner, { autoDraft: false })).status).toBe(200);
+      expect((await suggest(owner, [sw1])).body).toEqual({ ai: 'off', suggestions: [] });
+      const off = (await matches(owner, sw1)).body as ConversationContactMatched;
+      expect(off.ai).toBe('off');
+      expect(off.candidates[0]).toMatchObject({ name: 'Đặng Thu Hà', reason: 'phone' });
+      expect(off.candidates.length).toBeGreaterThan(1);
+      // The model was asked nothing, and was shown nothing.
+      expect([askedIntents.length, askedRanks.length]).toEqual([intentCalls, rankCalls]);
+      // On again, it reads and ranks.
+      expect((await rpc('conversations/setAutoDraft', owner, { autoDraft: true })).status).toBe(200);
+      answerIntents({ n: 1, intent: 'order_or_price' });
+      rankAnswers.push({ output: { order: [1] }, usage: { inputTokens: 5, outputTokens: 3 } });
+      expect((await suggest(owner, [sw1])).body).toEqual({ ai: 'used', suggestions: [{ conversationId: sw1, intent: 'order_or_price' }] });
+      expect(((await matches(owner, sw1)).body as ConversationContactMatched).ai).toBe('used');
+      expect([askedIntents.length, askedRanks.length]).toEqual([intentCalls + 1, rankCalls + 1]);
+    });
+  });
+
   describe('the likely contacts of a customer', () => {
     it('puts the contact with the phone the customer wrote first, then the contacts with a similar name, ranked by the model, and links nothing', async () => {
       const party = (name: string, phone: string | null) =>
         rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', $2, $3) RETURNING id", [org.orgId, name, phone]).then((r) => (r[0] as { id: string }).id);
       const [thi, van, binh, mai] = [await party('Nguyễn Thị Hoa', '0912 345 678'), await party('Nguyễn Văn Hoa', null), await party('Trần Văn Bình', '+84 987 654 321'), await party('Lê Thị Mai', '0901 111 222')];
+      // A contact merged into another is hidden by the contact list and the search, and is not offered here either, by phone or by name.
+      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone, duplicate_of) VALUES ($1, 'person', 'Trần Văn Bình (bản cũ)', '0987 654 321', $2), ($1, 'person', 'Hoa Nguyễn cũ', NULL, $3)", [org.orgId, binh, thi]);
       await ingest([event('direct', 'c1', 'Chào shop, mình là Hoa. Số mình 0987.654.321, STK 1234567890123 nhé', 'Hoa Nguyen')]);
       const c1 = await threadOf('c1');
       const asked = askedRanks.length;
@@ -386,6 +413,9 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
         { partyId: thi, name: 'Nguyễn Thị Hoa', reason: 'name' },
       ]);
       expect(body.candidates.map((c) => c.partyId)).not.toContain(mai);
+      // A merged contact is not offered: not the old copy of the phone's owner, not the old copy of a name.
+      expect(JSON.stringify(body.candidates)).not.toContain('bản cũ');
+      expect(JSON.stringify(body.candidates)).not.toContain('Hoa Nguyễn cũ');
       // The model saw the names only (the customer's and the candidates'), not the words of the thread nor the phone.
       expect(askedRanks.length).toBe(asked + 1);
       const prompt = askedRanks.at(-1)?.prompt ?? '';
