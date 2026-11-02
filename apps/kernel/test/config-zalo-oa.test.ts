@@ -22,6 +22,12 @@ describe('CHANNEL_ZALO_OA_SECRET_KEY', () => {
     expect(() => loadConfig({ ...base, CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: 'oa-secret-key-not-real' })).toThrow(/same as/);
   });
 
+  it('turns the history read on only by the word true, off by default', () => {
+    expect(loadConfig({ ...BASE }).CHANNEL_ZALO_HISTORY).toBe('false');
+    expect(loadConfig({ ...BASE, CHANNEL_ZALO_HISTORY: 'true' }).CHANNEL_ZALO_HISTORY).toBe('true');
+    expect(() => loadConfig({ ...BASE, CHANNEL_ZALO_HISTORY: 'yes' })).toThrow(/CHANNEL_ZALO_HISTORY/);
+  });
+
   it('is refused without the app, and with a shape that is not a key', () => {
     expect(() => loadConfig({ ...BASE, CHANNEL_ZALO_OA_SECRET_KEY: 'oa-secret-key-not-real' })).toThrow(/needs CHANNEL_ZALO_APP_ID/);
     for (const bad of ['short', 'has a space in it', 'x'.repeat(201)]) {

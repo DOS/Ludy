@@ -1018,6 +1018,10 @@ export interface KernelChannelConnectionTable {
   connected_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   granted_by_hash: string | null;
+  history_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  gap_from: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  gap_to: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_identity */
@@ -1031,6 +1035,8 @@ export interface KernelConversationIdentityTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  profile_checked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  profile_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_message */

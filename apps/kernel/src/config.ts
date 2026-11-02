@@ -352,6 +352,9 @@ const schema = z.object({
   CHANNEL_ZALO_OA_SECRET_KEY: optional,
   // The key CHANNEL_ZALO_OA_SECRET_KEY replaces, kept while Zalo may still sign with it (a rotation in the console, then here).
   CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS: optional,
+  // Read the OA's recent chats to fill what the webhook missed (conversation core CV5b, #2329): off until the live check has settled the
+  // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
+  CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
   // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
