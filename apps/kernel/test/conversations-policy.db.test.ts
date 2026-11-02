@@ -168,11 +168,14 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
       });
     const all = { direct: 1, comment: 1, messages: 1, notes: 1, identities: 1 };
     const nothingPrivate = { direct: 0, comment: 1, messages: 0, notes: 0, identities: 0 };
-    // No role holds the permission yet (CV3 seeds it for desk.agent): nobody but owners and admins reads a private message.
-    expect(await rows('SELECT 1 FROM crove_kernel.role_permission WHERE permission = $1', [DESK_AGENT_PERMISSION])).toHaveLength(0);
+    // The Inbox migration (CV3, #2306) seeds the permission for desk.agent, and for no other role.
+    expect(await rows('SELECT role_key FROM crove_kernel.role_permission WHERE permission = $1', [DESK_AGENT_PERMISSION])).toEqual([{ role_key: 'desk.agent' }]);
     await rows("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [o.orgId, o.desk, o.owner]);
+    // Without the permission (taken away here, as the database owner, the way it was before the seed) the role gives nothing: nobody but owners and
+    // admins reads a private message.
+    await rows("DELETE FROM crove_kernel.role_permission WHERE role_key = 'desk.agent' AND permission = $1", [DESK_AGENT_PERMISSION]);
     expect(await counts(o.desk)).toEqual(nothingPrivate);
-    // The desk.agent role as the Service inbox will seed it (a fixture here, as the database owner): its holder reads them.
+    // With it, as the migration seeds it: its holder reads them.
     await rows("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', $1)", [DESK_AGENT_PERMISSION]);
 
     expect(await counts(o.owner)).toEqual(all);
@@ -192,7 +195,6 @@ suite('the conversation core: who reads what, the channel limit, the intake age 
     const other = await org();
     expect((await list(other, other.owner)).conversations).toEqual([]);
     await expect(rt.query('kernel.conversation.get', { conversationId: direct }, { actor: asUser(other.owner), orgId: other.orgId })).rejects.toMatchObject({ code: 'CONVERSATION_NOT_FOUND' });
-    await rows("DELETE FROM crove_kernel.role_permission WHERE role_key = 'desk.agent' AND permission = $1", [DESK_AGENT_PERMISSION]);
   });
 
   it('shows an agent no conversation at all, comment or private message', async () => {
