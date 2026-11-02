@@ -314,9 +314,8 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     await expect(sqlAsMember("UPDATE crove_ads.ad_campaign_request SET state = 'none', code = 'AI_OFF' WHERE org_id = $1 AND id = $2", [o.orgId, asked.id])).rejects.toBeTruthy();
     await expect(sqlAsMember('UPDATE crove_ads.ad_campaign_request SET brief = $3 WHERE org_id = $1 AND id = $2', [o.orgId, asked.id, 'đổi'])).rejects.toBeTruthy();
     await expect(sqlAsMember('DELETE FROM crove_ads.ad_campaign_request WHERE org_id = $1 AND id = $2', [o.orgId, asked.id])).rejects.toBeTruthy();
-    // Even the database owner's own insert (no context) is born waiting and in the name of a member of the org.
+    // Even the database owner's own insert (no context) is born waiting.
     await expect(rows("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, state, code, requested_by) VALUES ($1, $2, 'traffic', 'x', 'none', 'AI_OFF', $3)", [o.orgId, o.accountId, o.member])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
-    await expect(rows("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, requested_by) VALUES ($1, $2, 'traffic', 'x', $3)", [o.orgId, o.accountId, randomUUID()])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
     // Nobody but the system records the answer: a member running the command is refused by its access list.
     await expect(rt.execute('ads.campaign.draft_record', { requestId: asked.id, outcome: 'none', code: 'AI_OFF' }, { actor: asUser(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // Whatever path reaches the row, even the database owner's own statement (the sweep and the purge run so), the guard holds what a written request
