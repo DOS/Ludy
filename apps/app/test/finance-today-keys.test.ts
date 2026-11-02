@@ -5,8 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { en } from '../../app/src/i18n/messages/en.ts';
-import { vi } from '../../app/src/i18n/messages/vi.ts';
+import { en } from '../src/i18n/messages/en.ts';
+import { vi } from '../src/i18n/messages/vi.ts';
 
 const source = readFileSync(fileURLToPath(new URL('../../../modules/finance/src/today.ts', import.meta.url)), 'utf8');
 const keys = [...new Set([...source.matchAll(/'(finance[A-Z][A-Za-z]+)'/g)].map((m) => m[1] as string))];
