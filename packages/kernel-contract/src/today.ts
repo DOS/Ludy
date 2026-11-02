@@ -10,7 +10,8 @@ export const TODAY_KINDS = ['proposal', 'flag', 'message', 'deadline'] as const;
 export type TodayKind = (typeof TODAY_KINDS)[number];
 
 // The app whose read returned the item (`conversations` is the Service inbox of the conversation core, a code id that
-// stays whatever the app is called on screen); Home hides an app the member cannot see and shows nothing for one with no read yet.
+// stays whatever the app is called on screen). Each line's read returns only what the member could open there, so an app
+// the member cannot see, or one with no read yet, simply adds no items.
 export const TODAY_APPS = ['finance', 'crm', 'notes', 'social', 'ads', 'conversations'] as const;
 export type TodayApp = (typeof TODAY_APPS)[number];
 
@@ -68,8 +69,42 @@ export const zTodayItem = zTodayItemBase.refine((item) => item.currency === unde
 });
 export type TodayItem = z.infer<typeof zTodayItem>;
 
-// The result of a line's `<module>.today` read: the oldest or most urgent items first, at most 200 (a read groups
-// before it lists, so a long list is a sign it did not).
-export const zTodayItems = z.array(zTodayItem).max(200);
+// The most items a line's read returns, and Home's list holds (a read groups before it lists, so a long list is a sign it did not).
+export const TODAY_ITEMS_MAX = 200;
+
+// The result of a line's `<module>.today` read: the most urgent items first.
+export const zTodayItems = z.array(zTodayItem).max(TODAY_ITEMS_MAX);
 
 export const todayCurrency = (item: Pick<TodayItem, 'currency'>): string => item.currency ?? TODAY_DEFAULT_CURRENCY;
+
+// Home lists the kinds in this order: what is wrong first, then what waits for a decision, then what waits for an answer,
+// then what is coming.
+export const TODAY_KIND_ORDER: readonly TodayKind[] = ['flag', 'proposal', 'message', 'deadline'];
+const SEVERITY_RANK: Record<TodaySeverity, number> = { block: 0, warn: 1, info: 2 };
+
+// The list as Home shows it: grouped by kind in TODAY_KIND_ORDER, inside a group the more severe first (an item with no
+// severity counts as info), then the nearer dueAt (none last), then the larger count, then app and id so the order never
+// depends on which read answered first. Returns a new array.
+export function sortTodayItems(items: readonly TodayItem[]): TodayItem[] {
+  const due = (item: TodayItem) => (item.dueAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(item.dueAt));
+  return [...items].sort(
+    (a, b) =>
+      TODAY_KIND_ORDER.indexOf(a.kind) - TODAY_KIND_ORDER.indexOf(b.kind) ||
+      SEVERITY_RANK[a.severity ?? 'info'] - SEVERITY_RANK[b.severity ?? 'info'] ||
+      (due(a) === due(b) ? 0 : due(a) < due(b) ? -1 : 1) ||
+      (b.count ?? 1) - (a.count ?? 1) ||
+      (a.app < b.app ? -1 : a.app > b.app ? 1 : 0) ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+// The answer of the Home read: the merged, ordered items (at most TODAY_ITEMS_MAX), how many items a line sent that did
+// not match the shape (never shown; above 0 is a bug in that line's read), how many were cut after the merge for being
+// past the cap (the least urgent ones), and how many lines' reads refused (a DomainError other than not registered).
+export const zTodayList = z.object({
+  items: zTodayItems,
+  dropped: z.number().int().nonnegative(),
+  truncated: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
+export type TodayList = z.infer<typeof zTodayList>;
