@@ -175,7 +175,9 @@ describe('module screens against the router (#1652)', () => {
       [
         'social',
         [
-          ['social', ['/o/$slug/social', '/o/$slug/social/comments', '/o/$slug/social/notifications']],
+          ['social', ['/o/$slug/social', '/o/$slug/social/notifications']],
+          // The Inbox group (CV3, #2306): comments and private messages together; the comment inbox's old address redirects to it.
+          ['inbox', ['/o/$slug/social/inbox']],
           ['ads', ['/o/$slug/ads']],
         ],
       ],
@@ -186,7 +188,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'comments', 'notifications', 'ads', 'bookings', 'deals', 'contacts', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'notifications', 'socialInbox', 'ads', 'bookings', 'deals', 'contacts', 'agents', 'settings',
     ]);
   });
 });
@@ -218,9 +220,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
 
   it('shows Ads as a group of the Social app, alone in it where Social is off, and not at all where Ads is off', () => {
     const groupsOf = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => g.id);
-    expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['social', 'ads']);
+    expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['social', 'inbox', 'ads']);
     expect(groupsOf(['kernel', 'ads'])).toEqual(['ads']);
-    expect(groupsOf(['kernel', 'social'])).toEqual(['social']);
+    expect(groupsOf(['kernel', 'social'])).toEqual(['social', 'inbox']);
     expect(groupsOf(['kernel'])).toBeUndefined();
     expect(appOfPath('/o/acme/ads')).toBe('social');
   });
@@ -249,7 +251,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
         expect(screenInstalled(session.modules, path), path).toBe(true);
-        expect(await landing(path), path).toBe(path);
+        // The comment inbox of CV1 moved into the Inbox group (CV3, #2306): its old address is still a route, and it lands on the Inbox's comments.
+        if (path === '/o/acme/social/comments') expect(await landing(path), path).toBe('/o/acme/social/inbox');
+        else expect(await landing(path), path).toBe(path);
       }
     }
   });

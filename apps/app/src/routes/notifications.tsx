@@ -45,6 +45,8 @@ function useLine() {
         return t(n.detail.differs === 'true' ? 'text.original_differs' : 'text.original_unverified', { title: n.detail.title ?? '' });
       case 'kernel.file_unreadable':
         return t('text.file_unreadable', { filename: n.detail.filename ?? '' });
+      case 'kernel.conversation_new':
+        return t('text.conversation_new');
       case 'kernel.task_rerouted':
         return n.detail.count ? t('text.tasks_rerouted', { count: Number(n.detail.count) }) : t('text.task_rerouted', { title: n.detail.title ?? '' });
       case 'finance.bank_attention':
@@ -120,6 +122,8 @@ export function NotificationsPage() {
     else if (target?.to === 'myWork') void navigate({ to: '/o/$slug/my-work', params: { slug } });
     else if (target?.to === 'task') void navigate({ to: '/o/$slug/tasks/$id', params: { slug, id: target.id } });
     else if (target?.to === 'tasks') void navigate({ to: '/o/$slug/tasks', params: { slug } });
+    else if (target?.to === 'conversation') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { c: target.id } });
+    else if (target?.to === 'conversations') void navigate({ to: '/o/$slug/social/inbox', params: { slug }, search: { status: 'new' } });
     else if (target?.to === 'ads') void navigate({ to: '/o/$slug/ads', params: { slug } });
     else if (target?.to === 'agents') void navigate({ to: '/o/$slug/agents', params: { slug } });
   };

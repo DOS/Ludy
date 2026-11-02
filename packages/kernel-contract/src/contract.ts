@@ -203,6 +203,11 @@ import {
   zConversationList,
   zConversationListed,
   zConversationMarkRead,
+  zConversationComposing,
+  zConversationComposed,
+  zAvailability,
+  zAvailabilityEntry,
+  zAvailabilitySet,
   zConversationNoteAdd,
   zConversationReplied,
   zConversationReply,
@@ -1448,6 +1453,11 @@ export const contract = {
     note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
     linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
     markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
+    // The inbox (CV3, #2306): the "you are replying" marker (at most one write in 20 seconds per thread and member), and the member's availability
+    // for new conversations (every staff member reads the team's, a member sets their own).
+    composing: oc.input(zConversationComposing).output(zConversationComposed),
+    availability: oc.input(z.strictObject({})).output(zAvailability),
+    setAvailability: oc.input(zAvailabilitySet).output(zAvailabilityEntry),
     // A demo comment on a post of a sandbox connection (owners and admins): it goes through the same intake a platform's notice takes.
     sandboxComment: oc.input(zConversationSandboxComment).output(zConversationSandboxQueued),
     // The retention of the org's threads (every member reads it; owners and admins set it), and the erasure of one customer (owners and
