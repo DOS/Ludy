@@ -1011,13 +1011,13 @@ export const en = {
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
       label: { question: 'Question', order_or_price: 'Order or price', complaint: 'Complaint', invoice_request: 'Invoice request', spam: 'Spam' },
-      suggestedShort: 'Suggested: {intent}',
+      suggestedShort: '{sales} suggests: {intent}',
       applied: 'Intent of the conversation',
       none: 'No intent',
       apply: 'Apply',
       applyLabel: 'Apply the intent {intent}',
       order: 'Order the first 10 by suggested intent, urgent first',
-      budget: 'The AI budget of this month is spent, so there are no intent suggestions.',
+      budget: '{sales} has used the AI budget of this month, so no intents are suggested.',
     },
     contact: {
       title: 'Customer',
@@ -1036,7 +1036,7 @@ export const en = {
       createName: 'Name of the new contact',
       createSave: 'Create and link',
       cancel: 'Cancel',
-      suggested: 'May be this contact',
+      suggested: '{sales} suggests a contact',
       reason: { phone: 'The customer wrote this number', name: 'Similar name' },
       linkThis: 'Link',
     },

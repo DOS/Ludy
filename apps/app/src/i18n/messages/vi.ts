@@ -1009,13 +1009,13 @@ export const vi = {
     // The intent of a conversation (CV3, #2306): the label a person applies, and the AI's suggestion beside it, which a click applies.
     intent: {
       label: { question: 'Câu hỏi', order_or_price: 'Đặt hàng hoặc hỏi giá', complaint: 'Phàn nàn', invoice_request: 'Xin hóa đơn', spam: 'Spam' },
-      suggestedShort: 'Gợi ý: {intent}',
+      suggestedShort: '{sales} gợi ý: {intent}',
       applied: 'Ý định của hội thoại',
       none: 'Chưa gán ý định',
       apply: 'Áp dụng',
       applyLabel: 'Áp dụng ý định {intent}',
       order: 'Sắp 10 hội thoại đầu theo ý định gợi ý, việc gấp trước',
-      budget: 'AI đã hết ngân sách của tháng này nên chưa có gợi ý ý định.',
+      budget: '{sales} đã hết ngân sách AI của tháng này nên chưa gợi ý được ý định.',
     },
     contact: {
       title: 'Khách hàng',
@@ -1034,7 +1034,7 @@ export const vi = {
       createName: 'Tên liên hệ mới',
       createSave: 'Tạo và gắn',
       cancel: 'Hủy',
-      suggested: 'Có thể là liên hệ này',
+      suggested: '{sales} gợi ý liên hệ',
       reason: { phone: 'Khách đã nhắn số này', name: 'Tên giống' },
       linkThis: 'Gắn',
     },
