@@ -17,6 +17,8 @@ import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DealBoard } from '../components/deal-board.tsx';
 import { DealFilterBar } from '../components/deal-filter-bar.tsx';
 import { DealForm, refreshDeals, type Member } from '../components/deal-form.tsx';
+import { DealNextSteps, useNextStepCount } from '../components/deal-next-steps.tsx';
+import { DealStaleSetting } from '../components/deal-stale-setting.tsx';
 import { PipelineSettings } from '../components/pipeline-settings.tsx';
 import { DataTable, Empty, ErrorText, Field, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { ViewTabs, type ViewState } from '../components/view-tabs.tsx';
@@ -60,7 +62,17 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
     <>
       <TableRow data-testid="deal-row">
         <TableCell className="px-4 text-sm">
-          <p className="font-medium text-foreground">{deal.title}</p>
+          <p className="font-medium text-foreground">
+            {deal.title}
+            {deal.followUp && (
+              <>
+                {' '}
+                <Badge variant="warning" data-testid="follow-up-badge">
+                  {t('followUp')}
+                </Badge>
+              </>
+            )}
+          </p>
           {deal.lostReason && <p className="text-xs text-muted-foreground">{t('lostReason', { reason: deal.lostReason })}</p>}
         </TableCell>
         <TableCell className="px-4 text-sm">{deal.partyName}</TableCell>
@@ -143,14 +155,22 @@ function DealRow({ deal, stages, members, canEdit, canDelete, columns }: { deal:
   );
 }
 
-type View = 'board' | 'list';
-// The board is the default where there is room for columns; on a phone the list is.
+type View = 'board' | 'list' | 'next';
+// The board is the default where there is room for columns; on a phone the list is. A link to `?tab=next` (the Home list) opens the next steps.
 const wideScreen = (): boolean => {
   try {
     return window.matchMedia('(min-width: 640px)').matches;
   } catch {
     return true;
   }
+};
+const firstView = (): View => {
+  try {
+    if (new URLSearchParams(window.location.search).get('tab') === 'next') return 'next';
+  } catch {
+    // No address to read: the default view.
+  }
+  return wideScreen() ? 'board' : 'list';
 };
 
 export function DealsPage() {
@@ -162,7 +182,8 @@ export function DealsPage() {
   const canManage = role === 'owner' || role === 'admin';
   const [adding, setAdding] = useState(false);
   const [settings, setSettings] = useState(false);
-  const [view, setView] = useState<View>(wideScreen() ? 'board' : 'list');
+  const [view, setView] = useState<View>(firstView);
+  const nextCount = useNextStepCount();
   const stages = useQuery(orpc.crm.pipeline.stages.queryOptions({ input: {} }));
   // The first member to open the screen in an org with no pipeline gets the default stages.
   const setup = useMutation(orpc.crm.pipeline.setup.mutationOptions({ onSuccess: (data) => {
@@ -214,6 +235,9 @@ export function DealsPage() {
               <TabsList aria-label={t('view.label')}>
                 <TabsTrigger value="board">{t('view.board')}</TabsTrigger>
                 <TabsTrigger value="list">{t('view.list')}</TabsTrigger>
+                <TabsTrigger value="next" data-testid="next-steps-tab">
+                  {nextCount > 0 ? t('view.nextCount', { count: String(nextCount) }) : t('view.next')}
+                </TabsTrigger>
               </TabsList>
             </Tabs>
             {canManage && (
@@ -230,8 +254,9 @@ export function DealsPage() {
         }
       />
       {settings && canManage && (
-        <div className="mb-4">
+        <div className="mb-4 space-y-4">
           <PipelineSettings />
+          <DealStaleSetting />
         </div>
       )}
       {adding && (
@@ -239,6 +264,10 @@ export function DealsPage() {
           <DealForm deal={null} members={members} onDone={() => setAdding(false)} />
         </div>
       )}
+      {view === 'next' ? (
+        <DealNextSteps canEdit={canEdit} />
+      ) : (
+        <>
       <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={applyView} />
       <DealFilterBar bar={bar} setBar={setBar} sort={sort} setSort={setSort} stages={stageList} members={members} />
       {view === 'board' ? (
@@ -263,6 +292,8 @@ export function DealsPage() {
               </Button>
             </div>
           )}
+        </>
+      )}
         </>
       )}
     </>
