@@ -32,7 +32,7 @@ describe('notificationTarget', () => {
     expect(notificationTarget({ kind: 'kernel.task_rerouted', subjectId: id, detail: { title: 'Việc' } })).toEqual({ to: 'task', id });
     expect(notificationTarget({ kind: 'kernel.task_rerouted', subjectId: null, detail: {} })).toEqual({ to: 'tasks' });
     // An original e-invoice that differs from its posting or is not verified opens the posted proposal (#2335).
-    expect(notificationTarget({ kind: 'kernel.original_flagged', 'kernel.ai_budget', subjectId: id, detail: { differs: 'true', signature: 'none' } })).toEqual({ to: 'proposal', id });
+    expect(notificationTarget({ kind: 'kernel.original_flagged', subjectId: id, detail: { differs: 'true', signature: 'none' } })).toEqual({ to: 'proposal', id });
     expect(notificationTarget({ kind: 'finance.bank_attention', subjectId: id, detail: { bankAccount: '1121' } })).toEqual({ to: 'bank', account: '1121' });
     expect(notificationTarget({ kind: 'finance.portal_attention', subjectId: id, detail: {} })).toEqual({ to: 'portal' });
     expect(notificationTarget({ kind: 'finance.portal_attention', subjectId: id, detail: { direction: 'sale' } })).toEqual({ to: 'portal', sale: true });

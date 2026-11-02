@@ -49,7 +49,7 @@ export type NotificationTarget =
 export function notificationTarget(item: { kind: string; subjectId: string | null; detail: Record<string, string> }): NotificationTarget | null {
   switch (item.kind) {
     case 'kernel.approval_waiting':
-    case 'kernel.original_flagged', 'kernel.ai_budget':
+    case 'kernel.original_flagged':
       return item.subjectId ? { to: 'proposal', id: item.subjectId } : { to: 'inbox' };
     case 'kernel.file_unreadable':
       return { to: 'inbox' };
