@@ -91,7 +91,7 @@ export const nextStepRaise = defineCommand({
     // raised for it is never one for a deal that just changed.
     const candidates = await ctx.trx
       .selectFrom('crove_crm.deal as d')
-      .select(['d.id', 'd.owner_user_id', 'd.expected_close', 'd.updated_at'])
+      .select(['d.id', 'd.owner_user_id', 'd.expected_close', 'd.updated_at', sql<string | null>`(SELECT m.role FROM crove_kernel.tenant_member m WHERE m.org_id = d.org_id AND m.user_id = d.owner_user_id)`.as('owner_role')])
       .where('d.org_id', '=', ctx.orgId)
       .where('d.closed_at', 'is', null)
       .where((eb) => eb.or([eb('d.expected_close', '<', today), eb('d.updated_at', '<=', quietSince)]))
@@ -116,7 +116,8 @@ export const nextStepRaise = defineCommand({
               org_id: ctx.orgId,
               deal_id: d.id,
               reason,
-              assignee_user_id: d.owner_user_id,
+              // A viewer cannot act on a step, so a deal a viewer owns is raised for the owners and admins (no assignee), as an unowned one is.
+              assignee_user_id: d.owner_role === 'viewer' ? null : d.owner_user_id,
               since_on: overdue && d.expected_close !== null ? dayOf(d.expected_close) : vietnamToday(new Date(d.updated_at)),
               raised_at: ctx.now,
             };

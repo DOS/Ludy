@@ -55,14 +55,14 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
     await expect(steps).toHaveCount(4);
     await expect(steps.first()).toContainText('Lâu chưa có thay đổi');
     await expect(steps.first()).toContainText('Thy nhắc: cơ hội này chưa có thay đổi từ ngày');
-    await page.getByRole('button', { name: 'Đánh dấu xong việc của cơ hội Tư vấn thuế' }).click();
+    await page.getByRole('button', { name: 'Xong: việc của cơ hội Tư vấn thuế' }).click();
     await expect(steps).toHaveCount(3);
     await expect(page.getByRole('status').filter({ hasText: 'Đã đánh dấu xong 1 việc.' })).toBeVisible();
     await expect(page.getByTestId('next-steps-tab')).toHaveText('Việc tiếp theo (3)');
   });
 
   await test.step('snooze is one click and hides the step', async () => {
-    await page.getByRole('button', { name: 'Hoãn việc của cơ hội Báo cáo tài chính 7 ngày' }).click();
+    await page.getByRole('button', { name: 'Hoãn 7 ngày: việc của cơ hội Báo cáo tài chính' }).click();
     await expect(page.getByTestId('next-step')).toHaveCount(2);
     await expect(page.getByRole('status').filter({ hasText: 'Đã hoãn 1 việc.' })).toBeVisible();
     // The badge follows: the snoozed and the done deals show none.

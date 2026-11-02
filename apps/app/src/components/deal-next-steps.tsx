@@ -4,7 +4,7 @@
 // everyone's. Done and snooze (3, 7 or 14 days) are one click each, for one step or for up to 20 picked at once, which is one action. A viewer reads
 // and marks nothing. A step closes by itself when its deal is edited, moved or closed.
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { NEXT_STEP_BULK_MAX, NEXT_STEP_SNOOZE_DAYS, type NextStep, type NextStepCursor, type NextStepSnoozeDays } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
@@ -70,21 +70,31 @@ export function DealNextSteps({ canEdit }: { canEdit: boolean }) {
       getNextPageParam: (page) => page.next ?? undefined,
     }),
   });
-  const settled = (verb: 'done' | 'snoozed') => (result: { changed: string[]; skipped: string[] }) => {
-    setPicked(new Set());
+  // The note under the tabs is where the answer of an action is read out and where focus goes when the acted row leaves the list.
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  // What an action settled: the steps it acted on are no longer picked (the rest of a selection stays), and the answer is read out.
+  const settled = (verb: 'done' | 'snoozed') => (result: { changed: string[]; skipped: string[] }, variables: { nextStepIds: string[] }) => {
+    setPicked((prev) => new Set([...prev].filter((id) => !variables.nextStepIds.includes(id))));
     setNotice(t(verb === 'done' ? 'doneResult' : 'snoozeResult', { count: String(result.changed.length) }));
     refreshDeals();
+    noticeRef.current?.focus();
   };
   const done = useMutation(orpc.crm.nextSteps.done.mutationOptions({ onSuccess: settled('done'), onError: () => refreshDeals() }));
   const snooze = useMutation(orpc.crm.nextSteps.snooze.mutationOptions({ onSuccess: settled('snoozed'), onError: () => refreshDeals() }));
   const busy = done.isPending || snooze.isPending;
+  // A new action forgets the last one's error and answer.
+  const begin = () => {
+    done.reset();
+    snooze.reset();
+    setNotice('');
+  };
   const items = list.data?.pages.flatMap((p) => p.items) ?? [];
   const counts = list.data?.pages[0]?.counts;
-  // A step that left the list (done elsewhere, closed with its deal) is no longer picked.
+  // A step that left the list (done elsewhere, closed with its deal) is no longer picked, and does not count toward the 20.
   const chosen = items.filter((s) => picked.has(s.id)).map((s) => s.id);
   const pick = (id: string, on: boolean) =>
-    setPicked((prev) => {
-      const next = new Set(prev);
+    setPicked(() => {
+      const next = new Set(chosen);
       if (!on) next.delete(id);
       else if (next.size < NEXT_STEP_BULK_MAX) next.add(id);
       return next;
@@ -104,6 +114,7 @@ export function DealNextSteps({ canEdit }: { canEdit: boolean }) {
         onValueChange={(v) => {
           setScope(v as Scope);
           setPicked(new Set());
+          begin();
         }}
       >
         <TabsList aria-label={t('scopeLabel')}>
@@ -119,20 +130,41 @@ export function DealNextSteps({ canEdit }: { canEdit: boolean }) {
           {chosen.length > 0 && (
             <>
               <span className="text-muted-foreground">{t('selected', { count: String(chosen.length) })}</span>
-              <Button type="button" size="sm" disabled={busy} loading={done.isPending} onClick={() => done.mutate({ nextStepIds: chosen })}>
+              <Button
+                type="button"
+                size="sm"
+                disabled={busy}
+                loading={done.isPending}
+                onClick={() => {
+                  begin();
+                  done.mutate({ nextStepIds: chosen });
+                }}
+              >
                 {t('bulkDone', { count: String(chosen.length) })}
               </Button>
               {NEXT_STEP_SNOOZE_DAYS.map((days) => (
-                <Button key={days} type="button" size="sm" variant="outline" disabled={busy} onClick={() => snooze.mutate({ nextStepIds: chosen, days })}>
+                <Button
+                  key={days}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => {
+                    begin();
+                    snooze.mutate({ nextStepIds: chosen, days });
+                  }}
+                >
                   {t('bulkSnooze', { days: String(days) })}
                 </Button>
               ))}
-              {picked.size >= NEXT_STEP_BULK_MAX && <span className="text-xs text-muted-foreground">{t('bulkMax', { max: String(NEXT_STEP_BULK_MAX) })}</span>}
+              <span role="status" className="text-xs text-muted-foreground">
+                {chosen.length >= NEXT_STEP_BULK_MAX ? t('bulkMax', { max: String(NEXT_STEP_BULK_MAX) }) : ''}
+              </span>
             </>
           )}
         </div>
       )}
-      <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
+      <p ref={noticeRef} tabIndex={-1} role="status" aria-live="polite" className="text-sm text-muted-foreground outline-none">
         {notice}
       </p>
       {failure !== null && <ErrorText>{errorMessage(failure)}</ErrorText>}
@@ -151,8 +183,14 @@ export function DealNextSteps({ canEdit }: { canEdit: boolean }) {
                 picked={picked.has(step.id)}
                 busy={busy}
                 onPick={(on) => pick(step.id, on)}
-                onDone={() => done.mutate({ nextStepIds: [step.id] })}
-                onSnooze={(days) => snooze.mutate({ nextStepIds: [step.id], days })}
+                onDone={() => {
+                  begin();
+                  done.mutate({ nextStepIds: [step.id] });
+                }}
+                onSnooze={(days) => {
+                  begin();
+                  snooze.mutate({ nextStepIds: [step.id], days });
+                }}
               />
             ))}
           </ul>

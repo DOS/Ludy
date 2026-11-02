@@ -33,7 +33,8 @@ export async function sweepCrmImports(deps: { runtime: Runtime; workerDb: Db }, 
 
 // The stale-deal rule (#2381, docs/plan/crm.md): once a day, after the import sweep, on the same clock (Vietnam's day is the rule's day).
 export const CRM_DEAL_STALE_CRON = '0 4 * * *';
-// Orgs one definer call lists, and batches one run walks: past a few thousand orgs with stale deals the rest wait for the next night.
+// Orgs one definer call lists, and batches one run walks. The list holds only orgs with a stale deal that has no step yet, so an org handled
+// tonight is not in it tomorrow: past this many orgs in one night the rest are reached the next night.
 const STALE_ORGS_BATCH = 200;
 const STALE_MAX_BATCHES = 50;
 
@@ -46,7 +47,8 @@ export async function raiseCrmNextSteps(deps: { runtime: Runtime; workerDb: Db }
   let orgs = 0;
   let raised = 0;
   for (let batch = 0; batch < STALE_MAX_BATCHES; batch++) {
-    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.deal_stale_orgs(${after}::uuid, ${STALE_ORGS_BATCH}::int)`.execute(deps.workerDb);
+    // The keyset paging below relies on the order, so it is asked for here and not left to what the function happens to return.
+    const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_crm.deal_stale_orgs(${after}::uuid, ${STALE_ORGS_BATCH}::int) ORDER BY org_id`.execute(deps.workerDb);
     for (const row of rows) {
       try {
         raised += (await deps.runtime.execute<{ raised: number; closed: number }>('crm.next_step.raise', {}, { actor: STALE_ACTOR, orgId: row.org_id })).raised;

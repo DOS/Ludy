@@ -113,5 +113,3 @@ export const crmToday = defineQuery({
     return zTodayItems.parse(items);
   },
 });
-
-export const todayQueries = [crmToday];

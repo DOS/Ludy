@@ -42,6 +42,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
   const dbName = `crove_test_crm_stale_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
   let adminUrl = '';
   let appUrl = '';
+  let workerUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let db: Db;
@@ -132,7 +133,8 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
     appUrl = login('crove_app', 'test-app-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     db = createDb(pool);
-    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    workerUrl = login('crove_worker', 'test-worker-pw');
+    workerPool = createPool({ connectionString: workerUrl, max: 2 });
     workerDb = createDb(workerPool);
     const registered = { commands: [...kernelCommands, ...crmCommands], queries: [...kernelQueries({ inboundDomain: null }), ...crmQueries] };
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
@@ -247,6 +249,26 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(await o.raise()).toEqual({ raised: 0, closed: 0 });
       await asRestore("UPDATE crove_crm.deal_next_step SET resolved_at = now() - interval '15 days' WHERE org_id = $1 AND deal_id = $2", [o.orgId, overdue.id]);
       expect(await o.raise()).toEqual({ raised: 1, closed: 0 });
+    });
+
+    it('raises at most 500 steps in a run, the longest quiet first, and the rest the next time', async () => {
+      const o = await org();
+      const p = await o.party('Công ty E2');
+      const stage = await o.stageNamed('Mới');
+      await rows(
+        `INSERT INTO crove_crm.deal (org_id, party_id, title, stage_id, sort_key, owner_user_id, created_by, updated_at)
+         SELECT $1, $2, 'Cơ hội ' || g, $3, 'V', $4, $4, now() - interval '30 days' + g * interval '1 minute' FROM generate_series(1, 501) g`,
+        [o.orgId, p, stage.id, o.member],
+      );
+      expect(await o.raise()).toEqual({ raised: 500, closed: 0 });
+      const left = await rows<{ title: string }>(
+        'SELECT d.title FROM crove_crm.deal d WHERE d.org_id = $1 AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n WHERE n.org_id = d.org_id AND n.deal_id = d.id)',
+        [o.orgId],
+      );
+      // The 501st is the least quiet one.
+      expect(left.map((d) => d.title)).toEqual(['Cơ hội 501']);
+      expect(await o.raise()).toEqual({ raised: 1, closed: 0 });
+      expect(await o.raise()).toEqual({ raised: 0, closed: 0 });
     });
 
     it('closes the open steps of a deal that left the open stages as a safety net, and raises none for it', async () => {
@@ -397,10 +419,61 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect(await asMember(other.orgId, other.member, async (c) => (await c.query('SELECT id FROM crove_crm.deal_next_step')).rowCount)).toBe(0);
       expect(await asMember(other.orgId, other.owner, async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now(), resolved_by = $1", [other.owner])).rowCount)).toBe(0);
       expect((await other.list(other.owner, 'all')).items).toEqual([]);
-      // The system context closes a step and does nothing else: it marks none done.
+      // A snooze is a time within the next 14 days (a day of slack): the past is an unsnooze and the far future buries the step.
+      for (const when of ["now() - interval '1 day'", "now() + interval '30 days'", "'9999-12-31'"]) {
+        await expect(asMember(o.orgId, o.member, (c) => c.query(`UPDATE crove_crm.deal_next_step SET snoozed_until = ${when} WHERE id = $1`, [step.id]))).rejects.toMatchObject({ code: '42501' });
+      }
+      expect(await asMember(o.orgId, o.member, async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET snoozed_until = now() + interval '5 days' WHERE id = $1", [step.id])).rowCount)).toBe(1);
+      // Who marked a step done cannot be wiped by a statement of a login; only the foreign key's own action, when that member is removed, clears it.
+      await expect(asMember(o.orgId, o.member, (c) => c.query('UPDATE crove_crm.deal_next_step SET resolved_by = NULL WHERE id = $1', [second.id]))).rejects.toMatchObject({ code: '42501' });
+      expect((await o.steps()).find((s) => s.id === second.id)?.resolved_by).toBe(o.member);
+      await rows('DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2', [o.orgId, o.member]);
+      expect((await o.steps()).find((s) => s.id === second.id)).toMatchObject({ status: 'done', resolved_by: null });
+    });
+
+    it('holds the system context to closing: it marks no step done, snoozes none and raises one only open', async () => {
+      const o = await org();
+      const p = await o.party('Công ty I2');
+      const deal = await o.newDeal(o.member, p);
+      const other = await o.newDeal(o.member, p);
+      await o.age(deal.id, 20);
+      await o.age(other.id, 20);
+      await o.raise();
+      const [first, second] = [(await o.stepsOf(deal.id))[0] as StepRow, (await o.stepsOf(other.id))[0] as StepRow];
+      // The command is the people's: the system actor is refused by its access list.
+      await expect(worker.execute('crm.next_step.done', { nextStepIds: [first.id] }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeDefined();
+      // And its own statements, in the system context of the org, are held by the guard.
+      const asSystem = async <T>(fn: (c: pg.Client) => Promise<T>): Promise<T> => {
+        const c = new pg.Client({ connectionString: workerUrl });
+        await c.connect();
+        try {
+          await c.query('BEGIN');
+          await c.query('SELECT crove_kernel.enter_system_context($1::uuid)', [o.orgId]);
+          return await fn(c);
+        } finally {
+          await c.query('ROLLBACK').catch(() => {});
+          await c.end();
+        }
+      };
+      await expect(asSystem((c) => c.query("UPDATE crove_crm.deal_next_step SET status = 'done', resolved_at = now() WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
+      await expect(asSystem((c) => c.query("UPDATE crove_crm.deal_next_step SET snoozed_until = now() + interval '3 days' WHERE id = $1", [first.id]))).rejects.toMatchObject({ code: '42501' });
       await expect(
-        worker.execute('crm.next_step.done', { nextStepIds: [step.id] }, { actor: SYSTEM, orgId: o.orgId }),
-      ).rejects.toBeDefined();
+        asSystem((c) => c.query("INSERT INTO crove_crm.deal_next_step (org_id, deal_id, reason, since_on, status, resolved_at, closed_reason) VALUES ($1, $2, 'no_activity', '2026-10-01', 'closed', now(), 'deal_edited')", [o.orgId, deal.id])),
+      ).rejects.toMatchObject({ code: '42501' });
+      expect(await asSystem(async (c) => (await c.query("UPDATE crove_crm.deal_next_step SET status = 'closed', resolved_at = now(), closed_reason = 'deal_closed' WHERE id = $1", [second.id])).rowCount)).toBe(1);
+      // Nothing of that was kept: the transaction rolled back.
+      expect((await o.steps()).map((s) => s.status)).toEqual(['open', 'open']);
+    });
+
+    it('raises a deal a viewer owns for the owners and admins, whom a viewer’s step would not reach, and nobody else’s change', async () => {
+      const o = await org();
+      const p = await o.party('Công ty I3');
+      const viewerDeal = await o.newDeal(o.member, p, { ownerUserId: o.viewer });
+      await o.age(viewerDeal.id, 20);
+      await o.raise();
+      expect((await o.stepsOf(viewerDeal.id))[0]?.assignee_user_id).toBeNull();
+      expect((await o.list(o.viewer)).items).toEqual([]);
+      expect((await o.list(o.admin)).items.map((s) => s.dealId)).toEqual([viewerDeal.id]);
     });
 
     it('keeps the setting to owners and admins, within 7 to 60 days, 14 until set', async () => {
@@ -455,6 +528,10 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       expect((await busy.steps()).map((s) => s.deal_id)).toEqual([stale.id]);
       expect(await calm.steps()).toEqual([]);
       expect((await raiseCrmNextSteps({ runtime: worker, workerDb })).raised).toBe(0);
+      // Handled: an org whose stale deals all have a step is no longer listed, so the next night does not walk it (or audit it) again.
+      const { rows: handled } = await workerPool.query<{ org_id: string }>('SELECT org_id FROM crove_crm.deal_stale_orgs(NULL, 1000)');
+      expect(handled.map((r) => r.org_id)).not.toContain(busy.orgId);
+      expect((await busy.auditOf('crm.next_step.raise')).length).toBe(1);
       // A person cannot run the rule, and the system actor reaches no other org's rows from here.
       await expect(busy.exec(busy.owner, 'crm.next_step.raise', {})).rejects.toBeDefined();
     });
@@ -478,7 +555,8 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       const booking = async (host: string, title: string) => {
         const type = randomUUID();
         const event = randomUUID();
-        const starts = new Date(Date.now() - 60_000);
+        // A minute ago, but never before the start of Vietnam's day (a run just after midnight): the read asks for bookings that start today.
+        const starts = new Date(Math.max(Date.now() - 60_000, new Date(`${today}T00:00:01+07:00`).getTime()));
         const ends = new Date(Date.now() + 600_000);
         await rows('INSERT INTO crove_crm.event_type (org_id, id, slug, title, duration_min, host_user_id, created_by) VALUES ($1, $2, $3, $4, 30, $5, $5)', [o.orgId, type, `t-${type.slice(0, 8)}`, title, host]);
         await rows("INSERT INTO crove_kernel.calendar_event (org_id, id, user_id, starts_at, ends_at, time_zone, kind, created_by) VALUES ($1, $2, $3, $4, $5, 'Asia/Ho_Chi_Minh', 'booking', $3)", [o.orgId, event, host, starts, ends]);

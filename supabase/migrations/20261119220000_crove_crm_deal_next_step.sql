@@ -56,22 +56,22 @@ CREATE TABLE IF NOT EXISTS crove_crm.deal_next_step (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
   id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
   deal_id uuid NOT NULL,
-  -- Written as chains of equalities: the sets are the product's (DEAL_NEXT_STEP_REASONS and the like in packages/db/src/schema.ts).
-  reason text NOT NULL CHECK (reason = 'no_activity' OR reason = 'past_close'),
+  -- The sets are the product's (DEAL_NEXT_STEP_REASONS and the like in packages/db/src/schema.ts, compared with these constraints by check-unions.db.test.ts).
+  reason text NOT NULL CHECK (reason IN ('no_activity', 'past_close')),
   -- The deal's owner when the step was raised; none for an unowned deal (the org's owners and admins read it as theirs) and once that member
   -- is removed (the foreign key's action).
   assignee_user_id uuid,
   -- The day the step is about: the day the deal was last changed (no_activity) or its expected close (past_close), in Vietnam's calendar.
   since_on date NOT NULL,
   raised_at timestamptz NOT NULL DEFAULT now(),
-  status text NOT NULL DEFAULT 'open' CHECK (status = 'open' OR status = 'done' OR status = 'closed'),
+  status text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'done', 'closed')),
   -- While open: hidden from the lists until this time, then shown again.
   snoozed_until timestamptz,
   resolved_at timestamptz,
   -- The member who marked it done; none for a step the deal's own change closed, and once that member is removed.
   resolved_by uuid,
   -- Why a step closed by itself: the deal was edited, moved to another stage, or closed (won or lost).
-  closed_reason text CHECK (closed_reason IS NULL OR closed_reason = 'deal_edited' OR closed_reason = 'deal_moved' OR closed_reason = 'deal_closed'),
+  closed_reason text CHECK (closed_reason IS NULL OR closed_reason IN ('deal_edited', 'deal_moved', 'deal_closed')),
   PRIMARY KEY (org_id, id),
   CONSTRAINT deal_next_step_deal_fk FOREIGN KEY (org_id, deal_id) REFERENCES crove_crm.deal (org_id, id) ON DELETE CASCADE,
   CONSTRAINT deal_next_step_assignee_fk FOREIGN KEY (org_id, assignee_user_id) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (assignee_user_id),
@@ -139,7 +139,13 @@ BEGIN
   IF OLD.resolved_by IS NOT NULL AND NEW.resolved_by IS NULL THEN
     v_same.resolved_by := OLD.resolved_by;
   END IF;
-  IF v_same IS NOT DISTINCT FROM OLD THEN
+  -- The foreign key's own action runs nested inside the referential trigger (depth 2 or more); a login's own statement is at depth 1 and never
+  -- gets this exemption (a member could otherwise wipe who marked a step done).
+  IF pg_catalog.pg_trigger_depth() > 1 AND v_same IS NOT DISTINCT FROM OLD THEN
+    RETURN NEW;
+  END IF;
+  -- A statement that changes nothing changes nothing, whoever runs it and whatever the step's state.
+  IF NEW IS NOT DISTINCT FROM OLD THEN
     RETURN NEW;
   END IF;
   -- The foreign key's own change was settled above (it alone changes nothing else), so here the assignee is as immutable as the rest.
@@ -156,9 +162,11 @@ BEGIN
         RAISE EXCEPTION 'NEXT_STEP_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a member marks a next step done in their own name';
       END IF;
     ELSIF NEW.status = 'open' THEN
-      -- A snooze: only the time changes, and it is a time.
-      IF NEW.snoozed_until IS NULL OR NEW.resolved_by IS NOT NULL OR NEW.closed_reason IS NOT NULL THEN
-        RAISE EXCEPTION 'NEXT_STEP_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a member snoozes a next step to a time';
+      -- A snooze: only the time changes, and it is a time between now and the longest snooze (14 days) with a day of slack for the application's
+      -- clock against the database's: never the past (an unsnooze) and never the far future (a step buried).
+      IF NEW.snoozed_until IS NULL OR NEW.resolved_by IS NOT NULL OR NEW.closed_reason IS NOT NULL
+         OR NEW.snoozed_until <= pg_catalog.now() OR NEW.snoozed_until > pg_catalog.now() + pg_catalog.make_interval(days => 15) THEN
+        RAISE EXCEPTION 'NEXT_STEP_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a member snoozes a next step to a time within the next 14 days';
       END IF;
     END IF;
   ELSIF v_actor IS NOT DISTINCT FROM 'system' THEN
@@ -179,7 +187,8 @@ CREATE TRIGGER deal_next_step_guard BEFORE INSERT OR UPDATE ON crove_crm.deal_ne
 -- The orgs the daily rule looks at (worker login only)
 -- ---------------------------------------------------------------------------
 -- An org of the active status with an open deal not changed for 7 days (the least N can be) or past its expected close (the day in Vietnam's
--- calendar). A superset: the command applies the org's own N and everything else. Keyset order, so the worker walks every org in batches.
+-- calendar) that has no open step and no step resolved in the last 7 days. A superset: the command applies the org's own N and everything else.
+-- Keyset order, so the worker walks every org in batches.
 CREATE OR REPLACE FUNCTION crove_crm.deal_stale_orgs(p_after uuid, p_limit integer)
 RETURNS TABLE (org_id uuid) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
@@ -194,6 +203,11 @@ BEGIN
     AND (p_after IS NULL OR d.org_id > p_after)
     AND (d.updated_at < pg_catalog.now() - pg_catalog.make_interval(days => 7)
          OR d.expected_close < (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date)
+    -- Not a deal the command would pass over: one with an open step, or one whose step was resolved within the least N can be (7 days), so an org
+    -- whose stale deals all have steps drops out of the list and the nightly pass does not walk it (or write its audit row) again.
+    AND NOT EXISTS (SELECT 1 FROM crove_crm.deal_next_step n
+                    WHERE n.org_id = d.org_id AND n.deal_id = d.id
+                      AND (n.status = 'open' OR n.resolved_at > pg_catalog.now() - pg_catalog.make_interval(days => 7)))
   ORDER BY 1
   LIMIT LEAST(GREATEST(p_limit, 1), 1000);
 END $$;
