@@ -164,7 +164,20 @@ export const vi = {
     },
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
-    items: {},
+    items: {
+      financeProposalsVendor: '{count, plural, other {# hóa đơn}} của {party} chờ bạn duyệt',
+      financeProposalsCustomer: '{count, plural, other {# hóa đơn}} bán cho {party} chờ bạn duyệt',
+      financeProposalsOther: '{count, plural, other {# chứng từ}} chờ bạn duyệt',
+      financeProposalsMore: '{count, plural, other {# chứng từ}} khác của các nhà cung cấp còn lại chờ bạn duyệt',
+      financeChecksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
+      financeChecksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
+      financeOriginalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',
+      financeOriginalsFlagged: '{count, plural, other {# hóa đơn gốc}} khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
+      financeStatementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',
+      financeBankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
+      financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
+      financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
+    },
   },
   overview: {
     title: 'Tổng quan',
@@ -198,22 +211,6 @@ export const vi = {
       notifications: { label: '{count, plural, other {thông báo chưa đọc}}', hint: 'Đề xuất, tệp lỗi, sao kê và kỳ sắp đến hạn nộp', open: 'Xem thông báo' },
       tasks: { label: '{count, plural, other {việc đang giao cho bạn}}', hint: 'Việc chưa xong của bạn hoặc của vị trí bạn giữ', open: 'Xem công việc' },
       bankLines: { label: '{count, plural, other {dòng sao kê chưa có chứng từ}}', hint: 'Lập phiếu thu, phiếu chi hoặc báo Nợ, báo Có cho từng dòng', open: 'Mở sao kê ngân hàng' },
-    },
-  },
-  today: {
-    items: {
-      financeProposalsVendor: '{count, plural, other {# hóa đơn}} của {party} chờ bạn duyệt',
-      financeProposalsCustomer: '{count, plural, other {# hóa đơn}} bán cho {party} chờ bạn duyệt',
-      financeProposalsOther: '{count, plural, other {# chứng từ}} chờ bạn duyệt',
-      financeProposalsMore: '{count, plural, other {# chứng từ}} khác của các nhà cung cấp còn lại chờ bạn duyệt',
-      financeChecksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
-      financeChecksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
-      financeOriginalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',
-      financeOriginalsFlagged: '{count, plural, other {# hóa đơn gốc}} khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
-      financeStatementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',
-      financeBankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
-      financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
-      financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
     },
   },
   notifications: {

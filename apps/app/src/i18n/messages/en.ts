@@ -166,7 +166,20 @@ export const en = {
     },
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
-    items: {},
+    items: {
+      financeProposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
+      financeProposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
+      financeProposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
+      financeProposalsMore: '{count, plural, one {# more document} other {# more documents}} from other vendors waiting for your approval',
+      financeChecksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
+      financeChecksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
+      financeOriginalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',
+      financeOriginalsFlagged: '{count, plural, one {# original differs} other {# originals differ}} from the posted invoice or cannot be verified',
+      financeStatementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',
+      financeBankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
+      financeVatDue: 'VAT return for {period}: due on {date}',
+      financePeriodClose: 'Lock the books of {period} before {date}',
+    },
   },
   overview: {
     title: 'Overview',
@@ -200,22 +213,6 @@ export const en = {
       notifications: { label: '{count, plural, one {unread notification} other {unread notifications}}', hint: 'Proposals, unreadable files, statements and filing periods coming due', open: 'See notifications' },
       tasks: { label: '{count, plural, one {task assigned to you} other {tasks assigned to you}}', hint: 'Open tasks of yours or of a position you hold', open: 'See tasks' },
       bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
-    },
-  },
-  today: {
-    items: {
-      financeProposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
-      financeProposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
-      financeProposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
-      financeProposalsMore: '{count, plural, one {# more document} other {# more documents}} from other vendors waiting for your approval',
-      financeChecksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
-      financeChecksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
-      financeOriginalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',
-      financeOriginalsFlagged: '{count, plural, one {# original differs} other {# originals differ}} from the posted invoice or cannot be verified',
-      financeStatementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',
-      financeBankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
-      financeVatDue: 'VAT return for {period}: due on {date}',
-      financePeriodClose: 'Lock the books of {period} before {date}',
     },
   },
   notifications: {
