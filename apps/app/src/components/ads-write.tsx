@@ -63,7 +63,7 @@ export function AdsWriteCard({
   const enable = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
   const unblock = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
   // Switching off closes every connection that can run ads: the toast says how the platform still holds the permission.
-  const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async (done) => (toast(disabledToastText(root, accounts, done.connectionsClosed)), refresh()) }));
+  const disable = useMutation(orpc.ads.writeDisable.mutationOptions({ onSuccess: async (done) => (toast(disabledToastText(root, accounts, done.connectionsClosed, done.readConnectionsClosed)), refresh()) }));
   const pauseAll = useMutation(orpc.ads.pauseAll.mutationOptions({ onSuccess: async () => (toast(t('pausedToast')), refresh()) }));
   if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
   if (!state.data) return null;

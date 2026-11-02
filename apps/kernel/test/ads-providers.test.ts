@@ -3,7 +3,7 @@
 // channel layer only, the contract on neither): the contract's constants (AD_WRITE_PROVIDERS, ADS_SPEND_SCOPES, READ_PROVIDER_OF_WRITE)
 // and the adapters' own. This is the one place that depends on both, and keeps them equal (ADR-0043, #2294, W0b).
 import { describe, expect, it } from 'vitest';
-import { META_WRITE_PROVIDER, META_WRITE_SCOPES, SANDBOX_WRITE_PROVIDER, SANDBOX_WRITE_SCOPES } from '@crove/ad-platform';
+import { META_FORBIDDEN_SCOPES, META_WRITE_PROVIDER, META_WRITE_SCOPES, SANDBOX_WRITE_PROVIDER, SANDBOX_WRITE_SCOPES } from '@crove/ad-platform';
 import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
 
 describe('the write providers of running ads', () => {
@@ -26,6 +26,11 @@ describe('the write providers of running ads', () => {
       expect(read.endsWith('_ads'), read).toBe(true);
       expect(`${read.slice(0, -4)}write_ads`, read).toBe(provider);
     }
+  });
+
+  // The reading connector refuses these while running ads is off, and the switch-off closes a connection that holds one: one list.
+  it('keep the permissions the reading connector refuses equal to the contract’s spend-capable ones', () => {
+    expect([...META_FORBIDDEN_SCOPES].sort()).toEqual([...ADS_SPEND_SCOPES].sort());
   });
 
   it('ask for the permission that can change campaigns, which the contract counts as spend-capable', () => {
