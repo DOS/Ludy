@@ -355,6 +355,10 @@ const schema = z.object({
   // Read the OA's recent chats to fill what the webhook missed (conversation core CV5b, #2329): off until the live check has settled the
   // answers' shapes, the message ids above all (the history must name a message as the webhook does, or it would store it twice).
   CHANNEL_ZALO_HISTORY: z.enum(['true', 'false']).default('false'),
+  // The hosts a customer's image on Zalo may be fetched from (conversation core CV5c, #2357): domain suffixes separated by commas, each
+  // matching the host itself and its subdomains. Unset: the built-in list (ZALO_MEDIA_HOSTS in @crove/channel), which is [S, U] until the
+  // live check settles it (docs/runbooks/zalo-conversations-live-check.md row 18). An image from any other host is never fetched.
+  CHANNEL_ZALO_MEDIA_HOSTS: optional,
   // The deployment's Threads app (the Threads use case of a Meta app has its own id), S9. Callback URL:
   // APP_URL/channels/oauth/threads/callback.
   CHANNEL_THREADS_APP_ID: optional,
@@ -672,6 +676,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (!config.CHANNEL_ZALO_APP_ID) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY needs CHANNEL_ZALO_APP_ID and CHANNEL_ZALO_APP_SECRET');
     if (!/^\S{8,200}$/.test(config.CHANNEL_ZALO_OA_SECRET_KEY)) throw new Error('CHANNEL_ZALO_OA_SECRET_KEY is the OA secret key of the Zalo app: 8 to 200 characters, no spaces');
   }
+  if (config.CHANNEL_ZALO_MEDIA_HOSTS !== undefined) {
+    const hosts = zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS);
+    if (hosts.length === 0 || hosts.length > 20 || hosts.some((h) => !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/.test(h))) {
+      throw new Error('CHANNEL_ZALO_MEDIA_HOSTS is up to 20 domain names (for example zdn.vn) separated by commas, each matching the domain and its subdomains');
+    }
+  }
   if (config.CROVE_CONTEXT_TOKEN_KEY !== undefined) {
     const bytes = /^[A-Za-z0-9+/_-]+={0,2}$/.test(config.CROVE_CONTEXT_TOKEN_KEY.trim()) ? Buffer.from(config.CROVE_CONTEXT_TOKEN_KEY.trim(), 'base64') : Buffer.alloc(0);
     if (bytes.length < 32 || bytes.length > 64) throw new Error('CROVE_CONTEXT_TOKEN_KEY must be base64 of 32 to 64 random bytes');
@@ -785,6 +795,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 }
 
 // The extract jobs this worker runs at once: EXTRACT_WORKER_CONCURRENCY, else 4 or the sandbox's slots if fewer (#2119).
+// The domains CHANNEL_ZALO_MEDIA_HOSTS names, in lower case; none when it is unset.
+export function zaloMediaHostsOf(value: string | undefined): string[] {
+  return (value ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h !== '');
+}
+
 export function extractConcurrency(config: Pick<Config, 'EXTRACT_WORKER_CONCURRENCY' | 'EXTRACT_CONCURRENCY'>): number {
   return config.EXTRACT_WORKER_CONCURRENCY ?? Math.min(DEFAULT_EXTRACT_WORKER_CONCURRENCY, config.EXTRACT_CONCURRENCY);
 }

@@ -77,6 +77,7 @@ export interface CroveKernelSchema {
   'crove_kernel.channel_access': KernelChannelAccessTable;
   'crove_kernel.channel_connection': KernelChannelConnectionTable;
   'crove_kernel.conversation': KernelConversationTable;
+  'crove_kernel.conversation_attachment': KernelConversationAttachmentTable;
   'crove_kernel.conversation_identity': KernelConversationIdentityTable;
   'crove_kernel.conversation_message': KernelConversationMessageTable;
   'crove_kernel.conversation_note': KernelConversationNoteTable;
@@ -1022,6 +1023,28 @@ export interface KernelChannelConnectionTable {
   gap_from: ColumnType<Date | null, Date | string | null, Date | string | null>;
   gap_to: ColumnType<Date | null, Date | string | null, Date | string | null>;
   history_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_kernel.conversation_attachment */
+export interface KernelConversationAttachmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  message_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  state: Generated<string>;
+  source_url: string | null;
+  storage_key: ColumnType<string, string, NotGranted>;
+  generation: string | null;
+  sha256: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+  width: number | null;
+  height: number | null;
+  requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  fetch_attempts: Generated<number>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_identity */

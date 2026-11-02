@@ -211,6 +211,17 @@ export function archiveKey(orgId: string, year: number, sha256: string): string 
   return `archive/${orgId}/${year}/${sha256}`;
 }
 
+// A customer's image in a conversation (issue #2357): bound to one message, so under a random id of its own and never a content
+// address (the same bytes sent by two customers are two blobs, and deleting one message's image never touches another's). The row
+// that names it is crove_kernel.conversation_attachment; its blob is deleted by the worker when that row goes.
+export function conversationKey(orgId: string, blobId: string): string {
+  return `conversation/${orgId}/${blobId}`;
+}
+
+export function newConversationBlobId(): string {
+  return randomBytes(32).toString('hex');
+}
+
 // Raw inbound email, stored by the API before any org is known, under a random id per delivery so the
 // worker can delete it once handled without counting references. Only the worker reads it.
 export function inboundKey(blobId: string): string {
@@ -235,7 +246,7 @@ export function isStagingKey(key: string): boolean {
   return /^staging\/[0-9a-f]{64}$/.test(key);
 }
 
-const KEY_PATTERN = /^(?:(?:org|export)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
+const KEY_PATTERN = /^(?:(?:org|export|conversation)\/[0-9a-f-]{36}|archive\/[0-9a-f-]{36}\/\d{4}|inbound|staging)\/[0-9a-f]{64}$/;
 // The keys a listing of each sweepable prefix returns.
 const LISTED_KEY: Record<ListPrefix, RegExp> = {
   'inbound/': /^inbound\/[0-9a-f]{64}$/,
@@ -243,7 +254,7 @@ const LISTED_KEY: Record<ListPrefix, RegExp> = {
 };
 
 // Every store accepts the same keys: org/<org_id>/<sha256> (plan §7.6), export/<org_id>/<sha256>,
-// archive/<org_id>/<year>/<sha256>, inbound/<random id> and staging/<random id>.
+// archive/<org_id>/<year>/<sha256>, conversation/<org_id>/<random id>, inbound/<random id> and staging/<random id>.
 export function assertStorageKey(key: string): void {
   if (!KEY_PATTERN.test(key)) throw new Error('invalid storage key');
 }

@@ -903,6 +903,7 @@ export const vi = {
     member: 'Thành viên',
     platformSide: 'Trang của bạn',
     removed: 'Nền tảng báo nội dung này đã bị gỡ.',
+    imageAlt: 'Ảnh khách gửi',
     sendState: { queued: 'Đang chờ gửi', sending: 'Đang gửi', sent: 'Đã gửi', failed: 'Gửi không được', unknown: 'Chưa rõ đã gửi hay chưa' },
     sendError: {
       ZALO_TOKEN: 'Zalo không nhận mã truy cập của kênh này, hãy kết nối lại kênh',

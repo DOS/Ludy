@@ -905,6 +905,7 @@ export const en = {
     member: 'Member',
     platformSide: 'Your page',
     removed: 'The platform says this was removed.',
+    imageAlt: 'Image the customer sent',
     sendState: { queued: 'Waiting to send', sending: 'Sending', sent: 'Sent', failed: 'Could not send', unknown: 'Not clear whether it was sent' },
     sendError: {
       ZALO_TOKEN: "Zalo does not accept this channel's access token, reconnect the channel",

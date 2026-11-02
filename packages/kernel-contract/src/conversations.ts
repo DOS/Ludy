@@ -29,6 +29,12 @@ export const CONVERSATION_LIST_MAX = 100;
 export const CONVERSATION_POSTS_MAX = 20;
 // A message shown in a list is cut to this many characters.
 export const CONVERSATION_PREVIEW_CHARS = 140;
+// A customer's image stored with its message (CV5c, #2357): at most this many a message, this many bytes each, and only these types (read
+// from the bytes, never from what the platform said). Anything else stays the placeholder the message was stored with.
+export const CONVERSATION_ATTACHMENTS_MAX = 5;
+export const CONVERSATION_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const CONVERSATION_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+export type ConversationImageType = (typeof CONVERSATION_IMAGE_TYPES)[number];
 // The calls a reply or a hide makes are a person's, so a stale started call (a worker that died mid-call) is settled by them.
 export const CONVERSATION_CALL_STALE_MS = 10 * 60_000;
 
@@ -56,6 +62,13 @@ const zThreadId = z.string().min(1).max(300).refine(noNul, 'NUL character');
 export const zConversationKind = z.enum(CONVERSATION_KINDS);
 export const zConversationStatus = z.enum(CONVERSATION_STATUSES);
 
+// An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
+// at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
+export const zConversationEventImage = z.strictObject({
+  kind: z.literal('image'),
+  url: z.string().min(1).max(2000).refine(noNul, 'NUL character').refine((value) => value.startsWith('https://'), 'https only'),
+});
+
 // One thing a notice told us, in the core's own words. `contact` is the customer of the thread (the commenter, or the
 // person writing to the page, also when the event is the page's own message seen as an echo); `direction` out is the
 // org's own message, written from the platform's own inbox.
@@ -72,6 +85,8 @@ export const zConversationEvent = z.strictObject({
   at: z.iso.datetime({ offset: true }),
   // The platform says the message was removed: the body is blanked (plan section 10).
   removed: z.boolean().optional(),
+  // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
+  attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
 });
 export type ConversationEvent = z.infer<typeof zConversationEvent>;
 
@@ -110,6 +125,15 @@ export const zConversationSummary = z.strictObject({
 });
 export type ConversationSummary = z.infer<typeof zConversationSummary>;
 
+// A stored image of a message: read through its own route (an authenticated GET of the id), never as HTML.
+export const zConversationAttachmentView = z.strictObject({
+  id: zId,
+  contentType: z.enum(CONVERSATION_IMAGE_TYPES),
+  width: z.number().int().nullable(),
+  height: z.number().int().nullable(),
+});
+export type ConversationAttachmentView = z.infer<typeof zConversationAttachmentView>;
+
 export const zConversationMessage = z.strictObject({
   id: zId,
   seq: z.number().int(),
@@ -121,7 +145,7 @@ export const zConversationMessage = z.strictObject({
   authorName: z.string().nullable(),
   authorTail: z.string().nullable(),
   body: z.string(),
-  attachments: z.array(zId),
+  attachments: z.array(zConversationAttachmentView),
   sentAt: z.iso.datetime({ offset: true }),
   sendState: z.enum(MESSAGE_SEND_STATES).nullable(),
   sendErrorCode: z.string().nullable(),
@@ -224,6 +248,27 @@ export const zConversationProfileApply = z.strictObject({
   displayName: z.string().trim().min(1).max(200).refine(noNul, 'NUL character').nullable(),
   retry: z.boolean().default(false),
 });
+// The images of a customer's messages (CV5c, #2357): the relay hands the worker one pending image to fetch (kernel.conversation.attachment_request,
+// which marks it handed out and emits the event the queue takes, ids only), the job reads its address (a query), fetches it, stores the bytes and
+// records the outcome. A failure that asking again will not change (a refused host, a wrong type, too large, gone) drops the image, and the
+// message keeps its placeholder.
+export const zConversationAttachmentRequest = z.strictObject({ attachmentId: zId });
+export const zConversationAttachmentSource = z.strictObject({ attachmentId: zId });
+export const zConversationAttachmentRecord = z.discriminatedUnion('outcome', [
+  z.strictObject({
+    outcome: z.literal('stored'),
+    attachmentId: zId,
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+    sizeBytes: z.number().int().min(1).max(CONVERSATION_IMAGE_MAX_BYTES),
+    contentType: z.enum(CONVERSATION_IMAGE_TYPES),
+    generation: z.string().min(1).max(1100),
+    width: z.number().int().min(1).max(100_000).nullable(),
+    height: z.number().int().min(1).max(100_000).nullable(),
+  }),
+  // retry: asking again may succeed (a timeout, a server error); else the image is dropped. `code` is a short code, never a platform's words.
+  z.strictObject({ outcome: z.literal('failed'), attachmentId: zId, retry: z.boolean(), code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }),
+]);
+export const zConversationAttachmentGet = z.strictObject({ attachmentId: zId });
 export const zConversationSandboxQueued = z.strictObject({ queued: z.literal(true) });
 
 // Retention (CV6, #2305): the months a thread is kept after its last message; null keeps it until a person deletes it. An org with

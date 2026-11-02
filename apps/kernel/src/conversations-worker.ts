@@ -14,8 +14,9 @@
 import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type ConversationAdapter, type ConversationNotice } from '@crove/channel';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
-import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { HideWork, HistoryWork, ProfileWork, ReplyWork } from '@crove/kernel';
+import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { AttachmentSource, HideWork, HistoryWork, ProfileWork, ReplyWork } from '@crove/kernel';
+import { fetchConversationImage, mediaHostsOf, type FetchConversationImageOptions } from './conversation-media.ts';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -233,6 +234,110 @@ export async function requestConversationSync(runtime: Runtime, jobs: readonly C
     if (result.queued) queued++;
   }
   return queued;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Customers' images (CV5c, #2357). A message that carries an image is stored at once with its placeholder text and a pending
+// conversation_attachment row holding the platform's address; the relay hands each pending row to this queue (ids only in the job), the job
+// fetches the image through the egress guard and records the bytes, and the row's blob is deleted by the sweep below when the row goes.
+// Nothing the platform sent (the address, a byte of the image) is logged, put in a job, an audit row or an event.
+// ---------------------------------------------------------------------------------------------------------------------
+
+export type ConversationAttachmentJob = { orgId: string; connectionId: string; action: 'attachment'; attachmentId: string };
+
+export interface AttachmentDeps {
+  runtime: Runtime;
+  store: BlobStore;
+  // The deployment's own list of media hosts (CHANNEL_ZALO_MEDIA_HOSTS); unset, each provider's own.
+  hosts?: readonly string[] | undefined;
+  // Tests only: the egress guard's resolver, address check and port.
+  egress?: FetchConversationImageOptions['egress'];
+}
+
+// Fetches one pending image and records what came of it: 'stored', 'dropped' (the image will never be fetched), 'retry' (asked again by the
+// relay after a few minutes, up to five tries), or 'none' (nothing to do: the row is gone, stored, or its connection is not active). The
+// outcome string is for the log and carries no platform text.
+export async function runConversationAttachment(deps: AttachmentDeps, job: ConversationAttachmentJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  const source = await deps.runtime.query<AttachmentSource | null>('kernel.conversation.attachment_source', { attachmentId: job.attachmentId }, options);
+  if (!source) return 'none';
+  const failed = async (retry: boolean, code: string): Promise<string> => {
+    await deps.runtime.execute('kernel.conversation.attachment_record', { outcome: 'failed', attachmentId: job.attachmentId, retry, code }, options);
+    return retry ? 'retry' : 'dropped';
+  };
+  const got = await fetchConversationImage(source.sourceUrl, { hosts: mediaHostsOf(source.provider, deps.hosts), ...(deps.egress ? { egress: deps.egress } : {}) });
+  if (got.kind === 'failed') return failed(got.retry, got.code);
+  const sha256 = sha256Hex(got.bytes);
+  let generation: string;
+  try {
+    generation = await putFile(deps.store, source.storageKey, got.bytes, got.contentType, sha256);
+  } catch (error) {
+    // The key was reserved for these bytes alone, so other bytes under it mean the same key was written twice with different answers (a
+    // retry of a job that already ran): the image is dropped and its blob deleted with the row. Anything else is the store failing.
+    return failed(!(error instanceof BlobConflictError), error instanceof BlobConflictError ? 'STORE_CONFLICT' : 'STORE_ERROR');
+  }
+  const done = await deps.runtime.execute<{ recorded: boolean }>(
+    'kernel.conversation.attachment_record',
+    { outcome: 'stored', attachmentId: job.attachmentId, sha256, sizeBytes: got.bytes.byteLength, contentType: got.contentType, generation, width: got.width, height: got.height },
+    options,
+  );
+  // A row that went while the bytes were being fetched (the customer was erased) recorded nothing; its blob is queued by its deletion.
+  return done.recorded ? 'stored' : 'none';
+}
+
+// The pending images the relay hands out each pass (crove_kernel.conversation_attachment_due, the worker login's). The same call drops the
+// images that will never be fetched: older than six days, or tried five times.
+export const ATTACHMENT_RETRY_SECONDS = 300;
+export const ATTACHMENT_BATCH = 50;
+export async function dueConversationAttachments(workerDb: Db): Promise<Array<{ orgId: string; connectionId: string; attachmentId: string }>> {
+  const { rows } = await sql<{ org_id: string; attachment_id: string; connection_id: string }>`
+    SELECT org_id, attachment_id, connection_id FROM crove_kernel.conversation_attachment_due(${ATTACHMENT_BATCH}::int, ${ATTACHMENT_RETRY_SECONDS}::int)`.execute(workerDb);
+  return rows.map((r) => ({ orgId: r.org_id, connectionId: r.connection_id, attachmentId: r.attachment_id }));
+}
+
+// Hands each due image to the queue through the command that marks it handed out and emits its event.
+export async function requestConversationAttachments(runtime: Runtime, due: ReadonlyArray<{ orgId: string; attachmentId: string }>): Promise<number> {
+  let queued = 0;
+  for (const row of due) {
+    const result = await runtime.execute<{ queued: boolean }>('kernel.conversation.attachment_request', { attachmentId: row.attachmentId }, { actor: SYSTEM, orgId: row.orgId });
+    if (result.queued) queued++;
+  }
+  return queued;
+}
+
+// Deletes from the store the blobs whose rows are gone (crove_kernel.conversation_blob_doomed: every path that deletes a row queued its
+// key in the same transaction), then tells the database which are done. A key that could not be deleted stays leased for five minutes and
+// is claimed again. At most once a minute, a batch at a time; `force` skips the wait (tests, and a purge that wants its blobs now).
+// Returns how many blobs were deleted. A missing object is a success (the store's delete says nothing of it).
+const BLOB_SWEEP_MS = 60_000;
+const BLOB_SWEEP_BATCH = 200;
+let lastBlobSweep = 0;
+export async function sweepConversationBlobs(deps: { workerDb: Db; store: BlobStore; now?: () => number; force?: boolean }): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastBlobSweep < BLOB_SWEEP_MS) return 0;
+  lastBlobSweep = now;
+  let deleted = 0;
+  for (let pass = 0; pass < 10; pass++) {
+    const { rows } = await sql<{ blob_key: string }>`SELECT blob_key FROM crove_kernel.conversation_blob_claim(${BLOB_SWEEP_BATCH}::int)`.execute(deps.workerDb);
+    if (rows.length === 0) break;
+    const done: string[] = [];
+    for (const { blob_key: key } of rows) {
+      try {
+        await deps.store.delete(key);
+        done.push(key);
+      } catch {
+        // Left to its lease; nothing of the key or the error goes to the log, only the count below.
+      }
+    }
+    if (done.length > 0) await sql`SELECT crove_kernel.conversation_blob_done(${done}::text[])`.execute(deps.workerDb);
+    deleted += done.length;
+    if (done.length < rows.length) {
+      console.error(`[conversations] ${rows.length - done.length} blob(s) not deleted; claimed again after the lease`);
+      break;
+    }
+    if (rows.length < BLOB_SWEEP_BATCH) break;
+  }
+  return deleted;
 }
 
 export interface ConversationJob {

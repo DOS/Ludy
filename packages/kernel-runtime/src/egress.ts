@@ -91,6 +91,9 @@ export interface EgressOptions {
   resolve?: (host: string) => Promise<{ address: string; family: number }[]>;
   allowed?: (address: string) => boolean;
   anyPort?: boolean;
+  // A host allowlist, asked for the host of the first request and of every redirect: a host it refuses is 'blocked' before anything is
+  // resolved or sent. For a fetch that may go only to one platform's own media hosts (a customer's image, #2357).
+  hostAllowed?: (host: string) => boolean;
 }
 
 export interface EgressResponse {
@@ -128,6 +131,7 @@ function remaining(deadline: number): number {
 async function addressFor(url: URL, options: EgressOptions, deadline: number): Promise<{ address: string; family: number }> {
   const allowed = options.allowed ?? isPublicAddress;
   const host = url.hostname.startsWith('[') ? url.hostname.slice(1, -1) : url.hostname;
+  if (options.hostAllowed && !options.hostAllowed(host)) throw new EgressError('blocked', 'not an allowed host');
   const family = isIP(host);
   if (family !== 0) {
     if (!allowed(host)) throw new EgressError('blocked', 'not a public address');

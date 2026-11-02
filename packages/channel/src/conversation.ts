@@ -19,6 +19,9 @@ export interface InboundConversationEvent {
   text: string;
   at: string;
   removed?: boolean | undefined;
+  // The images the message carries, by the platform's address (CV5c, #2357): personal data the worker fetches once and the core clears, so it
+  // is never logged, never put in a job and never kept past the fetch (six days at the most).
+  attachments?: Array<{ kind: 'image'; url: string }> | undefined;
 }
 
 // A verified notice: the platform's own account id (a Page, an Instagram account, an OA), from which the worker finds the
