@@ -376,20 +376,26 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
 
 // A booking confirmed, moved or cancelled (#2124): the events of every write-back connection of its org are made to match
 // at once, from a job the outbox relay queues, instead of waiting for the next sweep. It never renews a token or expires a
-// connection: a token that is about to run out, or that the provider refuses, is left to the sweep, which does both.
-export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: CalendarWriteBackJob): Promise<{ connections: number; ran: number; busy: number }> {
+// connection: a token that is about to run out, or that the provider refuses, is left to the sweep, which does both. Such a connection is counted as
+// `expiring`, so the worker can ask for a sweep at once (a booking's Google Meet, C7, is made by this write and must not wait for the next one).
+export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: CalendarWriteBackJob): Promise<{ connections: number; ran: number; busy: number; expiring: number }> {
   const options = { actor: ACTOR, orgId: job.orgId };
   const now = deps.now ?? (() => new Date());
   const ids = await deps.runtime.query<string[]>('kernel.calendar.writeback_connections', {}, options);
   let ran = 0;
   let busy = 0;
+  let expiring = 0;
   for (const connectionId of ids) {
     try {
       const state = await deps.runtime.query<{ status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null>('kernel.calendar.connection_state', { connectionId }, options);
       if (!state || state.status !== 'active' || !state.writeBack) continue;
       const adapter = adapterFor(deps.adapters, state.provider);
       // A token that would run out during the batch is renewed by the sweep, which comes within 15 minutes.
-      if (!adapter || state.expiresAt === null || Date.parse(state.expiresAt) - now().getTime() < REFRESH_AHEAD_MS) continue;
+      if (!adapter) continue;
+      if (state.expiresAt === null || Date.parse(state.expiresAt) - now().getTime() < REFRESH_AHEAD_MS) {
+        expiring += 1;
+        continue;
+      }
       const sealed = await deps.runtime.query<SealedCalendarCredential>('kernel.calendar.credential', { connectionId }, options);
       const again = await deps.runtime.query<{ status: string; updatedAt: string } | null>('kernel.calendar.connection_state', { connectionId }, options);
       if (!again || again.status !== 'active' || again.updatedAt !== state.updatedAt) continue;
@@ -406,7 +412,7 @@ export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: Calendar
   }
   // busy: connections the sweep or another job was working on; the caller retries the job, so a booking that committed after
   // their plan was read is still written.
-  return { connections: ids.length, ran, busy };
+  return { connections: ids.length, ran, busy, expiring };
 }
 export interface CalendarSweepDeps {
   runtime: Runtime;

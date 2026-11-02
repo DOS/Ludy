@@ -210,6 +210,8 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       // The outcome: the link is stored on the booking and the mails go out, to the visitor and the host, once.
       expect(await settle(o, { calendarEventId: pending.calendar_event_id, url: MEET })).toEqual({ settled: true, state: 'ready' });
       expect(await b.state()).toMatchObject({ meeting_state: 'ready', meeting_url: MEET });
+      // The event keeps the Meet Google made and stops asking for one, so a later write (a move) does not send the request again.
+      expect(await eventConference(pending.calendar_event_id)).toBe(false);
       expect(await b.mails()).toEqual(['host', 'visitor']);
       expect(await mailData(o, b.id)).toMatchObject({ meeting: { state: 'ready', url: MEET } });
       expect(await settle(o, { calendarEventId: pending.calendar_event_id, url: 'https://meet.google.com/zzz-zzzz-zzz' })).toEqual({ settled: false });
@@ -258,6 +260,33 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       expect(await b.mails()).toEqual([]);
     });
 
+    it('holds the mails of a move made while the Meet is pending, and the confirmation sent once it is settled names the new time and the current revision', async () => {
+      const o = await org();
+      await connect(o);
+      await createType(o, o.host);
+      const b = await book(o);
+      const mailsOf = (source: string) =>
+        rows<{ revision: string; startsAt: string; recipient: string }>(
+          `SELECT payload->>'revision' AS revision, payload->>'startsAt' AS "startsAt", payload->>'recipient' AS recipient FROM crove_kernel.mail_message WHERE org_id = $1 AND source_id = $2 AND source = $3 ORDER BY payload->>'recipient'`,
+          [o.orgId, b.id, source],
+        );
+      const newStart = at(b.day, 600);
+      await app.execute('crm.booking.move', { bookingId: b.id, startsAt: newStart }, { actor: asUser(o.host), orgId: o.orgId });
+      expect(await rows<{ revision: number }>('SELECT revision FROM crove_crm.booking WHERE id = $1', [b.id])).toEqual([{ revision: 1 }]);
+      // Nothing was told yet: not the confirmation (held), and not the move (the visitor never heard of the first time).
+      expect(await mailsOf('crm.booking.moved')).toEqual([]);
+      expect(await mailsOf('crm.booking.confirmed')).toEqual([]);
+      expect(await settle(o, { bookingId: b.id, url: MEET })).toEqual({ settled: true, state: 'ready' });
+      expect(await mailsOf('crm.booking.confirmed')).toEqual([
+        { revision: '1', startsAt: newStart, recipient: 'host' },
+        { revision: '1', startsAt: newStart, recipient: 'visitor' },
+      ]);
+      expect(await mailsOf('crm.booking.moved')).toEqual([]);
+      // A move once the Meet is settled is mailed as before.
+      await app.execute('crm.booking.move', { bookingId: b.id, startsAt: at(b.day, 660) }, { actor: asUser(o.host), orgId: o.orgId });
+      expect((await mailsOf('crm.booking.moved')).map((m) => m.recipient)).toContain('visitor');
+    });
+
     it('is confirmed at once, with the fixed link and its mails, when the host cannot make a Meet (the connection is gone, or write-back is off), and for a type that is not a Meet one', async () => {
       const o = await org();
       const connectionId = await connect(o);
@@ -265,9 +294,11 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       // The host turned write-back off after the type was set up.
       await app.execute('kernel.calendar.write_back.set', { connectionId, enabled: false }, { actor: asUser(o.host), orgId: o.orgId });
       const first = await book(o);
-      expect(await first.state()).toMatchObject({ meeting_state: 'none', meeting_url: null });
+      // A Meet type whose host cannot make one is failed from the start, so the host is told (the mail and the badge) and the visitor has the fixed link.
+      expect(await first.state()).toMatchObject({ meeting_state: 'failed', meeting_url: null });
       expect(await eventConference((await first.state()).calendar_event_id)).toBe(false);
       expect(await first.mails()).toEqual(['host', 'visitor']);
+      expect(await mailData(o, first.id)).toMatchObject({ meeting: { state: 'failed', url: null } });
       // A type that is not a Meet one never asks.
       await app.execute('kernel.calendar.write_back.set', { connectionId, enabled: true }, { actor: asUser(o.host), orgId: o.orgId });
       await app.execute('crm.event_type.update', { eventTypeId: made.id, ...typeInput(o, { locationKind: 'video' }) }, { actor: asUser(o.host), orgId: o.orgId });
@@ -287,7 +318,10 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       await expect(set("meeting_state = 'ready', meeting_url = 'https://evil.example/abc-defg-hij'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_state = 'ready', meeting_url = 'https://meet.google.com/abc-defg-hij?x=1'")).rejects.toMatchObject({ code: '23514' });
       await expect(set("meeting_state = 'made'")).rejects.toMatchObject({ code: '23514' });
+      await expect(set("meeting_state = 'ready', meeting_url = 'https://meet.google.com/lookup/../x'")).rejects.toMatchObject({ code: '23514' });
       await set("meeting_state = 'ready', meeting_url = 'https://meet.google.com/abc-defg-hij'");
+      // The form Google gives a conference a Workspace account made through the API is a Meet address too.
+      await set("meeting_url = 'https://meet.google.com/lookup/abc123def456'");
     });
   });
 

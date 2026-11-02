@@ -331,8 +331,10 @@ export const bookingConfirm = defineCommand({
       holding = free.filter((c) => c.userId === pick);
     }
 
-    // A Meet is made only for a single-host type, through its host's own Google connection.
-    const meet = type.location_kind === 'google_meet' && type.assignment === 'single' && holding.length === 1 && (await meetReady(ctx, (holding[0] as { userId: string }).userId));
+    // A Meet is made only for a single-host type, through its host's own Google connection. A type that asks for one when the host cannot make it now (the
+    // connection is gone, or write-back is off) is `failed` from the start, so the host is told and the visitor gets the type's fixed link, if it has one.
+    const wantsMeet = type.location_kind === 'google_meet';
+    const meet = wantsMeet && type.assignment === 'single' && holding.length === 1 && (await meetReady(ctx, (holding[0] as { userId: string }).userId));
     const held: Held[] = [];
     for (const host of holding) {
       const event = await ctx.trx
@@ -358,7 +360,7 @@ export const bookingConfirm = defineCommand({
     await ctx.activity('kernel.party', partyId, 'crm.booking.confirmed', `Đặt lịch hẹn ${type.title} lúc ${wallTime(primary.hours.timeZone, start)}`);
     await ctx.trx
       .updateTable('crove_crm.booking')
-      .set({ status: 'confirmed', calendar_event_id: primary.eventId, hold_event_ids: more.map((h) => h.eventId), party_id: partyId, decided_at: ctx.now, meeting_state: meet ? 'pending' : 'none' })
+      .set({ status: 'confirmed', calendar_event_id: primary.eventId, hold_event_ids: more.map((h) => h.eventId), party_id: partyId, decided_at: ctx.now, meeting_state: meet ? 'pending' : wantsMeet ? 'failed' : 'none' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', booking.id)
       .execute();
@@ -370,7 +372,7 @@ export const bookingConfirm = defineCommand({
       ...(more.length > 0 ? { holdEventIds: more.map((h) => h.eventId) } : {}),
       hostUserIds: held.map((h) => h.userId),
       partyId,
-      ...(meet ? { meet: 'pending' } : {}),
+      ...(wantsMeet ? { meet: meet ? 'pending' : 'failed' } : {}),
     });
     // A booking waiting for its Meet has its mails queued when the outcome is known (crm.booking.meeting_settle); the delayed job of crm.booking.meeting_pending
     // settles it as failed if no outcome comes.
@@ -445,14 +447,17 @@ export const bookingMeetingSettle = defineCommand({
     const url = input.url !== null && MEET_URL.test(input.url) ? input.url : null;
     const state = url === null ? ('failed' as const) : ('ready' as const);
     await ctx.trx.updateTable('crove_crm.booking').set({ meeting_state: state, meeting_url: url }).where('org_id', '=', ctx.orgId).where('id', '=', found.id).execute();
-    if (state === 'failed' && found.calendar_event_id) {
+    // The event stops asking for a conference either way: a failed one makes none, and a ready one keeps the Meet Google made (a later write of the event, a move,
+    // leaves its conference data alone), so the request is not sent again.
+    if (found.calendar_event_id) {
       await ctx.trx.updateTable('crove_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
     }
     const type = await eventTypeOf(ctx, found.event_type_id);
     const held = await holdHosts(ctx, await eventsOf(ctx, { calendar_event_id: found.calendar_event_id, hold_event_ids: found.hold_event_ids }));
     ctx.audit({ bookingId: found.id, eventTypeId: type.id, meeting: state });
-    // The mails of a booking that has already moved or cancelled are not the confirmation any more: only a booking still at its first revision is confirmed now.
-    if (found.revision === 0 && held.length > 0) await queueBookingMails(ctx, 'confirmed', found, type, held);
+    // The confirmation mails held back until now go out with the booking as it stands: a booking moved while it waited was never announced (the move held its mail
+    // too), so the visitor's first mail names the new time, and its manage link is for the current revision. A booking cancelled meanwhile is not settled at all.
+    if (held.length > 0) await queueBookingMails(ctx, 'confirmed', found, type, held);
     return { settled: true, state };
   },
 });
@@ -562,7 +567,8 @@ async function moveHeld(
   if (booking.party_id) {
     await ctx.activity('kernel.party', booking.party_id, 'crm.booking.moved', `${BY_TEXT[by]} đổi lịch hẹn ${type.title} sang ${wallTime(hours.timeZone, start)}`);
   }
-  await queueBookingMails(ctx, 'moved', { ...booking, starts_at: startsAt, ends_at: endsAt, revision: booking.revision + 1 }, type, held, by === 'visitor');
+  // A booking still waiting for its Meet has told nobody anything yet (its confirmation is held back): the confirmation, sent when the Meet is settled, names the new time.
+  if (booking.meeting_state !== 'pending') await queueBookingMails(ctx, 'moved', { ...booking, starts_at: startsAt, ends_at: endsAt, revision: booking.revision + 1 }, type, held, by === 'visitor');
   await scheduled(ctx, booking.id, startsAt);
   return 'moved';
 }

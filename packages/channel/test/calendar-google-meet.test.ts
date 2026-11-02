@@ -61,6 +61,11 @@ describe('GoogleCalendarAdapter, a Google Meet with the event', () => {
       expect(await run(entry(uri)), uri).toEqual({ ok: true, meetUrl: null });
     }
     expect(await run({ body: { hangoutLink: 'javascript:alert(1)' } })).toEqual({ ok: true, meetUrl: null });
+    // The lookup form Google gives some conferences made through the API is a Meet address too, and only that exact shape.
+    expect(await run({ body: { hangoutLink: 'https://meet.google.com/lookup/abc123def456' } })).toEqual({ ok: true, meetUrl: 'https://meet.google.com/lookup/abc123def456' });
+    for (const uri of ['https://meet.google.com/lookup/', 'https://meet.google.com/lookup/a/b', 'https://meet.google.com/lookup/abc?x=1']) {
+      expect(await run({ body: { hangoutLink: uri } }), uri).toEqual({ ok: true, meetUrl: null });
+    }
   });
 
   it('looks again at a request Google has not finished, a couple of times, and gives the link once it is there', async () => {

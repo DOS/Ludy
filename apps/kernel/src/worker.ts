@@ -1615,6 +1615,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
     });
   let calendarSyncing = false;
+  // When the last sweep a booking job asked for began (below): at most one a minute, whatever the bookings.
+  let calendarSweepAskedAt = 0;
   const calendarSweep = async () => {
     if (calendarSyncing || !channels) return;
     calendarSyncing = true;
@@ -1642,6 +1644,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // plan was read is still written; held longer than that, the sweep that holds it comes back within 15 minutes.
       for (let attempt = 1; ; attempt++) {
         const done = await runCalendarWriteBack({ runtime: deps.runtime, broker: channels.broker, adapters: channels.calendars ?? {}, lockConnection: calendarConnectionLock }, job.data);
+        // A connection whose token is about to run out is left to the sweep, which renews it: asked for now instead of within 15 minutes, because the write of a
+        // booking's Google Meet (C7, #1375) would otherwise miss the few minutes the booking waits for it. The sweep is the one that renews and writes, so nothing
+        // crosses it; a sweep already running is waited for first, since it may have passed the connection.
+        if (done.expiring > 0 && Date.now() - calendarSweepAskedAt > 60_000) {
+          calendarSweepAskedAt = Date.now();
+          void (async () => {
+            for (let waited = 0; calendarSyncing && waited < 30; waited++) await new Promise((resolve) => setTimeout(resolve, 2_000));
+            await calendarSweep();
+          })();
+        }
         if (done.busy === 0 || attempt >= CALENDAR_WRITEBACK_BUSY_TRIES) break;
         await new Promise((resolve) => setTimeout(resolve, CALENDAR_WRITEBACK_BUSY_WAIT_MS));
       }

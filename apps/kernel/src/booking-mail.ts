@@ -40,9 +40,10 @@ const LOCATIONS: Record<Payload['locationKind'], string> = { in_person: 'Gặp t
 // Where the meeting is, as the mail says it: for a Google Meet booking the join link when it is ready, else the type's fixed link (a Meet that could not be made, or
 // is not made yet, leaves the booking valid), else only that it is online. A cancelled booking names no link.
 export function bookingPlace(p: Pick<Payload, 'kind' | 'locationKind' | 'location'> & { meeting: BookingMailData['meeting'] }): { label: string; link: string | null } {
+  // A booking whose Meet is ready has its link whatever kind the type has now: the host may have changed the type since, and the visitor's reminders and moves keep the link.
+  if (p.kind !== 'cancelled' && p.meeting.state === 'ready' && p.meeting.url) return { label: LOCATIONS.google_meet, link: p.meeting.url };
   if (p.locationKind !== 'google_meet') return { label: LOCATIONS[p.locationKind], link: p.location };
   if (p.kind === 'cancelled') return { label: LOCATIONS.google_meet, link: null };
-  if (p.meeting.state === 'ready' && p.meeting.url) return { label: LOCATIONS.google_meet, link: p.meeting.url };
   return { label: LOCATIONS.video, link: p.location };
 }
 
@@ -106,7 +107,7 @@ export function bookingIcs(p: Booking, brand: string, now: Date): string {
     `DTEND:${icsTime(new Date(p.endsAt))}`,
     `SUMMARY:${escapeText(oneLine(summary))}`,
     ...(place.link ? [`LOCATION:${escapeText(oneLine(place.link))}`] : []),
-    ...(place.link?.startsWith('https://') ? [`URL:${oneLine(place.link)}`] : []),
+    ...(place.link && place.link === p.meeting.url ? [`URL:${oneLine(place.link)}`] : []),
     `DESCRIPTION:${escapeText(description)}`,
     `STATUS:${cancelled ? 'CANCELLED' : 'CONFIRMED'}`,
     'END:VEVENT',
@@ -134,8 +135,8 @@ export async function renderBookingMail(input: MailTemplateInput, now: () => Dat
     ['Hình thức', `${place.label}${place.link ? `: ${oneLine(place.link)}` : ''}`],
   ];
   if (p.recipient === 'host') {
-    // The host is told when the Google Meet could not be made: the booking stands, with the fixed link when the type has one.
-    if (p.locationKind === 'google_meet' && p.meeting.state === 'failed' && p.kind !== 'cancelled') {
+    // The host is told, in the mail of a new booking, when the Google Meet could not be made: the booking stands, with the fixed link when the type has one.
+    if (p.locationKind === 'google_meet' && p.meeting.state === 'failed' && p.kind === 'confirmed') {
       details.push(['Lưu ý', place.link ? 'Chưa tạo được liên kết Google Meet; đã dùng liên kết cố định của loại lịch hẹn này.' : 'Chưa tạo được liên kết Google Meet và loại lịch hẹn này chưa có liên kết cố định: hãy gửi liên kết cho khách.']);
     }
     details.push(['Khách', p.visitorName]);

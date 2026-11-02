@@ -54,8 +54,14 @@ describe('where a Google Meet booking says the meeting is', () => {
 
   it('names no link for a cancelled booking, and leaves every other kind of location as it was', () => {
     expect(bookingPlace({ kind: 'cancelled', locationKind: 'google_meet', location: FIXED, meeting: ready })).toEqual({ label: 'Google Meet', link: null });
-    expect(bookingPlace({ kind: 'confirmed', locationKind: 'video', location: FIXED, meeting: ready })).toEqual({ label: 'Họp trực tuyến', link: FIXED });
-    expect(bookingPlace({ kind: 'confirmed', locationKind: 'in_person', location: '12 Lê Lợi', meeting: ready })).toEqual({ label: 'Gặp trực tiếp', link: '12 Lê Lợi' });
+    const none: Meeting = { state: 'none', url: null };
+    expect(bookingPlace({ kind: 'confirmed', locationKind: 'video', location: FIXED, meeting: none })).toEqual({ label: 'Họp trực tuyến', link: FIXED });
+    expect(bookingPlace({ kind: 'confirmed', locationKind: 'in_person', location: '12 Lê Lợi', meeting: none })).toEqual({ label: 'Gặp trực tiếp', link: '12 Lê Lợi' });
+  });
+
+  it('keeps the join link of a booking whose type the host has switched away from Meet since, in what is sent later', () => {
+    for (const kind of ['reminder', 'moved'] as const) expect(bookingPlace({ kind, locationKind: 'video', location: FIXED, meeting: ready })).toEqual({ label: 'Google Meet', link: MEET });
+    expect(bookingPlace({ kind: 'cancelled', locationKind: 'video', location: FIXED, meeting: ready })).toEqual({ label: 'Họp trực tuyến', link: FIXED });
   });
 });
 
@@ -96,6 +102,15 @@ describe('the mails of a Google Meet booking', () => {
   it('does not tell a host of a failure for a type that is not a Google Meet one, and treats data without a meeting as none', async () => {
     const host = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'failed', url: null }), () => NOW);
     expect(host?.text).not.toContain('Google Meet');
+    // A booking's later mails (a reminder, a move) do not repeat the failure: the host heard it with the new booking.
+    for (const kind of ['reminder', 'moved'] as const) {
+      const later = await renderBookingMail(input({ ...base, kind, recipient: 'host', location: FIXED }, { state: 'failed', url: null }), () => NOW);
+      expect(later?.text, kind).not.toContain('Chưa tạo được liên kết Google Meet');
+    }
+    // The .ics names a URL only for the Meet link: another kind of location is as it was before.
+    const fixed = await renderBookingMail(input({ ...base, locationKind: 'video', location: FIXED }, { state: 'none', url: null }), () => NOW);
+    expect(icsOf(fixed)).toContain(`LOCATION:${FIXED}`);
+    expect(icsOf(fixed).some((l) => l.startsWith('URL:'))).toBe(false);
     const old = await renderBookingMail(input({ ...base, locationKind: 'video', location: FIXED }, undefined), () => NOW);
     expect(old?.text).toContain(`Hình thức: Họp trực tuyến: ${FIXED}`);
   });

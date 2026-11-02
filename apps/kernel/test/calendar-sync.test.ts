@@ -500,7 +500,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
   it('makes each write-back connection of the org match its bookings, with the token it has, and renews nothing', async () => {
     const { runtime, calls } = jobRuntime([CONNECTION, CONN_B], { [CONNECTION]: on, [CONN_B]: on });
     const a = adapter({ refresh: async () => Promise.reject(new Error('the job never renews')) });
-    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 2, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 2, busy: 0, expiring: 0 });
     expect(a.writes).toEqual(['write ext1ext1ext1 Tư vấn: Lan 2026-11-04T02:00:00.000Z', 'write ext1ext1ext1 Tư vấn: Lan 2026-11-04T02:00:00.000Z']);
     expect(records(calls)).toEqual([
       { connectionId: CONNECTION, eventId: 'e1', state: 'written' },
@@ -514,16 +514,31 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
     const soon = { ...on, expiresAt: new Date(NOW.getTime() + 60_000).toISOString() };
     const { runtime } = jobRuntime(['c-off', 'c-gone', 'c-soon', CONNECTION], { 'c-off': { ...on, writeBack: false }, 'c-soon': soon, [CONNECTION]: on });
     const a = adapter();
-    expect(await job(runtime, a)).toEqual({ connections: 4, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 4, ran: 1, busy: 0, expiring: 1 });
     expect(a.writes).toHaveLength(1);
     const { runtime: other } = jobRuntime([CONNECTION], { [CONNECTION]: { ...on, provider: 'microsoft' } });
-    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0 });
+    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
+  });
+
+  // A booking's Google Meet (C7, #1375) is made by this write, so the worker asks for a sweep at once when it leaves a connection to it: the count says so.
+  it('counts the connections it leaves to the sweep for a token that is about to run out or has no known end, and none otherwise', async () => {
+    const soon = { ...on, expiresAt: new Date(NOW.getTime() + 60_000).toISOString() };
+    const unknown = { ...on, expiresAt: null };
+    const { runtime, calls } = jobRuntime(['c-soon', 'c-unknown', CONNECTION], { 'c-soon': soon, 'c-unknown': unknown, [CONNECTION]: on });
+    const a = adapter({ refresh: async () => Promise.reject(new Error('the job never renews')) });
+    expect(await job(runtime, a)).toEqual({ connections: 3, ran: 1, busy: 0, expiring: 2 });
+    expect(calls.some((c) => c.name === 'kernel.calendar.refresh')).toBe(false);
+    // A connection that is off or has no adapter is not one the sweep would write: it is not counted.
+    const { runtime: off } = jobRuntime(['c-off'], { 'c-off': { ...soon, writeBack: false } });
+    expect(await job(off, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
+    const { runtime: other } = jobRuntime(['c-other'], { 'c-other': { ...soon, provider: 'microsoft' } });
+    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
   });
 
   it('does not renew or expire a connection whose token the provider refuses: the sweep does that', async () => {
     const { runtime, calls } = jobRuntime([CONNECTION], { [CONNECTION]: on });
     const a = adapter({ writeEvent: async () => ({ refused: 'invalid_token' }), refresh: async () => Promise.reject(new Error('the job never renews')) });
-    expect(await job(runtime, a)).toEqual({ connections: 1, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 1, ran: 1, busy: 0, expiring: 0 });
     expect(calls.some((c) => c.name === 'kernel.calendar.mark_failed' || c.name === 'kernel.calendar.refresh' || c.name === 'kernel.calendar.link.record')).toBe(false);
   });
 
@@ -538,7 +553,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
       held.push(`unlock ${id}`);
       return { ran: true as const, value };
     };
-    expect(await runCalendarWriteBack({ runtime, broker: vault, adapters: { google_calendar: a }, now: () => NOW, lockConnection }, { orgId: ORG })).toEqual({ connections: 2, ran: 1, busy: 1 });
+    expect(await runCalendarWriteBack({ runtime, broker: vault, adapters: { google_calendar: a }, now: () => NOW, lockConnection }, { orgId: ORG })).toEqual({ connections: 2, ran: 1, busy: 1, expiring: 0 });
     // The write happened between the lock and its release; the busy connection was left alone.
     expect(held).toEqual([`lock ${CONNECTION}`, `unlock ${CONNECTION}`]);
     expect(records(calls)).toEqual([{ connectionId: CONNECTION, eventId: 'e1', state: 'written' }]);
@@ -549,7 +564,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
     let n = 0;
     const a = adapter({ writeEvent: async () => (++n === 1 ? Promise.reject(new Error('socket hang up')) : { ok: true }) });
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 1, busy: 0, expiring: 0 });
     expect(records(calls)).toEqual([{ connectionId: CONN_B, eventId: 'e1', state: 'written' }]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('[calendar-writeback]'));
     spy.mockRestore();

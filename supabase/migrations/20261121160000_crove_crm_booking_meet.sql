@@ -18,7 +18,7 @@ ALTER TABLE crove_crm.event_type ADD CONSTRAINT event_type_location_kind_check C
 ALTER TABLE crove_crm.booking
   ADD COLUMN IF NOT EXISTS meeting_state text NOT NULL DEFAULT 'none' CHECK (meeting_state IN ('none', 'pending', 'ready', 'failed')),
   -- The link and the state go together: a ready booking has the link, any other has none.
-  ADD COLUMN IF NOT EXISTS meeting_url text CHECK (meeting_url IS NULL OR meeting_url ~ '^https://meet\.google\.com/[a-z0-9-]{3,64}$')
+  ADD COLUMN IF NOT EXISTS meeting_url text CHECK (meeting_url IS NULL OR meeting_url ~ '^https://meet\.google\.com/(lookup/)?[a-z0-9-]{3,64}$')
     CHECK ((meeting_url IS NOT NULL) = (meeting_state = 'ready'));
 
 ALTER TABLE crove_kernel.calendar_event ADD COLUMN IF NOT EXISTS conference boolean NOT NULL DEFAULT false;

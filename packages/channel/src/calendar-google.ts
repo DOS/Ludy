@@ -124,7 +124,7 @@ const expiryOf = (a: TokenAnswer, now = Date.now()) => {
 };
 
 // A Google Meet join link, and nothing else (the booking's own check says the same).
-const MEET_URL = /^https:\/\/meet\.google\.com\/[a-z0-9-]{3,64}$/;
+const MEET_URL = /^https:\/\/meet\.google\.com\/(lookup\/)?[a-z0-9-]{3,64}$/;
 // How many times a conference that Google has not finished is looked at again, and how long between looks.
 const MEET_LOOKS = 2;
 const MEET_LOOK_MS = 800;

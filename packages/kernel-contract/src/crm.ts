@@ -92,7 +92,7 @@ export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled']
 export const BOOKING_MEETING_STATES = ['none', 'pending', 'ready', 'failed'] as const;
 export type BookingMeetingState = (typeof BOOKING_MEETING_STATES)[number];
 // The only kind of address a Meet link is (the database checks the same).
-export const MEET_URL = /^https:\/\/meet\.google\.com\/[a-z0-9-]{3,64}$/;
+export const MEET_URL = /^https:\/\/meet\.google\.com\/(lookup\/)?[a-z0-9-]{3,64}$/;
 export const zBookingStatus = z.strictObject({
   status: z.enum(BOOKING_STATUSES),
   refusal: z.enum(['taken', 'unavailable']).nullable(),
