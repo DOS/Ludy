@@ -9,13 +9,14 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, type AdPlatform, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { kernelCommands, kernelQueries } from '@crove/kernel';
+import { decideApproval, kernelCommands, kernelQueries } from '@crove/kernel';
 import type { AdAccountView, AdsSummary, AdsSyncRunView } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
@@ -1089,6 +1090,64 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(batch).toMatchObject({ status: 200, body: { results: [{ id, outcome: 'refused', code: 'BULK_NOT_ALLOWED' }] } });
         expect((await state()).writeEnabled).toBe(false);
         expect((await reject(adminAccount, id)).status).toBe(200);
+      });
+
+      it('keeps the one-person rule at approval time: an owner who asked alone cannot approve once an admin has joined, and the admin can', async () => {
+        // The one-person org of the owner `outsider`: a request made while the owner is the only eligible person.
+        const id = proposalId(await ask(outsider, { change: 'cap_set', scope: 'org', period: 'daily', amount: '1000', currency: 'VND' }, otherSlug));
+        // An admin joins the org afterwards (the staff connection: the invite flow is the kernel's, tested elsewhere).
+        await row(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [otherOrgId, adminAccount.userId]);
+        try {
+          // The owner may no longer approve their own request, though the snapshot taken at the request names only them ...
+          expect(await approve(outsider, id, { org: otherSlug })).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+          // ... and the admin, who is not in that snapshot, may.
+          expect((await approve(adminAccount, id, { org: otherSlug })).status).toBe(200);
+          expect(await ok('ads/writeState', outsider, undefined, otherSlug)).toMatchObject({ caps: [expect.objectContaining({ amount: '1000', setBy: adminAccount.userId })] });
+        } finally {
+          await row(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [otherOrgId, adminAccount.userId]);
+        }
+      });
+
+      it('decides an ads approval in TypeScript and in the database alike, on the members of the org now', async () => {
+        const user = (who: Account) => ({ type: 'user', id: who.userId });
+        const snapshots = [[], [owner.userId], [owner.userId, adminAccount.userId]];
+        const authorSets = [[user(owner)], [user(adminAccount)], [user(owner), user(adminAccount)]];
+        let checked = 0;
+        for (const command of ['ads.write.enable', 'ads.cap.set']) {
+          for (const snapshot of snapshots) {
+            for (const authors of authorSets) {
+              for (const who of [owner, adminAccount, member, viewer]) {
+                const ts = await appDb.transaction().execute(async (trx) => {
+                  const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: who.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+                  await sql`SELECT crove_kernel.enter_user_context(${orgId}::uuid, ${token}::text)`.execute(trx);
+                  return decideApproval(trx, orgId, { type: 'user', userId: who.userId, aal: 'aal1', sessionId: randomUUID() }, { command, status: 'pending', eligible_approvers: snapshot, authors }, { lock: false });
+                });
+                const inDb = (
+                  await row<{ d: { reason: string; eligibleCount: number; selfApproved: boolean; fourEyes: string } }>(
+                    `SELECT crove_kernel.proposal_approval_decide($1::uuid, $2, 'pending', $3::uuid[], $4::jsonb, $5::uuid, false) AS d`,
+                    [orgId, command, snapshot, JSON.stringify(authors), who.userId],
+                  )
+                )[0]?.d;
+                const where = JSON.stringify({ command, snapshot, authors, actor: who.email });
+                expect({ reason: inDb?.reason, eligibleCount: inDb?.eligibleCount, selfApproved: inDb?.selfApproved, fourEyes: inDb?.fourEyes }, where).toEqual({
+                  reason: ts.reason,
+                  eligibleCount: ts.eligibleCount,
+                  selfApproved: ts.selfApproved,
+                  fourEyes: ts.fourEyes,
+                });
+                checked += 1;
+              }
+            }
+          }
+        }
+        expect(checked).toBe(72);
+        // The reading is the org's members now, whatever the snapshot holds: with an owner and an admin, an owner who wrote it
+        // alone is refused and the admin is not, with none or either of them in the snapshot.
+        const decide = async (who: Account, snapshot: string[], authors: unknown[]) =>
+          (await row<{ d: { reason: string } }>(`SELECT crove_kernel.proposal_approval_decide($1::uuid, 'ads.cap.set', 'pending', $2::uuid[], $3::jsonb, $4::uuid, false) AS d`, [orgId, snapshot, JSON.stringify(authors), who.userId]))[0]?.d.reason;
+        expect(await decide(owner, [owner.userId], [user(owner)])).toBe('four_eyes');
+        expect(await decide(adminAccount, [owner.userId], [user(owner)])).toBe('ok');
+        expect(await decide(adminAccount, [], [user(owner)])).toBe('ok');
       });
 
       // The database half, in SQL, in a context of each kind (rolled back): the change goes through for the execution of an
