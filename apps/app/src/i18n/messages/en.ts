@@ -190,7 +190,9 @@ export const en = {
         attention: '{count, plural, one {# post failed or is paused} other {# posts failed or are paused}}',
         due: 'A post scheduled in the next 24 hours is still waiting for approval',
         dueTitled: '“{title}” is scheduled in the next 24 hours and is still waiting for approval',
-        dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled in the next 24 hours and still waiting for approval',
+        dueOverdue: 'A post meant to go out is still waiting for approval',
+        dueOverdueTitled: '“{title}” was meant to go out and is still waiting for approval',
+        dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled for the next 24 hours, or overdue, and still waiting for approval',
       },
       ads: {
         paceOrg: 'At this pace the org passes its monthly spend cap',
