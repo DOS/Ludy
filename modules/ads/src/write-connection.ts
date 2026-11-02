@@ -11,9 +11,10 @@
 //   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The platform's own copy of the
 //   token is revoked by the write queue of W2, which cannot merge without it; until then the owner is told to remove the app in the
 //   platform's settings.
+import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@crove/kernel-contract';
+import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -53,6 +54,33 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
   const open = await query.execute();
   const command = ctx.actor.type === 'system' ? 'kernel.channel.revoke_by_platform' : 'kernel.channel.disconnect';
   for (const row of open) await ctx.run(command, { connectionId: row.id });
+  return open.length;
+}
+
+// The reading connections whose token can change campaigns (W0b-2, ADR-0043 point 4), closed with their sealed tokens dropped when
+// running ads is switched off, so no spend-capable token stays in Ludy: the connection says why (status reason `spend_scopes`) and the
+// owner reconnects it for reading. Two ways to know a token is one. The connection's recorded scopes hold a spend permission (it was
+// accepted while the switch was on). Or the person who granted it also granted a write connection (`write_granted_by_hash`, the same
+// keyed hash as `granted_by_hash`): a Meta permission belongs to the pair of the app and the person, so with the one app that serves
+// reading and writing every token of that person holds it, whatever scopes were recorded when the token was made (`byGrantor`; an
+// org whose switch was never on has no such person). A connection that was made but not linked (the sign-in's link was refused or
+// never ran) is found by its scopes too. It is the caller who closes them: the kernel's disconnect.
+export async function closeSpendCapableReadConnections(ctx: CommandContext, options: { byGrantor: boolean }): Promise<number> {
+  const spend = [...ADS_SPEND_SCOPES];
+  const grantors = ctx.trx.selectFrom('crove_ads.ad_account').select('write_granted_by_hash').where('org_id', '=', ctx.orgId).where('write_granted_by_hash', 'is not', null);
+  const open = await ctx.trx
+    .selectFrom('crove_kernel.channel_connection as c')
+    .leftJoin('crove_ads.ad_account as a', (j) => j.onRef('a.org_id', '=', 'c.org_id').onRef('a.channel_connection_id', '=', 'c.id'))
+    .select('c.id')
+    .distinct()
+    .where('c.org_id', '=', ctx.orgId)
+    .where('c.provider', 'like', '%\\_ads')
+    .where('c.provider', 'not in', [...AD_WRITE_PROVIDERS])
+    .where('c.status', '<>', 'revoked')
+    .where((eb) => eb.or([sql<boolean>`c.scopes && ${spend}::text[]`, ...(options.byGrantor ? [eb('a.granted_by_hash', 'in', grantors)] : [])]))
+    .orderBy('c.id')
+    .execute();
+  for (const row of open) await ctx.run('kernel.channel.disconnect', { connectionId: row.id, reason: 'spend_scopes' });
   return open.length;
 }
 

@@ -4,7 +4,7 @@
 // connection drops its token from Ludy at once, but the platform still holds the permission until the owner removes it in the
 // platform's own settings, so every place that closes one says so (the owner's switch-off of running ads, the withdrawal of
 // one account, and the disconnect of an account), in the reader's language.
-import type { AdAccountView } from '@crove/kernel-contract';
+import { ADS_SPEND_SCOPES, type AdAccountView } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { isSandboxProvider } from './ads.ts';
 
@@ -18,6 +18,10 @@ export const hasOpenWriteConnection = (account: Pick<AdAccountView, 'writeConnec
 // sandbox is offline, so it holds nothing anywhere.
 export const keepsPlatformGrant = (account: WriteFacts): boolean => hasOpenWriteConnection(account) && !isSandboxProvider(account.provider);
 
+// A reading connection whose token can also change campaigns (it was accepted while running ads was on): switching running ads off closes it
+// and drops its token, and the owner connects it again for reading. The server decides which; this only tells the owner it may happen.
+export const holdsSpendScope = (account: Pick<AdAccountView, 'extraScopes'>): boolean => account.extraScopes.some((scope) => (ADS_SPEND_SCOPES as readonly string[]).includes(scope));
+
 // The connection to run ads existed and is not live now (expired, failed or closed): the owner can connect it again.
 export const writeConnectionStopped = (account: Pick<AdAccountView, 'writeConnectionStatus' | 'canRunAds'>): boolean => account.writeConnectionStatus !== null && !account.canRunAds;
 
@@ -25,15 +29,26 @@ const join = (...parts: Array<string | false>): string => parts.filter((part): p
 
 // The question before the owner turns running ads off: what stops, that every connection that can run ads is closed with it, and,
 // where a real platform is involved, that the permission stays with the platform until the app is removed there.
-export function disableConfirmText(t: Translate, accounts: readonly WriteFacts[]): string {
-  return join(t('ads.write.disableBody'), accounts.some(hasOpenWriteConnection) && t('ads.write.disableClosesConnections'), accounts.some(keepsPlatformGrant) && t('ads.write.platformNote'));
+export function disableConfirmText(t: Translate, accounts: readonly (WriteFacts & Pick<AdAccountView, 'extraScopes'>)[]): string {
+  // A real platform's permission that outlives the closing: an open write connection, or a reading token that can change campaigns.
+  const keepsGrant = (account: WriteFacts & Pick<AdAccountView, 'extraScopes'>): boolean => keepsPlatformGrant(account) || (holdsSpendScope(account) && !isSandboxProvider(account.provider));
+  return join(
+    t('ads.write.disableBody'),
+    accounts.some(hasOpenWriteConnection) && t('ads.write.disableClosesConnections'),
+    accounts.some(keepsGrant) && t('ads.write.disableClosesReads'),
+    accounts.some(keepsGrant) && t('ads.write.platformNote'),
+  );
 }
 
 // After the switch-off: it says so, and, when connections were closed on an org with a real platform's account, the same note. The
 // answer carries only how many were closed, so an org with any real platform account is told (never the other way: a missed note
 // would leave the owner thinking the permission is gone).
-export function disabledToastText(t: Translate, accounts: readonly Pick<AdAccountView, 'provider'>[], connectionsClosed: number): string {
-  return join(t('ads.write.disabledToast'), connectionsClosed > 0 && accounts.some((a) => !isSandboxProvider(a.provider)) && t('ads.write.platformNote'));
+export function disabledToastText(t: Translate, accounts: readonly Pick<AdAccountView, 'provider'>[], connectionsClosed: number, readConnectionsClosed: number): string {
+  return join(
+    t('ads.write.disabledToast'),
+    readConnectionsClosed > 0 && t('ads.write.readsClosedToast', { count: String(readConnectionsClosed) }),
+    connectionsClosed + readConnectionsClosed > 0 && accounts.some((a) => !isSandboxProvider(a.provider)) && t('ads.write.platformNote'),
+  );
 }
 
 // After withdrawing one account: the note when its connection was closed and it belongs to a real platform.

@@ -113,7 +113,9 @@ export const channelConnect = defineCommand({
 
 export const channelDisconnect = defineCommand({
   name: 'kernel.channel.disconnect',
-  input: z.strictObject({ connectionId: zId }),
+  // `reason` is for a command that closes a connection for a reason the screen has words for (Ads closes a reading connection whose
+  // token can also change campaigns when running ads is switched off, #2294): it becomes the status reason. The API never passes it.
+  input: z.strictObject({ connectionId: zId, reason: z.literal('spend_scopes').optional() }),
   risk: 'R2',
   sideEffect: 'external',
   access: ADMINS,
@@ -131,7 +133,7 @@ export const channelDisconnect = defineCommand({
     if (row.status !== 'revoked') {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
-        .set({ status: 'revoked', status_reason: 'disconnected', updated_at: ctx.now })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'disconnected', updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();

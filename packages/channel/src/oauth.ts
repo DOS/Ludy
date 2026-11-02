@@ -18,6 +18,10 @@ export interface ExchangeInput {
   code: string;
   redirectUri: string;
   codeVerifier: string | null;
+  // Meta ads, the reading connection only (ADR-0043, #2294): the org's switch for running ads is on, so a token that also holds a
+  // permission to change campaigns is accepted and its full set of permissions recorded. Left out, such a token is refused. Every
+  // other connector ignores it.
+  spendScopesAllowed?: boolean;
 }
 
 export interface OAuthConnector {

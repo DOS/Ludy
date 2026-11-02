@@ -39,7 +39,7 @@ import {
   type AdsWriteState,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
-import { closeWriteConnections } from './write-connection.ts';
+import { closeSpendCapableReadConnections, closeWriteConnections } from './write-connection.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -353,7 +353,7 @@ export const adsWriteDisable = defineCommand({
   risk: 'R2',
   sideEffect: 'external',
   access: OWNERS,
-  handler: async (ctx): Promise<{ writeEnabled: false; accountsDisabled: number; connectionsClosed: number }> => {
+  handler: async (ctx): Promise<{ writeEnabled: false; accountsDisabled: number; connectionsClosed: number; readConnectionsClosed: number }> => {
     const setting = await lockedSetting(ctx);
     // Launches are blocked with it, so nothing queued or launched goes on spending while the owner decides what to do;
     // opening them again is a proposal, on purpose (the stricter way back).
@@ -361,8 +361,11 @@ export const adsWriteDisable = defineCommand({
     const closed = await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false }).where('org_id', '=', ctx.orgId).where('write_enabled', '=', true).returning('id').execute();
     // No sealed token that can change campaigns stays: each write connection is closed by the kernel's own command (one audit row each).
     const connectionsClosed = await closeWriteConnections(ctx, {});
-    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, wasEnabled: setting.write_enabled });
-    return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed };
+    // And no reading connection whose token can change campaigns either (W0b-2): by its recorded scopes, and, once running ads had been
+    // on or a write connection was open, by the person who granted a write connection, since a Meta permission is theirs for the app.
+    const readConnectionsClosed = await closeSpendCapableReadConnections(ctx, { byGrantor: setting.write_enabled || connectionsClosed > 0 });
+    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed, wasEnabled: setting.write_enabled });
+    return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed };
   },
 });
 

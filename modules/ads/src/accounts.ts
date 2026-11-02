@@ -13,7 +13,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { ADS_REQUEST_MIN_SECONDS, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
+import { ADS_REQUEST_MIN_SECONDS, ADS_SPEND_SCOPES, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { historyStart } from './domain.ts';
 import { closeWriteConnections } from './write-connection.ts';
@@ -58,13 +58,21 @@ export const adsAccountLink = defineCommand({
   handler: async (ctx, input): Promise<{ adAccountId: string; linked: boolean }> => {
     const connection = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['id', 'provider', 'external_account_id', 'display_name', 'status'])
+      .select(['id', 'provider', 'external_account_id', 'display_name', 'status', 'scopes'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     // A write connection is never an account of its own: it hangs off the account the read connection linked (ads.account.link_write).
     if (!connection || !isAdProviderId(connection.provider) || isAdWriteProviderId(connection.provider)) throw new DomainError('ADS_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối tài khoản quảng cáo');
     if (connection.status !== 'active') throw new DomainError('ADS_CONNECTION_INACTIVE', 422, 'Kết nối tài khoản quảng cáo không còn hoạt động; hãy kết nối lại');
+    // A reading connection whose token can change campaigns or the business (a Meta token holds every permission the person granted
+    // the app) is linked only while the org's switch for running ads is on; the sign-in applies the same rule, and switching running
+    // ads off closes every such connection. The setting is read FOR SHARE, so a switch-off running at the same moment either commits
+    // first, and this refuses, or waits for this link and then finds the connection.
+    if (connection.scopes.some((scope) => (ADS_SPEND_SCOPES as readonly string[]).includes(scope))) {
+      const setting = await ctx.trx.selectFrom('crove_ads.ad_org_setting').select('write_enabled').where('org_id', '=', ctx.orgId).orderBy('id').limit(1).forShare().executeTakeFirst();
+      if (!setting?.write_enabled) throw new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Mã truy cập này còn quyền sửa quảng cáo nên chưa dùng để đọc báo cáo được. Hãy gỡ ứng dụng Meta trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại');
+    }
     // Two links of one account at once: the second waits and finds the first's row (a FOR UPDATE of a row that does not
     // exist yet would lock nothing).
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.ads:${ctx.orgId}:${connection.provider}:${connection.external_account_id}`}, 0))`.execute(ctx.trx);
@@ -253,7 +261,7 @@ export const adsAccountErase = defineCommand({
 
 // Why a connection stopped, in one of the words the screen has text for: the status reason is the closer's own code
 // (kernel.channel.mark_expired, disconnect, revoke_by_platform), anything else is "other" (the text is not shown).
-const PAUSED_REASONS: readonly NonNullable<AdAccountView['pausedReason']>[] = ['token_expired', 'owner_left', 'disconnected', 'platform_deletion'];
+const PAUSED_REASONS: readonly NonNullable<AdAccountView['pausedReason']>[] = ['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'spend_scopes'];
 function pausedReason(reason: string | null): NonNullable<AdAccountView['pausedReason']> {
   return PAUSED_REASONS.find((r) => r === reason) ?? 'other';
 }

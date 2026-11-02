@@ -1341,6 +1341,9 @@ export const vi = {
       accountConnectedToast: 'Đã kết nối tài khoản này để chạy quảng cáo.',
       accountCanRun: 'Chạy được quảng cáo',
       accountStopped: 'Kết nối để chạy quảng cáo của tài khoản này đã dừng.',
+      // Với một ứng dụng Meta dùng chung cho đọc và ghi, mã truy cập đọc của cùng một người cũng giữ quyền đó (quyền thuộc về cặp ứng dụng và người).
+      disableClosesReads: 'Kết nối đọc số liệu bằng mã truy cập có thể sửa chiến dịch cũng bị đóng, và {brand} xóa mã đó. Sau khi gỡ ứng dụng trong Facebook, hãy kết nối lại để chỉ đọc.',
+      readsClosedToast: 'Đã đóng {count} kết nối đọc số liệu bằng mã truy cập có thể sửa chiến dịch. Sau khi gỡ ứng dụng trong Facebook, hãy kết nối lại để chỉ đọc.',
       disableClosesConnections: 'Mọi kết nối có thể chạy quảng cáo cũng bị đóng, và {brand} xóa mã truy cập của chúng ngay.',
       // Said wherever such a connection is closed: dropping the token from here does not remove the permission at the platform.
       platformNote:
@@ -1393,6 +1396,7 @@ export const vi = {
       token_expired: 'Từ {since}, Meta không còn nhận mã truy cập của tài khoản này nên Ludy đã tạm dừng cập nhật. Không mất ngày nào: sau khi kết nối lại, hệ thống lấy tiếp từ ngày chưa chốt gần nhất.',
       owner_left: 'Từ {since}, người đã kết nối tài khoản này không còn là chủ sở hữu hay quản trị viên nên Ludy đã tạm dừng cập nhật. Chủ sở hữu hoặc quản trị viên kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
       other: 'Từ {since}, kết nối của tài khoản này đã dừng nên Ludy tạm dừng cập nhật. Kết nối lại thì hệ thống lấy tiếp, không mất ngày nào.',
+      spend_scopes: 'Từ {since}, việc chạy quảng cáo đã được tắt, mà mã truy cập của tài khoản này cũng sửa được chiến dịch, nên Ludy đã đóng và hủy mã đó. Hãy gỡ ứng dụng trong Cài đặt Facebook (Tích hợp doanh nghiệp), rồi kết nối lại tài khoản này để chỉ đọc; khi chưa gỡ, Meta vẫn trả lại quyền đó và kết nối sẽ bị từ chối.',
       platform_deletion: 'Từ {since}, Meta yêu cầu xóa dữ liệu của người đã cấp quyền cho tài khoản này nên kết nối đã đóng và dữ liệu bị xóa.',
       noReconnect: 'Chủ sở hữu hoặc quản trị viên cần kết nối lại tài khoản này.',
     },
@@ -6754,7 +6758,7 @@ export const vi = {
       OAUTH_STATE_USED: 'Lượt kết nối này đã được dùng, hãy bắt đầu lại',
       OAUTH_STATE_EXPIRED: 'Lượt kết nối đã hết hạn, hãy bắt đầu lại',
       OAUTH_CODE_REJECTED: 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn), hãy kết nối lại',
-      OAUTH_WRITE_PERMISSION: 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy dùng một ứng dụng Meta riêng chỉ có quyền ads_read, hoặc gỡ quyền đó trong Cài đặt Facebook (Ứng dụng và trang web) rồi kết nối lại',
+      OAUTH_WRITE_PERMISSION: 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read',
       OAUTH_PERMISSION_MISSING: 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền',
       OAUTH_PROVIDER_FAILED: 'Nền tảng không phản hồi đúng, hãy thử lại sau',
       CHANNEL_NO_ACCOUNTS: 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',

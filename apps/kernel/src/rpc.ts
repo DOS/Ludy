@@ -254,7 +254,7 @@ function connectorFailure(error: unknown): DomainError {
     // A token that can change campaigns or the business (ads_management, business_management): the person granted more than
     // reading reports to this app before. Said as it is, since accepting more permissions cannot help.
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
-      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy dùng một ứng dụng Meta riêng chỉ có quyền ads_read, hoặc gỡ quyền đó trong Cài đặt Facebook (Ứng dụng và trang web) rồi kết nối lại');
+      return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
     }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
@@ -1542,7 +1542,14 @@ export function createRpcHandler(
             { actor, orgId },
           );
           if (connector.pkce && !codeVerifier) throw new DomainError('OAUTH_STATE_INVALID', 400, 'Lượt kết nối này không hợp lệ hoặc không phải của bạn, hãy bắt đầu lại');
-          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier }).catch((error: unknown) => {
+          // A reading connection of an ad account whose token also holds a permission to change campaigns is accepted only while the org's
+          // switch for running ads is on (ADR-0043, #2294): with the one Meta app that serves reading and writing, the owner's own read
+          // login returns every permission they granted it, and refusing it then would stop reading for good. The link checks it again.
+          let spendScopesAllowed = false;
+          if (isAdProviderId(input.provider) && !isAdWriteProviderId(input.provider)) {
+            spendScopesAllowed = (await runtime.query<{ writeEnabled: boolean }>('ads.write.state', {}, { actor, orgId })).writeEnabled;
+          }
+          const accounts = await connector.exchange({ code: input.code, redirectUri: oauthRedirectUri(input.provider), codeVerifier, ...(spendScopesAllowed ? { spendScopesAllowed } : {}) }).catch((error: unknown) => {
             throw connectorFailure(error);
           });
           if (accounts.length === 0) {

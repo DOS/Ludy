@@ -63,20 +63,22 @@ const DAY_MS = 86_400_000;
 
 // The OAuth connector of Meta ads the API holds in these tests, made of fixed answers: Meta's dialog and token exchange are
 // not reached from a test. A grant covers two ad accounts.
-const META_GRANT = { write: false, user: '7001' };
+const META_GRANT = { write: false, user: '7001', lastSpendAllowed: null as boolean | null };
 const META_CONNECTOR: OAuthConnector = {
   provider: 'meta_ads',
   pkce: false,
   authorizeUrl: ({ state, redirectUri }) => `https://www.facebook.com/v24.0/dialog/oauth?state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=ads_read`,
-  exchange: async () => {
-    // The grant of a person whose token also holds ads_management: the connector refuses it, as MetaAdsConnector does.
-    if (META_GRANT.write) throw new ConnectorError('denied', 'the token holds ads_management', 'WRITE_PERMISSION_GRANTED');
+  exchange: async (input) => {
+    META_GRANT.lastSpendAllowed = input.spendScopesAllowed ?? false;
+    // The grant of a person whose token also holds ads_management: the connector refuses it unless the org's switch for running ads is
+    // on (the API says so), as MetaAdsConnector does, and then records the full set.
+    if (META_GRANT.write && !input.spendScopesAllowed) throw new ConnectorError('denied', 'the token holds ads_management', 'WRITE_PERMISSION_GRANTED');
     // The second account's token also holds a Pages permission, which is accepted and shown.
     return ['act_9001', 'act_9002'].map((id) => ({
       provider: 'meta_ads' as const,
       externalAccountId: id,
       displayName: `Meta ${id}`,
-      scopes: id === 'act_9002' ? ['ads_read', 'pages_manage_posts'] : ['ads_read'],
+      scopes: [...(id === 'act_9002' ? ['ads_read', 'pages_manage_posts'] : ['ads_read']), ...(META_GRANT.write ? ['ads_management'] : [])],
       expiresAt: new Date(Date.now() + 60 * DAY_MS),
       secret: JSON.stringify({ accessToken: 'EAAB-grant-token' }),
       // The person who granted it, as the connector hands it on: a keyed hash, never the Meta user id.
@@ -1965,27 +1967,49 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(channels.some((c) => c.provider === 'meta_ads')).toBe(false);
     });
 
+    // SQL as the signed-in owner (the switches are the owner's), committed.
+    const ownerSql = (text: string, params: unknown[]) =>
+      (async () => {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
+          await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
+          await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
+          await c.query(text, params);
+          await c.query('COMMIT');
+        } finally {
+          await c.query('ROLLBACK').catch(() => undefined);
+          c.release();
+        }
+      })();
+    const switchOn = () => ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = true, launches_blocked = false WHERE org_id = $1', [orgId]);
+    const switchOff = () => ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
+    const readStatus = async (provider: string) =>
+      row<{ id: string; external_account_id: string; status: string; status_reason: string | null; scopes: string[]; sealed: string }>(
+        `SELECT k.id, k.external_account_id, k.status, k.status_reason, k.scopes, (SELECT count(*)::text FROM crove_kernel.credential c WHERE c.org_id = k.org_id AND c.connection_id = k.id) AS sealed
+           FROM crove_kernel.channel_connection k WHERE k.org_id = $1 AND k.provider = $2 ORDER BY k.external_account_id, k.connected_at, k.id`,
+        [orgId, provider],
+      );
+    // A closed connection is not opened again: the next sign-in makes a new one for the platform account, and the ad account follows it.
+    const openReading = async () => (await readStatus('meta_ads')).filter((r) => r.status !== 'revoked');
+    // A reading connection of the given platform account, made as the sign-in makes it (sealed, linked), with the scopes and grantor given.
+    const readingConnection = async (externalAccountId: string, scopes: string[], grantor: string | null) => {
+      const sealedToken = vault.seal(JSON.stringify({ accessToken: 'EAAB-other-token' }), { orgId, provider: 'meta_ads', externalAccountId });
+      const made = await api.execute<{ connectionId: string }>(
+        'kernel.channel.connect',
+        { provider: 'meta_ads', externalAccountId, displayName: `Meta ${externalAccountId}`, scopes, expiresAt: null, credential: { keyId: sealedToken.keyId, envelope: sealedToken.envelope.toString('base64') } },
+        { actor: asOwner(), orgId },
+      );
+      return { connectionId: made.connectionId, link: () => api.execute<{ adAccountId: string }>('ads.account.link', { connectionId: made.connectionId, ...(grantor ? { grantedByHash: platformUserHash('meta-app-secret', grantor) } : {}) }, { actor: asOwner(), orgId }) };
+    };
+
     it('connects the write connection of a Meta grant for the owner alone, while the switch is on, and only to accounts linked for reading', async () => {
       const writeGrant = async (who: Account) => {
         const started = await metaRpc('channels/oauthStart', who, { provider: 'metawrite_ads' });
         if (started.status !== 200) return { started, finished: null };
         return { started, finished: await metaRpc('channels/oauthFinish', who, { provider: 'metawrite_ads', state: started.body.state, code: 'the-code' }) };
       };
-      const ownerSql = (text: string, params: unknown[]) =>
-        (async () => {
-          const c = await pool.connect();
-          try {
-            await c.query('BEGIN');
-            const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: owner.userId, orgId, sessionId: null, aal: 'aal1', mfaAt: null });
-            await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [orgId, token]);
-            await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [orgId]);
-            await c.query(text, params);
-            await c.query('COMMIT');
-          } finally {
-            await c.query('ROLLBACK').catch(() => undefined);
-            c.release();
-          }
-        })();
       // The read grant of the test before made the two accounts (the write connection hangs off them); the switch on now.
       await ownerSql('UPDATE crove_ads.ad_org_setting SET write_enabled = false, launches_blocked = false WHERE org_id = $1', [orgId]);
       expect((await writeGrant(owner)).started).toMatchObject({ status: 409, body: { code: 'ADS_WRITE_OFF' } });
@@ -2013,15 +2037,75 @@ suite('ads on PostgreSQL (#2217)', () => {
       expect(JSON.stringify(hashes)).not.toContain(META_GRANT.user);
       const sealedWrite = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'metawrite_ads'`, [orgId]);
       expect(sealedWrite[0]?.n).toBe('2');
-      // Switching writing off closes both and drops their tokens; the read connections and the read tokens stay.
+      // The read connection of somebody else, who never granted a write connection: its token cannot change campaigns.
+      const other = await readingConnection('act_9100', ['ads_read'], '7002');
+      await other.link();
+      // Switching writing off closes both write connections and drops their tokens. The same person's read connections close too: with
+      // the one Meta app, a permission belongs to the app and the person, so their read tokens (recorded as ads_read only) can change
+      // campaigns as well. Somebody else's read connection stays.
       const off = await metaRpc('ads/writeDisable', owner, { idempotencyKey: randomUUID() });
       // Every write connection of the org, these two and any the tests before left open.
       expect(off.status).toBe(200);
       expect(off.body.connectionsClosed).toBeGreaterThanOrEqual(2);
+      expect(off.body.readConnectionsClosed).toBe(2);
       const after = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider IN ('metawrite_ads')`, [orgId]);
       expect(after[0]?.n).toBe('0');
-      const readSealed = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.credential c JOIN crove_kernel.channel_connection k ON k.org_id = c.org_id AND k.id = c.connection_id WHERE c.org_id = $1 AND k.provider = 'meta_ads'`, [orgId]);
-      expect(readSealed[0]?.n).toBe('2');
+      expect(await openReading()).toEqual([{ id: other.connectionId, external_account_id: 'act_9100', status: 'active', status_reason: null, scopes: ['ads_read'], sealed: '1' }]);
+      expect((await readStatus('meta_ads')).filter((r) => r.status === 'revoked').map((r) => [r.external_account_id, r.status_reason, r.scopes, r.sealed])).toEqual([
+        ['act_9001', 'spend_scopes', ['ads_read'], '0'],
+        ['act_9002', 'spend_scopes', ['ads_read', 'pages_manage_posts'], '0'],
+      ]);
+      // The screen says why and asks for a read-only reconnect; nothing else of the account is lost.
+      expect(await view(owner, (await row<{ id: string }>(`SELECT id FROM crove_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' AND external_account_id = 'act_9001'`, [orgId]))[0]?.id as string)).toMatchObject({ connectionStatus: 'revoked', pausedReason: 'spend_scopes', canRunAds: false });
+      // Switched off again: the person removed the app in Facebook, the login returns a token that holds ads_read only, and reading connects again.
+      expect((await grant(owner)).finished?.status).toBe(200);
+      expect((await openReading()).map((r) => [r.external_account_id, r.sealed])).toEqual([['act_9001', '1'], ['act_9002', '1'], ['act_9100', '1']]);
+      // The account is the same one, on the new connection: its history and settings stay.
+      expect(await view(owner, (await row<{ id: string }>(`SELECT id FROM crove_ads.ad_account WHERE org_id = $1 AND provider = 'meta_ads' AND external_account_id = 'act_9001'`, [orgId]))[0]?.id as string)).toMatchObject({ connectionStatus: 'active', pausedReason: null });
+    });
+
+    it('accepts a reading token that can change campaigns only while the switch is on, records its full set, and closes it when running ads is switched off', async () => {
+      const countReading = async () => (await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]))[0]?.n;
+      // The person's token holds ads_management (they granted it to the shared app before). Off: refused as before, nothing connected.
+      await switchOff();
+      META_GRANT.write = true;
+      try {
+        const before = await countReading();
+        const refused = (await grant(owner)).finished;
+        expect(refused).toMatchObject({ status: 422, body: { code: 'OAUTH_WRITE_PERMISSION' } });
+        expect(META_GRANT.lastSpendAllowed).toBe(false);
+        expect(await countReading()).toBe(before);
+        // On: accepted, the permission recorded, and the screen shows it among what the token can also do.
+        await switchOn();
+        const accepted = (await grant(owner)).finished;
+        expect(accepted?.status, JSON.stringify(accepted?.body)).toBe(200);
+        expect(META_GRANT.lastSpendAllowed).toBe(true);
+        const held = (await openReading()).filter((r) => r.external_account_id !== 'act_9100');
+        expect(held.map((r) => [r.external_account_id, r.scopes.includes('ads_management')])).toEqual([['act_9001', true], ['act_9002', true]]);
+        const listed = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).filter((a) => a.provider === 'meta_ads' && a.name !== 'Meta act_9100');
+        expect(listed.every((a) => a.connectionStatus === 'active' && a.extraScopes.includes('ads_management'))).toBe(true);
+      } finally {
+        META_GRANT.write = false;
+      }
+      const spendCapable = (await openReading()).filter((r) => r.scopes.includes('ads_management')).map((r) => r.id);
+      expect(spendCapable).toHaveLength(2);
+      // A connection made with a spend permission while the switch was on is linked only while it is on: the link refuses it once it is off,
+      // and a connection that never got linked is closed by the switch-off all the same, by its recorded scopes alone.
+      const orphan = await readingConnection('act_9200', ['ads_read', 'business_management'], null);
+      await switchOff();
+      await expect(orphan.link()).rejects.toMatchObject({ status: 422, code: 'OAUTH_WRITE_PERMISSION' });
+      expect((await openReading()).find((r) => r.id === orphan.connectionId)).toMatchObject({ status: 'active', sealed: '1' });
+      // The switch is already off, so the person's grantor is not asked: only a connection whose scopes hold the permission is closed.
+      const off = await metaRpc('ads/writeDisable', owner, { idempotencyKey: randomUUID() });
+      expect(off.status).toBe(200);
+      expect(off.body.readConnectionsClosed).toBe(3);
+      const byId = new Map((await readStatus('meta_ads')).map((r) => [r.id, r]));
+      for (const id of [...spendCapable, orphan.connectionId]) expect(byId.get(id), id).toMatchObject({ status: 'revoked', status_reason: 'spend_scopes', sealed: '0' });
+      expect((await openReading()).map((r) => r.external_account_id)).toEqual(['act_9100']);
+      // Reading connects again once the token holds ads_read only.
+      expect((await grant(owner)).finished?.status).toBe(200);
+      expect((await openReading()).map((r) => r.external_account_id)).toEqual(['act_9001', 'act_9002', 'act_9100']);
+      expect((await openReading()).every((r) => !r.scopes.includes('ads_management'))).toBe(true);
     });
 
     it('reads 13 months in the adapter\'s windows with only GET requests, and stores them in the account\'s currency and time zone', async () => {
@@ -2073,6 +2157,8 @@ suite('ads on PostgreSQL (#2217)', () => {
     });
 
     it('refuses a grant whose token can change ads, says why in its own words, and connects nothing', async () => {
+      // While running ads is off: with it on the token is accepted (the test before).
+      await switchOff();
       const before = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.channel_connection WHERE org_id = $1 AND provider = 'meta_ads'`, [orgId]);
       META_GRANT.write = true;
       try {
