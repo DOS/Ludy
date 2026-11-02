@@ -243,6 +243,56 @@ export const zAdsWriteState = z.object({
 });
 export type AdsWriteState = z.infer<typeof zAdsWriteState>;
 
+// The deterministic flags of the Ads screen (#2378, owners and admins: they show spend): where the month's spend is heading against a cap,
+// a day that spent far more than its share of a cap, and a campaign whose cost per result jumped. Each carries the numbers it is based on,
+// as decimal strings in its own currency (never converted); nothing is moved or changed by a flag.
+const zFlagScope = z.enum(['org', 'account']);
+export const zAdsFlag = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('pace'),
+    scope: zFlagScope,
+    adAccountId: zId.nullable(),
+    accountName: z.string().nullable(),
+    currency: zCurrency,
+    cap: z.string(),
+    spent: z.string(),
+    projected: z.string(),
+    elapsedDays: z.number().int(),
+    daysInMonth: z.number().int(),
+    // The accounts of the cap's currency that were left out because they have not read yesterday yet (an org flag is about the others).
+    skippedAccounts: z.number().int(),
+  }),
+  z.object({
+    kind: z.literal('day'),
+    scope: zFlagScope,
+    adAccountId: zId.nullable(),
+    accountName: z.string().nullable(),
+    currency: zCurrency,
+    period: z.enum(ADS_CAP_PERIODS),
+    cap: z.string(),
+    share: z.string(),
+    day: zLocalDate,
+    spend: z.string(),
+    ratio: z.string(),
+    skippedAccounts: z.number().int(),
+  }),
+  z.object({
+    kind: z.literal('cpr'),
+    adAccountId: zId,
+    accountName: z.string(),
+    campaignId: z.string(),
+    campaignName: z.string(),
+    currency: zCurrency,
+    day: zLocalDate,
+    recentCost: z.string(),
+    medianCost: z.string(),
+    ratio: z.string(),
+    recentResults: z.string(),
+    historyDays: z.number().int(),
+  }),
+]);
+export type AdsFlag = z.infer<typeof zAdsFlag>;
+
 export const zAdsSummaryInput =z.strictObject({ adAccountId: zId, from: zLocalDate, to: zLocalDate });
 export type AdsSummaryInput = z.infer<typeof zAdsSummaryInput>;
 
