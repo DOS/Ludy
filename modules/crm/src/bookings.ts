@@ -647,9 +647,10 @@ export const bookingRemind = defineCommand({
 async function loadBookings(
   ctx: QueryContext,
   userId: string,
-  filter: { scope: 'mine' | 'org'; period: 'upcoming' | 'past' } | { scope: 'mine' | 'org'; id: string },
+  filter: { scope: 'mine' | 'org'; period: 'upcoming' | 'past' } | { scope: 'mine' | 'org'; id: string } | { scope: 'mine'; day: { from: Date; to: Date } },
 ): Promise<BookingItem[]> {
-  const upcoming = 'period' in filter && filter.period === 'upcoming';
+  // A day (the Home read, today.ts): the confirmed bookings that start in it and have not ended, earliest first.
+  const upcoming = ('period' in filter && filter.period === 'upcoming') || 'day' in filter;
   let query = ctx.trx
     .selectFrom('crove_crm.booking as b')
     .innerJoin('crove_crm.event_type as e', (j) => j.onRef('e.org_id', '=', 'b.org_id').onRef('e.id', '=', 'b.event_type_id'))
@@ -675,7 +676,7 @@ async function loadBookings(
         WHERE h.org_id = b.org_id AND h.id = ANY (b.hold_event_ids)), '{}')`.as('hold_user_ids'),
     ])
     .where('b.org_id', '=', ctx.orgId)
-    .where('b.status', 'in', ['confirmed', 'cancelled'])
+    .where('b.status', 'in', 'day' in filter ? ['confirmed'] : ['confirmed', 'cancelled'])
     .$if(filter.scope === 'mine', (q) =>
       q.where((eb) =>
         eb.or([
@@ -686,6 +687,7 @@ async function loadBookings(
       ),
     );
   if ('id' in filter) query = query.where('b.id', '=', filter.id);
+  else if ('day' in filter) query = query.where('b.starts_at', '>=', filter.day.from).where('b.starts_at', '<', filter.day.to).where('b.ends_at', '>', new Date());
   else query = query.where('b.ends_at', upcoming ? '>' : '<=', new Date());
   const rows = await query
     .orderBy('b.starts_at', upcoming ? 'asc' : 'desc')
@@ -705,6 +707,10 @@ async function loadBookings(
     partyId: r.party_id,
   }));
 }
+
+// The member's own bookings that start between two instants and have not ended: the types they lead or held on their calendar, the same rule as the
+// screen's "mine" (the Home read, today.ts).
+export const bookingsOfDay = (ctx: QueryContext, userId: string, from: Date, to: Date): Promise<BookingItem[]> => loadBookings(ctx, userId, { scope: 'mine', day: { from, to } });
 
 function bookingUser(ctx: QueryContext): string {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');

@@ -197,51 +197,62 @@ async function lockOpen(ctx: CommandContext, ids: readonly string[]): Promise<st
   return rows.map((r) => r.id);
 }
 
+// The next steps the lists show: open and not snoozed. Mine: the steps of my deals, and for an owner or admin the ones of deals nobody owns.
+const shownSql = sql<boolean>`(n.status = 'open' AND (n.snoozed_until IS NULL OR n.snoozed_until <= now()))`;
+function mineSql(ctx: Pick<QueryContext, 'actor' | 'role'>) {
+  const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+  const admin = ctx.role === 'owner' || ctx.role === 'admin';
+  return admin ? sql<boolean>`(n.assignee_user_id = ${me}::uuid OR n.assignee_user_id IS NULL)` : sql<boolean>`n.assignee_user_id = ${me}::uuid`;
+}
+
+// One page of the list, the longest quiet first. The Home read (today.ts) takes the same rows through the same rule.
+export async function loadNextSteps(ctx: QueryContext, scope: 'mine' | 'all', cursor: { sinceOn: string; id: string } | null | undefined, limit: number): Promise<{ items: NextStep[]; next: { sinceOn: string; id: string } | null }> {
+  let q = ctx.trx
+    .selectFrom('crove_crm.deal_next_step as n')
+    .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
+    .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
+    .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
+    .select(['n.id', 'n.deal_id', 'n.reason', 'n.since_on', 'n.raised_at', 'n.assignee_user_id', 'd.title', 'd.party_id', 'd.amount', 'd.expected_close', 'p.name as party_name', 's.name as stage_name'])
+    .where('n.org_id', '=', ctx.orgId)
+    .where(shownSql);
+  if (scope === 'mine') q = q.where(mineSql(ctx));
+  if (cursor) q = q.where(sql<boolean>`(n.since_on, n.id) > (${cursor.sinceOn}::date, ${cursor.id}::uuid)`);
+  const rows = await q.orderBy('n.since_on').orderBy('n.id').limit(limit + 1).execute();
+  const items: NextStep[] = rows.slice(0, limit).map((r) => ({
+    id: r.id,
+    dealId: r.deal_id,
+    dealTitle: r.title,
+    partyId: r.party_id,
+    partyName: r.party_name,
+    amount: r.amount,
+    currency: 'VND',
+    stageName: r.stage_name,
+    expectedClose: r.expected_close === null ? null : dayOf(r.expected_close),
+    assigneeUserId: r.assignee_user_id,
+    reason: r.reason,
+    sinceOn: dayOf(r.since_on),
+    raisedAt: iso(r.raised_at),
+  }));
+  const last = items.at(-1);
+  return { items, next: rows.length > limit && last ? { sinceOn: last.sinceOn, id: last.id } : null };
+}
+
+// How many next steps the lists show, mine and everyone's.
+export async function countNextSteps(ctx: QueryContext): Promise<{ mine: number; all: number }> {
+  const counted = await sql<{ mine: number; all: number }>`
+    SELECT (count(*) FILTER (WHERE ${mineSql(ctx)}))::int AS mine, count(*)::int AS "all"
+    FROM crove_crm.deal_next_step n WHERE n.org_id = ${ctx.orgId}::uuid AND ${shownSql}`.execute(ctx.trx);
+  const counts = counted.rows[0] ?? { mine: 0, all: 0 };
+  return { mine: counts.mine, all: counts.all };
+}
+
 export const nextStepList = defineQuery({
   name: 'crm.next_step.list',
   input: zNextStepListQuery,
   access: ALL,
   handler: async (ctx, input): Promise<NextStepPage> => {
-    const scope = input.scope ?? 'mine';
-    const limit = input.limit ?? NEXT_STEP_PAGE_SIZE;
-    const me = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-    // Mine: the steps of my deals, and for an owner or admin the ones of deals nobody owns.
-    const admin = ctx.role === 'owner' || ctx.role === 'admin';
-    const mine = admin ? sql<boolean>`(n.assignee_user_id = ${me}::uuid OR n.assignee_user_id IS NULL)` : sql<boolean>`n.assignee_user_id = ${me}::uuid`;
-    const shown = sql<boolean>`(n.status = 'open' AND (n.snoozed_until IS NULL OR n.snoozed_until <= now()))`;
-    let q = ctx.trx
-      .selectFrom('crove_crm.deal_next_step as n')
-      .innerJoin('crove_crm.deal as d', (j) => j.onRef('d.org_id', '=', 'n.org_id').onRef('d.id', '=', 'n.deal_id'))
-      .innerJoin('crove_kernel.party as p', (j) => j.onRef('p.org_id', '=', 'd.org_id').onRef('p.id', '=', 'd.party_id'))
-      .innerJoin('crove_crm.pipeline_stage as s', (j) => j.onRef('s.org_id', '=', 'd.org_id').onRef('s.id', '=', 'd.stage_id'))
-      .select(['n.id', 'n.deal_id', 'n.reason', 'n.since_on', 'n.raised_at', 'n.assignee_user_id', 'd.title', 'd.party_id', 'd.amount', 'd.expected_close', 'p.name as party_name', 's.name as stage_name'])
-      .where('n.org_id', '=', ctx.orgId)
-      .where(shown);
-    if (scope === 'mine') q = q.where(mine);
-    if (input.cursor) q = q.where(sql<boolean>`(n.since_on, n.id) > (${input.cursor.sinceOn}::date, ${input.cursor.id}::uuid)`);
-    const rows = await q.orderBy('n.since_on').orderBy('n.id').limit(limit + 1).execute();
-    const page = rows.slice(0, limit);
-    const items: NextStep[] = page.map((r) => ({
-      id: r.id,
-      dealId: r.deal_id,
-      dealTitle: r.title,
-      partyId: r.party_id,
-      partyName: r.party_name,
-      amount: r.amount,
-      currency: 'VND',
-      stageName: r.stage_name,
-      expectedClose: r.expected_close === null ? null : dayOf(r.expected_close),
-      assigneeUserId: r.assignee_user_id,
-      reason: r.reason,
-      sinceOn: dayOf(r.since_on),
-      raisedAt: iso(r.raised_at),
-    }));
-    const last = items.at(-1);
-    const counted = await sql<{ mine: number; all: number }>`
-      SELECT (count(*) FILTER (WHERE ${mine}))::int AS mine, count(*)::int AS "all"
-      FROM crove_crm.deal_next_step n WHERE n.org_id = ${ctx.orgId}::uuid AND ${shown}`.execute(ctx.trx);
-    const counts = counted.rows[0] ?? { mine: 0, all: 0 };
-    return { items, next: rows.length > limit && last ? { sinceOn: last.sinceOn, id: last.id } : null, counts: { mine: counts.mine, all: counts.all } };
+    const page = await loadNextSteps(ctx, input.scope ?? 'mine', input.cursor, input.limit ?? NEXT_STEP_PAGE_SIZE);
+    return { ...page, counts: await countNextSteps(ctx) };
   },
 });
 
