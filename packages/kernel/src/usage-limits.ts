@@ -59,7 +59,7 @@ export const usageOver = defineQuery({
           FROM crove_kernel.org_usage
           WHERE org_id = ${ctx.orgId} AND metric = ${metric}
             -- The day's AI cost bounds the extraction queue (#675): what drafts and rewrites cost is the month's budget's (#2382).
-            AND (metric <> 'ai_cost' OR feature IS NULL OR module = 'finance')
+            AND (metric <> 'ai_cost' OR feature IS NULL OR module IN ('finance', 'conversation'))
             AND created_at > pg_catalog.now() - pg_catalog.make_interval(hours => ${USAGE_WINDOW_HOURS}::int)
         )
         SELECT (SELECT coalesce(max(total), 0)::text FROM w) AS used,

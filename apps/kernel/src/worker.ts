@@ -1145,7 +1145,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   if (draftWriter) {
     await boss.work<ConversationDraftJob>(QUEUES.conversationsDraft, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, aiPrice: deps.aiPrice, budget: draftBudget }, job.data);
+      const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, meter: aiMeter, budget: draftBudget }, job.data);
       console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
     });
   }

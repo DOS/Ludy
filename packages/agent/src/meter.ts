@@ -26,6 +26,8 @@ export const AI_FEATURES = {
   'social.ideas': 'social',
   'social.summary': 'social',
   'crm.booking_schedule': 'crm',
+  // Vy's reply drafts of the conversation core (CV8, #2310).
+  'conversation.draft': 'conversation',
 } as const satisfies Record<string, string>;
 export type AiFeature = keyof typeof AI_FEATURES;
 export const AI_FEATURE_KEYS = Object.keys(AI_FEATURES) as AiFeature[];
