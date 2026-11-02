@@ -10,6 +10,7 @@ import type { TodayItem, TodaySeverity } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Card } from '@crove/ui/components/card';
 import { NavIcon } from '@crove/ui/components/nav-icon';
+import { TodayBrief } from './today-brief.tsx';
 import { Empty, ErrorText, ListSkeleton } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
@@ -98,6 +99,7 @@ export function TodayList({ slug }: { slug: string }) {
           <Empty title={t('empty')} hint={t('emptyHint')} />
         ) : (
           <div className="space-y-5">
+            <TodayBrief slug={slug} items={today.data?.items ?? []} />
             {groups.map((group) => (
               <div key={group.kind}>
                 <h3 className="mb-2 flex items-baseline gap-2 text-sm font-semibold">

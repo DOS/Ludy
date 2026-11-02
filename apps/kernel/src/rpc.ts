@@ -1,10 +1,11 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, TodayList } from '@crove/kernel-contract';
+import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -39,7 +40,7 @@ import type { z } from 'zod';
 import type { zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -105,6 +106,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     // A draft written from photos of the library (#1191) too, read from their stored bytes like alt text, when the model
     // takes images; each read stops at the size its file row records.
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
+    // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
+    brief?: (facts: BriefFacts) => Promise<BriefResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -287,6 +290,8 @@ export function createRpcHandler(
   aiEnabled = false,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
+  const briefs = new DraftBudget();
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -501,6 +506,15 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
+      // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
+      // spent: no brief, and Home shows the list alone. Nothing is stored.
+      brief: os.today.brief.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
+          return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
+        }),
+      ),
     },
     org: {
       create: os.org.create.handler(({ context, input }) =>
