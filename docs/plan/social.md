@@ -18,7 +18,7 @@ Crove Social lets a founder or a small marketing team write a post once, adapt i
 
 **Later (v1.x, same plan):** media library on the kernel upload pipeline, evergreen reposting, multi-step approval, a public preview link with comments for client review, more channels (TikTok, YouTube, Threads, LinkedIn, X, Bluesky), posting-time suggestions from history, post-publish actions (auto-repost, a reply at a likes threshold), the `social.content_manager` agent template (ADR-0029), public API and MCP tools (the same drafts, review queue and limits as people), auto-publish for untainted posts as an org setting.
 
-**Comments are in Social, private messages are not** (owner decision, 2026-11-01, #2213): replying to comments on the org's own posts belongs in Social, and private messages (Messenger, Instagram and Zalo OA chat) belong in Service. Both sit on one conversation core in the kernel, so either module runs alone; design in [conversations.md](conversations.md) and [ADR-0041](../adr/0041-conversation-core.md). Until its build steps land, Social shows comment counts only.
+**Conversations are in Hộp thư** (owner decisions 2026-11-01 and 2026-11-03, #2213, #2437): comments on the org's own posts are conversations shown in Hộp thư and under their post, and private messages (Messenger, Instagram and Zalo OA chat) are in Hộp thư too; there is no separate Service app. Both sit on one conversation core in the kernel, so either side runs alone; design in [conversations.md](conversations.md) and [ADR-0041](../adr/0041-conversation-core.md). Until its build steps land, Social shows comment counts only.
 
 ## 2. Can it be built independently of the kernel work in flight?
 

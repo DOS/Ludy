@@ -11,7 +11,7 @@ Quyết định ngày 2026-11-03 (ghi trên #2213, làm từ #2437) thay cho cá
 - **Không còn vụ việc, phiếu hay SLA.** Hội thoại cần việc nội bộ thì nối với một nhiệm vụ (`crove_kernel.task`); nó không bao giờ biến thành một bản ghi có số thứ tự, và không có đồng hồ đếm thời gian trả lời.
 - **Trang bài đăng vẫn có tab Bình luận:** cùng những hội thoại đó, lọc theo bài. Đó là một cách nhìn vào hộp thư, không phải hộp thư thứ hai, nên mỗi bình luận chỉ có một bộ đếm chưa đọc.
 - **Một lõi dùng chung ở dưới**, để hộp thư và phần đăng bài chạy từ cùng một dữ liệu, không bên nào giữ bản sao thứ hai.
-- **Đồng nghiệp AI trong Hộp thư** (Uy trong Ludy Engage; tên nằm sau bảng danh sách đồng nghiệp và khóa i18n) phân loại ý định của khách, gợi ý hồ sơ liên hệ khớp và soạn bản nháp để người bấm Gửi. Không tự gửi, và lõi vẫn chạy khi tắt AI.
+- **Đồng nghiệp AI trong Hộp thư** (Dy trong Ludy Engage, cũng phụ trách Khách hàng & Bán hàng; Uy phụ trách Marketing, tức Bài đăng và Quảng cáo; tên nằm sau bảng danh sách đồng nghiệp và khóa i18n) phân loại ý định của khách, gợi ý hồ sơ liên hệ khớp và soạn bản nháp để người bấm Gửi. Không tự gửi, và lõi vẫn chạy khi tắt AI.
 
 Kế hoạch cũ ghi ngược lại (bình luận thuộc hộp thư của Service, rồi ngày 2026-11-01 là bình luận ở Social). Dòng "Not in Social" trong [social.md](social.md) và đoạn Service và Social trong kế hoạch lõi được sửa theo (kế hoạch lõi trong cùng PR này, social.md trong PR của CV3).
 
@@ -89,7 +89,7 @@ Doanh nghiệp có hộp thư nhưng chưa dùng phần đăng bài vẫn thấy
 | CV8 | Bản nháp AI và câu mẫu (đã làm) |
 | CV9 | Bỏ (quyết định 2026-11-03, #2311): việc tiếp theo là một nhiệm vụ nối với hội thoại, làm cùng CV3 |
 | CV10 | Email của khách là một kênh hội thoại (chưa mở issue) |
-| CV11 | Phân loại ý định và gợi ý liên hệ của đồng nghiệp AI (chưa mở issue) |
+| (CV11) | Phân loại ý định và bản nháp trả lời nằm trong #2306 (CV3); gợi ý liên hệ và công ty là #2438; không phải việc build của kế hoạch này |
 
 Việc của JOY khi bắt đầu build (không agent nào tự làm): thêm quyền Trang vào ứng dụng Meta (hoặc tạo ứng dụng Messenger riêng nếu Meta bắt buộc), trỏ webhook về địa chỉ triển khai, OA Zalo dùng gói có API, đặt địa chỉ gọi lại và khóa bí mật OA; về sau với Ludy Cloud là App Review và Business Verification, và nhờ luật sư đọc điều khoản Meta về tin nhắn khách lưu trữ.
 
