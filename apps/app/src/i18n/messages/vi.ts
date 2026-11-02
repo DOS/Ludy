@@ -1323,6 +1323,7 @@ export const vi = {
       capNoneYet: 'Chưa có hạn mức nào cho mục này.',
       capLowerHint: 'Giảm hạn mức có hiệu lực ngay và không cần duyệt. Số mới phải thấp hơn số đang áp dụng, tính bằng loại tiền của chính hạn mức đó.',
       capRequestOpen: 'Đã có một đề nghị cho hạn mức này đang chờ duyệt.',
+      capNotBelow: 'Số mới phải thấp hơn hạn mức đang áp dụng.',
       capRequest: 'Đề nghị hạn mức này',
       capLower: 'Giảm hạn mức',
       capLoweredToast: 'Đã giảm hạn mức. Hạn mức mới áp dụng ngay.',

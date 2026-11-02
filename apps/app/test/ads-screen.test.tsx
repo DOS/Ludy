@@ -539,6 +539,25 @@ describe('running ads: the stops, the requests, the switches and the caps (#2294
       expect(form({ initial: { mode: 'lower', scope: 'account' } })).toContain('Tài khoản chưa cập nhật');
     });
 
+    it('does not let the owner lower a cap to the same amount or above it: submit is off and says why, however the amount is spelled', () => {
+      // The cap in force is 5,000,000: the same amount, the same with decimals, and a larger one are not a lowering.
+      for (const amount of ['5000000', '5000000.00', '5000000.5', '6000000']) {
+        const html = form({ initial: { mode: 'lower', amount } });
+        expect(buttonBefore(html, en.ads.write.capLower), amount).toContain('disabled');
+        expect(html, amount).toContain(en.ads.write.capNotBelow);
+      }
+      // A lower amount is allowed, and nothing is said.
+      for (const amount of ['4999999.99', '1']) {
+        const html = form({ initial: { mode: 'lower', amount } });
+        expect(buttonBefore(html, en.ads.write.capLower), amount).not.toContain('disabled');
+        expect(html, amount).not.toContain(en.ads.write.capNotBelow);
+      }
+      // Asking for a raise is another matter: the same amount is not judged here (the server says it is not a raise).
+      expect(form({ initial: { amount: '5000000' } })).not.toContain(en.ads.write.capNotBelow);
+      // The same words in Vietnamese.
+      expect(form({ initial: { mode: 'lower', amount: '5000000' } }, 'vi')).toContain(viMessages.ads.write.capNotBelow);
+    });
+
     it('says there is no cap in force to lower, or to compare with, where none is set', () => {
       expect(form({ caps: [], initial: { mode: 'lower' } })).toContain(en.ads.write.capNoneYet);
       expect(form({ caps: [] })).toContain(en.ads.write.capNoneYet);

@@ -1325,6 +1325,7 @@ export const en = {
       capNoneYet: 'No cap is set for this yet.',
       capLowerHint: 'Lowering takes effect at once and needs no approval. The new amount must be below the one in force, in that cap’s own currency.',
       capRequestOpen: 'A request for this cap already waits in the Inbox.',
+      capNotBelow: 'The new amount must be below the cap in force.',
       capRequest: 'Ask for this cap',
       capLower: 'Lower the cap',
       capLoweredToast: 'Lowered the cap. It is in force now.',

@@ -17,6 +17,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { useFormat } from '../i18n/provider.tsx';
 import { adsChangeLine } from '../lib/ads-change.ts';
+import { toUnits } from '../lib/decimal.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 import { ConfirmDialog } from './confirm-dialog.tsx';
@@ -249,7 +250,7 @@ export function CapForm({
   caps: readonly AdsCapView[];
   pending: readonly Pending[];
   orgCurrency: string;
-  initial?: { mode?: CapMode; scope?: (typeof ADS_CAP_SCOPES)[number] };
+  initial?: { mode?: CapMode; scope?: (typeof ADS_CAP_SCOPES)[number]; amount?: string };
 }) {
   const t = useTranslations('ads.write');
   const f = useFormat();
@@ -257,7 +258,7 @@ export function CapForm({
   const [scope, setScope] = useState<(typeof ADS_CAP_SCOPES)[number]>(initial.scope ?? 'org');
   const [adAccountId, setAdAccountId] = useState('');
   const [period, setPeriod] = useState<(typeof ADS_CAP_PERIODS)[number]>('daily');
-  const [amount, setAmount] = useState('');
+  const [amount, setAmount] = useState(initial.amount ?? '');
   const [orgCurrencyInput, setOrgCurrencyInput] = useState(orgCurrency);
   const lowering = owner && mode === 'lower';
   // To raise, an account needs a known currency; to lower, any account (the cap in force has its own).
@@ -270,7 +271,10 @@ export function CapForm({
   );
   const currency = scope === 'org' ? orgCurrencyInput.trim().toUpperCase() : (account?.currency ?? '');
   const targetKnown = scope === 'org' || account !== undefined;
-  const valid = isCapAmount(amount) && targetKnown && (lowering ? inForce !== undefined : /^[A-Z]{3}$/.test(currency) && !requestOpen);
+  // Lowering goes strictly below the cap in force (the server refuses the same amount too): compared exactly, as decimal units,
+  // never as a JS number.
+  const notBelow = lowering && inForce !== undefined && isCapAmount(amount) && toUnits(amount.trim()) >= toUnits(inForce.amount);
+  const valid = isCapAmount(amount) && targetKnown && (lowering ? inForce !== undefined && !notBelow : /^[A-Z]{3}$/.test(currency) && !requestOpen);
   const request = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('requestedToast')), refresh()) }));
   const lower = useMutation(orpc.ads.lowerCap.mutationOptions({ onSuccess: async () => (setAmount(''), toast(t('capLoweredToast')), refresh()) }));
   const busy = request.isPending || lower.isPending;
@@ -338,7 +342,7 @@ export function CapForm({
               </NativeSelect>
             )}
           </Field>
-          <Field label={t('capAmount')} hint={amount !== '' && !isCapAmount(amount) ? t('capAmountInvalid') : undefined}>
+          <Field label={t('capAmount')} hint={amount !== '' && !isCapAmount(amount) ? t('capAmountInvalid') : notBelow ? t('capNotBelow') : undefined}>
             {(control) => <Input {...control} inputMode="decimal" value={amount} disabled={busy} onChange={(e) => setAmount(e.target.value)} />}
           </Field>
           {!lowering && scope === 'org' && (
