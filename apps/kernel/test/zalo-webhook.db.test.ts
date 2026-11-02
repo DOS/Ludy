@@ -312,6 +312,39 @@ suite('the Zalo OA webhook on PostgreSQL (#2304)', () => {
     const statuses: number[] = [];
     for (let i = 0; i < 3; i++) statuses.push((await post(limited, body, {})).status);
     expect(statuses).toEqual([401, 401, 429]);
+    // Only refused requests are charged: with the bucket of this address spent, a verified notice from it is still answered (#2348).
+    const follow = `{"app_id":"${APP_ID}","event_name":"follow","timestamp":"1788300041000","follower":{"id":"u-1"},"oa_id":"oa-1"}`;
+    expect((await post(limited, follow, signed(follow, '1788300041000'))).status).toBe(200);
+    expect((await post(limited, body, {})).status).toBe(429);
+  });
+
+  it('takes a notice signed with the previous OA secret key while a rotation is under way, and refuses any other key (#2348)', async () => {
+    const rotating = createHttpApp({
+      config: appConfig,
+      runtime: api,
+      store: new MemoryStore(),
+      authenticate: createAuthenticator(appConfig, appDb),
+      pool: pools[0] as pg.Pool,
+      aiEnabled: false,
+      zaloWebhook: { appId: APP_ID, oaSecretKey: 'the-new-oa-secret-key-0001', oaSecretKeyPrevious: OA_KEY, now: () => NOW },
+    });
+    const viaOld = text('m-rot-1', 'Ký bằng khóa cũ', '1788300300000');
+    expect((await post(rotating, viaOld, signed(viaOld, '1788300300000', OA_KEY))).status).toBe(200);
+    const viaNew = text('m-rot-2', 'Ký bằng khóa mới', '1788300310000');
+    expect((await post(rotating, viaNew, signed(viaNew, '1788300310000', 'the-new-oa-secret-key-0001'))).status).toBe(200);
+    const viaOther = text('m-rot-3', 'Khóa lạ', '1788300320000');
+    expect((await post(rotating, viaOther, signed(viaOther, '1788300320000', 'some-other-key-entirely'))).status).toBe(401);
+    // Without a previous key the old one is refused.
+    expect((await post(app, viaNew, signed(viaNew, '1788300310000', 'the-new-oa-secret-key-0001'))).status).toBe(401);
+    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
+  });
+
+  it("is not refused for the sandbox's backlog: the cap is per provider (#2348)", async () => {
+    await rows("INSERT INTO crove_kernel.conversation_inbound_pending (provider, body) SELECT 'sandbox', 'x'::bytea FROM generate_series(1, 1001)");
+    const real = text('m-cap-1', 'Tin thật vẫn nhận', '1788300400000');
+    expect((await post(app, real, signed(real, '1788300400000'))).status).toBe(200);
+    expect(await rows("SELECT 1 FROM crove_kernel.conversation_inbound_pending WHERE provider = 'zalo_oa'")).toHaveLength(1);
+    await rows('DELETE FROM crove_kernel.conversation_inbound_pending');
   });
   it('answers the customer through the customer care API once, inside the 48-hour window, and refuses a reply after it', async () => {
     const asOwner = { actor: { type: 'user' as const, userId: ownerId, aal: 'aal1' as const }, orgId };

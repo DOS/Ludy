@@ -18,10 +18,11 @@ Markers: **[PERSON]** only a person can do it (the owner: Zalo developer console
 
 - **Variable:** `CHANNEL_ZALO_OA_SECRET_KEY`, beside `CHANNEL_ZALO_APP_ID` and `CHANNEL_ZALO_APP_SECRET` (the server refuses to start with the key and no app id, and with a key of fewer than 8 or more than 200 characters or with spaces). With the key set, the route `POST /api/channels/zalo/webhook` exists; without it, the route does not exist.
 - **How it is held:** read from the process environment only. It is never written to the database, a file, a log line, an error, an alert, an audit row or an answer, and it is not part of any connection's sealed credential (those are each OA's own access and refresh tokens, sealed by `CREDENTIAL_KEY` as for every channel). The pilot check refuses a sample value (`change-me`) for it.
-- **Rotation (it protects only the check of Zalo's notices, so a rotation loses nothing stored):**
-  1. **[PERSON]** generate or change the OA secret key in the Zalo console. From this moment Zalo signs with the new key and Ludy refuses (401) every notice until it has the new one: a short gap in which Zalo's resends (30 seconds, 5, 15, 30 minutes and 1 hour after an outage [S]) land.
-  2. **[PERSON]** put the new value in `.env` as `CHANNEL_ZALO_OA_SECRET_KEY` and restart the API (`docker compose up -d`), at once after step 1.
-  3. Check with section 2 below (a test message appears). Notices refused in the gap are lost; an OA that was busy then is read back by the history read of the follow-up issue.
+- **Rotation with no gap (it protects only the check of Zalo's notices, so a rotation loses nothing stored).** Zalo does not retry a notice Ludy refused [S], so the new key must be known to Ludy *before* Zalo starts signing with it. `CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS` holds the key being replaced, and a notice signed with either is accepted:
+  1. **[PERSON]** copy the current value of `CHANNEL_ZALO_OA_SECRET_KEY` into `CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS` in `.env`, and restart the API (`docker compose up -d`). Nothing changes yet.
+  2. **[PERSON]** generate the new OA secret key in the Zalo console, put it in `.env` as `CHANNEL_ZALO_OA_SECRET_KEY` (the old one stays in `_PREVIOUS`), and restart the API at once. From the moment Zalo signs with the new key both are accepted, so no notice is refused.
+  3. Check with section 2 below (a test message appears).
+  4. **[PERSON]** a day later remove `CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS` and restart: the old key, which may have leaked, is no longer accepted. (If the old key leaked, do steps 1 to 4 on the same day, and the old key stops being accepted at step 4.)
   4. If the key leaked: rotate as above, then read the API's request log for 401s on the route since the leak (a forged notice with the leaked key is signed, so it is accepted: a leaked key means a forger can add messages to the threads of connected OAs, never read or send anything; look at the last messages of each thread in the inbox).
 - **Where the value is never to appear:** chat, issues, pull requests, runbook results. Write "key set" and "key rotated on <date>".
 
@@ -43,6 +44,7 @@ Fill one row per fact as it is settled; commit the table with the fixes it cause
 | 10 | Attachments: the event names and that their address expires after 7 days | [S] | `parseZaloNotice` (placeholders; v1 stores text only) | |
 | 11 | No comment API or webhook exists for the OA | [S, "none found" is not proof] | `zalo_oa.kinds` (private chats only) | |
 | 12 | The webhook is answered 200 within 2 to 5 seconds, and Zalo does not retry on an error status; it resends after an outage with the original timestamp | [S] | the route's answers; ingest is idempotent on `msg_id` | |
+| 13 | The timestamp the signature uses is the first `"timestamp"` key of the raw body (`TIMESTAMP_IN_BODY`): confirm with a real notice that a message text containing the word timestamp in quotes cannot shift it (the signature is over the whole body, so a mismatch is a refusal, not a forgery) | [U] | `zaloSignatureOk` | |
 
 ## 2. Steps
 
@@ -60,7 +62,7 @@ All with the OA's connection made in Ludy (Social > channels > Zalo) by an owner
 
 ## 3. What is not built yet (follow-up issues, same plan)
 
-- **History on reconnect** (`listrecentchat`, `conversation`) and the "events missed" marker: Zalo does not retry on an error status [S], so a notice refused while the key was being rotated, or while the API was down longer than Zalo's resends, is not recovered yet.
+- **History on reconnect** (`listrecentchat`, `conversation`) and the "events missed" marker: Zalo does not retry on an error status [S], so a notice refused while the API was down or its backlog full is not recovered yet. A key rotation no longer refuses any (section 0). A verified notice is never refused for rate (only forged ones are charged to the per-address limit), and the backlog cap is per provider (10000 for Zalo OA, 1000 for the sandbox), so the one thing that still loses a verified notice is a full Zalo backlog of 10000 waiting notices (a worker down for long).
 - **Customer images stored as files** (a media address expires after 7 days [S]): v1 stores a placeholder.
 - **The customer's name and picture** (`oa/user/detail`): v1 shows "Người dùng ·<last 4 of the id>".
 - **Zalo comments**: no API was found.
