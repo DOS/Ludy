@@ -178,11 +178,9 @@ suite('role assignments on PostgreSQL (#1279)', () => {
     // The entity chief accountant (#1507) is limited to its legal entities and grants their period unlock alone.
     expect(roles.filter((r) => r.scope === 'legal_entity').map((r) => r.key)).toEqual(['external_accountant', 'finance.entity_chief_accountant']);
     // Both chief accountants mark the VAT return filed too (finance.vat.file, #1508), for their entities.
-    // The Service inbox (CV3, #2306) seeds one permission for desk.agent, kernel.conversation.direct.read (reading private messages): accepted here
-    // whether or not it is seeded yet, since the migration lands after this step, and no other desk.agent permission is.
-    const seeded = permissions.filter((p) => !(p.role_key === 'desk.agent' && p.permission === 'kernel.conversation.direct.read'));
-    expect(permissions.filter((p) => p.role_key === 'desk.agent').length).toBeLessThanOrEqual(1);
-    expect(seeded).toEqual([
+    // The Service inbox (CV3, #2306) seeds one permission for desk.agent, kernel.conversation.direct.read (reading private messages), and no other.
+    expect(permissions).toEqual([
+      { role_key: 'desk.agent', permission: 'kernel.conversation.direct.read' },
       { role_key: 'finance.chief_accountant', permission: 'finance.period.unlock' },
       { role_key: 'finance.chief_accountant', permission: 'finance.proposal.approve' },
       { role_key: 'finance.chief_accountant', permission: 'finance.vat.file' },

@@ -4,7 +4,7 @@
 // hide a comment, note). Social passes the comment kind (the comment inbox, and the threads under one post); Service will
 // pass the direct kind. What a viewer may read is the database's decision, not this screen's: a thread the reader may not
 // read is simply not in the list. A reply carries the last message its sender saw, so a newer one asks them to read it first.
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
 import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
@@ -20,9 +20,11 @@ import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, q
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
 
-const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
+export const STATUSES: readonly ConversationStatus[] = ['new', 'pending', 'resolved'];
 // Lists and the open thread are read again this often (the stream's hints do not carry conversations yet).
-const POLL_MS = 6_000;
+export const POLL_MS = 6_000;
+// How often typing in the reply box tells the server (it takes one mark in 20 seconds, and a mark lives 60).
+const COMPOSING_EVERY_MS = 15_000;
 
 export interface PostRef {
   connectionId: string;
@@ -44,7 +46,7 @@ export interface Member {
   email: string;
 }
 
-function useMe() {
+export function useMe() {
   const org = useQuery(orpc.org.get.queryOptions());
   const me = useQuery(orpc.me.get.queryOptions());
   const role = org.data?.role;
@@ -56,7 +58,7 @@ function useMe() {
   };
 }
 
-function useContactName() {
+export function useContactName() {
   const t = useTranslations('conversations');
   return (c: ConversationSummary['contact']): string => c.partyName ?? c.displayName ?? t('anonymous', { tail: c.idTail });
 }
@@ -101,25 +103,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
         {list.data && items.length === 0 && <Empty title={empty ?? t(`empty.${status}`)} />}
         <ul className="divide-y divide-border rounded-md border border-border">
           {items.map((c) => (
-            <li key={c.id}>
-              <button
-                type="button"
-                data-testid="conversation-item"
-                aria-current={c.id === openId ? 'true' : undefined}
-                className={cn('flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted', c.id === openId && 'bg-muted')}
-                onClick={() => setSelected(c.id)}
-              >
-                <span className="flex items-center justify-between gap-2">
-                  <span className={cn('truncate', c.unread ? 'font-semibold text-foreground' : 'text-foreground')}>{contactName(c.contact)}</span>
-                  <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                    {c.unread && <span className="size-2 rounded-full bg-primary" role="img" aria-label={t('unread')} />}
-                    {c.lastMessageAt ? f.dateTime(c.lastMessageAt) : ''}
-                  </span>
-                </span>
-                <span className="truncate text-muted-foreground">{c.preview || t('noText')}</span>
-                <span className="truncate text-xs text-muted-foreground">{c.channel.displayName}</span>
-              </button>
-            </li>
+            <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => setSelected(c.id)} />
           ))}
         </ul>
         {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
@@ -131,7 +115,59 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
   );
 }
 
-function ConversationThread({ conversationId, onGone }: { conversationId: string; onGone: () => void }) {
+// One row of a list of threads: who, the last words, the channel, an unread dot, and the members who are typing a reply to it now (CV3).
+export function ConversationListItem({ conversation: c, open, onOpen }: { conversation: ConversationSummary; open: boolean; onOpen: () => void }) {
+  const t = useTranslations('conversations');
+  const f = useFormat();
+  const contactName = useContactName();
+  const { members } = useMe();
+  return (
+    <li>
+      <button
+        type="button"
+        data-testid="conversation-item"
+        aria-current={open ? 'true' : undefined}
+        className={cn('flex w-full flex-col gap-0.5 px-3 py-2 text-left text-sm hover:bg-muted', open && 'bg-muted')}
+        onClick={onOpen}
+      >
+        <span className="flex items-center justify-between gap-2">
+          <span className={cn('truncate', c.unread ? 'font-semibold text-foreground' : 'text-foreground')}>{contactName(c.contact)}</span>
+          <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+            {c.unread && <span className="size-2 rounded-full bg-primary" role="img" aria-label={t('unread')} />}
+            {c.lastMessageAt ? f.dateTime(c.lastMessageAt) : ''}
+          </span>
+        </span>
+        <span className="truncate text-muted-foreground">{c.preview || t('noText')}</span>
+        <span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="truncate">
+            {c.channel.displayName}
+            {c.kind === 'direct' ? ` · ${t('kind.direct')}` : ''}
+          </span>
+          {c.composing.length > 0 && (
+            <span className="shrink-0 text-primary" data-testid="conversation-composing-short">
+              {t('composingShort', { names: composingNames(c.composing, members, t('someone')) })}
+            </span>
+          )}
+        </span>
+      </button>
+    </li>
+  );
+}
+
+const composingNames = (userIds: readonly string[], members: readonly Member[], fallback: string): string =>
+  userIds.map((id) => members.find((m) => m.userId === id)?.displayName ?? members.find((m) => m.userId === id)?.email ?? fallback).join(', ');
+
+// "Linh is replying", above the reply box.
+function ComposingNote({ userIds, members }: { userIds: readonly string[]; members: readonly Member[] }) {
+  const t = useTranslations('conversations');
+  return (
+    <p role="status" className="text-sm text-muted-foreground" data-testid="conversation-composing">
+      {t('composing', { names: composingNames(userIds, members, t('someone')) })}
+    </p>
+  );
+}
+
+export function ConversationThread({ conversationId, onGone }: { conversationId: string; onGone: () => void }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
@@ -197,6 +233,7 @@ function ConversationThread({ conversationId, onGone }: { conversationId: string
           <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} />
         ))}
       </ol>
+      {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
       {canWrite && <ReplyBox detail={data} seen={seen ?? c.lastSeq} onMoved={(seq) => setSeen(seq)} />}
       <Notes detail={data} members={members} canWrite={canWrite} />
     </div>
@@ -448,6 +485,9 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   const t = useTranslations('conversations');
   const [text, setText] = useState('');
   const [movedNote, setMovedNote] = useState(false);
+  // "Linh is replying": typing marks the thread for the others (the server keeps a mark for 60 seconds and takes one in 20; asking every 15 here is
+  // enough). A failed mark is not worth a message.
+  const lastMarked = useRef(0);
   // The draft or the saved reply the text in the box began from: the reply names it, so the draft is marked used (its length and the size of the
   // edit are kept, never the text) and the saved reply is counted. Typing everything away forgets it.
   const [from, setFrom] = useState<{ draftId?: string; savedReplyId?: string }>({});
@@ -503,6 +543,10 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
         onChange={(e) => {
           setText(e.target.value);
           if (e.target.value === '') setFrom({});
+          else if (Date.now() - lastMarked.current > COMPOSING_EVERY_MS) {
+            lastMarked.current = Date.now();
+            void client.conversations.composing({ conversationId: id }).catch(() => undefined);
+          }
         }}
         data-testid="conversation-reply-text"
       />
