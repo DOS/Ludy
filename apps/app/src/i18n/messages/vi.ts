@@ -165,6 +165,13 @@ export const vi = {
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
     items: {
+      crm: {
+        noActivity: 'Nhắc: deal này đã {days, plural, other {# ngày}} chưa có cập nhật',
+        pastClose: 'Nhắc: deal này đã quá ngày dự kiến chốt {days, plural, other {# ngày}}',
+        nextStepsMore: '{count, plural, other {# deal khác}} cần được theo dõi',
+        dealClosesToday: 'Deal này dự kiến chốt hôm nay',
+        booking: 'Lịch hẹn lúc {time}',
+      },
       social: {
         review: '{count, plural, other {# bài}} đang chờ bạn duyệt',
         channels: '{count, plural, other {# kênh}} cần kết nối lại',

@@ -167,6 +167,13 @@ export const en = {
     // The titles of the items each line's read returns, by the key the line gives (`finance.proposalsByVendor`): a
     // line adds its keys here, in both languages, with the read.
     items: {
+      crm: {
+        noActivity: 'Reminder: this deal has had no update for {days, plural, one {# day} other {# days}}',
+        pastClose: 'Reminder: this deal is {days, plural, one {# day} other {# days}} past its expected close',
+        nextStepsMore: '{count, plural, one {# more deal needs} other {# more deals need}} a follow-up',
+        dealClosesToday: 'This deal is due to close today',
+        booking: 'Appointment at {time}',
+      },
       social: {
         review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
         channels: '{count, plural, one {# channel needs} other {# channels need}} reconnecting',
