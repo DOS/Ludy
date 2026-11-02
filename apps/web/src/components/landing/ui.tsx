@@ -66,7 +66,7 @@ export function Section({ id, labelledBy, children, tinted = false }: { id?: str
   );
 }
 
-// The brand mark: four keycaps that spell L, U, D and Y, the Y key in teal (Vy, the AI assistant), in the brand colors.
+// The brand mark: four keycaps that spell L, U, D and Y, the Y key in teal (Vy, the AI general manager), in the brand colors.
 // The same paths as public/brand/ludy-mark.svg; public/favicon.svg draws the keys alone.
 export function LudyMark({ className = 'size-6' }: { className?: string }) {
   return (

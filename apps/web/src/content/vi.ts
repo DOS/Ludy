@@ -1,3 +1,4 @@
+import { N, team } from './roster';
 // Vietnamese copy of the landing page (the default language). en.ts mirrors this shape; the Dictionary type keeps
 // them in step. Company names, amounts and document numbers are example data and stay the same in both languages.
 export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
@@ -5,9 +6,9 @@ export type Tone = 'ok' | 'warn' | 'accent' | 'neutral';
 export const vi = {
   lang: 'vi',
   meta: {
-    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, nơi AI agent là đồng nghiệp của bạn',
+    title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI',
     description:
-      'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.',
+      `${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
   },
   nav: {
     label: 'Điều hướng chính',
@@ -26,8 +27,8 @@ export const vi = {
     closeMenu: 'Đóng menu',
   },
   hero: {
-    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, nơi AI\u00a0agent là đồng\u00a0nghiệp của bạn',
-    lead: 'Vy và các AI agent soạn sẵn bút toán và gợi ý giờ hẹn; bạn duyệt những gì quan trọng.',
+    title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, mỗi phòng\u00a0ban một đội\u00a0AI.',
+    lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.crm} lo bán\u00a0hàng, ${N.engage} lo marketing và khách\u00a0hàng. Bạn chỉ duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',
@@ -45,7 +46,7 @@ export const vi = {
     inbox: 'AI Inbox',
     groups: [
       { label: 'Tài chính', items: ['Chứng từ', 'Sổ nhật ký', 'Sổ cái', 'Nhà cung cấp', 'VAT'] },
-      { label: 'Vận hành', items: ['Công việc', 'Agents', 'Social'] },
+      { label: 'Vận hành', items: ['Công việc', 'Agents', 'Engage'] },
     ],
     user: { name: 'Chị Lan', role: 'Kế toán trưởng' },
     metaWait: '4 cần xem',
@@ -180,7 +181,7 @@ export const vi = {
       {
         name: 'Đề xuất',
         body: 'Bút toán theo TT133 được đưa vào AI Inbox, kèm lý do chọn tài khoản. Ludy nhớ tài khoản đã dùng cho từng nhà cung cấp.',
-        actor: 'Agent Kế toán',
+        actor: `${N.finance}`,
         time: '14/10/2026 15:59',
         confirm: 'Đề xuất, chưa ghi sổ',
         final: false,
@@ -199,7 +200,7 @@ export const vi = {
     chartTitle: 'Sơ đồ tổ chức',
     chartSub: 'Gạo Sạch Mekong, dữ liệu mẫu',
     legendPerson: 'Người',
-    legendAgent: 'Agent',
+    legendAgent: 'Đồng nghiệp AI',
     hint: 'Chọn một vị trí để xem việc đang chờ.',
     budget: 'Ngân sách tháng 10',
     risk: 'Giới hạn rủi ro',
@@ -209,9 +210,9 @@ export const vi = {
       { id: 'tuan', kind: 'person', name: 'Anh Tuấn', role: 'Giám đốc', initials: 'AT', chip: null, budget: null },
       { id: 'lan', kind: 'person', name: 'Chị Lan', role: 'Kế toán trưởng', initials: 'L', chip: { tone: 'ok', label: 'Đã duyệt HĐ 1284' }, budget: null },
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
-      { id: 'acc', kind: 'agent', name: 'Agent Kế toán', role: 'Báo cáo cho Chị Lan', initials: '', chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
+      { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: 'Agent Social', role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.engage}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
@@ -226,23 +227,23 @@ export const vi = {
       lan: {
         kicker: 'Người',
         title: 'Chị Lan',
-        sub: 'Kế toán trưởng. Duyệt bút toán của Agent Kế toán.',
+        sub: `Kế toán trưởng. Duyệt bút toán của ${N.finance}.`,
         items: [
           { title: 'HĐ 00001284', amount: '32.832.000 ₫', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: 'Đã duyệt bằng mã hai lớp', note: '16:05 14/10/2026' },
-          { title: 'Phiếu mua gạo', amount: '148.500.000 ₫', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'Thiếu mã CQT', note: 'Agent chuyển lên, chờ chị xem' },
+          { title: 'Phiếu mua gạo', amount: '148.500.000 ₫', sub: 'Hợp tác xã Tân Hồng', tone: 'warn', chip: 'Thiếu mã CQT', note: `${N.finance} chuyển lên, chờ chị xem` },
         ],
       },
       minh: {
         kicker: 'Người',
         title: 'Anh Minh',
-        sub: 'Marketing. Duyệt bài của Agent Social trước khi đăng.',
+        sub: `Marketing. Duyệt bài của ${N.engage} trước khi đăng.`,
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ anh duyệt', note: '' },
         ],
       },
       acc: {
-        kicker: 'Agent',
-        title: 'Agent Kế toán',
+        kicker: 'Đồng nghiệp AI',
+        title: `${N.finance}`,
         sub: 'Báo cáo cho Chị Lan (Kế toán trưởng). Được đề xuất, không được ghi sổ.',
         items: [
           { title: 'HĐ 00001284', amount: '32.832.000 ₫', sub: 'Công ty CP Bao Bì Phú Thịnh', tone: 'ok', chip: '5/5 kiểm tra đạt', note: 'Nợ 152, 1331 / Có 331' },
@@ -255,14 +256,14 @@ export const vi = {
         title: 'Công việc',
         sub: 'Việc cho người và cho agent, có hạn và người chịu trách nhiệm.',
         items: [
-          { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', amount: '', sub: 'Giao cho Agent Kế toán, hạn 20/10/2026', tone: 'accent', chip: 'Agent đang làm', note: '' },
+          { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', amount: '', sub: `Giao cho ${N.finance}, hạn 20/10/2026`, tone: 'accent', chip: `${N.finance} đang làm`, note: '' },
           { title: 'Bổ sung mã CQT phiếu HTX Tân Hồng', amount: '', sub: 'Giao cho Chị Lan, hạn 21/10/2026', tone: 'neutral', chip: 'Đang mở', note: '' },
           { title: 'Chụp ảnh gạo ST25 cho bài đăng', amount: '', sub: 'Giao cho Anh Minh, hạn 18/10/2026', tone: 'neutral', chip: 'Đang mở', note: '' },
         ],
       },
       social: {
-        kicker: 'Agent',
-        title: 'Agent Social',
+        kicker: 'Đồng nghiệp AI',
+        title: `${N.engage}`,
         sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, đăng khi có người duyệt.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ Anh Minh duyệt', note: '' },
@@ -270,8 +271,13 @@ export const vi = {
       },
     },
     edgeLabel: 'Agent đề xuất, người duyệt',
+    team: {
+      title: 'Đội đồng nghiệp AI của Ludy',
+      lead: `Mỗi phòng ban có một đồng nghiệp AI, giữ một vị trí trong sơ đồ tổ chức, có người quản lý, ngân sách tháng và nút dừng. ${N.gm} là tổng quản, điều phối xuyên suốt các ứng dụng.`,
+      members: team('vi'),
+    },
     matrix: {
-      title: 'Agent làm được gì, không được làm gì',
+      title: 'Đồng nghiệp AI làm được gì, không được làm gì',
       lead: 'Mỗi việc có một mức rủi ro. Agent chỉ được tự làm trong giới hạn của mình; việc vượt giới hạn được chuyển cho người quản lý trực tiếp.',
       selfLabel: 'Agent tự làm (giới hạn R1)',
       humanLabel: 'Chuyển cho người',
@@ -286,7 +292,7 @@ export const vi = {
         { task: 'Đọc hoá đơn, sổ sách, hệ thống tài khoản', level: 0, label: 'Tự làm' },
         { task: 'Đề xuất bút toán khi 5/5 kiểm tra đạt', level: 1, label: 'Tự đề xuất' },
         { task: 'Đề xuất bút toán có cảnh báo, ví dụ thiếu mã CQT', level: 2, label: 'Chị Lan duyệt' },
-        { task: 'Lên lịch bài đăng Social', level: 2, label: 'Anh Minh duyệt' },
+        { task: 'Lên lịch bài đăng', level: 2, label: 'Anh Minh duyệt' },
         { task: 'Ghi sổ bút toán', level: 3, label: 'Duyệt và mã hai lớp' },
       ],
       note: 'Ví dụ cấu hình. Giới hạn đặt theo từng agent, người đặt là Anh Tuấn.',
@@ -325,7 +331,7 @@ export const vi = {
   },
   modules: {
     title: 'Mỗi phòng một phân hệ, chung một sơ đồ',
-    lead: 'Người và agent của từng phòng làm việc trên cùng dữ liệu, cùng quy trình duyệt và cùng nhật ký thay đổi. Bật phân hệ nào thì dùng phân hệ đó.',
+    lead: 'Người và đồng nghiệp AI của từng phòng làm việc trên cùng dữ liệu, cùng quy trình duyệt và cùng nhật ký thay đổi. Bật phân hệ nào thì dùng phân hệ đó.',
     deptLabel: 'Phòng của',
     pageLink: 'Xem trang giới thiệu',
     finance: {
@@ -341,7 +347,7 @@ export const vi = {
       soon: 'Lấy danh sách hoá đơn từ cổng thuế và đối chiếu hoá đơn bán ra với cổng thuế',
       people: [
         { name: 'Chị Lan', initials: 'L', agent: false },
-        { name: 'Agent Kế toán', initials: '', agent: true },
+        { name: `${N.finance}`, initials: '', agent: true },
       ],
       inboxTitle: 'AI Inbox',
       inboxSub: '1 đã ghi sổ, 3 đang chờ duyệt',
@@ -390,8 +396,8 @@ export const vi = {
       budgetLabel: 'Ngân sách tháng 10',
       running: 'Đang chạy',
       roster: [
-        { name: 'Agent Kế toán', risk: 'R1', manager: 'Quản lý: Chị Lan', spent: '1.240.000 / 2.000.000 ₫', pct: 62 },
-        { name: 'Agent Social', risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
+        { name: `${N.finance}`, risk: 'R1', manager: 'Quản lý: Chị Lan', spent: '1.240.000 / 2.000.000 ₫', pct: 62 },
+        { name: `${N.engage}`, risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
       ],
     },
     tasks: {
@@ -399,10 +405,10 @@ export const vi = {
       body: 'Một danh sách việc cho cả người và agent, có hạn và người nhận.',
       doneLabel: 'Đã xong',
       items: [
-        { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', who: 'Agent Kế toán', initials: '', agent: true, due: '20/10/2026', done: false },
+        { title: 'Đối chiếu công nợ Bao Bì Phú Thịnh', who: `${N.finance}`, initials: '', agent: true, due: '20/10/2026', done: false },
         { title: 'Bổ sung mã CQT phiếu HTX Tân Hồng', who: 'Chị Lan', initials: 'L', agent: false, due: '21/10/2026', done: false },
         { title: 'Chụp ảnh gạo ST25 cho bài đăng', who: 'Anh Minh', initials: 'M', agent: false, due: '18/10/2026', done: false },
-        { title: 'Xuất sổ nhật ký chung tháng 9', who: 'Agent Kế toán', initials: '', agent: true, due: '15/10/2026', done: true },
+        { title: 'Xuất sổ nhật ký chung tháng 9', who: `${N.finance}`, initials: '', agent: true, due: '15/10/2026', done: true },
       ],
     },
     notes: {
@@ -445,11 +451,11 @@ export const vi = {
       ],
     },
     social: {
-      name: 'Social',
+      name: 'Ludy Engage',
       body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
-        { name: 'Agent Social', initials: '', agent: true },
+        { name: `${N.engage}`, initials: '', agent: true },
       ],
       weekLabel: 'Lịch đăng tuần 16/10 đến 22/10/2026',
       todayLabel: 'Hôm nay',
@@ -496,11 +502,11 @@ export const vi = {
       noSlots: 'Kín lịch',
       pickedLabel: 'Đã chọn',
       booked: { title: 'Lịch hẹn mới', who: 'Cty TNHH Gạo Sạch Miền Tây', when: '14:00, T3 20/10/2026', state: 'Đã xác nhận' },
-      suggest: 'Khách nhắn "chiều thứ Ba được không?": Vy gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.',
+      suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.crm} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
     },
   },
   trust: {
-    title: 'Vy đề xuất, người duyệt, mọi thay đổi đều được ghi lại',
+    title: 'Đồng nghiệp AI đề xuất, người duyệt, mọi thay đổi đều được ghi lại',
     lead: 'Ludy không để AI tự quyết. Mọi con số đều được kiểm tra bằng quy tắc, mọi bút toán đều cần người duyệt.',
     points: [
       { title: 'Kiểm tra bằng quy tắc, không dựa vào AI', body: 'Tổng tiền, thuế suất, mã số thuế, mã cơ quan thuế và hoá đơn trùng đều được kiểm tra bằng quy tắc cố định.' },
@@ -513,7 +519,7 @@ export const vi = {
     log: [
       ['14/10/2026 15:58', 'Ludy', 'Nhận HĐ 00001284 qua hộp thư hoá đơn'],
       ['14/10/2026 15:58', 'Bộ kiểm tra', '5/5 đạt: tổng tiền, thuế suất, MST, mã CQT, trùng lặp'],
-      ['14/10/2026 15:59', 'Agent Kế toán', 'Đề xuất bút toán Nợ 152, 1331 / Có 331'],
+      ['14/10/2026 15:59', `${N.finance}`, 'Đề xuất bút toán Nợ 152, 1331 / Có 331'],
       ['14/10/2026 16:05', 'Chị Lan', 'Duyệt bằng mã hai lớp, ghi sổ'],
     ],
     selfHostTitle: 'Cài trên máy chủ của bạn',
@@ -556,8 +562,8 @@ export const vi = {
         a: 'Được. Ludy soạn bút toán và giải thích vì sao chọn tài khoản. Bạn chỉ cần xem số tiền, nhà cung cấp và bấm duyệt; chỗ nào thiếu thông tin Ludy sẽ chỉ ra.',
       },
       {
-        q: 'Vy có tự ghi sổ không?',
-        a: 'Không. Vy, trợ lý AI, chỉ đề xuất. Quy tắc kiểm tra quyết định số liệu đúng hay sai, và bút toán chỉ được ghi sổ khi người có quyền duyệt bằng mã xác thực hai lớp.',
+        q: 'Đồng nghiệp AI có tự ghi sổ không?',
+        a: `Không. Các đồng nghiệp AI của Ludy, như ${N.finance} trong kế toán, chỉ đề xuất. Quy tắc kiểm tra quyết định số liệu đúng hay sai, và bút toán chỉ được ghi sổ khi người có quyền duyệt bằng mã xác thực hai lớp.`,
       },
       {
         q: 'Ludy đọc được những loại hoá đơn nào?',
