@@ -6455,6 +6455,8 @@ export const en = {
     anomaly_amount: {
       high: 'Warning: the amount {total} is {ratio} times this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged from 3 times).',
       low: 'Warning: the amount {total} is only {percent}% of this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged below a third).',
+      highPayment: 'Warning: the payment of {total} is {ratio} times what this party is usually paid ({usual}, the median of its last {count} payments; flagged from 3 times).',
+      lowPayment: 'Warning: the payment of {total} is only {percent}% of what this party is usually paid ({usual}, the median of its last {count} payments; flagged below a third).',
     },
     anomaly_price: { jump: 'Warning: the unit price of "{item}" rose {percent}% above its usual ({usual}, the median of up to 3 earlier invoices), now {current}; flagged from 25%.' },
     accounts: {

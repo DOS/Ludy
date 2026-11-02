@@ -6454,6 +6454,8 @@ export const vi = {
     anomaly_amount: {
       high: 'Cảnh báo: số tiền {total} cao gấp {ratio} lần mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo từ 3 lần).',
       low: 'Cảnh báo: số tiền {total} chỉ bằng {percent}% mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo khi dưới một phần ba).',
+      highPayment: 'Cảnh báo: số tiền chi {total} cao gấp {ratio} lần mức thường chi cho đối tượng này ({usual}, trung vị của {count} lần chi gần nhất; cảnh báo từ 3 lần).',
+      lowPayment: 'Cảnh báo: số tiền chi {total} chỉ bằng {percent}% mức thường chi cho đối tượng này ({usual}, trung vị của {count} lần chi gần nhất; cảnh báo khi dưới một phần ba).',
     },
     anomaly_price: { jump: 'Cảnh báo: đơn giá "{item}" tăng {percent}% so với mức thường ({usual}, trung vị tối đa 3 hóa đơn trước), lên {current}; cảnh báo từ 25%.' },
     accounts: {

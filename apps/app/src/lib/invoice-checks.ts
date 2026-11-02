@@ -49,9 +49,13 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
     case 'anomaly_bank.changed':
       return has('previous', 'current') ? t('invoiceChecks.anomaly_bank.changed', { previous: p.previous ?? '', current: p.current ?? '' }) : check.message;
     case 'anomaly_amount.unusual':
-      return has('total', 'usual', 'count')
-        ? t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '', ratio: p.ratio ?? '', percent: p.percent ?? '' })
-        : check.message;
+      if (!has('total', 'usual', 'count')) return check.message;
+      {
+        const values = { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '', ratio: p.ratio ?? '', percent: p.percent ?? '' };
+        // The same rule on a payment voucher (#2419) says payments, not invoices.
+        if (p.subject === 'payment') return t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.lowPayment' : 'invoiceChecks.anomaly_amount.highPayment', values);
+        return t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', values);
+      }
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')
         ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })
