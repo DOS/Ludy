@@ -325,6 +325,7 @@ export const cashVouchers = defineQuery({
       .select([
         'v.voucher_type',
         'v.number',
+        'v.number_period',
         'v.voucher_date',
         'v.cash_account',
         'v.person_name',
@@ -372,6 +373,7 @@ export const cashVouchers = defineQuery({
     return vouchers.map((v) => ({
       type: input.type,
       code: voucherCode(v.voucher_type, v.number),
+      numberPeriod: v.number_period,
       date: v.voucher_date,
       cashAccount: v.cash_account,
       party: v.party_name !== null ? { name: v.party_name, taxCode: v.party_tax_code, address: v.party_address } : null,
