@@ -39,7 +39,7 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 // From the org's first screen: connects one sandbox channel per name, and stays on the channels screen.
 async function connectSandbox(page: Page, ...names: string[]): Promise<void> {
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   for (const name of names) {
     await page.getByLabel('Tên kênh thử').fill(name);

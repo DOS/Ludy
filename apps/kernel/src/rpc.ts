@@ -852,8 +852,8 @@ export function createRpcHandler(
                 ? await runtime.query<{ fileId: string; storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }[]>('social.media.draft_images', { fileIds }, { actor, orgId })
                 : [];
             for (const photo of photos) {
-              if (!ALT_TEXT_IMAGE_TYPES.includes(photo.contentType)) throw new DomainError('AI_DRAFT_IMAGE_ONLY', 422, `${COWORKERS.marketing} chỉ soạn bài từ ảnh JPG, PNG hoặc WEBP, không từ video hay tệp PDF`, { fileId: photo.fileId });
-              if (photo.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('AI_DRAFT_IMAGE_TOO_LARGE', 413, `Có ảnh lớn hơn 10 MB nên ${COWORKERS.marketing} không đọc được`, { fileId: photo.fileId });
+              if (!ALT_TEXT_IMAGE_TYPES.includes(photo.contentType)) throw new DomainError('AI_DRAFT_IMAGE_ONLY', 422, `${COWORKERS.engage} chỉ soạn bài từ ảnh JPG, PNG hoặc WEBP, không từ video hay tệp PDF`, { fileId: photo.fileId });
+              if (photo.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('AI_DRAFT_IMAGE_TOO_LARGE', 413, `Có ảnh lớn hơn 10 MB nên ${COWORKERS.engage} không đọc được`, { fileId: photo.fileId });
             }
             // The source page (#769) as its link preview read it (fetched by the worker through the egress guard, parsed in
             // the extract container): asked for if new, and waited for a few seconds. Before the budget: waiting for a page
@@ -894,13 +894,13 @@ export function createRpcHandler(
               refuseBudget(error);
               console.error('[social-ai] draft failed', error instanceof Error ? error.name : typeof error);
               // A photo that could not be read as recorded, or a failed vision call, has its own words (#1126).
-              if (photos.length > 0) throw new DomainError('AI_DRAFT_VISION_FAILED', 503, `${COWORKERS.marketing} chưa đọc được ảnh để soạn bài lúc này, hãy thử lại sau`);
-              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
+              if (photos.length > 0) throw new DomainError('AI_DRAFT_VISION_FAILED', 503, `${COWORKERS.engage} chưa đọc được ảnh để soạn bài lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.engage} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!draft && photos.length > 0) throw new DomainError('AI_DRAFT_PHOTOS_EMPTY', 422, `${COWORKERS.marketing} không soạn được bài từ những ảnh này, hãy thêm vài dòng mô tả`);
-            if (!draft) throw new DomainError('AI_DRAFT_EMPTY', 422, `${COWORKERS.marketing} không soạn được bài từ mô tả này, hãy viết rõ hơn`);
+            if (!draft && photos.length > 0) throw new DomainError('AI_DRAFT_PHOTOS_EMPTY', 422, `${COWORKERS.engage} không soạn được bài từ những ảnh này, hãy thêm vài dòng mô tả`);
+            if (!draft) throw new DomainError('AI_DRAFT_EMPTY', 422, `${COWORKERS.engage} không soạn được bài từ mô tả này, hãy viết rõ hơn`);
             const own = new Map(draft.variants.map((v) => [v.key, v]));
             const created = await runtime.execute<{ postId: string }>(
               'social.post.create',
@@ -952,16 +952,16 @@ export function createRpcHandler(
               refuseBudget(error);
               // The check after a proofread (#1167) found a changed link, hashtag, mention, number or price, or emoji.
               if (error instanceof ProofreadChangedError) {
-                throw new DomainError('AI_PROOFREAD_CHANGED', 422, `${COWORKERS.marketing} đã sửa cả liên kết, hashtag, tài khoản được nhắc (@), con số, giá hoặc emoji nên bản sửa bị bỏ; nội dung của bạn vẫn giữ nguyên`, { changed: [...error.kinds] });
+                throw new DomainError('AI_PROOFREAD_CHANGED', 422, `${COWORKERS.engage} đã sửa cả liên kết, hashtag, tài khoản được nhắc (@), con số, giá hoặc emoji nên bản sửa bị bỏ; nội dung của bạn vẫn giữ nguyên`, { changed: [...error.kinds] });
               }
               console.error('[social-ai] rewrite failed', error instanceof Error ? error.name : typeof error);
-              if (proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.marketing} chưa soát được chính tả lúc này, hãy thử lại sau`);
-              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
+              if (proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.engage} chưa soát được chính tả lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.engage} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!result && proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.marketing} chưa soát được chính tả lúc này, hãy thử lại sau`);
-            if (!result) throw new DomainError('AI_REWRITE_EMPTY', 422, `${COWORKERS.marketing} không viết lại được đoạn này, hãy thử cách khác`);
+            if (!result && proofread) throw new DomainError('AI_PROOFREAD_FAILED', 503, `${COWORKERS.engage} chưa soát được chính tả lúc này, hãy thử lại sau`);
+            if (!result) throw new DomainError('AI_REWRITE_EMPTY', 422, `${COWORKERS.engage} không viết lại được đoạn này, hãy thử cách khác`);
             return result;
           }),
         ),
@@ -976,7 +976,7 @@ export function createRpcHandler(
             if (!socialWriter.describeStored) throw new DomainError('AI_VISION_OFF', 422, 'Mô hình AI của máy chủ chưa đọc được ảnh (AI_VISION)');
             const file = await runtime.query<{ storageKey: string; generation: string | null; sha256: string; contentType: string; sizeBytes: number }>('social.media.stored', { fileId: input.fileId }, { actor, orgId });
             if (!ALT_TEXT_IMAGE_TYPES.includes(file.contentType)) throw new DomainError('ALT_TEXT_IMAGE_ONLY', 422, 'Chỉ gợi ý mô tả cho ảnh');
-            if (file.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('ALT_TEXT_IMAGE_TOO_LARGE', 413, `Ảnh lớn hơn 10 MB nên ${COWORKERS.marketing} không đọc được`);
+            if (file.sizeBytes > ALT_TEXT_IMAGE_MAX_BYTES) throw new DomainError('ALT_TEXT_IMAGE_TOO_LARGE', 413, `Ảnh lớn hơn 10 MB nên ${COWORKERS.engage} không đọc được`);
             // The post's channels, the org's own (a disconnected one of a saved post included): the suggestion keeps
             // within their strictest alt-text limit. A member limited to some channels (#1081) names only theirs (#1175),
             // checked before the budget and the model call.
@@ -1006,11 +1006,11 @@ export function createRpcHandler(
             } catch (error: unknown) {
               refuseBudget(error);
               console.error('[social-ai] describe failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_ALT_TEXT_FAILED', 503, `${COWORKERS.marketing} chưa gợi ý được mô tả ảnh lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_ALT_TEXT_FAILED', 503, `${COWORKERS.engage} chưa gợi ý được mô tả ảnh lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!altText) throw new DomainError('AI_ALT_TEXT_EMPTY', 422, `${COWORKERS.marketing} không mô tả được ảnh này, bạn hãy tự viết mô tả`);
+            if (!altText) throw new DomainError('AI_ALT_TEXT_EMPTY', 422, `${COWORKERS.engage} không mô tả được ảnh này, bạn hãy tự viết mô tả`);
             return { altText };
           }),
         ),
@@ -1041,7 +1041,7 @@ export function createRpcHandler(
             } catch (error: unknown) {
               refuseBudget(error);
               console.error('[social-ai] hashtags failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.marketing} không soạn được bài lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_DRAFT_FAILED', 503, `${COWORKERS.engage} không soạn được bài lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
@@ -1100,14 +1100,14 @@ export function createRpcHandler(
               refuseBudget(error);
               // The check after the call found a number that is not one of the period's figures.
               if (error instanceof SummaryFigureError) {
-                throw new DomainError('AI_SUMMARY_FIGURE_INVENTED', 422, `${COWORKERS.marketing} đã viết một con số không có trong số liệu của kỳ nên bản tóm tắt bị bỏ; hãy thử lại`, { numbers: error.numbers.length });
+                throw new DomainError('AI_SUMMARY_FIGURE_INVENTED', 422, `${COWORKERS.engage} đã viết một con số không có trong số liệu của kỳ nên bản tóm tắt bị bỏ; hãy thử lại`, { numbers: error.numbers.length });
               }
               console.error('[social-ai] summary failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_SUMMARY_FAILED', 503, `${COWORKERS.marketing} chưa viết được tóm tắt lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_SUMMARY_FAILED', 503, `${COWORKERS.engage} chưa viết được tóm tắt lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (!text) throw new DomainError('AI_SUMMARY_EMPTY', 422, `${COWORKERS.marketing} không viết được tóm tắt cho kỳ này, hãy thử lại`);
+            if (!text) throw new DomainError('AI_SUMMARY_EMPTY', 422, `${COWORKERS.engage} không viết được tóm tắt cho kỳ này, hãy thử lại`);
             return { text };
           }),
         ),
@@ -1167,11 +1167,11 @@ export function createRpcHandler(
             } catch (error: unknown) {
               refuseBudget(error);
               console.error('[social-ai] ideas failed', error instanceof Error ? error.name : typeof error);
-              throw new DomainError('AI_IDEAS_FAILED', 503, `${COWORKERS.marketing} chưa gợi ý được ý tưởng lúc này, hãy thử lại sau`);
+              throw new DomainError('AI_IDEAS_FAILED', 503, `${COWORKERS.engage} chưa gợi ý được ý tưởng lúc này, hãy thử lại sau`);
             } finally {
               ticket.release();
             }
-            if (ideas.length === 0) throw new DomainError('AI_IDEAS_EMPTY', 422, `${COWORKERS.marketing} không nghĩ ra ý tưởng nào từ chủ đề này, hãy viết rõ hơn`);
+            if (ideas.length === 0) throw new DomainError('AI_IDEAS_EMPTY', 422, `${COWORKERS.engage} không nghĩ ra ý tưởng nào từ chủ đề này, hãy viết rõ hơn`);
             return { ideas };
           }),
         ),

@@ -1,37 +1,31 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The roster of AI coworkers by role, and the default name of an agent installed from a template (#2410).
+// The roster of AI coworkers by app, and the default name of an agent installed from a template (#2410).
 import { describe, expect, it } from 'vitest';
-import { COWORKER_ROLES, COWORKER_ROLE_BY_MODULE, COWORKER_ROSTER, defaultCoworkerName } from '../src/coworkers.ts';
+import { COWORKER_BY_MODULE, COWORKER_KEYS, COWORKER_ROSTER, defaultCoworkerName } from '../src/coworkers.ts';
 
 describe('the roster', () => {
-  it('has a name for every role, and no name twice', () => {
-    expect(Object.keys(COWORKER_ROSTER).sort()).toEqual([...COWORKER_ROLES].sort());
+  it('has a name for every key, and no name twice', () => {
+    expect(Object.keys(COWORKER_ROSTER).sort()).toEqual([...COWORKER_KEYS].sort());
     const names = Object.values(COWORKER_ROSTER);
     expect(new Set(names).size).toBe(names.length);
     for (const name of names) expect(name).toMatch(/^[A-Z][a-z]+$/);
   });
 
-  it('gives every module a role of the roster, and the general manager none', () => {
-    for (const role of Object.values(COWORKER_ROLE_BY_MODULE)) expect(COWORKER_ROLES).toContain(role);
-    expect(Object.values(COWORKER_ROLE_BY_MODULE)).not.toContain('gm');
+  it('gives every module a coworker of the roster, and neither the general manager nor the hidden system one', () => {
+    for (const key of Object.values(COWORKER_BY_MODULE)) expect(COWORKER_KEYS).toContain(key);
+    expect(Object.values(COWORKER_BY_MODULE)).not.toContain('gm');
+    expect(Object.values(COWORKER_BY_MODULE)).not.toContain('system');
   });
 });
 
 describe('defaultCoworkerName', () => {
-  it('is the name of the role of the module, whatever the names are', () => {
+  it('is the name of the coworker of the module’s app, whatever the names are', () => {
     expect(defaultCoworkerName('finance')).toBe(COWORKER_ROSTER.finance);
-    expect(defaultCoworkerName('social')).toBe(COWORKER_ROSTER.marketing);
-    expect(defaultCoworkerName('ads')).toBe(COWORKER_ROSTER.marketing);
-    expect(defaultCoworkerName('crm')).toBe(COWORKER_ROSTER.sales);
-    expect(defaultCoworkerName('conversations')).toBe(COWORKER_ROSTER.sales);
-    expect(defaultCoworkerName('kernel')).toBe(COWORKER_ROSTER.system);
-    expect(defaultCoworkerName('system')).toBe(COWORKER_ROSTER.system);
+    expect(defaultCoworkerName('crm')).toBe(COWORKER_ROSTER.crm);
+    for (const module of ['social', 'ads', 'conversations']) expect(defaultCoworkerName(module), module).toBe(COWORKER_ROSTER.engage);
   });
 
-  it('has none for a module without one, and never the general manager', () => {
-    expect(defaultCoworkerName('notes')).toBeNull();
-    expect(defaultCoworkerName('unknown')).toBeNull();
-    expect(defaultCoworkerName('constructor')).toBeNull();
-    expect(Object.values(COWORKER_ROLE_BY_MODULE).map((r) => COWORKER_ROSTER[r])).not.toContain(COWORKER_ROSTER.gm);
+  it('has none for a module without one, such as Notes (Vy covers it) or the kernel (Hy is hidden)', () => {
+    for (const module of ['notes', 'kernel', 'system', 'unknown', 'constructor']) expect(defaultCoworkerName(module), module).toBeNull();
   });
 });

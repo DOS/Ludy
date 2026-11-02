@@ -14,7 +14,7 @@ import { ThemeSwitcher } from './theme-switcher.tsx';
 import { Logo } from './ui.tsx';
 
 // Shorter or clearer names inside the menu: the work notifications fit the column next to their count, and Social's
-// items say what they hold, since the app itself is named "Mạng xã hội" in the switcher. None may contain another
+// items say what they hold, since the app itself is named "Engage" in the switcher. None may contain another
 // item's name: a link is found by its name (e2e), and a name inside another matches both.
 const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotifications' | 'socialPosts'>> = {
   alerts: 'alertsShort',

@@ -2,16 +2,15 @@
 // product; the catalogs handed to use-intl have it filled in, so no t() call passes it. The kernel serves the name in
 // /api/config; main.tsx sets it once, before the first render, and "Ludy" stands until then (or when the server
 // sends none). `{brandSlug}` is the same name as a file-name prefix ("ludy", "ten-moi"; #1045). `{gm}`, `{finance}`,
-// `{sales}`, `{marketing}` and `{system}` are the names of the AI coworkers by ROLE (#1683, #2410), whatever the brand: a
-// message names the coworker of its own app (the accounting app's, the sales and customer-care one's, the marketing one's) and
-// the general manager where the work spans apps. The names are in one place, COWORKER_ROSTER (@crove/kernel-contract).
-import { COWORKER_ROLES, COWORKER_ROSTER, brandSlug, type CoworkerRole } from '@crove/kernel-contract';
+// `{crm}`, `{engage}` and `{system}` are the names of the AI coworkers by APP (#1683, #2410), whatever the brand: a message
+// names the coworker of its own app (Ludy Kế toán's, Ludy CRM's, Ludy Engage's) and the general manager where the work spans
+// apps. The names are in one place, COWORKER_ROSTER (@crove/kernel-contract).
+import { COWORKER_KEYS, COWORKER_ROSTER, brandSlug, type CoworkerKey as RosterKey } from '@crove/kernel-contract';
 
 export const DEFAULT_BRAND = 'Ludy';
 // The AI coworkers by role (DESIGN.md 1.1); the names are the roster's.
 export const COWORKERS = COWORKER_ROSTER;
-export type CoworkerKey = CoworkerRole;
-const COWORKER_KEYS = COWORKER_ROLES;
+export type CoworkerKey = RosterKey;
 
 function fillCoworkers(text: string): string {
   let out = text;

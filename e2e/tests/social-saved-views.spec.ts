@@ -18,7 +18,7 @@ async function draft(page: Page, slug: string, body: string): Promise<void> {
 test('filters the drafts by a writer, keeps it in the link, and shares it as a saved view (#1300)', async ({ page, browser }) => {
   await signInNewUser(page, newEmail('social-views-owner'));
   const slug = await createOrg(page, 'Công ty Bộ Lọc');
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Kênh Chung');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

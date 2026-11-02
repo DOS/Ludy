@@ -1,6 +1,6 @@
 // The product name users see comes from one setting, BRAND_NAME (issue #1040): messages and guides say {brand}, and
 // the i18n layer fills it in, so no screen hard-codes a name. With no name configured it is Ludy (#1683), and no screen
-// says Crove, the old name; the AI coworkers are named by role ({gm}, {finance}, {sales}, {marketing}, {system}).
+// says Crove, the old name; the AI coworkers are named by app ({gm}, {finance}, {crm}, {engage}, {system}).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -126,17 +126,17 @@ describe('brand name (#1040)', () => {
   // #1683, #2410: the AI is a team of coworkers, never an assistant. Each app names the coworker of its role through a
   // placeholder, the same in both languages and whatever the brand; the names themselves are the roster's, one place.
   it('names the AI coworkers by role, one per app, in both languages', () => {
-    expect(Object.keys(COWORKERS).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
+    expect(Object.keys(COWORKERS).sort()).toEqual(['crm', 'engage', 'finance', 'gm', 'system']);
     const named = (locale: (typeof LOCALES)[number], role: string) =>
       messages(SOURCE_CATALOGS[locale])
         .filter(([, text]) => text.includes(`{${role}}`))
         .map(([path]) => path);
-    // Where each role is named: the messages of the screens its app owns. The general manager names the work across apps
-    // (the AI budget); the system role is reserved for a future app and has no message yet.
+    // Where each coworker is named: the messages of the screens its app owns. The general manager names the work across apps
+    // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
       finance: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
-      sales: /^(bookings\.|conversations\.|commands\.)/,
-      marketing: /^(social\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
+      crm: /^bookings\./,
+      engage: /^(social\.|conversations\.|commands\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
       gm: /^(aiMeter\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {
@@ -156,8 +156,8 @@ describe('brand name (#1040)', () => {
     // Whoever holds a role, the message says so through the roster: the names are not written in the catalogs.
     expect(catalog('vi').auth.tagline).toBe(`Chứng từ chờ duyệt: chuyển tiếp hóa đơn, đồng nghiệp AI ${COWORKERS.finance} đề xuất hạch toán, bạn duyệt.`);
     expect(catalog('en').auth.tagline).toBe(`Document inbox: forward invoices; ${COWORKERS.finance}, your AI coworker, proposes the entries; you approve.`);
-    expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.sales} `));
-    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.sales}`);
+    expect(catalog('en').bookings.suggest.ai.noWindows).toMatch(new RegExp(`^${COWORKERS.crm} `));
+    expect(catalog('en').conversations.draft.ask).toBe(`Ask ${COWORKERS.engage}`);
     expect(withBrand('{finance} của {brand}')).toBe(`${COWORKERS.finance} của Tên Mới`);
   });
 

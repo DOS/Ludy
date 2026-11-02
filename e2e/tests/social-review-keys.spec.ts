@@ -16,7 +16,7 @@ const postIdOf = (page: Page) => new URL(page.url()).pathname.split('/').pop() ?
 
 // From the org's first screen: connects a sandbox channel and stays on the channels screen.
 async function connectSandbox(page: Page, name: string): Promise<void> {
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill(name);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

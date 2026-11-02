@@ -23,7 +23,7 @@ async function selectByKeyboard(page: Page, body: string, quote: string): Promis
 test('a reviewer suggests an edit, the author accepts it by keyboard, and the post is reviewed again (#1236)', async ({ page, browser }) => {
   await signInNewUser(page, newEmail('social-suggest-owner'));
   const slug = await createOrg(page, 'Công ty Đề Xuất Sửa');
-  await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Trang Đề Xuất');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
