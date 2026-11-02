@@ -354,6 +354,7 @@ Version 4.0 (2026-11-02). Applies to the marketing site (`apps/web`, ludy.vn), t
 
 - **Names and logo.** Ludy is the suite and Vy the AI assistant (2026-10-28, [#1682](https://github.com/DOS/Ludy/issues/1682)); the logo is four violet keys that spell L, U, D and Y, the Y key teal (2026-11-01, [#2200](https://github.com/DOS/Ludy/issues/2200), [#2293](https://github.com/DOS/Ludy/issues/2293)). Section 1.1 and 1.2 say what is current; the Crove ring mark and the three-tile mark with a spark (Ô tia, [#2052](https://github.com/DOS/Ludy/issues/2052)) are gone.
 - **What Ludy is.** Section 1 describes the apps as they are today (Ludy Kế toán, Ludy CRM, Ludy Notes, Social, Vy) and the focus on one-person companies and SMEs first (owner decision, 2026-10-31).
+- **One URL per page in both languages** ([#2360](https://github.com/DOS/Ludy/issues/2360)): the language comes from a cookie or the browser, the toggle keeps the path, old `/en` links redirect (6.5, 6.4, 8).
 - **App pages on ludy.vn.** Section 6.4 is new: the shared app page template, the `APP_PAGES` registry, the routes of each app in both languages, the call-to-action line for apps that are not on Ludy Cloud yet, and the rule that a claim needs a merged PR behind it ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282)). Section 6.1 is the home page as it is now.
 - **Rules added piecemeal are now in their places:** form field borders reach 3:1 ([#2114](https://github.com/DOS/Ludy/issues/2114), 3.1 and 7), every screen has a title, a skip link and a focus move on navigation ([#2115](https://github.com/DOS/Ludy/issues/2115), 7), `<Button loading>` ([#2116](https://github.com/DOS/Ludy/issues/2116), 4.1), reduced motion in the app's base layer ([#1605](https://github.com/DOS/Ludy/issues/1605), 3.6).
 - **Token block.** All colors per theme with their role, font families and weights, the radius scale, layout and motion values are in the front matter, taken from the two CSS files and held to them by `tools/test/design-tokens.test.ts`.
@@ -376,6 +377,7 @@ The owner's picks and the product owner's rulings, kept with their dates. A late
 | 2026-11-01 | The logo is four keys that spell L, U, D and Y. Interim: the owner is still choosing among the round-2 options of the logo canvas. | 1.2 |
 | 2026-11-01 | Frontend PO ruling on the app pages: the call to action for an app not on Ludy Cloud yet says it is in the self-hosted edition and that Ludy Cloud is coming soon, with no plan, tier or price; no unbuilt feature is named (Ludy CRM and Ludy Notes use the exact line of 6.4, Ludy Kế toán says the same in its own words). | 6.4 |
 | 2026-11-02 | Frontend PO ruling ([#2351](https://github.com/DOS/Ludy/issues/2351)): all three app pages use that line, with the app's own name; Ludy Kế toán's page changed to match. | 6.4 |
+| 2026-11-02 | Owner request ([#2360](https://github.com/DOS/Ludy/issues/2360)): switching the language does not add `/en` or any slug to the address; one URL per page, language by cookie and browser. English is no longer indexed as separate URLs. | 6.5, 8 |
 | decision D5 | Social is paused, except the slice the owner reopened on 2026-11-01 (the Facebook Page and Zalo OA channels, [#236](https://github.com/DOS/Ludy/issues/236)). Screens of the paused part are the only exceptions to the rules below that say so (4.1). | 4.1 |
 
 The visual direction in one line: the brand violet is the single, restrained accent, and teal marks done and approved states (`ok` on the marketing site, `success` in `packages/ui`); controls use a 6px radius; the marketing site implements it in `apps/web` (tokens in `apps/web/src/app/globals.css`) and the web app's `packages/ui` tokens use the same values (3.1), with the `proposal` token for AI proposals nobody has approved yet.
@@ -613,7 +615,7 @@ Approve, edit and reject have equal visual access (reject is not hidden in a men
 
 ### 6.1 Home page anatomy
 
-The home page is `/` (Vietnamese) and `/en`. The picks of 2026-10-19 (see the decision records) are in it.
+The home page is `/`, in either language (6.5). The picks of 2026-10-19 (see the decision records) are in it.
 
 1. Header: logo, four links (Product, Open source, Pricing, Docs), "Đăng nhập", one primary CTA ("Tự cài đặt miễn phí"), theme and language toggles; a phone menu.
 2. Hero: one-sentence thesis, one supporting sentence, primary and secondary action, and the product working (the live org chart at full width, a live HTML rendering, not a screenshot with fake browser chrome).
@@ -646,15 +648,15 @@ The home page is `/` (Vietnamese) and `/en`. The picks of 2026-10-19 (see the de
 
 Each app that has users today has a page of its own on ludy.vn (the page of one product, the way 6.1 is the page of the suite): Ludy Kế toán, Ludy CRM and Ludy Notes ([#2280](https://github.com/DOS/Ludy/issues/2280), [#2281](https://github.com/DOS/Ludy/issues/2281), [#2282](https://github.com/DOS/Ludy/issues/2282)). Social and the other areas have none yet.
 
-**Routes and the registry.** A page per language, with its own title, description, canonical, hreflang twin and social preview image named with the app. Vietnamese has no prefix, English lives under `/en`:
+**Routes and the registry.** One public address per page, the same in both languages (6.5), with its own title, description, canonical and social preview image named with the app. The English copy is served at the same address; inside the app it is a route under `/en` that the proxy rewrites to and nobody links to:
 
-| App | Vietnamese | English |
+| App | Public address | English route (internal) |
 | :--- | :--- | :--- |
 | Ludy Kế toán | `/ke-toan` | `/en/accounting` |
 | Ludy CRM | `/crm` | `/en/crm` |
 | Ludy Notes | `/notes` | `/en/notes` |
 
-`APP_PAGES` in `apps/web/src/content/site.ts` is the one registry (`{ vi, en, module }` per app, and `appPagePath(key, lang)`). The sitemap (with the hreflang alternates), the footer links, the module cards of the home page and the language switch of each page all read it. A new app page is one entry there, its copy, its routes and its visuals, and `apps/web/test/app-pages.test.ts` fails when an entry lacks a route, an image, copy in both languages, a sitemap entry with its twin, or a link from the home card.
+`APP_PAGES` in `apps/web/src/content/site.ts` is the one registry (`{ path, enRoute, module }` per app, and `appPagePath(key)`). The sitemap, the footer links and the module cards of the home page all read it. A new app page is one entry there, its copy, its two routes and its visuals, and `apps/web/test/app-pages.test.ts` fails when an entry lacks a route, an image, copy in both languages, a sitemap entry, or a link from the home card.
 
 **The template.** `AppPage` (`apps/web/src/components/apps/app-page.tsx`) renders, in order: a breadcrumb; the hero (the promise in one sentence, a lead, two actions, the note line and the app's product visual); the numbered steps of the job, each with the outcome it leaves behind as a chip; the feature groups (text and bullets on one side, a fragment of the real product on the other, alternating); "coming soon" when there is something to say; what Vy does here and does not do; who it is for; the FAQ; the call to action. It is server-rendered with no client JavaScript of its own. An app supplies its copy as `AppPageCopy` (`apps/web/src/content/app-page.ts`: `<app>-vi.ts`, with `<app>-en.ts` typed from it so a missing English string fails typecheck), its hero and one visual per feature group (`components/apps/<app>-visuals.tsx`) and `<app>-page.tsx`.
 
@@ -663,6 +665,18 @@ Each app that has users today has a page of its own on ludy.vn (the page of one 
 **The claim table.** Every claim on an app page is backed by a merged PR and a code path on `main`, and the PR that adds or changes the page carries a table of them (claim, PR numbers, code path), checked by a reviewer with fresh context against the code. What is not yet accepted is stated plainly on the page, not implied: an export the tax authority's or an accounting package's own software has not yet been seen to take, a table of due dates no accountant has confirmed, statements that are drafts. Planned work appears only under the "coming soon" strip, labelled as such. As everywhere (6.2): no price, customer, logo, statistic or testimonial, and example data is fictional and marked "Dữ liệu mẫu" once per fragment.
 
 **Checked in CI.** `app-pages.test.ts` (registry, routes, sitemap, titles, copy in step, no dash or hype word), `content-language.test.ts` and `a11y.spec.ts` (English pages hold no Vietnamese, axe at 360px and desktop in both themes) and `perf.spec.ts` (the budget of 6.3).
+
+### 6.5 Language and addresses
+
+Both languages share one URL per page (`/`, `/ke-toan`, `/crm`, `/notes`); the address never carries a language ([#2360](https://github.com/DOS/Ludy/issues/2360), owner request 2026-11-02). The pages stay static, one tree per language, and `apps/web/src/proxy.ts` (the file Next.js 16 calls `proxy`, the former middleware) picks the tree for each request with the rules in `apps/web/src/lib/language.ts`:
+
+1. The cookie `ludy-lang` (`vi` or `en`, one year, `SameSite=Lax`, `Secure` on https, set only by the toggle and the old-link redirect) decides.
+2. Without it, the browser's `Accept-Language` decides: the first of `vi` or `en` in its order of preference, English when it names neither, and Vietnamese when there is no header at all, an empty one or `*` (crawlers are served Vietnamese).
+3. English is a rewrite to the page's `/en` route; Vietnamese is the page itself. Responses of the proxy carry `Vary: Cookie, Accept-Language`; the static page responses of Next.js set their own `Vary`, so a cache in front of the site that does not key on the cookie must be told to (on Vercel, where ludy.vn runs, the rewrite happens before the cache, so each language is cached under its own route; a self-hosted site behind a cache must key on both headers).
+
+The language switch in the header is a plain link to the same address with `?lang=en` or `?lang=vi` (`rel="nofollow"`, no client JavaScript). The proxy sets the cookie and redirects (302) to the same address without the parameter. An old `/en...` link redirects (301) to the public address and sets the English choice, so shared links keep working. `<html lang>` and the metadata follow the language served; the canonical is the public address in both. The one `/en` path left is the English page's social preview image route, which the proxy leaves alone so the image of the language served is the one named in its meta tags. The sitemap has one entry per page and no hreflang alternates.
+
+SEO trade-off: with one URL per page, search engines see one language, Vietnamese (a crawler sends no language), and English pages are no longer indexed as addresses of their own. English visitors reach the site from the Vietnamese result or from a link and are then served English by their browser's language or their choice. The site's first market is Vietnam (section 1), so this was accepted; if English search traffic becomes a goal, the way back is a separate English address with hreflang, which is what this change removed.
 
 ## 7. Accessibility (WCAG 2.2 AA)
 
@@ -681,7 +695,7 @@ Each app that has users today has a page of its own on ludy.vn (the page of one 
 
 - Vietnamese is the default locale; English is the second (`apps/app/src/i18n/locale.ts`).
 - App: `use-intl`, messages in `apps/app/src/i18n/messages/vi.ts` and `en.ts`; every visible string, including toasts, errors and aria labels, has a key in both.
-- Marketing site: one route per language (`/` Vietnamese, `/en` English, and the app pages of 6.4 the same way), copy in `apps/web/src/content/vi.ts` and `en.ts` (and `<app>-vi.ts` and `<app>-en.ts` per app page); the `Dictionary` and `AppPageCopy` types keep them in step, so a missing English string fails typecheck. A page never mixes languages (no Vietnamese button in the English page); example company names and documents stay Vietnamese in both.
+- Marketing site: one public address per page for both languages (6.5), a route tree per language inside the app (`(vi)` at the public paths, `(en)` under `/en`), copy in `apps/web/src/content/vi.ts` and `en.ts` (and `<app>-vi.ts` and `<app>-en.ts` per app page); the `Dictionary` and `AppPageCopy` types keep them in step, so a missing English string fails typecheck. A page never mixes languages (no Vietnamese button in the English page); example company names and documents stay Vietnamese in both.
 - Vietnamese text runs about 10 to 30 percent longer than English: layouts must not depend on English string lengths.
 
 ## 9. App engineering notes

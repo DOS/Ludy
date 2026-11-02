@@ -22,7 +22,6 @@ export const vi = {
     toDark: 'Chuyển sang giao diện tối',
     otherLang: 'EN',
     otherLangLabel: 'Xem bằng tiếng Anh',
-    otherLangHref: '/en',
     openMenu: 'Mở menu',
     closeMenu: 'Đóng menu',
   },

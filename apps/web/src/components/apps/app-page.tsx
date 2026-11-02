@@ -16,20 +16,18 @@ import { ButtonLink, Chip, Section, SectionHead } from '../landing/ui';
 export interface AppPageProps {
   dict: Dictionary;
   copy: AppPageCopy;
-  // The same page in the other language, for the language switch.
-  otherLangHref: string;
   hero: ReactNode;
   // One visual per group, by the group's id in the copy.
   visuals: Readonly<Record<string, ReactNode>>;
 }
 
-export function AppPage({ dict, copy, otherLangHref, hero, visuals }: AppPageProps) {
-  const home = dict.lang === 'vi' ? '/' : '/en';
+export function AppPage({ dict, copy, hero, visuals }: AppPageProps) {
+  const home = '/';
   const selfHost = `${home}#tu-host`;
   const { soon, assistant } = copy;
   return (
     <>
-      <SiteHeader dict={dict} otherLangHref={otherLangHref} linkToHome />
+      <SiteHeader dict={dict} linkToHome />
       <main id="main">
         <section aria-labelledby="app-title" className="pt-10 pb-16 sm:pt-14 sm:pb-24">
           <div className="wrap">
