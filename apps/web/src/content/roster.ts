@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The AI coworkers on ludy.vn (DESIGN.md 1.1, issue #2409): one roster, keyed by APP, never by name (the owner's decision,
-// 2026-11-02: one coworker per app, default names an org can rename). The copy files read the names from here (`N.finance`,
-// `N.crm`), so a name is a change of one line in this file and the copy is never edited for it. The app has its own roster by
-// the same keys (packages/kernel-contract/src/coworkers.ts); the two are kept in step by hand.
-export type CoworkerKey = 'gm' | 'finance' | 'crm' | 'engage' | 'system';
+// The AI coworkers on ludy.vn (DESIGN.md 1.1, issues #2409 and #2440): one roster, keyed by what each coworker COVERS, never
+// by name (the owner's decisions, 2026-11-02 and 2026-11-03: Ludy CRM folds into Ludy Engage, default names an org can rename).
+// The copy files read the names from here (`N.finance`, `N.sales`), so a name is a change of one line in this file and the copy
+// is never edited for it. The app has its own roster by the same keys (packages/kernel-contract/src/coworkers.ts); the two are
+// kept in step by hand.
+export type CoworkerKey = 'gm' | 'finance' | 'sales' | 'marketing' | 'system';
 
 interface Coworker {
   name: string;
@@ -27,17 +28,17 @@ export const ROSTER: Readonly<Record<CoworkerKey, Coworker>> = {
     title: { vi: 'Giám đốc tài chính', en: 'CFO' },
     scope: { vi: 'Ludy Kế toán: đọc hoá đơn và soạn sẵn bút toán', en: 'Ludy Accounting: reads invoices and drafts the entries' },
   },
-  // Ludy CRM.
-  crm: {
+  // Ludy Engage's Inbox and its customers and sales.
+  sales: {
     name: 'Dy',
-    title: { vi: 'Trưởng phòng bán hàng', en: 'Head of sales' },
-    scope: { vi: 'Ludy CRM: gợi ý giờ hẹn và soạn thư trả lời', en: 'Ludy CRM: suggests meeting times and drafts the reply' },
+    title: { vi: 'Trưởng phòng bán hàng và chăm sóc khách hàng', en: 'Head of sales and customer care' },
+    scope: { vi: 'Ludy Engage: Hộp thư, khách hàng và bán hàng', en: 'Ludy Engage: the Inbox, customers and sales' },
   },
-  // Ludy Engage: the Social app with the Inbox folded in.
-  engage: {
+  // Ludy Engage's marketing: publishing and ads.
+  marketing: {
     name: 'Uy',
-    title: { vi: 'Giám đốc marketing và chăm sóc khách hàng', en: 'CMO and customer care' },
-    scope: { vi: 'Ludy Engage: soạn và lên lịch bài đăng', en: 'Ludy Engage: drafts and schedules posts' },
+    title: { vi: 'Giám đốc marketing', en: 'CMO' },
+    scope: { vi: 'Ludy Engage: marketing, soạn và lên lịch bài đăng', en: 'Ludy Engage: marketing, drafting and scheduling posts' },
   },
   // Reserved: no scope, so the site does not list it.
   system: { name: 'Hy', title: { vi: 'Giám đốc công nghệ', en: 'CTO' } },
@@ -47,8 +48,8 @@ export const ROSTER: Readonly<Record<CoworkerKey, Coworker>> = {
 export const N: Readonly<Record<CoworkerKey, string>> = {
   gm: ROSTER.gm.name,
   finance: ROSTER.finance.name,
-  crm: ROSTER.crm.name,
-  engage: ROSTER.engage.name,
+  sales: ROSTER.sales.name,
+  marketing: ROSTER.marketing.name,
   system: ROSTER.system.name,
 };
 

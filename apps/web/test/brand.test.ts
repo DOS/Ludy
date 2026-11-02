@@ -79,23 +79,23 @@ describe('brand on the landing page (#1683)', () => {
     // The owner's final hero (2026-11-02, #2409): the names in the lead come from the roster, never from the copy.
     const NB = String.fromCharCode(0xa0);
     expect(vi.hero.title.replaceAll(NB, ' ')).toBe('Hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI.');
-    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe(`${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt.`);
+    expect(vi.hero.lead.replaceAll(NB, ' ')).toBe(`${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.sales} lo hộp thư, khách hàng và bán hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt.`);
     expect(en.hero.title).toBe('The all-in-one Business OS, with an AI team for every department.');
-    expect(en.hero.lead).toBe(`${N.gm} runs the team: ${N.finance} keeps your books, ${N.crm} works your sales, ${N.engage} runs marketing and your customer inbox. You approve.`);
+    expect(en.hero.lead).toBe(`${N.gm} runs the team: ${N.finance} keeps your books, ${N.sales} works your inbox, customers and sales, ${N.marketing} runs marketing. You approve.`);
     expect(vi.meta.title).toBe('Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI');
     expect(en.meta.title).toBe('Ludy: the all-in-one Business OS, with an AI team for every department');
     for (const dict of [vi, en]) expect(dict.meta.description, dict.lang).toContain(dict.hero.lead.replaceAll(NB, ' '));
     for (const dict of [vi, en]) {
       expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
       expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
-      expect(dict.modules.crm.suggest, dict.lang).toContain(N.crm);
+      expect(dict.modules.crm.suggest, dict.lang).toContain(N.sales);
       expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
       expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
   });
 
   it('keeps the roster by role and no name written in the copy', () => {
-    expect(Object.keys(ROSTER).sort()).toEqual(['crm', 'engage', 'finance', 'gm', 'system']);
+    expect(Object.keys(ROSTER).sort()).toEqual(['finance', 'gm', 'marketing', 'sales', 'system']);
     // The copy reads names from content/roster.ts (`${N.finance}`): a name typed into a string is the edit a rename must not need.
     const names = new RegExp(`\\b(${Object.values(ROSTER).map((c) => c.name).join('|')})\\b(?! work)`);
     const written = sourceFiles(join(src, 'content'))
