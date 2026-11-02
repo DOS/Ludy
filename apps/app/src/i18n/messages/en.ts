@@ -8064,7 +8064,7 @@ export const en = {
         record: 'Record the next part of a thread',
         retry: 'Retry the rest of a thread',
       },
-      today: 'Read what needs you in Social today',
+      today: 'Read what needs you in Engage today',
       variant: {
         cancel: 'Cancel a post on a channel',
         decide: 'Approve or reject a post on a channel',

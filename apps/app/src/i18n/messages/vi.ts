@@ -8063,7 +8063,7 @@ export const vi = {
         record: 'Ghi kết quả đăng phần tiếp theo của chuỗi bài',
         retry: 'Đăng lại phần còn thiếu của chuỗi bài',
       },
-      today: 'Xem việc Social cần bạn hôm nay',
+      today: 'Xem việc Engage cần bạn hôm nay',
       variant: {
         cancel: 'Hủy bài trên một kênh',
         decide: 'Duyệt hoặc từ chối bài trên một kênh',
