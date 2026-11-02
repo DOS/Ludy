@@ -367,8 +367,8 @@ suite('the intent of a conversation and the likely contacts of a customer (CV3, 
 
   describe('the org’s switch for AI on its customers’ conversations', () => {
     it('keeps every word of a customer and every name of a contact from the model while it is off, answers off, and still lists the contacts by phone', async () => {
-      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Đặng Thu Hà', '0933 222 111'), ($1, 'person', 'Đặng Thị Hà', NULL), ($1, 'person', 'Hà Đặng Văn', NULL)", [org.orgId]);
-      await ingest([event('direct', 'sw1', 'Cho mình hỏi giá, số mình 0933.222.111', 'Hà Đặng')]);
+      await rows("INSERT INTO crove_kernel.party (org_id, kind, name, phone) VALUES ($1, 'person', 'Đặng Thu Hà', '0398 765 432'), ($1, 'person', 'Đặng Thị Hà', NULL), ($1, 'person', 'Hà Đặng Văn', NULL)", [org.orgId]);
+      await ingest([event('direct', 'sw1', 'Cho mình hỏi giá, số mình 0398.765.432', 'Hà Đặng')]);
       const sw1 = await threadOf('sw1');
       const [intentCalls, rankCalls] = [askedIntents.length, askedRanks.length];
       expect((await rpc('conversations/setAutoDraft', viewer, { autoDraft: false })).status).toBe(403);
