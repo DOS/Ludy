@@ -29,6 +29,9 @@ const requestMissing = () => new DomainError('ADS_DRAFT_REQUEST_NOT_FOUND', 404,
 // The rules that are not the model's: the dates and the daily budget of a draft the AI coworker wrote
 // ---------------------------------------------------------------------------------------------------------------
 
+// The largest budget zAdsBudget accepts: 13 digits before the point, two after.
+const LARGEST_BUDGET = '9999999999999.99';
+
 // The daily budget a draft starts with: below every daily cap in force and below every monthly cap spread over 31 days (a flight never has more days
 // in a month than that, so its spend in any month stays inside the monthly cap), in the account's currency, rounded down to the currency's smallest
 // unit. Null when no cap is in force (the plan then says so: a launch needs a cap) or when the result would be zero. Decimal arithmetic, never a number.
@@ -37,8 +40,8 @@ export function defaultDailyBudget(currency: string | null, dailyCaps: readonly 
   const candidates = [...dailyCaps.map((c) => new Decimal(c)), ...monthlyCaps.map((c) => new Decimal(c).div(31))];
   if (candidates.length === 0) return null;
   const lowest = candidates.reduce((a, b) => (b.lt(a) ? b : a));
-  // At most two decimals whatever the currency's own, as a budget is entered (zAdsBudget).
-  const rounded = lowest.toDecimalPlaces(Math.min(currencyDecimals(currency), 2), Decimal.ROUND_DOWN);
+  // At most two decimals whatever the currency's own, as a budget is entered (zAdsBudget), and never above the largest budget it takes (13 digits).
+  const rounded = Decimal.min(lowest, LARGEST_BUDGET).toDecimalPlaces(Math.min(currencyDecimals(currency), 2), Decimal.ROUND_DOWN);
   return rounded.gt(0) ? rounded.toFixed() : null;
 }
 
@@ -143,13 +146,15 @@ export const adsCampaignDraftRequest = defineCommand({
   },
 });
 
-// The requests of the org the member reads, newest first: a request waiting, one with its draft, one with the reason there is none.
+// The caller's own requests, newest first: one waiting, one with its draft, one with the reason there is none. A request carries the member's brief,
+// so each member reads their own (the builder shows the member's own asks), and an older outcome stays reachable because the 50 are theirs alone.
 export const adsCampaignRequests = defineQuery({
   name: 'ads.campaign.requests',
   input: z.strictObject({ adAccountId: zId.optional() }),
   access: DRAFTERS,
   handler: async (ctx: QueryContext, input): Promise<AdsCampaignRequestView[]> => {
-    let q = requestSelect(ctx.trx).where('r.org_id', '=', ctx.orgId);
+    if (ctx.actor.type !== 'user') return [];
+    let q = requestSelect(ctx.trx).where('r.org_id', '=', ctx.orgId).where('r.requested_by', '=', ctx.actor.userId);
     if (input.adAccountId) q = q.where('r.ad_account_id', '=', input.adAccountId.toLowerCase());
     const list = await q.orderBy('r.requested_at', 'desc').orderBy('r.id').limit(50).execute();
     return list.map(viewOf);
@@ -179,7 +184,11 @@ export const adsCampaignDraftSource = defineQuery({
       .where('id', '=', input.requestId.toLowerCase())
       .executeTakeFirst();
     if (!row || row.state !== 'requested') return null;
-    const account = await accountOf(ctx, row.ad_account_id).catch(() => null);
+    // Only a missing account is nothing to draft; any other failure (a statement timeout, say) is thrown so the job retries instead of ending as gone.
+    const account = await accountOf(ctx, row.ad_account_id).catch((error: unknown) => {
+      if (error instanceof DomainError && error.code === 'ADS_ACCOUNT_NOT_FOUND') return null;
+      throw error;
+    });
     if (!account) return null;
     const base = await contextBase(ctx, account.id);
     // A cap in another currency is never compared with this account's amounts.
@@ -211,14 +220,24 @@ export const adsCampaignDraftRecord = defineCommand({
   handler: async (ctx, input): Promise<{ recorded: boolean }> => {
     requireSystem(ctx);
     const requestId = input.requestId.toLowerCase();
+    // The account row is locked before the request row, the order an account's move to another legal entity takes them in (its cascade then locks the
+    // requests), so the two never wait for each other in a circle.
+    const known = await ctx.trx.selectFrom('crove_ads.ad_campaign_request').select(['ad_account_id', 'state']).where('org_id', '=', ctx.orgId).where('id', '=', requestId).executeTakeFirst();
+    if (!known || known.state !== 'requested') return { recorded: false };
+    const account = await accountOf(ctx, known.ad_account_id, true).catch((error: unknown) => {
+      if (error instanceof DomainError && error.code === 'ADS_ACCOUNT_NOT_FOUND') return null;
+      throw error;
+    });
+    if (!account) return { recorded: false };
     const request = await ctx.trx
       .selectFrom('crove_ads.ad_campaign_request')
-      .select(['ad_account_id', 'requested_by', 'state', 'legal_entity_id'])
+      .select(['ad_account_id', 'requested_by', 'state'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', requestId)
       .forUpdate()
       .executeTakeFirst();
-    if (!request || request.state !== 'requested') return { recorded: false };
+    // Read again under the lock: settled or gone meanwhile, or its account is not the one that was locked.
+    if (!request || request.state !== 'requested' || request.ad_account_id !== account.id) return { recorded: false };
     if (input.outcome === 'none') {
       await ctx.trx.updateTable('crove_ads.ad_campaign_request').set({ state: 'none', code: input.code }).where('org_id', '=', ctx.orgId).where('id', '=', requestId).execute();
       ctx.audit({ requestId, outcome: 'none', code: input.code });
@@ -231,7 +250,7 @@ export const adsCampaignDraftRecord = defineCommand({
       .values({
         org_id: ctx.orgId,
         ad_account_id: request.ad_account_id,
-        legal_entity_id: request.legal_entity_id,
+        legal_entity_id: account.legalEntityId,
         ...columns,
         max_spend: maxSpend,
         origin: 'ai',

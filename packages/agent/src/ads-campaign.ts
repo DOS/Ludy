@@ -69,6 +69,8 @@ export type CampaignGenerator = (args: { system: string; prompt: string }) => Pr
 
 const LANGUAGE = { vi: 'Vietnamese', en: 'English' } as const;
 export const CAMPAIGN_BRIEF_CHARS = 1_000;
+// The narrowest age range a draft may target, in years, both ends included (the instructions ask for it, the check holds it).
+export const MIN_AGE_SPAN = 5;
 const oneLine = (value: string, max: number) => value.replace(/\s+/g, ' ').trim().slice(0, max);
 // The text cannot close its own fence: a run of > or < is broken up.
 const fenced = (value: string) => value.replace(/<{3,}|>{3,}/g, (run) => run.split('').join(' '));
@@ -129,7 +131,8 @@ export class AdsCampaignWriter {
     if (usage) onUsage?.(usage);
     if (!output) return { kind: 'none', code: 'EMPTY' };
     const parsed = zPlan.safeParse(output);
-    if (!parsed.success || parsed.data.targeting.ageMax < parsed.data.targeting.ageMin) return { kind: 'none', code: 'INVALID' };
+    // A reversed range, or one narrower than the five years the instructions ask for (both ends included), is no draft.
+    if (!parsed.success || parsed.data.targeting.ageMax - parsed.data.targeting.ageMin + 1 < MIN_AGE_SPAN) return { kind: 'none', code: 'INVALID' };
     // An empty link is no link.
     const plan = { success: true as const, data: { ...parsed.data, linkUrl: parsed.data.linkUrl?.trim() ? parsed.data.linkUrl.trim() : null } };
     // What the model may state: the member's own words, and nothing else.

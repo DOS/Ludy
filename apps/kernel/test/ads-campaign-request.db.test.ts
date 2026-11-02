@@ -167,8 +167,9 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     expect(audits.length).toBeGreaterThanOrEqual(4);
     expect(audits.find((a) => a.detail.requestId === asked.id)?.detail).toMatchObject({ requestId: asked.id, adAccountId: o.accountId, objective: 'traffic', briefLength: BRIEF.length });
     expect(JSON.stringify([events, audits])).not.toContain('4242');
-    // Members read the requests of the org; a viewer none.
+    // A member reads their own requests (the brief is theirs); another member's are not in the list; a viewer reads none.
     expect((await requestsOf(o)).map((r) => r.id)).toContain(asked.id);
+    expect((await requestsOf(o, o.other)).map((r) => r.id)).not.toContain(asked.id);
     await expect(requestsOf(o, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 

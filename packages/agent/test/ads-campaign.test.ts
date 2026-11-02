@@ -102,6 +102,11 @@ describe('AdsCampaignWriter', () => {
   it('refuses a plan whose targeting contradicts itself or whose shape is wrong', async () => {
     expect((await writerSaying(plan({ targeting: { locations: [{ country: 'VN', region: null }], ageMin: 45, ageMax: 20, gender: 'all', interests: [] } })).writer.draft(request()))).toEqual({ kind: 'none', code: 'INVALID' });
     expect((await writerSaying(plan({ variants: [] })).writer.draft(request()))).toEqual({ kind: 'none', code: 'INVALID' });
+    // A range narrower than five years (both ends included) is no draft; exactly five is.
+    const span = (ageMin: number, ageMax: number) => plan({ targeting: { locations: [{ country: 'VN', region: null }], ageMin, ageMax, gender: 'all', interests: [] } });
+    expect(await writerSaying(span(25, 25)).writer.draft(request())).toEqual({ kind: 'none', code: 'INVALID' });
+    expect(await writerSaying(span(25, 28)).writer.draft(request())).toEqual({ kind: 'none', code: 'INVALID' });
+    expect((await writerSaying(span(25, 29)).writer.draft(request())).kind).toBe('draft');
     expect((await writerSaying(plan({ durationDays: 90 })).writer.draft(request()))).toEqual({ kind: 'none', code: 'INVALID' });
   });
 });

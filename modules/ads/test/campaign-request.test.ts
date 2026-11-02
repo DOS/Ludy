@@ -13,6 +13,9 @@ describe('defaultDailyBudget', () => {
     // A currency with cents keeps two decimals, rounded down.
     expect(defaultDailyBudget('USD', ['10.999'], [])).toBe('10.99');
     expect(defaultDailyBudget('USD', [], ['100'])).toBe('3.22');
+    // Never above the largest budget the contract takes (13 digits), however large the cap.
+    expect(defaultDailyBudget('USD', ['99999999999999'], [])).toBe('9999999999999.99');
+    expect(defaultDailyBudget('VND', ['99999999999999'], [])).toBe('9999999999999');
     // A budget has two decimals at most (as it is entered), whatever the currency's own: three-decimal dinars are cut to two.
     expect(defaultDailyBudget('KWD', ['10.9999'], [])).toBe('10.99');
   });

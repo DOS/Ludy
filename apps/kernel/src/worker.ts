@@ -1164,7 +1164,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   // The AI coworker's campaign drafts (ads W1b, #2295): the model reads a member's brief and a system command records the draft. Only where an AI endpoint is
   // configured; elsewhere a request is settled as none by the relay below.
   const adsWriter = deps.adsCampaignWriter;
-  if (adsWriter) {
+  if (adsWriter && deps.runtime.installed('ads')) {
     await boss.work<AdsCampaignDraftJob>(QUEUES.adsCampaignDraft, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       const outcome = await runAdsCampaignDraft({ runtime: deps.runtime, writer: adsWriter, meter: aiMeter, budget: draftBudget }, job.data);
