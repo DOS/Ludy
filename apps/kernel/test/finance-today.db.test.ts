@@ -158,11 +158,11 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
       expect(items, who).toHaveLength(2);
       const alpha = items.find((i) => i.title.params?.party === 'Công ty Alpha');
       const beta = items.find((i) => i.title.params?.party === 'Công ty Beta');
-      expect(alpha).toMatchObject({ app: 'finance', title: { key: 'financeToday.proposalsVendor', params: { count: 2, party: 'Công ty Alpha' } }, count: 2, href: `/inbox?entity=${defaultEntity}` });
+      expect(alpha).toMatchObject({ app: 'finance', title: { key: 'financeProposalsVendor', params: { count: 2, party: 'Công ty Alpha' } }, count: 2, href: `/inbox?entity=${defaultEntity}` });
       expect(Number(alpha?.amount)).toBe(total * 2);
       expect(alpha?.currency).toBeUndefined();
       // One proposal opens itself.
-      expect(beta).toMatchObject({ title: { key: 'financeToday.proposalsVendor', params: { count: 1, party: 'Công ty Beta' } }, count: 1, href: `/inbox/${b1}?entity=${defaultEntity}` });
+      expect(beta).toMatchObject({ title: { key: 'financeProposalsVendor', params: { count: 1, party: 'Công ty Beta' } }, count: 1, href: `/inbox/${b1}?entity=${defaultEntity}` });
       expect(Number(beta?.amount)).toBe(total);
       // The org has two entities: the link carries the entity it is in.
     }
@@ -347,7 +347,7 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(acme).toHaveLength(1);
     expect(acme[0]).toMatchObject({ count: 2 });
     expect(Number(acme[0]?.amount)).toBe(3000000);
-    const voucher = items.find((i) => i.title.key === 'financeToday.proposalsOther');
+    const voucher = items.find((i) => i.title.key === 'financeProposalsOther');
     expect(voucher).toMatchObject({ count: 1 });
     expect(voucher?.amount).toBeUndefined();
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);

@@ -11,7 +11,7 @@
 // Deadlines come only from what the org has set up: the VAT filing period, and a period lock for the close. Nothing is
 // guessed.
 //
-// Titles are message keys with params (catalogs in apps/app: financeToday.*), never rendered text. A href is a path
+// Titles are message keys with params (catalogs in apps/app: today.items.finance*, resolved by Home against its today.items namespace), never rendered text. A href is a path
 // inside the org (/inbox/<id>, /bank, /vat?period=...); with several legal entities in view it carries `entity=<id>` so
 // the acting screen opens in the right books.
 import { sql } from 'kysely';
@@ -123,7 +123,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
       kind: 'proposal',
       app: 'finance',
       id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${r.party.toLowerCase()}`.slice(0, 200),
-      title: named ? { key: sale ? 'financeToday.proposalsCustomer' : 'financeToday.proposalsVendor', params: { count, party: r.party.slice(0, 500) } } : { key: 'financeToday.proposalsOther', params: { count } },
+      title: named ? { key: sale ? 'financeProposalsCustomer' : 'financeProposalsVendor', params: { count, party: r.party.slice(0, 500) } } : { key: 'financeProposalsOther', params: { count } },
       count,
       ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency } : {}) } : {}),
       // One proposal opens itself; a group opens the Inbox.
@@ -133,7 +133,7 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
   const waiting = Number(rows[0]?.waiting ?? 0);
   const listed = items.reduce((n, i) => n + (i.count ?? 0), 0);
   if (waiting > listed) {
-    items.push({ kind: 'proposal', app: 'finance', id: 'proposals-more', title: { key: 'financeToday.proposalsMore', params: { count: waiting - listed } }, count: waiting - listed, href: '/inbox' });
+    items.push({ kind: 'proposal', app: 'finance', id: 'proposals-more', title: { key: 'financeProposalsMore', params: { count: waiting - listed } }, count: waiting - listed, href: '/inbox' });
   }
   return items;
 }
@@ -153,8 +153,8 @@ async function flaggedProposals(ctx: QueryContext, to: Link): Promise<TodayItem[
   for (const r of rows) {
     const failed = Number(r.failed);
     const warned = Number(r.warned);
-    if (failed > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-failed:${r.entity}`, title: { key: 'financeToday.checksFailed', params: { count: failed } }, count: failed, severity: 'block', href: to('/inbox', r.entity) });
-    if (warned > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-warn:${r.entity}`, title: { key: 'financeToday.checksWarn', params: { count: warned } }, count: warned, severity: 'warn', href: to('/inbox', r.entity) });
+    if (failed > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-failed:${r.entity}`, title: { key: 'financeChecksFailed', params: { count: failed } }, count: failed, severity: 'block', href: to('/inbox', r.entity) });
+    if (warned > 0) items.push({ kind: 'flag', app: 'finance', id: `checks-warn:${r.entity}`, title: { key: 'financeChecksWarn', params: { count: warned } }, count: warned, severity: 'warn', href: to('/inbox', r.entity) });
   }
   return items;
 }
@@ -166,14 +166,14 @@ async function originalItems(ctx: QueryContext): Promise<TodayItem[]> {
   const items: TodayItem[] = [];
   const needed = await ctx.query<{ total: number }>('kernel.inbox.originals', {});
   if (needed.status === 'ok' && needed.value.total > 0) {
-    items.push({ kind: 'flag', app: 'finance', id: 'originals-needed', title: { key: 'financeToday.originalsNeeded', params: { count: needed.value.total } }, count: needed.value.total, severity: 'info', href: '/inbox' });
+    items.push({ kind: 'flag', app: 'finance', id: 'originals-needed', title: { key: 'financeOriginalsNeeded', params: { count: needed.value.total } }, count: needed.value.total, severity: 'info', href: '/inbox' });
   }
   const notices = await ctx.query<{ items: Array<{ kind: string; subjectId: string | null; read: boolean }> }>('kernel.notification.list', {});
   if (notices.status === 'ok') {
     const flagged = notices.value.items.filter((n) => n.kind === ORIGINAL_FLAGGED && !n.read);
     const only = flagged.length === 1 ? flagged[0]?.subjectId : null;
     if (flagged.length > 0) {
-      items.push({ kind: 'flag', app: 'finance', id: 'originals-flagged', title: { key: 'financeToday.originalsFlagged', params: { count: flagged.length } }, count: flagged.length, severity: 'warn', href: only ? `/inbox/${only}` : '/inbox' });
+      items.push({ kind: 'flag', app: 'finance', id: 'originals-flagged', title: { key: 'financeOriginalsFlagged', params: { count: flagged.length } }, count: flagged.length, severity: 'warn', href: only ? `/inbox/${only}` : '/inbox' });
     }
   }
   return items;
@@ -186,13 +186,13 @@ async function bankItems(ctx: QueryContext, entities: readonly string[], to: Lin
   const staged = await ctx.query<Array<{ statement: { state?: string } | null }>>('kernel.files.staged', {});
   if (staged.status === 'ok') {
     const waiting = staged.value.filter((f) => f.statement?.state === 'staged').length;
-    if (waiting > 0) items.push({ kind: 'message', app: 'finance', id: 'statements-staged', title: { key: 'financeToday.statementsStaged', params: { count: waiting } }, count: waiting, href: '/inbox' });
+    if (waiting > 0) items.push({ kind: 'message', app: 'finance', id: 'statements-staged', title: { key: 'financeStatementsStaged', params: { count: waiting } }, count: waiting, href: '/inbox' });
   }
   for (const entity of entities) {
     const open = await ctx.query<{ accounts: Array<{ open: number }> }>('finance.bank.open_lines', { legalEntityId: entity });
     if (open.status !== 'ok') break;
     const lines = open.value.accounts.reduce((n, a) => n + a.open, 0);
-    if (lines > 0) items.push({ kind: 'message', app: 'finance', id: `bank-open-lines:${entity}`, title: { key: 'financeToday.bankLinesOpen', params: { count: lines } }, count: lines, href: to('/bank', entity) });
+    if (lines > 0) items.push({ kind: 'message', app: 'finance', id: `bank-open-lines:${entity}`, title: { key: 'financeBankLinesOpen', params: { count: lines } }, count: lines, href: to('/bank', entity) });
   }
   return items;
 }
@@ -216,7 +216,7 @@ async function deadlines(ctx: QueryContext, today: string, to: Link): Promise<To
       kind: 'deadline',
       app: 'finance',
       id: `vat:${due.period}`,
-      title: { key: 'financeToday.vatDue', params: { period: due.period, date: due.dueDate, days: due.daysLeft } },
+      title: { key: 'financeVatDue', params: { period: due.period, date: due.dueDate, days: due.daysLeft } },
       dueAt: `${due.dueDate}${DUE_TIME}`,
       severity: due.daysLeft < 0 ? 'block' : due.daysLeft <= 5 ? 'warn' : 'info',
       href: to(`/vat?period=${due.period}`, only),
@@ -237,7 +237,7 @@ async function deadlines(ctx: QueryContext, today: string, to: Link): Promise<To
         kind: 'deadline',
         app: 'finance',
         id: `close:${closing.period}`,
-        title: { key: 'financeToday.periodClose', params: { period: closing.period, date: closing.dueDate } },
+        title: { key: 'financePeriodClose', params: { period: closing.period, date: closing.dueDate } },
         dueAt: `${closing.dueDate}${DUE_TIME}`,
         severity: 'warn',
         href: '/ledger',
