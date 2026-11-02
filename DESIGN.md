@@ -398,7 +398,7 @@ Ludy is an open-source, AI-native Business OS for one-person companies, solo fou
 - **Ludy Engage** (code name Social): posts and channels, with an Ads group and the Inbox of customer conversations; paused under decision D5 except the Facebook Page and Zalo OA slice (see the decision records). Its shell label is "Engage".
 - **The AI coworkers** work inside these apps: they read, propose, suggest and draft, and a person approves. A general manager (Vy) coordinates across every app; each app has its own coworker (1.1).
 
-The shell's apps are Home (the overview, the AI Inbox, Tasks, Notes, "Việc của tôi" and notifications), Ludy Kế toán, Ludy CRM and Social. The organization's own screens (the org chart with its AI settings, and Settings) belong to no app.
+The shell's apps are Home (the overview, the AI Inbox, Tasks, Notes, "Việc của tôi" and notifications), Ludy Kế toán and Ludy Engage, which holds the CRM's screens too (#2435): its groups are Hộp thư, Khách hàng & Bán hàng, Marketing (posts and Ads) and a Báo cáo item with a tab for each area, each shown when its module runs. The organization's own screens (the org chart with its AI settings, and Settings) belong to no app.
 
 The people using it:
 
