@@ -328,7 +328,11 @@ export const revisePurchase = defineCommand({
       const account = overrides.get(l.lineNo);
       if (!account || account === l.debitAccount) return l;
       chosen.push({ lineNo: l.lineNo, debitAccount: account });
-      return { ...l, debitAccount: account, reason: 'Người dùng chọn', accountRule: { source: 'user' as const } };
+      // The learned rule the line came with is remembered (#2379), so the rule's corrections can be counted; a line a
+      // person changes twice keeps the first rule's id.
+      const was = l.accountRule;
+      const corrected = was?.source === 'learned' ? was.ruleId : was?.source === 'user' ? was.correctedRuleId : undefined;
+      return { ...l, debitAccount: account, reason: 'Người dùng chọn', accountRule: { source: 'user' as const, ...(corrected ? { correctedRuleId: corrected } : {}) } };
     });
     if (chosen.length === 0 && !exchangeRate && !movesEntity) return { changed: false as const, payload };
     // The accounts the user picked now; the others are checked again when the proposal is approved.
