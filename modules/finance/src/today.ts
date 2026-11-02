@@ -19,7 +19,7 @@ import { z } from 'zod';
 import { ORIGINAL_FLAGGED, taxDuesOf } from '@crove/kernel';
 import type { TodayItem, VatFilingPeriod } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
 import { closingPeriod } from './notifications.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -71,7 +71,7 @@ export const financeToday = defineQuery({
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
     }
-    items.push(...(await deadlines(ctx, today, to)));
+    items.push(...(await deadlines(ctx, today, to, entities)));
     return items;
   },
 });
@@ -122,7 +122,8 @@ async function waitingProposals(ctx: QueryContext, userId: string, to: Link): Pr
     return {
       kind: 'proposal',
       app: 'finance',
-      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${r.party.toLowerCase()}`.slice(0, 200),
+      // The party enters the id as a digest of its lower-cased name, so two parties never share an id however long their names.
+      id: `proposals:${r.entity}:${r.kind}:${r.direction}:${r.currency}:${sha256Hex(r.party.toLowerCase()).slice(0, 24)}`,
       title: named ? { key: sale ? 'financeProposalsCustomer' : 'financeProposalsVendor', params: { count, party: r.party.slice(0, 500) } } : { key: 'financeProposalsOther', params: { count } },
       count,
       ...(r.amount !== null ? { amount: r.amount, ...(r.currency !== 'VND' ? { currency: r.currency } : {}) } : {}),
@@ -168,13 +169,23 @@ async function originalItems(ctx: QueryContext): Promise<TodayItem[]> {
   if (needed.status === 'ok' && needed.value.total > 0) {
     items.push({ kind: 'flag', app: 'finance', id: 'originals-needed', title: { key: 'financeOriginalsNeeded', params: { count: needed.value.total } }, count: needed.value.total, severity: 'info', href: '/inbox' });
   }
-  const notices = await ctx.query<{ items: Array<{ kind: string; subjectId: string | null; read: boolean }> }>('kernel.notification.list', {});
-  if (notices.status === 'ok') {
-    const flagged = notices.value.items.filter((n) => n.kind === ORIGINAL_FLAGGED && !n.read);
-    const only = flagged.length === 1 ? flagged[0]?.subjectId : null;
-    if (flagged.length > 0) {
-      items.push({ kind: 'flag', app: 'finance', id: 'originals-flagged', title: { key: 'financeOriginalsFlagged', params: { count: flagged.length } }, count: flagged.length, severity: 'warn', href: only ? `/inbox/${only}` : '/inbox' });
-    }
+  // The caller's own unread notices of that kind (the policy keeps a member to their own rows), counted here rather than read
+  // from kernel.notification.list, which stops at its newest 30.
+  const { rows } = await sql<{ n: string; subject: string | null }>`
+    SELECT pg_catalog.count(*)::text AS n, pg_catalog.min(subject_id::text) AS subject
+    FROM crove_kernel.notification
+    WHERE org_id = ${ctx.orgId} AND kind = ${ORIGINAL_FLAGGED} AND read_at IS NULL`.execute(ctx.trx);
+  const flagged = Number(rows[0]?.n ?? 0);
+  if (flagged > 0) {
+    items.push({
+      kind: 'flag',
+      app: 'finance',
+      id: 'originals-flagged',
+      title: { key: 'financeOriginalsFlagged', params: { count: flagged } },
+      count: flagged,
+      severity: 'warn',
+      href: flagged === 1 && rows[0]?.subject ? `/inbox/${rows[0].subject}` : '/inbox',
+    });
   }
   return items;
 }
@@ -204,7 +215,7 @@ const DUE_TIME = 'T23:59:59+07:00';
 // period set in the org's settings, and, for the close, a period lock. The return comes from the tax calendar, which
 // leaves out what every entity marked done (and an entity the caller does not see); the close from the rule of the
 // closing reminder (#671), so the two never disagree.
-async function deadlines(ctx: QueryContext, today: string, to: Link): Promise<TodayItem[]> {
+async function deadlines(ctx: QueryContext, today: string, to: Link, entities: readonly string[]): Promise<TodayItem[]> {
   const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('vat_filing_period').where('org_id', '=', ctx.orgId).executeTakeFirst();
   const kind = (org?.vat_filing_period as VatFilingPeriod | null | undefined) ?? null;
   if (kind === null) return [];
@@ -230,7 +241,8 @@ async function deadlines(ctx: QueryContext, today: string, to: Link): Promise<To
     .where('org_id', '=', ctx.orgId)
     .execute();
   if (locks.length > 0) {
-    const through = locks.some((l) => l.through === null) ? null : (locks.map((l) => l.through as string).sort()[0] ?? null);
+    // An entity with no lock row has locked nothing: it leaves the period open, as an entity whose lock is empty does.
+    const through = locks.length < entities.length || locks.some((l) => l.through === null) ? null : (locks.map((l) => l.through as string).sort()[0] ?? null);
     const closing = closingPeriod(kind, through, today);
     if (closing) {
       items.push({
