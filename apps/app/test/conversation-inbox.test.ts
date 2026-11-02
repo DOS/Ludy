@@ -23,20 +23,29 @@ describe('the Inbox address', () => {
     expect(parseConversationInboxSearch({})).toEqual({});
   });
 
+  it('reads the intent filter and the order by intent, and drops a value that is neither', () => {
+    expect(parseConversationInboxSearch({ intent: 'complaint', order: 'intent' })).toEqual({ intent: 'complaint', order: 'intent' });
+    expect(parseConversationInboxSearch({ intent: 'none' })).toEqual({ intent: 'none' });
+    expect(parseConversationInboxSearch({ intent: 'greeting', order: 'date' })).toEqual({});
+  });
+
   it('reads a phone number typed in the address as text', () => {
     expect(parseConversationInboxSearch({ q: 912345678 })).toEqual({ q: '912345678' });
   });
 
   it('asks for the New tab unless another is named, with the filters in force and a page of 50', () => {
     expect(inboxListInput({})).toEqual({ status: 'new', limit: 50 });
-    expect(inboxListInput({ status: 'resolved', kind: 'comment_thread', channel: ID, assignee: 'none', q: 'hoa' })).toEqual({
+    expect(inboxListInput({ status: 'resolved', kind: 'comment_thread', channel: ID, assignee: 'none', intent: 'spam', q: 'hoa' })).toEqual({
       status: 'resolved',
       kind: 'comment_thread',
       connectionId: ID,
       assignee: 'none',
+      intent: 'spam',
       q: 'hoa',
       limit: 50,
     });
+    // The order by intent is the screen's own sort of the page: the server is not asked for it.
+    expect(inboxListInput({ order: 'intent' })).toEqual({ status: 'new', limit: 50 });
   });
 
   it('counts the tabs under the kind and channel filters only', () => {

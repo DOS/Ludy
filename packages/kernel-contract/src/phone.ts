@@ -27,3 +27,22 @@ export function phoneKey(phone: string | null | undefined): string | null {
   }
   return digits === '' ? null : digits;
 }
+
+// The phone keys of the numbers written in a text (the Inbox's contact match, CV3, #2306): a Vietnamese mobile number, written with a leading `0`, `84`,
+// `+84` or `0084`, nine more digits and at most three spaces, dots or dashes between them. A number inside a longer run of digits (an order number, a bank account) is
+// not one. At most `max` distinct keys, in the order written.
+// Not after a digit, nor after a digit and a separator (a date or a longer number); at most three separators, so "01 02 2025 12" is not one.
+const PHONE_IN_TEXT = /(?<![\d+])(?<!\d[ .-])(?:(?:\+|00)?84|0)(?:[ .-]?\d){9}(?!\d)/g;
+const MAX_SEPARATORS = 3;
+// A group of four digits that reads as a year ("01 02 2025 12" is a date, not a number).
+const YEAR_GROUP = /(?:^|[ .-])(?:19|20)\d{2}(?:[ .-]|$)/;
+export function phoneKeysIn(text: string, max = 3): string[] {
+  const keys: string[] = [];
+  for (const match of text.matchAll(PHONE_IN_TEXT)) {
+    if (match[0].replace(/[\d+]/g, '').length > MAX_SEPARATORS || YEAR_GROUP.test(match[0])) continue;
+    const key = phoneKey(match[0]);
+    if (key !== null && !keys.includes(key)) keys.push(key);
+    if (keys.length >= max) break;
+  }
+  return keys;
+}

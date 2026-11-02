@@ -17,6 +17,45 @@ import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
 const SEARCH_PAUSE_MS = 300;
+const MATCHES_STALE_MS = 5 * 60_000;
+
+// The contacts the customer may be (CV3, #2306): the contact with the phone number the customer wrote first, then those with a similar name, ranked by the
+// AI coworker when it is on. They are suggestions, shown only while the thread is not linked; nothing is linked until a person clicks. With the model off,
+// spent or failing the names still come in their own order, with no error.
+function ContactSuggestions({ conversationId, lastSeq }: { conversationId: string; lastSeq: number }) {
+  const t = useTranslations('conversations.contact');
+  const matches = useQuery({
+    queryKey: ['conversation-contact-matches', conversationId, lastSeq],
+    queryFn: () => client.conversations.contactMatches({ conversationId }),
+    // An answer that is not one yet (busy) is asked again soon, a few times.
+    staleTime: (query) => (query.state.data?.ai === 'busy' ? 0 : MATCHES_STALE_MS),
+    refetchInterval: (query) => (query.state.data?.ai === 'busy' && query.state.dataUpdateCount < 6 ? 4_000 : false),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const link = useMutation({ mutationFn: (partyId: string) => client.conversations.linkContact({ conversationId, partyId }), onSuccess: refresh });
+  const candidates = matches.data?.candidates ?? [];
+  if (candidates.length === 0) return null;
+  return (
+    <div className="space-y-1" data-testid="contact-suggestions">
+      <h3 className="text-sm font-semibold text-foreground">{t('suggested')}</h3>
+      <ul className="divide-y divide-border rounded-md border border-border">
+        {candidates.map((c) => (
+          <li key={c.partyId} className="flex items-center justify-between gap-2 px-2 py-1.5">
+            <span className="min-w-0">
+              <span className="block truncate text-foreground">{c.name}</span>
+              <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
+            </span>
+            <Button type="button" size="sm" variant="outline" loading={link.isPending && link.variables === c.partyId} onClick={() => link.mutate(c.partyId)}>
+              {t('linkThis')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {link.error && <ErrorText>{errorMessage(link.error)}</ErrorText>}
+    </div>
+  );
+}
 
 function LinkContact({ conversationId, defaultName, hasParty }: { conversationId: string; defaultName: string; hasParty: boolean }) {
   const t = useTranslations('conversations.contact');
@@ -134,6 +173,7 @@ export function ContactPanel({ conversationId, onOpen }: { conversationId: strin
           {c.channel.displayName} · {tc(`kind.${c.kind}`)}
         </p>
       </div>
+      {canWrite && c.contact.partyId === null && <ContactSuggestions conversationId={conversationId} lastSeq={c.lastSeq} />}
       {canWrite && <LinkContact key={`${conversationId}:${c.contact.partyId ?? ''}`} conversationId={conversationId} defaultName={c.contact.displayName ?? ''} hasParty={c.contact.partyId !== null} />}
       <div className="space-y-1">
         <h3 className="text-sm font-semibold text-foreground">{t('others')}</h3>

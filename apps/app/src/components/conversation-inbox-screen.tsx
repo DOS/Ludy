@@ -7,6 +7,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
+import { CONVERSATION_INTENTS } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -14,9 +15,11 @@ import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { inboxCountsInput, inboxListInput, type InboxSearch } from '../lib/conversation-inbox.ts';
+import { sortByIntent } from '../lib/conversation-intent.ts';
 import { withSearch } from '../lib/search.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationListItem, ConversationThread, POLL_MS, STATUSES, useMe } from './conversation-inbox.tsx';
+import { useIntentSuggestions } from './conversation-intent.tsx';
 import { ContactPanel } from './conversation-contact-panel.tsx';
 
 const SEARCH_PAUSE_MS = 300;
@@ -58,11 +61,16 @@ function AvailabilitySwitch() {
 export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearch: (next: InboxSearch) => void }) {
   const t = useTranslations('conversations');
   const ti = useTranslations('conversations.inbox');
+  const tn = useTranslations('conversations.intent');
   const status = search.status ?? 'new';
   const channels = useQuery(orpc.channels.list.queryOptions({ input: {} }));
   const list = useQuery({ ...orpc.conversations.list.queryOptions({ input: inboxListInput(search) }), refetchInterval: POLL_MS });
   const counts = useQuery({ ...orpc.conversations.counts.queryOptions({ input: inboxCountsInput(search) }), refetchInterval: POLL_MS });
-  const items = list.data?.conversations ?? [];
+  const { canWrite } = useMe();
+  // The AI coworker's suggested intents for the top of the New list (a read, never stored); the list may be ordered by them, a sort of the page only.
+  const loaded = list.data?.conversations ?? [];
+  const { suggested, ai } = useIntentSuggestions(loaded, canWrite && status === 'new');
+  const items = search.order === 'intent' && status === 'new' ? sortByIntent(loaded, suggested) : loaded;
   // The thread shown: the one the address names (kept even when it has moved to another tab), else the first of the list.
   const openId = search.c ?? items[0]?.id ?? null;
   // A change of tab or filter starts a new list: the open thread is the first of it again.
@@ -116,6 +124,18 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
             <option value="none">{ti('filters.assigneeNone')}</option>
           </NativeSelect>
         </label>
+        <label className="text-xs font-medium text-muted-foreground">
+          <span className="mb-1 block">{ti('filters.intent')}</span>
+          <NativeSelect value={search.intent ?? ''} onChange={(e) => change({ intent: e.target.value === '' ? undefined : (e.target.value as InboxSearch['intent']) })} data-testid="inbox-intent">
+            <option value="">{ti('filters.intentAll')}</option>
+            {CONVERSATION_INTENTS.map((intent) => (
+              <option key={intent} value={intent}>
+                {tn(`label.${intent}`)}
+              </option>
+            ))}
+            <option value="none">{ti('filters.intentNone')}</option>
+          </NativeSelect>
+        </label>
         <AvailabilitySwitch />
       </div>
       <div className="grid gap-4 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)_minmax(0,16rem)]">
@@ -130,12 +150,23 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
               ))}
             </TabsList>
           </Tabs>
+          {canWrite && status === 'new' && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={search.order === 'intent'} data-testid="inbox-order-intent" onChange={(e) => change({ order: e.target.checked ? 'intent' : undefined })} />
+              {tn('order')}
+            </label>
+          )}
+          {ai === 'budget' && status === 'new' && (
+            <p className="text-xs text-muted-foreground" role="status">
+              {tn('budget')}
+            </p>
+          )}
           {list.isPending && <Spinner />}
           {list.error && <ErrorText>{errorMessage(list.error)}</ErrorText>}
           {list.data && items.length === 0 && <Empty title={search.q ? ti('noMatch') : ti(`empty.${status}`)} />}
           <ul className="divide-y divide-border rounded-md border border-border">
             {items.map((c) => (
-              <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => onSearch({ ...search, c: c.id })} />
+              <ConversationListItem key={c.id} conversation={c} open={c.id === openId} onOpen={() => onSearch({ ...search, c: c.id })} suggested={suggested.get(c.id) ?? null} />
             ))}
           </ul>
           {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
