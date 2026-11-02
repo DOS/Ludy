@@ -1,9 +1,9 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
-import { sandboxAdPlatform, type AdPlatform } from '@crove/ad-platform';
+import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import type { AdAccountView, AdsChangeRequest, ConversationEvent } from '@crove/kernel-contract';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -389,6 +389,13 @@ export function createRpcHandler(
     if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được kênh');
     // An ad platform (ADR-0040) connects only where the Ads module runs: its accounts are linked as the grant is finished.
     if (isAdProviderId(provider) && !runtime.installed('ads')) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Mô-đun Quảng cáo chưa được bật');
+    // The write connection of an ad account (ADR-0043, W0b) is the owner's, and only while the org's switch is on: nobody is sent through
+    // the platform's dialog for a token the org may not hold. The command that attaches it checks both again.
+    if (isAdWriteProviderId(provider)) {
+      if (role !== 'owner') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới kết nối được để chạy quảng cáo');
+      const state = await runtime.query<{ writeEnabled: boolean }>('ads.write.state', {}, { actor: actorOf(context.user), orgId });
+      if (!state.writeEnabled) throw new DomainError('ADS_WRITE_OFF', 409, 'Chủ sở hữu chưa bật việc chạy quảng cáo cho tổ chức này');
+    }
     const connector = channels?.connectors?.[provider];
     if (!channels || !connector) throw new DomainError('CHANNEL_PROVIDER_DISABLED', 404, 'Kênh này chưa được cấu hình trên máy chủ');
     // Checked before an attempt is written or used up: without a key the tokens could never be sealed, and the user
@@ -1542,7 +1549,11 @@ export function createRpcHandler(
             throw new DomainError(
               'CHANNEL_NO_ACCOUNTS',
               422,
-              isAdProviderId(input.provider) ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để đọc báo cáo' : 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
+              isAdWriteProviderId(input.provider)
+                ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để chạy quảng cáo'
+                : isAdProviderId(input.provider)
+                  ? 'Tài khoản đăng nhập này không có tài khoản quảng cáo nào để đọc báo cáo'
+                  : 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
             );
           }
           // Each account connects in its own command, so one that fails leaves the others connected: the answer says
@@ -1552,7 +1563,22 @@ export function createRpcHandler(
           const connections: { connectionId: string; displayName: string; reconnected: boolean }[] = [];
           const failed: { displayName: string; code: string }[] = [];
           let firstError: DomainError | null = null;
+          // A write connection is made only for an account linked for reading with a read connection that is not closed: nothing is
+          // sealed for the others (an account an owner or admin disconnected stays closed), and when none of them is ready there is
+          // nothing to connect. The attaching command checks the same again.
+          let writeReady: Set<string> | null = null;
+          if (isAdWriteProviderId(input.provider)) {
+            const ready = await runtime.query<string[]>('ads.account.write_ready', { provider: input.provider, externalAccountIds: taken.map((a) => a.externalAccountId) }, { actor, orgId });
+            writeReady = new Set(ready);
+            if (writeReady.size === 0) {
+              throw new DomainError('ADS_WRITE_NEEDS_READ', 409, 'Hãy kết nối tài khoản quảng cáo này để đọc số liệu trước, rồi mới kết nối để chạy quảng cáo');
+            }
+          }
           for (const account of taken) {
+            if (writeReady && !writeReady.has(account.externalAccountId)) {
+              failed.push({ displayName: account.displayName, code: 'ADS_WRITE_NEEDS_READ' });
+              continue;
+            }
             const sealed = broker.seal(account.secret, { orgId, provider: account.provider, externalAccountId: account.externalAccountId });
             const command: ChannelConnectInput = {
               provider: account.provider,
@@ -1567,7 +1593,22 @@ export function createRpcHandler(
               // An ad account is also linked to the org's books as it connects (the entity the member reads by default), so
               // its first sync starts at once; a link that is refused closes the connection it just made, which no screen would
               // list, and the account is reported as failed. An account connected again keeps its row, history and settings.
-              if (isAdProviderId(account.provider)) {
+              if (isAdWriteProviderId(account.provider)) {
+                // A write connection hangs off the account the read connection linked, never an account of its own; one with no read
+                // link, or while the switch is off, is refused and the connection it just made is closed.
+                try {
+                  await runtime.execute(
+                    'ads.account.link_write',
+                    { connectionId: done.connectionId, grantedByHash: account.grantedByHash ?? null },
+                    { actor, orgId, idempotencyKey: `oauth-ads-link-write:${oauthStateHash(input.state)}:${done.connectionId}` },
+                  );
+                } catch (linkError) {
+                  await runtime.execute('kernel.channel.disconnect', { connectionId: done.connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+                    console.warn(`[ads] a write connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+                  });
+                  throw linkError;
+                }
+              } else if (isAdProviderId(account.provider)) {
                 try {
                   await runtime.execute(
                     'ads.account.link',
@@ -2162,6 +2203,46 @@ export function createRpcHandler(
             throw error;
           }
         }),
+      ),
+      // The offline write connection of a sandbox account (W0b): its own sealed token with the permission that can change campaigns,
+      // attached to the account the read connection linked. The owner's, and only while the org's switch is on (the command checks it).
+      connectSandboxWrite: os.ads.connectSandboxWrite.handler(({ context, input }) =>
+        inAds(context, async (orgId, actor) => {
+          const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+          if (role !== 'owner') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới kết nối được để chạy quảng cáo');
+          if (!channels || !Object.hasOwn(channels.adsPlatforms ?? {}, 'sandbox_ads')) throw new DomainError('ADS_SANDBOX_DISABLED', 404, 'Nền tảng quảng cáo thử nghiệm chưa được bật');
+          const target = await runtime.query<{ provider: string; externalAccountId: string; currency: string | null; name: string }>('ads.account.write_target', { adAccountId: input.adAccountId }, { actor, orgId });
+          if (target.provider !== 'sandbox_ads') throw new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tìm thấy tài khoản quảng cáo thử nghiệm này');
+          // The sandbox account's currency is known after its first sync; the writer's secret only carries it for show, so an account that has
+          // not synced yet takes the sandbox's default.
+          const login = sandboxWriteLogin({ externalAccountId: target.externalAccountId, currency: target.currency ?? 'VND' });
+          const sealed = channels.broker.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+          const command: ChannelConnectInput = {
+            provider: login.provider,
+            externalAccountId: login.externalAccountId,
+            displayName: target.name,
+            scopes: [...login.scopes],
+            expiresAt: null,
+            credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+          };
+          const { connectionId } = await runtime.execute<{ connectionId: string }>('kernel.channel.connect', command, { actor, orgId });
+          try {
+            const { adAccountId } = await runtime.execute<{ adAccountId: string }>('ads.account.link_write', { connectionId }, { actor, orgId, idempotencyKey: input.idempotencyKey });
+            return { connectionId, adAccountId };
+          } catch (error) {
+            // Refused (the switch is off, the account has no read connection any more): no write connection is left behind with its
+            // sealed token, one this call only reconnected included. A close that fails is still found by the switch-off, which closes
+            // every write connection of the org whether or not an account refers to it.
+            await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch((closeError: unknown) => {
+              console.warn(`[ads] a write connection whose link was refused could not be closed: ${closeError instanceof DomainError ? closeError.code : 'unknown'}`);
+            });
+            throw error;
+          }
+        }),
+      ),
+      // Closes an account's read connection and its write connection, dropping both sealed tokens (owners and admins).
+      disconnectAccount: os.ads.disconnectAccount.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => runtime.execute('ads.account.disconnect', { adAccountId: input.adAccountId }, { actor, orgId, idempotencyKey: input.idempotencyKey })),
       ),
       configure: os.ads.configure.handler(({ context, input }) =>
         inAds(context, (orgId, actor) => {

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Ads screen's small rules (ADR-0040, #2217): the periods worked out on the ad account's own clock, the comparison
 // with the books as exact decimals, what the settings form sends, the search params, and the words for what the server
-// refuses and for how an update failed, in both languages.
+// refuses and for how an update failed, in both languages. And the connection that can run ads (ADR-0043, W0b): which OAuth
+// providers read and which run ads, what a deployment offers the owner, and what the screen says when such a connection is closed.
 import { ADS_ERROR_KINDS, ADS_SANDBOX_CURRENCIES, ADS_SUMMARY_MAX_DAYS, type AdAccountView } from '@crove/kernel-contract';
 import { describe, expect, it } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
@@ -9,10 +10,16 @@ import { vi } from '../src/i18n/messages/vi.ts';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
   AD_OAUTH_PROVIDERS,
+  AD_READ_OAUTH_PROVIDERS,
+  AD_WRITE_OAUTH_PROVIDERS,
   ADS_RANGES,
   NAMED_RESULT_KINDS,
+  NO_WRITE_OFFER,
   adOAuthProviders,
   adProviderName,
+  adReadOAuthProviders,
+  adWriteOAuthProviders,
+  adWriteOffer,
   adsRange,
   awaitsFirstSync,
   booksDifference,
@@ -23,6 +30,7 @@ import {
   expenseCodeProblem,
   hasFigures,
   isAdOAuthProvider,
+  isAdWriteOAuthProvider,
   isCalmRefusal,
   isNamedResultKind,
   isSandboxProvider,
@@ -32,8 +40,10 @@ import {
   resultKindChoices,
   syncHeld,
   todayIn,
+  writeConnectWay,
   type AdsRangeKind,
 } from '../src/lib/ads.ts';
+import { accountOffToastText, disableConfirmText, disabledToastText, disconnectConfirmText, hasOpenWriteConnection, keepsPlatformGrant, writeConnectionStopped } from '../src/lib/ads-write.ts';
 import { ApiError, describeError } from '../src/lib/errors.ts';
 
 const inVi = translatorFor('vi');
@@ -46,6 +56,8 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   pausedSince: null,
   pausedReason: null,
   writeEnabled: false,
+  writeConnectionStatus: null,
+  canRunAds: false,
   extraScopes: [],
   provider: 'sandbox_ads',
   name: 'Quảng cáo cửa hàng',
@@ -278,18 +290,30 @@ describe('what an account says about its figures', () => {
     expect(isSandboxProvider('meta_ads')).toBe(false);
   });
 
-  it('knows the ad platforms connected through an OAuth dialog, and names them', () => {
-    expect(AD_OAUTH_PROVIDERS).toEqual(['meta_ads']);
+  it('knows the ad platforms connected through an OAuth dialog, reading and running ads apart, and names them', () => {
+    // Both kinds are ad providers: the Social channels screen leaves every one of them out (it filters with isAdOAuthProvider).
+    expect(AD_OAUTH_PROVIDERS).toEqual(['meta_ads', 'metawrite_ads']);
     expect(isAdOAuthProvider('meta_ads')).toBe(true);
+    expect(isAdOAuthProvider('metawrite_ads')).toBe(true);
     expect(isAdOAuthProvider('sandbox_ads')).toBe(false);
     expect(isAdOAuthProvider('facebook_page')).toBe(false);
+    expect(['facebook_page', 'meta_ads', 'metawrite_ads', 'instagram'].filter((p) => !isAdOAuthProvider(p))).toEqual(['facebook_page', 'instagram']);
+    // Connecting an account for reading offers Meta's read provider alone; the one that runs ads is a separate offer.
+    expect(AD_READ_OAUTH_PROVIDERS).toEqual(['meta_ads']);
+    expect(AD_WRITE_OAUTH_PROVIDERS).toEqual(['metawrite_ads']);
+    expect(isAdWriteOAuthProvider('metawrite_ads')).toBe(true);
+    expect(isAdWriteOAuthProvider('meta_ads')).toBe(false);
+    expect(isAdWriteOAuthProvider('sandboxwrite_ads')).toBe(false);
+    // Both are Meta to the reader.
     expect(adProviderName('meta_ads')).toBe('Meta');
+    expect(adProviderName('metawrite_ads')).toBe('Meta');
     // An unknown platform is shown by its id.
     expect(adProviderName('google_ads')).toBe('google_ads');
   });
 
   it('offers an ad platform only where the deployment lists it among the OAuth providers', () => {
     expect(adOAuthProviders({ channels: { oauth: ['facebook_page', 'meta_ads'] } })).toEqual(['meta_ads']);
+    expect(adOAuthProviders({ channels: { oauth: ['facebook_page', 'meta_ads', 'metawrite_ads'] } })).toEqual(['meta_ads', 'metawrite_ads']);
     // Social providers alone offer no ad platform.
     expect(adOAuthProviders({ channels: { oauth: ['facebook_page', 'instagram'] } })).toEqual([]);
     expect(adOAuthProviders({ channels: { oauth: [] } })).toEqual([]);
@@ -298,6 +322,36 @@ describe('what an account says about its figures', () => {
     expect(adOAuthProviders({})).toEqual([]);
     expect(adOAuthProviders(null)).toEqual([]);
     expect(adOAuthProviders(undefined)).toEqual([]);
+  });
+
+  it('keeps what a deployment offers for reading apart from what it offers for running ads', () => {
+    const both = { channels: { oauth: ['facebook_page', 'meta_ads', 'metawrite_ads'] } };
+    expect(adReadOAuthProviders(both)).toEqual(['meta_ads']);
+    expect(adWriteOAuthProviders(both)).toEqual(['metawrite_ads']);
+    // The app for running ads alone offers no way to connect an account for reading, and the other way round.
+    expect(adReadOAuthProviders({ channels: { oauth: ['metawrite_ads'] } })).toEqual([]);
+    expect(adWriteOAuthProviders({ channels: { oauth: ['metawrite_ads'] } })).toEqual(['metawrite_ads']);
+    expect(adWriteOAuthProviders({ channels: { oauth: ['meta_ads'] } })).toEqual([]);
+    expect(adWriteOAuthProviders(null)).toEqual([]);
+  });
+
+  it('works out what an owner can connect to run ads from the deployment config: Meta through its dialog, the sandbox offline', () => {
+    expect(adWriteOffer({ channels: { oauth: ['meta_ads', 'metawrite_ads'] }, ads: { sandbox: true } })).toEqual({ meta: true, sandbox: true });
+    expect(adWriteOffer({ channels: { oauth: ['meta_ads'] }, ads: { sandbox: false } })).toEqual({ meta: false, sandbox: false });
+    expect(adWriteOffer({ ads: { sandbox: true } })).toEqual({ meta: false, sandbox: true });
+    expect(adWriteOffer(null)).toEqual(NO_WRITE_OFFER);
+    expect(adWriteOffer(undefined)).toEqual({ meta: false, sandbox: false });
+  });
+
+  it('picks the way an account is connected to run ads from its own platform and what is offered', () => {
+    const both = { meta: true, sandbox: true };
+    expect(writeConnectWay('meta_ads', both)).toBe('meta');
+    expect(writeConnectWay('sandbox_ads', both)).toBe('sandbox');
+    expect(writeConnectWay('meta_ads', { meta: false, sandbox: true })).toBeNull();
+    expect(writeConnectWay('sandbox_ads', { meta: true, sandbox: false })).toBeNull();
+    expect(writeConnectWay('meta_ads', NO_WRITE_OFFER)).toBeNull();
+    // A platform with no way yet is offered none.
+    expect(writeConnectWay('google_ads', both)).toBeNull();
   });
 
   it('reads the code of an error, when it has one', () => {
@@ -320,6 +374,7 @@ describe('the words of the screen', () => {
     'ADS_CURRENCY_CHANGED',
     // Running ads (ADR-0043, #2294): the requests and the lowering of a cap.
     'ADS_WRITE_OFF',
+    'ADS_WRITE_NEEDS_READ',
     'ADS_CAP_ACCOUNT_UNSYNCED',
     'ADS_CAP_CURRENCY',
     'ADS_REQUEST_OPEN',
@@ -386,9 +441,121 @@ describe('the words of the screen', () => {
     expect(en.ads.oauth.connected).toContain('{list}');
   });
 
+  it('has the words of the connection that can run ads in both languages, with the same arguments', () => {
+    for (const messages of [vi.ads, en.ads]) {
+      for (const text of [
+        messages.canRunAds,
+        messages.readOnly,
+        messages.oauth.writeTitle,
+        messages.oauth.writeConnected,
+        messages.oauth.writeFailed,
+        messages.settings.disconnectClosesWrite,
+        messages.write.accountConnect,
+        messages.write.accountConnectedToast,
+        messages.write.accountCanRun,
+        messages.write.accountStopped,
+        messages.write.disableClosesConnections,
+        messages.write.platformNote,
+      ]) {
+        expect(text).toBeTruthy();
+      }
+      expect(messages.oauth.writeConnected).toContain('{list}');
+      expect(messages.oauth.writeFailed).toContain('{list}');
+    }
+    // The platform keeps the permission until it is removed there: said plainly, with where to remove it.
+    expect(en.ads.write.platformNote).toContain('Facebook settings (Settings, Business integrations)');
+    expect(en.ads.write.platformNote).toContain('Meta still honours the permission');
+    expect(en.ads.write.platformNote).toContain('a read-only reconnect works only after you have');
+    expect(vi.ads.write.platformNote).toContain('Tích hợp doanh nghiệp');
+    expect(en.ads.canRunAds).toContain('Every launch still needs a person to approve it, within the caps.');
+    expect(en.kernelErrors.codes.ADS_WRITE_NEEDS_READ).toBe('Connect this ad account for reading first, then connect it to run ads.');
+  });
+
+  it('labels the commands of the connection that can run ads in the audit log, in both languages', () => {
+    for (const labels of [vi.commands.ads.account, en.commands.ads.account]) {
+      expect(labels.link_write).toBeTruthy();
+      expect(labels.disconnect).toBeTruthy();
+      expect(labels.write_target).toBeTruthy();
+    }
+  });
+
   it('writes no tax or VAT figure and no em or en dash anywhere in the screen', () => {
     const text = JSON.stringify([vi.ads, en.ads]);
     expect(text).not.toMatch(new RegExp('[\\u2013\\u2014]'));
     expect(text).not.toMatch(/\bVAT\b|GTGT|thuế/i);
+  });
+});
+
+describe('the connection that can run ads (ADR-0043, W0b)', () => {
+  const metaWrite = (writeConnectionStatus: AdAccountView['writeConnectionStatus'] = 'active') => account({ provider: 'meta_ads', writeConnectionStatus, canRunAds: writeConnectionStatus === 'active' });
+  const sandboxWrite = (writeConnectionStatus: AdAccountView['writeConnectionStatus'] = 'active') => account({ writeConnectionStatus, canRunAds: writeConnectionStatus === 'active' });
+
+  it('tells a connection that is open from one that is closed, and a real platform from the offline sandbox', () => {
+    for (const status of ['active', 'expired', 'error'] as const) expect(hasOpenWriteConnection(account({ writeConnectionStatus: status })), status).toBe(true);
+    expect(hasOpenWriteConnection(account({ writeConnectionStatus: 'revoked' }))).toBe(false);
+    expect(hasOpenWriteConnection(account())).toBe(false);
+    // Only a real platform keeps the permission on its side.
+    expect(keepsPlatformGrant(metaWrite('active'))).toBe(true);
+    expect(keepsPlatformGrant(metaWrite('expired'))).toBe(true);
+    expect(keepsPlatformGrant(metaWrite('revoked'))).toBe(false);
+    expect(keepsPlatformGrant(account({ provider: 'meta_ads' }))).toBe(false);
+    expect(keepsPlatformGrant(sandboxWrite('active'))).toBe(false);
+  });
+
+  it('knows a connection that stopped: it existed and is not live now', () => {
+    for (const status of ['expired', 'error', 'revoked'] as const) expect(writeConnectionStopped(account({ writeConnectionStatus: status, canRunAds: false })), status).toBe(true);
+    expect(writeConnectionStopped(account({ writeConnectionStatus: 'active', canRunAds: true }))).toBe(false);
+    expect(writeConnectionStopped(account())).toBe(false);
+  });
+
+  it('says, in the confirmation of the switch-off and in both languages, that every connection is closed and where a real platform keeps the permission', () => {
+    for (const t of [inEn, inVi]) {
+      const note = t('ads.write.platformNote');
+      const closes = t('ads.write.disableClosesConnections');
+      const body = t('ads.write.disableBody');
+      // Nothing to close: the confirmation is the old one.
+      expect(disableConfirmText(t, [account(), metaWrite('revoked')])).toBe(body);
+      // A Meta connection: it is closed, and the permission stays at Meta until the app is removed there.
+      expect(disableConfirmText(t, [account(), metaWrite('active')])).toBe(`${body} ${closes} ${note}`);
+      // One that expired still holds its sealed token and the platform's permission.
+      expect(disableConfirmText(t, [metaWrite('expired')])).toBe(`${body} ${closes} ${note}`);
+      // The offline sandbox holds no permission anywhere: closing it is said, the platform note is not.
+      expect(disableConfirmText(t, [sandboxWrite('active')])).toBe(`${body} ${closes}`);
+    }
+  });
+
+  it('adds the platform note to the toast of the switch-off only when a connection was closed on an org with a real platform account', () => {
+    const note = inEn('ads.write.platformNote');
+    const done = inEn('ads.write.disabledToast');
+    expect(disabledToastText(inEn, [metaWrite()], 1)).toBe(`${done} ${note}`);
+    expect(disabledToastText(inEn, [metaWrite(), sandboxWrite()], 2)).toBe(`${done} ${note}`);
+    // Nothing was closed, or only the sandbox exists: no permission was held anywhere.
+    expect(disabledToastText(inEn, [metaWrite()], 0)).toBe(done);
+    expect(disabledToastText(inEn, [sandboxWrite()], 1)).toBe(done);
+    expect(disabledToastText(inVi, [metaWrite()], 1)).toBe(`${inVi('ads.write.disabledToast')} ${inVi('ads.write.platformNote')}`);
+  });
+
+  it('adds the platform note to the toast of withdrawing one account when its connection was closed', () => {
+    const note = inEn('ads.write.platformNote');
+    const done = inEn('ads.write.accountOffToast');
+    expect(accountOffToastText(inEn, metaWrite(), 1)).toBe(`${done} ${note}`);
+    expect(accountOffToastText(inEn, metaWrite(), 0)).toBe(done);
+    expect(accountOffToastText(inEn, sandboxWrite(), 1)).toBe(done);
+    expect(accountOffToastText(inVi, metaWrite(), 1)).toBe(`${inVi('ads.write.accountOffToast')} ${inVi('ads.write.platformNote')}`);
+  });
+
+  it('says in the confirmation of a disconnect that the connection to run ads is closed too, with the platform note, only where there is one', () => {
+    const name = 'Quảng cáo cửa hàng';
+    const body = inEn('ads.settings.disconnectBody', { name });
+    const closes = inEn('ads.settings.disconnectClosesWrite');
+    const note = inEn('ads.write.platformNote');
+    // The old confirmation, for an account that reads only (or whose connection to run ads is closed already).
+    expect(disconnectConfirmText(inEn, account({ provider: 'meta_ads' }))).toBe(body);
+    expect(disconnectConfirmText(inEn, metaWrite('revoked'))).toBe(body);
+    expect(disconnectConfirmText(inEn, metaWrite('active'))).toBe(`${body} ${closes} ${note}`);
+    expect(disconnectConfirmText(inEn, metaWrite('error'))).toBe(`${body} ${closes} ${note}`);
+    expect(disconnectConfirmText(inEn, sandboxWrite('active'))).toBe(`${body} ${closes}`);
+    expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.settings.disconnectBody', { name }));
+    expect(disconnectConfirmText(inVi, metaWrite('active'))).toContain(inVi('ads.write.platformNote'));
   });
 });

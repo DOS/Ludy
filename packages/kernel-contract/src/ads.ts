@@ -11,6 +11,19 @@ import { zAccountCode, zId, zLocalDate, zMoney } from './schemas.ts';
 const AD_PROVIDER_ID = /^[a-z][a-z0-9]{0,26}_ads$/;
 export const isAdProviderId = (provider: string): boolean => AD_PROVIDER_ID.test(provider);
 
+// Running ads (ADR-0043, #2294, W0b): a second connection of an ad account, with its own sealed token, that can change campaigns. Its
+// provider id is the read provider's own kind with a write twin (the ids match the pattern above, so the Social screens leave them
+// out too): `metawrite_ads` beside `meta_ads`, `sandboxwrite_ads` beside `sandbox_ads`. A write connection is never an ad account of
+// its own: it hangs off the account the read connection linked (`ad_account.write_connection_id`), and it never goes through
+// `ads.account.link`. The readers (@crove/ad-platform adPlatforms) never see these ids.
+export const AD_WRITE_PROVIDERS = ['metawrite_ads', 'sandboxwrite_ads'] as const;
+export type AdWriteProviderId = (typeof AD_WRITE_PROVIDERS)[number];
+export const isAdWriteProviderId = (provider: string): provider is AdWriteProviderId => (AD_WRITE_PROVIDERS as readonly string[]).includes(provider);
+// The read provider whose accounts a write provider's connections belong to.
+export const READ_PROVIDER_OF_WRITE: Readonly<Record<AdWriteProviderId, string>> = { metawrite_ads: 'meta_ads', sandboxwrite_ads: 'sandbox_ads' };
+// The permissions that can change campaigns or the business behind them: a connection whose recorded scopes hold one is spend-capable.
+export const ADS_SPEND_SCOPES = ['ads_management', 'business_management'] as const;
+
 // Months of history a first sync reads and the app keeps (plan section 2, owner answer Q4 of #2214).
 export const ADS_BACKFILL_MONTHS = 13;
 // The most rows one sync command takes, and so the most a job hands it per call (a month or so of a large account).
@@ -67,6 +80,14 @@ export const zAdsAccountLink = z.strictObject({
   grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 });
 export type AdsAccountLink = z.infer<typeof zAdsAccountLink>;
+
+// The owner attaches a write connection (provider `metawrite_ads` or `sandboxwrite_ads`) to the ad account the read connection linked,
+// while the org's switch is on (ADR-0043 point 3). grantedByHash as in zAdsAccountLink, kept apart from the read grant's.
+export const zAdsAccountLinkWrite = z.strictObject({
+  connectionId: zId,
+  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
+});
+export type AdsAccountLinkWrite = z.infer<typeof zAdsAccountLinkWrite>;
 
 // An owner or admin deletes an account's stored figures and sync log (owner answer Q4 of #2214). A connected account reads its
 // 13 months again; one whose connection is closed also loses its row.
@@ -235,8 +256,12 @@ export const zAdAccountView = z.object({
   pausedSince: z.string().nullable(),
   pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'other']).nullable(),
   // An owner enabled this account for running ads (ADR-0043). It does not yet mean ads can run: the org switch and a token that
-  // can change campaigns (W0b) are needed too.
+  // can change campaigns (the write connection below) are needed too.
   writeEnabled: z.boolean(),
+  // The write connection of this account (W0b): its status, or null when the account has none (it is read only). `canRunAds` is a
+  // live write connection: the screen says "can run ads" for it and "read only" for the rest.
+  writeConnectionStatus: z.enum(['active', 'expired', 'revoked', 'error']).nullable(),
+  canRunAds: z.boolean(),
   // The permissions the connection's token holds beyond reading ad reports (empty for the sandbox and for a token that holds
   // only ads_read): the screen says when it can do more than read.
   extraScopes: z.array(z.string()),
