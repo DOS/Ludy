@@ -148,6 +148,19 @@ export const en = {
     support: 'Feedback / Support',
     status: 'System status',
   },
+  today: {
+    // The titles of the items each line's read returns, by the key the line gives: a line adds its keys here, in both languages, with the read.
+    items: {
+      social: {
+        review: '{count, plural, one {# post is} other {# posts are}} waiting for your approval',
+        channels: '{count, plural, one {# channel needs} other {# channels need}} reconnecting',
+        attention: '{count, plural, one {# post failed or is paused} other {# posts failed or are paused}}',
+        due: 'A post scheduled in the next 24 hours is still waiting for approval',
+        dueTitled: '“{title}” is scheduled in the next 24 hours and is still waiting for approval',
+        dueMore: '{count, plural, one {# more post is} other {# more posts are}} scheduled in the next 24 hours and still waiting for approval',
+      },
+    },
+  },
   overview: {
     title: 'Overview',
     subtitle: 'What waits for you in this organization, and the tax deadlines ahead.',
@@ -8024,6 +8037,7 @@ export const en = {
         record: 'Record the next part of a thread',
         retry: 'Retry the rest of a thread',
       },
+      today: 'Read what needs you in Social today',
       variant: {
         cancel: 'Cancel a post on a channel',
         decide: 'Approve or reject a post on a channel',
