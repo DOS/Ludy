@@ -74,7 +74,7 @@ DECLARE
 BEGIN
   IF TG_OP = 'INSERT' THEN
     -- A row for another org is the tenant policy's to refuse (its own message), not this guard's.
-    IF NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    IF crove_kernel.ctx_org_id() IS NOT NULL AND NEW.org_id IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
       RETURN NEW;
     END IF;
     -- A request is born waiting, in the name of the member who asks, stamped here whatever the writer sent. Only a member (or the system, which the RLS
@@ -86,6 +86,10 @@ BEGIN
       RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a request is born waiting';
     END IF;
     NEW.requested_by := COALESCE(v_user, NEW.requested_by);
+    -- Whoever writes it, it is in the name of a member of the org (a member's own id is stamped above; the system's must name one).
+    IF v_user IS NULL AND NOT EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = NEW.org_id AND m.user_id = NEW.requested_by) THEN
+      RAISE EXCEPTION 'ADS_REQUEST_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'a request is made in the name of a member of the org';
+    END IF;
     NEW.requested_at := pg_catalog.clock_timestamp();
     RETURN NEW;
   END IF;

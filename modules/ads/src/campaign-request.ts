@@ -11,7 +11,7 @@ import { Decimal } from 'decimal.js';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestView } from '@crove/kernel-contract';
+import { zAdsCampaignDraftRecord, zAdsCampaignRequest, zId, type AdsCampaignDraftSource, type AdsCampaignPlanDraft, type AdsCampaignRequestAsked, type AdsCampaignRequestView } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { accountOf, columnsOf, contextBase } from './campaign-draft.ts';
 import { flightDays, maxSpendOf } from './campaign-plan.ts';
@@ -37,7 +37,8 @@ export function defaultDailyBudget(currency: string | null, dailyCaps: readonly 
   const candidates = [...dailyCaps.map((c) => new Decimal(c)), ...monthlyCaps.map((c) => new Decimal(c).div(31))];
   if (candidates.length === 0) return null;
   const lowest = candidates.reduce((a, b) => (b.lt(a) ? b : a));
-  const rounded = lowest.toDecimalPlaces(currencyDecimals(currency), Decimal.ROUND_DOWN);
+  // At most two decimals whatever the currency's own, as a budget is entered (zAdsBudget).
+  const rounded = lowest.toDecimalPlaces(Math.min(currencyDecimals(currency), 2), Decimal.ROUND_DOWN);
   return rounded.gt(0) ? rounded.toFixed() : null;
 }
 
@@ -104,7 +105,7 @@ export const adsCampaignDraftRequest = defineCommand({
   sideEffect: 'external',
   access: DRAFTERS,
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
-  handler: async (ctx, input): Promise<AdsCampaignRequestView> => {
+  handler: async (ctx, input): Promise<AdsCampaignRequestAsked> => {
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới nhờ soạn nháp chiến dịch được');
     const userId = ctx.actor.userId;
     const adAccountId = input.adAccountId.toLowerCase();
@@ -137,7 +138,8 @@ export const adsCampaignDraftRequest = defineCommand({
     ctx.audit({ requestId: inserted.id, adAccountId, objective: input.objective, briefLength: input.brief.length });
     const [row] = await requestSelect(ctx.trx).where('r.org_id', '=', ctx.orgId).where('r.id', '=', inserted.id).execute();
     if (!row) throw requestMissing();
-    return viewOf(row);
+    const { brief: _brief, sourcePostId: _sourcePostId, ...asked } = viewOf(row);
+    return asked;
   },
 });
 

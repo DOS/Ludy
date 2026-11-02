@@ -11,7 +11,7 @@ import { metered, type AiUsage, type CampaignDraftRequest, type CampaignDraftRes
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { AdsCampaignDraftView, AdsCampaignRequestView } from '@crove/kernel-contract';
+import type { AdsCampaignDraftView, AdsCampaignRequestAsked, AdsCampaignRequestView } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { addDays, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from '../src/ads-worker.ts';
@@ -71,7 +71,7 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
   }
 
   const ask = (o: Org, user: string, over: Record<string, unknown> = {}) =>
-    rt.execute<AdsCampaignRequestView>('ads.campaign.draft_request', { adAccountId: o.accountId, objective: 'traffic', brief: BRIEF, ...over }, { actor: asUser(user), orgId: o.orgId });
+    rt.execute<AdsCampaignRequestAsked>('ads.campaign.draft_request', { adAccountId: o.accountId, objective: 'traffic', brief: BRIEF, ...over }, { actor: asUser(user), orgId: o.orgId });
   const requestsOf = (o: Org, user = o.member) => rt.query<AdsCampaignRequestView[]>('ads.campaign.requests', {}, { actor: asUser(user), orgId: o.orgId });
   const draftOf = (o: Org, id: string, user = o.member) => rt.query<AdsCampaignDraftView>('ads.campaign.draft', { draftId: id }, { actor: asUser(user), orgId: o.orgId });
   const jobOf = (o: Org, requestId: string): AdsCampaignDraftJob => ({ orgId: o.orgId, requestId });
@@ -147,7 +147,10 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
   it('lets an owner, an admin and a member ask, a viewer none, one request waiting per member, and carries ids only in the event and the audit row', async () => {
     const o = await org();
     const asked = await ask(o, o.member);
-    expect(asked).toMatchObject({ state: 'requested', code: null, draftId: null, objective: 'traffic', brief: BRIEF, adAccountId: o.accountId, adAccountName: 'Tài khoản thử' });
+    expect(asked).toMatchObject({ state: 'requested', code: null, draftId: null, objective: 'traffic', adAccountId: o.accountId, adAccountName: 'Tài khoản thử' });
+    // The answer of asking has no brief (it is kept for a week to replay a retry); the list has it.
+    expect(asked).not.toHaveProperty('brief');
+    expect((await requestsOf(o)).find((r) => r.id === asked.id)).toMatchObject({ brief: BRIEF });
     await expect(ask(o, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // One waiting per member: the same member cannot pile requests up into model spend; another member can.
     await expect(ask(o, o.member)).rejects.toMatchObject({ code: 'ADS_DRAFT_REQUEST_OPEN' });
@@ -311,6 +314,9 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     await expect(sqlAsMember("UPDATE crove_ads.ad_campaign_request SET state = 'none', code = 'AI_OFF' WHERE org_id = $1 AND id = $2", [o.orgId, asked.id])).rejects.toBeTruthy();
     await expect(sqlAsMember('UPDATE crove_ads.ad_campaign_request SET brief = $3 WHERE org_id = $1 AND id = $2', [o.orgId, asked.id, 'đổi'])).rejects.toBeTruthy();
     await expect(sqlAsMember('DELETE FROM crove_ads.ad_campaign_request WHERE org_id = $1 AND id = $2', [o.orgId, asked.id])).rejects.toBeTruthy();
+    // Even the database owner's own insert (no context) is born waiting and in the name of a member of the org.
+    await expect(rows("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, state, code, requested_by) VALUES ($1, $2, 'traffic', 'x', 'none', 'AI_OFF', $3)", [o.orgId, o.accountId, o.member])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
+    await expect(rows("INSERT INTO crove_ads.ad_campaign_request (org_id, ad_account_id, objective, brief, requested_by) VALUES ($1, $2, 'traffic', 'x', $3)", [o.orgId, o.accountId, randomUUID()])).rejects.toMatchObject({ message: expect.stringContaining('ADS_REQUEST_FORBIDDEN') });
     // Nobody but the system records the answer: a member running the command is refused by its access list.
     await expect(rt.execute('ads.campaign.draft_record', { requestId: asked.id, outcome: 'none', code: 'AI_OFF' }, { actor: asUser(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // Whatever path reaches the row, even the database owner's own statement (the sweep and the purge run so), the guard holds what a written request
@@ -327,7 +333,7 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     await expect(rt.execute('ads.campaign.prepare_launch', { draftId: settled?.draftId }, { actor: SYSTEM, orgId: o.orgId })).rejects.toBeTruthy();
   });
 
-  it('keeps another org’s requests out, and the table follows the org purge and the manifest', async () => {
+  it('keeps another org’s requests out of the list and of the asks', async () => {
     const a = await org();
     const b = await org();
     const mine = await ask(a, a.member);

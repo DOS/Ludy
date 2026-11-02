@@ -27,7 +27,7 @@ export interface AdsDraftDeps {
 
 // Writes one waiting request: what became of it, as a short word for the log ('written', 'none', 'rate', 'budget', 'error', or 'gone' when the
 // request was settled or went while the job waited). A failure of the model call, a refusal and a draft the checks refused leave no draft (the member
-// edits the brief and asks again): they are not retried, so a failing endpoint costs one call per request, not a loop.
+// edits the brief and asks again): they are not retried; only a failure of the recording after a successful call is, so a request costs at most three model calls (the queue's retry limit), then the sweep settles it.
 export async function runAdsCampaignDraft(deps: AdsDraftDeps, job: AdsCampaignDraftJob): Promise<string> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   const none = (code: string) => deps.runtime.execute('ads.campaign.draft_record', { requestId: job.requestId, outcome: 'none', code }, options);
