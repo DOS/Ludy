@@ -187,6 +187,9 @@ export const zAdsCampaignRequestView = z.object({
   settledAt: z.string().nullable(),
 });
 export type AdsCampaignRequestView = z.infer<typeof zAdsCampaignRequestView>;
+// What asking answers: the request without the member's brief (a command's answer is kept for a week to replay a retry, and the brief is read from the list).
+export const zAdsCampaignRequestAsked = zAdsCampaignRequestView.omit({ brief: true, sourcePostId: true });
+export type AdsCampaignRequestAsked = z.infer<typeof zAdsCampaignRequestAsked>;
 
 // What the draft job reads (system only): the request, the account's facts and the caps in force, in the account's own currency. Never a customer's text.
 export const zAdsCampaignDraftSource = z.strictObject({

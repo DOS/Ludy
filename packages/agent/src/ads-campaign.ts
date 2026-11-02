@@ -11,7 +11,7 @@
 // - a link in the plan itself that the member did not give;
 // - an empty answer or one whose targeting contradicts itself.
 // A draft that fails is no draft (the member edits the brief and asks again, or writes the plan): nothing is cut or repaired.
-import { generateText, Output } from 'ai';
+import { generateText, NoObjectGeneratedError, Output } from 'ai';
 import { z } from 'zod';
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
@@ -117,14 +117,25 @@ export class AdsCampaignWriter {
   /** Drafts the creative part of a campaign. onUsage gets the tokens the call used, for the org's AI cost limit. */
   async draft(request: CampaignDraftRequest, onUsage?: (usage: AiUsage) => void): Promise<CampaignDraftResult> {
     if (request.brief.trim() === '') return { kind: 'none', code: 'EMPTY' };
-    const { output, usage } = await this.generate({ system: instructions(request), prompt: prompt(request) });
+    let generated: Awaited<ReturnType<CampaignGenerator>>;
+    try {
+      generated = await this.generate({ system: instructions(request), prompt: prompt(request) });
+    } catch (error) {
+      // An answer outside the schema (45 days, eleven interests) is the model's, not the endpoint's: no draft, with the code INVALID.
+      if (NoObjectGeneratedError.isInstance(error)) return { kind: 'none', code: 'INVALID' };
+      throw error;
+    }
+    const { output, usage } = generated;
     if (usage) onUsage?.(usage);
     if (!output) return { kind: 'none', code: 'EMPTY' };
-    const plan = zPlan.safeParse(output);
-    if (!plan.success || plan.data.targeting.ageMax < plan.data.targeting.ageMin) return { kind: 'none', code: 'INVALID' };
+    const parsed = zPlan.safeParse(output);
+    if (!parsed.success || parsed.data.targeting.ageMax < parsed.data.targeting.ageMin) return { kind: 'none', code: 'INVALID' };
+    // An empty link is no link.
+    const plan = { success: true as const, data: { ...parsed.data, linkUrl: parsed.data.linkUrl?.trim() ? parsed.data.linkUrl.trim() : null } };
     // What the model may state: the member's own words, and nothing else.
     const trusted = [cut(request.brief, CAMPAIGN_BRIEF_CHARS)];
-    const copy = [plan.data.name, ...plan.data.variants.flatMap((v) => [v.headline, v.primaryText])].join('\n');
+    // Every text the model wrote that ends up on the draft and the approval card: the name, the texts, the interests and the regions.
+    const copy = [plan.data.name, ...plan.data.variants.flatMap((v) => [v.headline, v.primaryText]), ...plan.data.targeting.interests, ...plan.data.targeting.locations.map((l) => l.region ?? '')].join('\n');
     if (draftFiguresOutside(copy, trusted).length > 0) return { kind: 'none', code: 'FIGURES' };
     if (draftLinksOutside([copy, plan.data.linkUrl ?? ''].join('\n'), trusted).length > 0) return { kind: 'none', code: 'LINK' };
     return { kind: 'draft', plan: plan.data };

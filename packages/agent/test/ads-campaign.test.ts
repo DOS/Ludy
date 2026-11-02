@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // AdsCampaignWriter (ads W1b, #2295) with a stand-in for the model: what it is told, what it keeps of the answer, and what the checks after the call refuse
 // (a figure or a link the member's words do not contain, a plan that contradicts itself, an empty answer), so a draft never invents a price or a page.
+import { NoObjectGeneratedError } from 'ai';
 import { describe, expect, it } from 'vitest';
 import { AdsCampaignWriter, CAMPAIGN_BRIEF_CHARS, type CampaignDraftPlan, type CampaignDraftRequest, type CampaignGenerator } from '../src/index.ts';
 
@@ -75,6 +76,27 @@ describe('AdsCampaignWriter', () => {
     const short = 'Quán cà phê Mộc, chi nhánh mới ở Quận 3.';
     expect((await writerSaying(plan({ linkUrl: null, variants: plain })).writer.draft(request({ brief: short }))).kind).toBe('draft');
     expect((await writerSaying(plan({ linkUrl: 'https://moc.example.com', variants: plain })).writer.draft(request({ brief: short })))).toEqual({ kind: 'none', code: 'LINK' });
+  });
+
+  it('checks the interests and the regions too, since they end up on the draft and the approval card', async () => {
+    const targeting = (over: Partial<CampaignDraftPlan['targeting']>): CampaignDraftPlan['targeting'] => ({ locations: [{ country: 'VN', region: null }], ageMin: 20, ageMax: 45, gender: 'all', interests: ['Cà phê'], ...over });
+    expect(await writerSaying(plan({ targeting: targeting({ interests: ['Nhắn zalo.me/xyz'] }) })).writer.draft(request())).toEqual({ kind: 'none', code: 'LINK' });
+    expect(await writerSaying(plan({ targeting: targeting({ interests: ['Mở cửa 24/7'] }) })).writer.draft(request())).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(await writerSaying(plan({ targeting: targeting({ locations: [{ country: 'VN', region: 'Gọi 0901234567' }] }) })).writer.draft(request())).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('turns an empty link into no link, and an answer outside the schema into INVALID, not into a failure of the endpoint', async () => {
+    const result = await writerSaying(plan({ linkUrl: '   ' })).writer.draft(request());
+    expect(result).toMatchObject({ kind: 'draft', plan: { linkUrl: null } });
+    const outside = new AdsCampaignWriter(CONFIG, async () => {
+      throw new NoObjectGeneratedError({ message: 'no object', response: { id: 'r', timestamp: new Date(), modelId: 'm' }, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, finishReason: 'stop' } as never);
+    });
+    expect(await outside.draft(request())).toEqual({ kind: 'none', code: 'INVALID' });
+    // Any other failure is the endpoint's, and is thrown for the job to record as AI_ERROR.
+    const down = new AdsCampaignWriter(CONFIG, async () => {
+      throw new Error('endpoint down');
+    });
+    await expect(down.draft(request())).rejects.toThrow('endpoint down');
   });
 
   it('refuses a plan whose targeting contradicts itself or whose shape is wrong', async () => {
