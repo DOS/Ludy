@@ -625,6 +625,17 @@ export async function sweepConversationDrafts(deps: { workerDb: Db; now?: () => 
   return rows[0] ?? { settled: 0, expired: 0 };
 }
 
+// The "you are replying" markers that expired more than five minutes ago (crove_kernel.conversation_composing_sweep, the worker login's, CV3): readers
+// ignore a marker after its 60 seconds, so this only keeps the table small. Not more often than every ten seconds; runs in every deployment.
+let lastComposingSweep = 0;
+export async function sweepConversationComposing(deps: { workerDb: Db; now?: () => number; force?: boolean }): Promise<number> {
+  const now = (deps.now ?? Date.now)();
+  if (!deps.force && now - lastComposingSweep < DRAFT_DUE_MS) return 0;
+  lastComposingSweep = now;
+  const { rows } = await sql<{ n: number }>`SELECT crove_kernel.conversation_composing_sweep() AS n`.execute(deps.workerDb);
+  return rows[0]?.n ?? 0;
+}
+
 // The new conversations to draft for (crove_kernel.conversation_draft_due, the worker login's), at most a few at a time and not more often than every
 // ten seconds: each costs a model call.
 const DRAFT_DUE_MS = 10_000;

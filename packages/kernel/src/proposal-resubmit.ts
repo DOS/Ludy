@@ -28,6 +28,8 @@ export const PROPOSAL_PREPARERS = {
   'ads.account.enable_write': 'ads.account.prepare_enable_write',
   'ads.cap.set': 'ads.cap.prepare_set',
   'ads.launches.unblock': 'ads.launches.prepare_unblock',
+  // A drafted campaign submitted for approval (ADR-0043, #2295, W1): the owner or an admin asks, an owner or an admin approves.
+  'ads.campaign.launch': 'ads.campaign.prepare_launch',
 } as const;
 export type RequestableCommand = keyof typeof PROPOSAL_PREPARERS;
 export const REQUESTABLE = Object.keys(PROPOSAL_PREPARERS) as [RequestableCommand, ...RequestableCommand[]];

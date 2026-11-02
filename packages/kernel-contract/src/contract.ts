@@ -203,6 +203,11 @@ import {
   zConversationList,
   zConversationListed,
   zConversationMarkRead,
+  zConversationComposing,
+  zConversationComposed,
+  zAvailability,
+  zAvailabilityEntry,
+  zAvailabilitySet,
   zConversationNoteAdd,
   zConversationReplied,
   zConversationReply,
@@ -269,6 +274,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView } from './ads-campaign.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1443,6 +1449,11 @@ export const contract = {
     note: oc.input(zConversationNoteAdd).output(z.object({ noteId: zId })),
     linkContact: oc.input(zConversationLinkContact).output(z.object({ conversationId: zId })),
     markRead: oc.input(zConversationMarkRead).output(z.object({ conversationId: zId })),
+    // The inbox (CV3, #2306): the "you are replying" marker (at most one write in 20 seconds per thread and member), and the member's availability
+    // for new conversations (every staff member reads the team's, a member sets their own).
+    composing: oc.input(zConversationComposing).output(zConversationComposed),
+    availability: oc.input(z.strictObject({})).output(zAvailability),
+    setAvailability: oc.input(zAvailabilitySet).output(zAvailabilityEntry),
     // A demo comment on a post of a sandbox connection (owners and admins): it goes through the same intake a platform's notice takes.
     sandboxComment: oc.input(zConversationSandboxComment).output(zConversationSandboxQueued),
     // The retention of the org's threads (every member reads it; owners and admins set it), and the erasure of one customer (owners and
@@ -1722,6 +1733,13 @@ export const contract = {
     flagSettings: oc.output(zAdsFlagSettings),
     setFlagSettings: oc.input(zAdsFlagSettingCall).output(zAdsFlagSettings),
     requestChange: oc.input(zAdsChangeRequest).output(z.object({ proposalId: zId })),
+    // Campaign drafts (W1, #2295): one campaign with its ad set and ad, built and checked here; nothing leaves Ludy. Owners, admins and members
+    // draft (a member limited to some legal entities sees those entities' accounts only); submitting a draft for approval is requestChange
+    // with change campaign_launch, owners and admins.
+    campaignDrafts: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignDraftView)),
+    campaignDraft: oc.input(z.strictObject({ draftId: zId })).output(zAdsCampaignDraftView),
+    saveCampaignDraft: oc.input(zAdsCampaignDraftSaveCall).output(zAdsCampaignDraftView),
+    discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
     // What an Inbox item of an ads kind changes (owners and admins), for the approval card.
     proposal: oc.input(z.object({ id: zId })).output(zAdsProposalView),
     lowerCap: oc.input(zAdsCapLowerCall).output(z.object({ capId: zId, previous: z.string() })),

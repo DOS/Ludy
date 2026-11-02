@@ -5,7 +5,8 @@
 export const NOTIFICATION_KINDS = {
   // A task that came to me because its holder can no longer read its legal entity (#1799); an original e-invoice attached
   // to a posted invoice that differs from it or is not verified (#2335).
-  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget'],
+  // A conversation that is New and needs an answer (CV3, #2306): told to the assignee, else the available members who read it, else owners and admins.
+  kernel: ['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new'],
   finance: ['finance.bank_attention', 'finance.portal_attention', 'finance.period_closing'],
   // A to-do's reminder (#1675): it holds no text, the to-do shows in My work.
   notes: ['notes.todo_due'],
@@ -39,6 +40,8 @@ export type NotificationTarget =
   | { to: 'ledger' }
   | { to: 'myWork' }
   | { to: 'task'; id: string }
+  | { to: 'conversation'; id: string }
+  | { to: 'conversations' }
   | { to: 'tasks' }
   | { to: 'ads' }
   | { to: 'agents' };
@@ -55,6 +58,9 @@ export function notificationTarget(item: { kind: string; subjectId: string | nul
       return { to: 'inbox' };
     case 'kernel.task_rerouted':
       return item.subjectId ? { to: 'task', id: item.subjectId } : { to: 'tasks' };
+    // The thread that needs an answer opens in the Inbox, else the Inbox's New tab.
+    case 'kernel.conversation_new':
+      return item.subjectId ? { to: 'conversation', id: item.subjectId } : { to: 'conversations' };
     case 'finance.bank_attention':
       return item.detail.bankAccount ? { to: 'bank', account: item.detail.bankAccount } : { to: 'bank' };
     case 'finance.portal_attention':

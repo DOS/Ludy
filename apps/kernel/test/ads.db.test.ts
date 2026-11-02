@@ -19,7 +19,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { decideApproval, kernelCommands, kernelQueries } from '@crove/kernel';
 import { zTodayItems, type AdAccountView, type AdsSummary, type AdsSyncRunView, type TodayItem } from '@crove/kernel-contract';
 import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
+import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus } from '../src/meta-deletion.ts';
@@ -1267,6 +1267,260 @@ suite('ads on PostgreSQL (#2217)', () => {
         });
         // Clear what is left open in the org.
         for (const id of [enable, account, capProposal]) await reject(adminAccount, id);
+      });
+
+      // W1 (#2295): the campaign draft. Built and checked here, submitted by an owner or an admin as a proposal of ads.campaign.launch that names the plan, its
+      // hash and the largest amount it can spend; approved in the Inbox like any money; in W1 an approved plan is only marked approved, nothing leaves Ludy.
+      describe('campaign drafts (W1, #2295)', () => {
+        const zone = 'Asia/Ho_Chi_Minh';
+        const inDays = (n: number) => addDays(todayIn(zone, new Date()), n);
+        const plan = (over: Record<string, unknown> = {}) => ({
+          name: 'Khuyến mãi cuối tuần',
+          objective: 'traffic',
+          dailyBudget: '100000',
+          startOn: inDays(2),
+          endOn: inDays(8),
+          targeting: { locations: [{ country: 'VN' }], ageMin: 22, ageMax: 45, gender: 'all', interests: ['Cà phê'] },
+          linkUrl: 'https://example.com/khuyen-mai',
+          variants: [{ headline: 'Giảm 20% cuối tuần', primaryText: 'Ghé quán hôm nay để nhận ưu đãi.', callToAction: 'learn_more' }],
+          ...over,
+        });
+        const save = (who: Account, adAccountId: string, body: Record<string, unknown>, draftId?: string) => callAs(who, 'ads/saveCampaignDraft', { idempotencyKey: key(), adAccountId, plan: body, ...(draftId ? { draftId } : {}) });
+        const saved = async (who: Account, adAccountId: string, body: Record<string, unknown>, draftId?: string) => {
+          const made = await save(who, adAccountId, body, draftId);
+          expect(made.status, JSON.stringify(made.body)).toBe(200);
+          return made.body as { id: string; revision: number; status: string; maxSpend: string | null; days: number | null; issues: Array<{ code: string; severity: string; field: string | null }>; pendingProposalId: string | null; currency: string | null; aiFields: string[] };
+        };
+        const codes = (d: { issues: Array<{ code: string; severity: string }> }) => d.issues.map((i) => `${i.severity}:${i.code}`);
+        const submit = (who: Account, draftId: string) => ask(who, { change: 'campaign_launch', draftId });
+        // The org's switch on, an account that has read its currency, enabled for running ads, with an org daily cap of 200 000 and a monthly one of 5 000 000.
+        const ready = async (name: string) => {
+          await open();
+          const made = await connect(name);
+          await sync(made.connectionId);
+          const ids = [proposalId(await ask(owner, { change: 'account_enable', adAccountId: made.adAccountId }))];
+          // The org's caps are exactly these, whatever the tests before left: a raise is a proposal, a lowering the owner's direct stop.
+          for (const period of ['daily', 'monthly'] as const) {
+            const amount = period === 'daily' ? '200000' : '5000000';
+            const current = (await state()).caps.find((c) => c.scope === 'org' && c.period === period);
+            if (!current || Number(current.amount) < Number(amount)) ids.push(proposalId(await ask(owner, { change: 'cap_set', scope: 'org', period, amount, currency: 'VND' })));
+            else if (Number(current.amount) > Number(amount)) expect((await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'org', period, amount })).status).toBe(200);
+          }
+          for (const id of ids) expect((await approve(adminAccount, id)).status).toBe(200);
+          return made.adAccountId;
+        };
+        const draftRow = async (id: string) => (await row<{ status: string; revision: number; proposal_id: string | null; approved_at: Date | null; max_spend: string | null; daily_budget: string | null }>(`SELECT status, revision, proposal_id, approved_at, max_spend::text AS max_spend, daily_budget::text AS daily_budget FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+        const refusedBy = (sqlText: string, params: unknown[], message: string) => expect(row(sqlText, params), message).rejects.toMatchObject({ message: expect.stringContaining(message) });
+
+        it('lets an owner, an admin and a member draft, a viewer none; a plan in progress needs only a name and an objective, and says what is missing', async () => {
+          const account = await ready('Bản nháp');
+          const draft = await saved(member, account, { name: 'Mới', objective: 'traffic' });
+          expect(draft).toMatchObject({ status: 'draft', revision: 1, maxSpend: null, days: null, currency: 'VND', aiFields: [], pendingProposalId: null });
+          expect(codes(draft)).toEqual(expect.arrayContaining(['error:missing_field']));
+          expect(draft.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['dailyBudget', 'startOn', 'endOn', 'targeting', 'variants', 'linkUrl']);
+          expect((await save(viewer, account, plan())).status).toBe(403);
+          for (const who of [owner, adminAccount, member]) expect((await save(who, account, plan())).status, who.email).toBe(200);
+          expect((await callAs(viewer, 'ads/campaignDrafts', {})).status).toBe(403);
+          // A plan that is complete and inside the caps has nothing to say and a largest amount: 100 000 a day for 7 days.
+          const full = await saved(member, account, plan());
+          expect(full).toMatchObject({ maxSpend: '700000', days: 7, issues: [] });
+          // An edit raises the revision, keeps what it does not name, and recomputes the amount.
+          const edited = await saved(adminAccount, account, plan({ dailyBudget: '150000' }), draft.id);
+          expect(edited).toMatchObject({ id: draft.id, revision: 2, maxSpend: '1050000', days: 7, issues: [] });
+          expect(await draftRow(draft.id)).toMatchObject({ revision: 2, max_spend: '1050000', daily_budget: '150000' });
+          // An editor that sends the revision it read does not overwrite a later save: the stale one is refused, the current one goes through.
+          const stale = (revision: number) => callAs(owner, 'ads/saveCampaignDraft', { idempotencyKey: key(), adAccountId: account, draftId: draft.id, plan: { name: 'Sửa từ bản cũ', objective: 'traffic' }, expectedRevision: revision });
+          expect(await stale(1)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_STALE' } });
+          expect((await draftRow(draft.id))?.revision).toBe(2);
+          expect((await stale(2)).status).toBe(200);
+          // The list and the single read agree, and a draft discarded leaves the list.
+          const listed = (await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>;
+          expect(listed.map((d) => d.id)).toContain(draft.id);
+          expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({ id: draft.id, revision: 3 });
+          expect((await callAs(member, 'ads/discardCampaignDraft', { draftId: full.id, idempotencyKey: key() })).status).toBe(200);
+          expect(((await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string }>).map((d) => d.id)).not.toContain(full.id);
+          expect((await save(owner, account, plan(), full.id)).status).toBe(409);
+        });
+
+        it('judges a plan against the dates, the budget and the caps in force, to the cent, and keeps the account’s currency', async () => {
+          const account = await ready('Kiểm tra cục bộ');
+          expect(codes(await saved(owner, account, plan({ startOn: inDays(-1) })))).toContain('error:start_in_past');
+          expect(codes(await saved(owner, account, plan({ endOn: inDays(1) })))).toContain('error:end_before_start');
+          expect(codes(await saved(owner, account, plan({ dailyBudget: '200001' })))).toContain('error:daily_cap_exceeded');
+          expect(codes(await saved(owner, account, plan({ dailyBudget: '200000' })))).toEqual([]);
+          expect(codes(await saved(owner, account, plan({ dailyBudget: '200000', startOn: inDays(1), endOn: inDays(60) })))).toContain('error:monthly_cap_exceeded');
+          // Whole dong only; a third decimal is not a budget at all.
+          expect(codes(await saved(owner, account, plan({ dailyBudget: '100000.5' })))).toContain('error:budget_decimals');
+          expect((await save(owner, account, plan({ dailyBudget: '1.234' }))).status).toBe(400);
+          // The shapes the contract refuses: more than three variants, a link that is not https, an interest list past its limit.
+          const variants = Array.from({ length: 4 }, () => ({ headline: 'Tiêu đề', primaryText: 'Nội dung', callToAction: 'learn_more' }));
+          for (const bad of [{ variants }, { linkUrl: 'http://example.com' }, { targeting: { locations: [{ country: 'VN' }], ageMin: 22, ageMax: 45, gender: 'all', interests: Array.from({ length: 21 }, (_, i) => `sở thích ${i}`) } }, { objective: 'sales' }]) {
+            expect((await save(owner, account, plan(bad))).status, JSON.stringify(bad).slice(0, 60)).toBe(400);
+          }
+          // Messenger wants a Page that is a connection of the org.
+          const messenger = await saved(owner, account, plan({ objective: 'messenger', linkUrl: null }));
+          expect(messenger.issues.filter((i) => i.code === 'missing_field').map((i) => i.field)).toEqual(['pageConnectionId']);
+          // A connection of the org that is not a Facebook Page (the account's own, for reading) is not a Page; an id that is not the org's is refused.
+          const readConnection = (await row<{ id: string }>(`SELECT channel_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0]?.id as string;
+          expect(codes(await saved(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: readConnection }), messenger.id))).toContain('error:page_not_found');
+          expect(await save(owner, account, plan({ objective: 'messenger', linkUrl: null, pageConnectionId: randomUUID() }), messenger.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
+          expect(await save(owner, account, plan({ mediaFileId: randomUUID() }))).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_REFERENCE' } });
+          // The caps are the owners' and admins' to read: a member is told a cap is exceeded, not its amount.
+          const overAsMember = await saved(member, account, plan({ dailyBudget: '300000' }));
+          expect(overAsMember.issues.find((i) => i.code === 'daily_cap_exceeded')).toEqual({ code: 'daily_cap_exceeded', severity: 'error', field: 'dailyBudget', params: { scope: 'org', budget: '300000' } });
+          const overAsOwner = await saved(owner, account, plan({ dailyBudget: '300000' }));
+          expect(overAsOwner.issues.find((i) => i.code === 'daily_cap_exceeded')).toMatchObject({ params: { scope: 'org', cap: '200000', budget: '300000' } });
+        });
+
+        it('submits a plan for approval only when it is complete and judged clean, one request at a time, by an owner or an admin', async () => {
+          const account = await ready('Gửi duyệt');
+          const incomplete = await saved(owner, account, { name: 'Dở dang', objective: 'traffic' });
+          expect(await submit(owner, incomplete.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INCOMPLETE' } });
+          const over = await saved(owner, account, plan({ dailyBudget: '300000' }));
+          expect(await submit(owner, over.id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+          const good = await saved(member, account, plan());
+          // A member drafts; asking for approval is the owner's or an admin's, and a viewer's nothing.
+          expect((await submit(member, good.id)).status).toBe(403);
+          expect((await submit(viewer, good.id)).status).toBe(403);
+          expect((await submit(owner, randomUUID())).status).toBe(404);
+          // Nothing but a signed-in owner or admin asks: not the system, and so not an agent either (no agent is listed for the command).
+          await expect(api.execute('ads.campaign.prepare_launch', { draftId: good.id }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+          await expect(api.execute('ads.campaign.draft_save', { adAccountId: account, plan: plan() }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+          const id = proposalId(await submit(adminAccount, good.id));
+          expect(await submit(owner, good.id)).toMatchObject({ status: 409, body: { code: 'ADS_REQUEST_OPEN' } });
+          // The card: the plan whole and the largest amount; the proposal's own amount is the one the approver signs.
+          expect((await callAs(owner, 'ads/proposal', { id })).body).toMatchObject({ change: { change: 'campaign_launch', draftId: good.id, amount: '700000', currency: 'VND', days: 7, plan: { name: 'Khuyến mãi cuối tuần', dailyBudget: '100000' } } });
+          expect((await row<{ amount: string; kind: string }>(`SELECT payload ->> 'amount' AS amount, kind FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id]))[0]).toEqual({ amount: '700000', kind: 'ads.campaign_launch' });
+          // While the request waits the draft is frozen: for the commands (a friendly refusal) and for the database, whatever path reaches it.
+          expect(await save(owner, account, plan({ dailyBudget: '90000' }), good.id)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_SUBMITTED' } });
+          expect(await callAs(owner, 'ads/discardCampaignDraft', { draftId: good.id, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_SUBMITTED' } });
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'discarded' WHERE org_id = $1 AND id = $2`, [orgId, good.id], 'ADS_DRAFT_SUBMITTED');
+          expect(await callAs(owner, 'ads/campaignDraft', { draftId: good.id })).toMatchObject({ body: { pendingProposalId: id } });
+          // A rejected request sends it back to its author: editable again, and a new request is possible.
+          expect((await reject(adminAccount, id)).status).toBe(200);
+          const reopened = await saved(owner, account, plan({ dailyBudget: '90000' }), good.id);
+          expect(reopened).toMatchObject({ revision: 2, maxSpend: '630000', pendingProposalId: null });
+          proposalId(await submit(owner, good.id));
+        });
+
+        it('approves a plan like any money: the author does not approve it, the approver behind a second factor does, and then it is approved and frozen', async () => {
+          const account = await ready('Duyệt kế hoạch');
+          const draft = await saved(member, account, plan());
+          const id = proposalId(await submit(owner, draft.id));
+          // P10: the author does not approve it while another eligible person exists; P11: the approver needs a second factor.
+          expect(await approve(owner, id)).toMatchObject({ status: 403, body: { code: 'FOUR_EYES_REQUIRED' } });
+          expect(await approve(adminAccount, id, { mfa: false })).toMatchObject({ status: 403, body: { code: 'STEP_UP_REQUIRED' } });
+          expect(await draftRow(draft.id)).toMatchObject({ status: 'draft', proposal_id: null, approved_at: null });
+          expect((await approve(adminAccount, id)).status).toBe(200);
+          expect(await draftRow(draft.id)).toMatchObject({ status: 'approved', proposal_id: id, max_spend: '700000' });
+          expect((await draftRow(draft.id))?.approved_at).toBeInstanceOf(Date);
+          expect(await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).toMatchObject({ body: { status: 'approved', issues: [], pendingProposalId: null } });
+          // Approved is over: no edit, no discard, no second request; for the commands and for the database.
+          expect(await save(owner, account, plan({ dailyBudget: '90000' }), draft.id)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_CLOSED' } });
+          expect((await callAs(owner, 'ads/discardCampaignDraft', { draftId: draft.id, idempotencyKey: key() })).status).toBe(409);
+          expect((await submit(owner, draft.id)).status).toBe(409);
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 1 WHERE org_id = $1 AND id = $2`, [orgId, draft.id], 'ADS_DRAFT_FROZEN');
+          // The audit row has the ids, the amount and the hash, never the creative text.
+          const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.campaign.launch' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+          expect(audit[0]?.detail).toMatchObject({ draftId: draft.id, maxSpend: '700000', currency: 'VND', days: 7, planHash: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) });
+          expect(JSON.stringify(audit[0]?.detail)).not.toContain('Khuyến');
+        });
+
+        it('lets a draft become approved by that approved proposal alone: no raw status change, no forged row, no other draft', async () => {
+          const account = await ready('Khóa cơ sở dữ liệu');
+          const a = await saved(owner, account, plan());
+          const b = await saved(owner, account, plan({ name: 'Một chiến dịch khác' }));
+          // A raw statement cannot approve a draft or insert one that is approved, discarded or with a proposal, whoever runs it.
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, a.id], 'ADS_DRAFT_FORBIDDEN');
+          const forged = (columns: string, values: string) => refusedBy(`INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, created_by, ${columns}) VALUES ($1, $2, 'Giả', 'traffic', $3, ${values})`, [orgId, account, owner.userId], 'ADS_DRAFT_FORBIDDEN');
+          await forged('status', `'discarded'`);
+          await forged('proposal_id', 'gen_random_uuid()');
+          await forged('revision', '5');
+          // 'approved' with its proposal and its time is stopped by the guard too (the table's check alone would let a draft with both through).
+          await forged('status, proposal_id, approved_at', `'approved', gen_random_uuid(), now()`);
+          // The approval of one draft's proposal does not approve another: the guard names the draft, its revision and its amount.
+          const id = proposalId(await submit(owner, a.id));
+          expect((await approve(adminAccount, id)).status).toBe(200);
+          expect((await draftRow(b.id))?.status).toBe('draft');
+          // The writer cannot stamp who or when, or the revision: the database does, each on its own; who wrote it and the keys never change.
+          await row(`UPDATE crove_ads.ad_campaign_draft SET revision = 99 WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
+          expect((await draftRow(b.id))?.revision).toBe(1);
+          await row(`UPDATE crove_ads.ad_campaign_draft SET updated_by = $3 WHERE org_id = $1 AND id = $2`, [orgId, b.id, member.userId]);
+          expect((await row<{ updated_by: string | null }>(`SELECT updated_by FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, b.id]))[0]?.updated_by).toBeNull();
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET created_at = '2000-01-01' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET origin = 'ai' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET ai_fields = ARRAY['dailyBudget'] WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+          // No amount that is not a number: NaN and Infinity are refused by the table.
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET daily_budget = 'NaN' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_daily_budget_check');
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET max_spend = 'Infinity' WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ad_campaign_draft_max_spend_check');
+          // A draft with no amount is never approved, even by a proposal that names it.
+          await row(`UPDATE crove_ads.ad_campaign_draft SET max_spend = NULL WHERE org_id = $1 AND id = $2`, [orgId, b.id]);
+          await refusedBy(`UPDATE crove_ads.ad_campaign_draft SET status = 'approved', proposal_id = gen_random_uuid(), approved_at = now() WHERE org_id = $1 AND id = $2`, [orgId, b.id], 'ADS_DRAFT_FORBIDDEN');
+        });
+
+        it('checks again at approval: a cap lowered, running ads switched off or launches blocked after the request stop the approval, and the draft stays a draft', async () => {
+          const account = await ready('Kiểm tra lại khi duyệt');
+          const lowered = await saved(owner, account, plan());
+          const idLowered = proposalId(await submit(owner, lowered.id));
+          // The owner lowers the org's daily cap under the plan's budget (a stop, direct): the approval refuses, with the reason.
+          expect((await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'org', period: 'daily', amount: '50000' })).status).toBe(200);
+          expect(await approve(adminAccount, idLowered)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect(await draftRow(lowered.id)).toMatchObject({ status: 'draft', proposal_id: null });
+          expect((await reject(adminAccount, idLowered)).status).toBe(200);
+          // The kill switch: launches blocked refuses the request and an approval of one made before.
+          const account2 = await ready('Chặn chạy');
+          const blocked = await saved(owner, account2, plan({ dailyBudget: '40000' }));
+          const idBlocked = proposalId(await submit(owner, blocked.id));
+          expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
+          expect(await approve(adminAccount, idBlocked)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect(await submit(owner, (await saved(owner, account2, plan({ name: 'Sau khi chặn', dailyBudget: '40000' }))).id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect((await reject(adminAccount, idBlocked)).status).toBe(200);
+          // Writing switched off after the request: the approval is refused, the draft stays a draft; and with it off, no request at all.
+          const account3 = await ready('Tắt sau khi gửi');
+          const off = await saved(owner, account3, plan({ dailyBudget: '40000' }));
+          const idOff = proposalId(await submit(owner, off.id));
+          expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+          expect(await approve(adminAccount, idOff)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect(await draftRow(off.id)).toMatchObject({ status: 'draft', proposal_id: null });
+          expect(await submit(owner, (await saved(owner, account3, plan({ name: 'Sau khi tắt', dailyBudget: '40000' }))).id)).toMatchObject({ status: 422, body: { code: 'ADS_DRAFT_INVALID' } });
+          expect((await reject(adminAccount, idOff)).status).toBe(200);
+        });
+
+        it('lets an account move to another legal entity whatever state its drafts are in, and keeps the drafts with it', async () => {
+          const account = await ready('Chuyển pháp nhân');
+          const discarded = await saved(owner, account, plan());
+          expect((await callAs(owner, 'ads/discardCampaignDraft', { draftId: discarded.id, idempotencyKey: key() })).status).toBe(200);
+          const approved = await saved(owner, account, plan({ name: 'Đã duyệt' }));
+          expect((await approve(adminAccount, proposalId(await submit(owner, approved.id)))).status).toBe(200);
+          const open = await saved(owner, account, plan({ name: 'Đang soạn' }));
+          const entity = (await row<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh quảng cáo', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id as string;
+          const entityOf = async (id: string) => (await row<{ legal_entity_id: string; status: string }>(`SELECT legal_entity_id, status FROM crove_ads.ad_campaign_draft WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+          const before = (await entityOf(open.id))?.legal_entity_id;
+          // The account's foreign key cascades the new entity to its drafts; the guard lets that alone through for a draft that is over too.
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          expect(await entityOf(discarded.id)).toEqual({ legal_entity_id: entity, status: 'discarded' });
+          expect(await entityOf(approved.id)).toEqual({ legal_entity_id: entity, status: 'approved' });
+          expect((await entityOf(open.id))?.legal_entity_id).toBe(entity);
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          expect((await entityOf(approved.id))?.legal_entity_id).toBe(before);
+          // A request made in one entity is not approved after its account moved to another: the approval is refused and a new request is the way.
+          const asked = proposalId(await submit(owner, open.id));
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, entity]);
+          expect(await approve(adminAccount, asked)).toMatchObject({ status: 409, body: { code: 'ADS_DRAFT_CHANGED' } });
+          expect((await draftRow(open.id))?.status).toBe('draft');
+          await row(`UPDATE crove_ads.ad_account SET legal_entity_id = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, before]);
+          expect((await approve(adminAccount, asked)).status).toBe(200);
+        });
+
+        it('keeps the drafts of another org out, and answers for an account of the org only', async () => {
+          const account = await ready('Hai tổ chức');
+          const mine = await saved(owner, account, plan());
+          expect((await rpc('ads/campaignDraft', await tokenFor(outsider), { draftId: mine.id }, otherSlug)).status).toBe(404);
+          expect(((await rpc('ads/campaignDrafts', await tokenFor(outsider), {}, otherSlug)).body as unknown[]).length).toBe(0);
+          expect((await rpc('ads/saveCampaignDraft', await tokenFor(outsider), { idempotencyKey: key(), adAccountId: account, plan: plan() }, otherSlug)).status).toBe(404);
+          expect((await save(owner, randomUUID(), plan())).status).toBe(404);
+        });
       });
     });
 

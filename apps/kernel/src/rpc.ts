@@ -403,6 +403,8 @@ export function createRpcHandler(
         };
       case 'launches_unblock':
         return { command: 'ads.launches.unblock', input: {} };
+      case 'campaign_launch':
+        return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -1945,6 +1947,10 @@ export function createRpcHandler(
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
       markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
+      // The inbox (CV3, #2306): the "you are replying" marker and the availability switch.
+      composing: os.conversations.composing.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.composing', input, { actor, orgId }))),
+      availability: os.conversations.availability.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.availability', {}, { actor, orgId }))),
+      setAvailability: os.conversations.setAvailability.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_availability', input, { actor, orgId }))),
       // The command checks the connection and the role and returns the event; the body then takes the intake's own way, parked
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
@@ -2367,6 +2373,21 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.flag_settings_set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Campaign drafts (W1, #2295): built and checked here, nothing leaves Ludy; asking for approval is requestChange (campaign_launch).
+      campaignDrafts: os.ads.campaignDrafts.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.drafts', input, { actor, orgId }))),
+      campaignDraft: os.ads.campaignDraft.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.draft', input, { actor, orgId }))),
+      saveCampaignDraft: os.ads.saveCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_discard', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),
