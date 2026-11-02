@@ -3,7 +3,7 @@
 // rule; the SPA only finds the columns and shows the answer.
 import { z } from 'zod';
 import { zVoucherCode } from './cash-voucher.ts';
-import { zAccountCode, zId, zLocalDate, zMoney, zVoucherAmount, zVoucherType } from './schemas.ts';
+import { BANK_MATCH_REASONS, zAccountCode, zBankMatchedBy, zId, zLocalDate, zMoney, zVoucherAmount, zVoucherType } from './schemas.ts';
 
 // A month of a busy account has a few thousand lines; the cap keeps a request well under the API's body limit.
 export const BANK_IMPORT_MAX_ROWS = 5000;
@@ -196,11 +196,6 @@ export const zBankLines = z.object({
 });
 export type BankLines = z.infer<typeof zBankLines>;
 
-// Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
-// description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
-export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
-export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
-
 export const zBankLineCandidate = z.object({
   party: z.object({ id: zId, name: z.string(), taxCode: z.string().nullable() }),
   reason: z.enum(BANK_MATCH_REASONS),
@@ -229,6 +224,49 @@ export const zBankLineVoucher = z.object({
   candidates: z.array(zBankLineCandidate),
 });
 export type BankLineVoucher = z.infer<typeof zBankLineVoucher>;
+
+// Why an open line needs a look instead of a one-click group (#2385), from the deterministic checks: several parties
+// could be meant, only a weak reason (the name, the open balance) points at one, no open invoice of the party equals the
+// amount (a partial payment, a bank fee in it), or another line of the same statement names the same invoice.
+export const BANK_LOOK_WHY = ['several', 'weak', 'no_invoice', 'duplicate'] as const;
+export type BankLookWhy = (typeof BANK_LOOK_WHY)[number];
+
+// An open line with its voucher, sorted into a group by finance.bank.match_groups. A clean line has one exact candidate
+// and no warning: the party's tax code or the invoice number is in the description, exactly one party fits, the party's
+// open balance covers the amount and one open invoice of it equals the amount. Everything else is `look`, with the
+// first reason that kept it out of a clean group.
+export const zBankMatchLine = zBankLineVoucher.extend({
+  group: z.enum(['clean', 'look']),
+  why: z.enum(BANK_LOOK_WHY).nullable(),
+});
+export type BankMatchLine = z.infer<typeof zBankMatchLine>;
+
+export const zBankMatchGroups = z.object({
+  clean: z.array(zBankMatchLine),
+  look: z.array(zBankMatchLine),
+  // More lines than one read looks at (BANK_SUGGESTIONS_MAX): the period holds lines this answer leaves out.
+  more: z.boolean(),
+});
+export type BankMatchGroups = z.infer<typeof zBankMatchGroups>;
+
+// A line a voucher settles, listed after the fact (#2385): the line, its voucher, who approved it and when, how the party
+// was found, and whether the voucher was reversed since (a reversed voucher frees its line).
+export const zBankMatchedLine = z.object({
+  line: zBankLine,
+  voucher: z.object({ id: zId, code: z.string(), type: zVoucherType, date: zLocalDate, amount: zMoney, journalEntryId: zId }),
+  party: z.object({ id: zId, name: z.string() }).nullable(),
+  proposalId: zId.nullable(),
+  // The member who approved the voucher's proposal, while they are a member; null for a voucher posted without one.
+  approvedBy: z.object({ name: z.string() }).nullable(),
+  approvedAt: z.iso.datetime({ offset: true }).nullable(),
+  // Null for a voucher made before the match was recorded, or entered without a line's suggestion.
+  matchedBy: zBankMatchedBy.nullable(),
+  reversal: z.object({ id: zId, entryDate: zLocalDate }).nullable(),
+});
+export type BankMatchedLine = z.infer<typeof zBankMatchedLine>;
+
+export const zBankMatched = z.object({ items: z.array(zBankMatchedLine), more: z.boolean() });
+export type BankMatched = z.infer<typeof zBankMatched>;
 
 // The open statement lines of each bank account (no voucher, none waiting for approval), which the Inbox lists as lines
 // to resolve (#326, stage 2b): how many, how many were flagged as ambiguous at import, and the oldest one's date.

@@ -3,7 +3,7 @@
 // like any posting (R3, four-eyes, fresh MFA), and approving it numbers the voucher and posts its journal entry. The
 // finance module decides every rule; the shapes here are shared with the SPA.
 import { z } from 'zod';
-import { VOUCHER_MAX_LINES, zAccountCode, zId, zLocalDate, zVoucherLine, zVoucherType, type VoucherType } from './schemas.ts';
+import { VOUCHER_MAX_LINES, zAccountCode, zBankMatchedBy, zId, zLocalDate, zVoucherLine, zVoucherType, type VoucherType } from './schemas.ts';
 
 // The proposal kind and the command its approval runs.
 export const VOUCHER_KIND = 'finance.cash_voucher';
@@ -26,6 +26,9 @@ export const zCashVoucherRequest = z.object({
   // The bank statement line a báo Có or báo Nợ settles (#326), when it is made from one: the voucher then has the
   // line's bank account, date, direction and amount.
   bankLineId: zId.optional(),
+  // How the party of a voucher made from a bank line was found (#2385). The server checks a claimed `vy` against the
+  // matcher and keeps `manual` otherwise.
+  matchedBy: zBankMatchedBy.optional(),
   // The legal entity whose books the voucher goes to (#1280), as in zLegalEntityChoice; a voucher made from a bank line
   // is in the line's entity.
   legalEntityId: zId.optional(),

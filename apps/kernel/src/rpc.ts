@@ -2183,6 +2183,12 @@ export function createRpcHandler(
       suggestions: os.bank.suggestions.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.suggestions', input, { actor, orgId })),
       ),
+      matchGroups: os.bank.matchGroups.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.match_groups', input, { actor, orgId })),
+      ),
+      matched: os.bank.matched.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.bank.matched', input, { actor, orgId })),
+      ),
       openLines: os.bank.openLines.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.bank.open_lines', input ?? {}, { actor, orgId })),
       ),
