@@ -9,6 +9,18 @@ import { foldVietnamese } from './portal-status.ts';
 // Words and phrases of a bank statement that say nothing about the counterparty, folded (no diacritics, lower case). A phrase
 // is dropped whole, longest first. Matched on folded whole words only.
 export const BANK_NOISE_PHRASES: readonly string[] = [
+  // What the payment is for (several words, so a name that contains one of them is left alone).
+  'hop dong',
+  'hoa don',
+  'cong no',
+  'tien hang',
+  'tien nha',
+  'tien thue',
+  'tien dien',
+  'tien nuoc',
+  'tien luong',
+  'tra tien',
+  'tra no',
   'ma giao dich',
   'chuyen khoan',
   'chuyen tien',
@@ -21,16 +33,20 @@ export const BANK_NOISE_PHRASES: readonly string[] = [
 export const BANK_NOISE_WORDS: readonly string[] = [
   // Transfer words and channels.
   'ck', 'tt', 'nd', 'ibft', 'napas', 'ft', 'trace', 'ref', 'ib', 'qr', 'vietqr', 'banking', 'bank', 'nh', 'stk',
-  // Invoice and month words of a payment reason.
-  'hd', 'mst', 'thang', 'nam',
+  // Invoice words of a payment reason.
+  'hd', 'mst',
   // Prepositions the banks put around the names.
-  'tu', 'den', 'qua', 'cho', 'cua', 'va',
+  'den', 'qua', 'cho', 'cua', 'va',
   // Bank codes and names.
   'mb', 'vcb', 'bidv', 'ctg', 'vtb', 'acb', 'tcb', 'mbb', 'vpb', 'tpb', 'stb', 'shb', 'hdb', 'ocb', 'msb', 'eib', 'lpb', 'vib', 'scb', 'abb', 'bab', 'bvb', 'nab', 'seab', 'vab',
   'vietcombank', 'techcombank', 'vietinbank', 'agribank', 'sacombank', 'mbbank', 'vpbank', 'tpbank', 'maritimebank',
 ];
 const PHRASES = BANK_NOISE_PHRASES.map((p) => p.split(' ')).sort((a, b) => b.length - a.length);
 const NOISE = new Set(BANK_NOISE_WORDS);
+// Words that are noise only in one place, because each is also a Vietnamese given name (Thắng, Nam, Từ): "thang" and "nam" before
+// a number (a month or a year), "tu" (from) where a run of words begins.
+const BEFORE_NUMBER = new Set(['thang', 'nam']);
+const RUN_START = new Set(['tu']);
 
 // The shortest key (characters, spaces included) a rule may have: a shorter one points at too many parties.
 export const BANK_KEY_MIN_CHARS = 3;
@@ -52,8 +68,14 @@ export function bankLineKey(description: string): string | null {
       continue;
     }
     const token = tokens[i] as string;
+    const next = tokens[i + 1];
     i += 1;
-    if (/[0-9]/.test(token) || NOISE.has(token)) {
+    const noisy =
+      /[0-9]/.test(token) ||
+      NOISE.has(token) ||
+      (BEFORE_NUMBER.has(token) && next !== undefined && /[0-9]/.test(next)) ||
+      (RUN_START.has(token) && (runs[runs.length - 1] as string[]).length === 0);
+    if (noisy) {
       runs.push([]);
       continue;
     }

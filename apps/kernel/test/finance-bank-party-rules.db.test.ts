@@ -69,6 +69,7 @@ suite('learned bank line rules (#2402)', () => {
   const beta = randomUUID();
   const hoaBinh = randomUUID();
   const lineId: Record<string, string> = {};
+  let ownerId = '';
 
   async function admin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
     const client = new pg.Client({ connectionString: adminUrl });
@@ -129,7 +130,7 @@ suite('learned bank line rules (#2402)', () => {
     expect(asked.status).toBe(200);
     const approved = await rpc('inbox/approve', await tokenFor(adminUser, { mfa: true }), { id: asked.body.proposalId, revision: 1, idempotencyKey: randomUUID() });
     expect(approved.status).toBe(200);
-    return approved.body as { voucherId: string; code: string };
+    return approved.body as { voucherId: string; code: string; journalEntryId: string };
   }
   const rules = async () => admin(async (c) => (await c.query('SELECT * FROM crove_finance.bank_party_rule ORDER BY created_at')).rows);
   const listed = async (who = owner, slug = org.slug) => (await rpc('bankPartyRules/list', await tokenFor(who), undefined, slug)).body as any[];
@@ -167,6 +168,7 @@ suite('learned bank line rules (#2402)', () => {
     app = createHttpApp({ config, runtime, store, authenticate: createAuthenticator(config, db), pool, aiEnabled: false });
 
     for (const who of [owner, adminUser, member, outsider]) expect((await rpc('me/get', await tokenFor(who), undefined, null)).status).toBe(200);
+    ownerId = String((await rpc('me/get', await tokenFor(owner), undefined, null)).body?.userId);
     const created = await rpc('org/create', await tokenFor(owner), { name: 'Công ty Quy Tắc Sao Kê', idempotencyKey: randomUUID() }, null);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
     await join(adminUser, 'admin', org.slug);
@@ -282,5 +284,48 @@ suite('learned bank line rules (#2402)', () => {
     // The login role may not update a rule (made and removed whole).
     await expect(asTenant(`UPDATE crove_finance.bank_party_rule SET key_hash = 'nope' WHERE id = $1`, [rule.id])).rejects.toThrow(/permission denied/);
     await expect(admin((c) => c.query(`INSERT INTO crove_finance.bank_party_rule (org_id, kind, key_hash, party_id, source_voucher_id) VALUES ($1, 'other', $2, $3, $4)`, [org.orgId, rule.key_hash, beta, rule.source_voucher_id]))).rejects.toThrow();
+  });
+
+  it('removes the rules of a party whose personal data is erased, though the books keep the party', async () => {
+    const gamma = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name, email) VALUES ($1, $2, 'Trần Thị Lan', 'gamma@example.test')`, [org.orgId, gamma]);
+    });
+    expect((await importLines(org.slug, member, [row('20/11/2026', '400.000', 'RP6', 'CK TRAN THI LAN TT HOP DONG')], 'sao-ke-gamma.xlsx')).status).toBe(200);
+    await refresh();
+    await matchByHand('RP6', '2026-11-20', gamma, '400000', { kind: 'manual' });
+    expect((await rules()).some((r) => r.party_id === gamma)).toBe(true);
+    const actor = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    const erased = await runtime.execute<{ erased: Array<{ column: string; rows: number }> }>('kernel.personal_data.erase', { value: 'gamma@example.test' }, { actor, orgId: org.orgId, idempotencyKey: randomUUID() });
+    expect(erased.erased).toEqual(expect.arrayContaining([{ column: 'crove_finance.bank_party_rule.key_hash', rows: 1 }]));
+    expect((await rules()).some((r) => r.party_id === gamma)).toBe(false);
+    // The voucher the rule was learned from stays: the books keep it.
+    expect(await admin(async (c) => (await c.query(`SELECT 1 FROM crove_finance.cash_voucher WHERE party_id = $1`, [gamma])).rowCount)).toBe(1);
+  });
+
+  it('stops suggesting a party once the voucher that taught the rule is reversed', async () => {
+    const delta = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Delta Trade')`, [org.orgId, delta]);
+    });
+    expect((await importLines(org.slug, member, [row('22/11/2026', '600.000', 'RP7', 'CK PHAM VAN LONG TT GIAO HANG'), row('02/12/2026', '600.000', 'RP8', 'CK PHAM VAN LONG TT GIAO HANG 2')], 'sao-ke-delta.xlsx')).status).toBe(200);
+    await refresh();
+    const voucher = await matchByHand('RP7', '2026-11-22', delta, '600000', { kind: 'manual' });
+    expect((await suggestion('RP8')).suggested).toMatchObject({ party: { id: delta }, reason: 'learned' });
+    const reversal = await rpc('inbox/request', await tokenFor(member), {
+      command: 'finance.journal.reverse',
+      input: { entryId: voucher.journalEntryId, entryDate: '2026-11-30', reason: 'Chọn nhầm đối tượng' },
+      idempotencyKey: randomUUID(),
+    });
+    expect(reversal.status).toBe(200);
+    expect((await rpc('inbox/approve', await tokenFor(adminUser, { mfa: true }), { id: reversal.body.proposalId, revision: 1, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect((await suggestion('RP8')).suggested).toBeNull();
+  });
+
+  it('keeps each rule in its voucher\'s legal entity', async () => {
+    const mismatched = await admin(
+      async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_party_rule r JOIN crove_finance.cash_voucher v ON v.org_id = r.org_id AND v.id = r.source_voucher_id WHERE r.legal_entity_id <> v.legal_entity_id`)).rowCount,
+    );
+    expect(mismatched).toBe(0);
   });
 });

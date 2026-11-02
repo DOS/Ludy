@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Learned rules that point a bank statement line's text at a party (issue #2402, part 2 of #2385), after the learned account
 // rules of #1399:
-// - Learning: when the voucher of a bank line is approved and its proposal says the person chose the party themselves
-//   (`matchedBy.kind = 'manual'`, never a suggestion the matcher made), finance.voucher.record writes a rule in the same
+// - Learning: when the voucher of a bank line is approved and its proposal says `matchedBy.kind = 'manual'`: the person chose the
+//   party themselves, or took one the server could not verify as the matcher's (never a suggestion it verified), finance.voucher.record writes a rule in the same
 //   audited command: the keyed hash of the line's distinctive words (domain/bank-rule-key.ts) for that party. The key is
 //   never stored as text. Only a user's approval teaches; a rule never posts anything.
 // - Matching: lineMatchFor adds the parties whose rule the line's key hits, in the line's own org and legal entity, as
 //   candidates with the reason `learned`. Two parties on one key make the line one to look at, never a clean one.
 // - Settings: every role lists the rules (party, who confirmed, when, the voucher that taught it); owners and admins remove one
 //   (R1, audited).
+// The key is hashed with BANK_KEY_VERSION in front: a later change to the noise words or the key logic bumps it, and the rules
+// learned under the old derivation are simply not hit again (a person's next match teaches the new key).
 // Both the learner and the matcher hash through crove_finance.bank_party_rule_hash, so the deployment's key is read by that
 // definer alone.
 import { sql } from 'kysely';
@@ -16,6 +18,7 @@ import { z } from 'zod';
 import { voucherCode, zId, type BankPartyRule } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { bankLineKey } from './domain/bank-rule-key.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -23,6 +26,9 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // The most rules the Settings list shows, newest first.
 export const BANK_RULE_LIST_LIMIT = 500;
+// The version of the key derivation (domain/bank-rule-key.ts), part of what is hashed.
+export const BANK_KEY_VERSION = 1;
+const hashed = (key: string) => `${BANK_KEY_VERSION}:${key}`;
 
 // The parties whose rule this line's text hits, in the line's org and legal entity.
 export async function learnedParties(ctx: QueryContext, line: { description: string; legalEntityId: string }): Promise<string[]> {
@@ -31,7 +37,12 @@ export async function learnedParties(ctx: QueryContext, line: { description: str
   const { rows } = await sql<{ party_id: string }>`
     SELECT r.party_id FROM crove_finance.bank_party_rule r
     WHERE r.org_id = ${ctx.orgId} AND r.legal_entity_id = ${line.legalEntityId} AND r.kind = 'text'
-      AND r.key_hash = crove_finance.bank_party_rule_hash('text', ${key})`.execute(ctx.trx);
+      AND r.key_hash = crove_finance.bank_party_rule_hash('text', ${hashed(key)})
+      -- A rule whose voucher was reversed since (a wrong match undone) teaches no more.
+      AND NOT EXISTS (
+        SELECT 1 FROM crove_finance.journal_entry j
+        JOIN crove_finance.journal_entry x ON x.org_id = j.org_id AND x.reverses_entry_id = j.id
+        WHERE j.org_id = r.org_id AND j.source_id = r.source_voucher_id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL)`.execute(ctx.trx);
   return rows.map((r) => r.party_id);
 }
 
@@ -46,7 +57,7 @@ export async function learnFromVoucher(
   if (key === null) return null;
   const { rows } = await sql<{ id: string }>`
     INSERT INTO crove_finance.bank_party_rule (org_id, legal_entity_id, kind, key_hash, party_id, confirmed_by, confirmed_at, source_voucher_id)
-    VALUES (${ctx.orgId}, ${input.legalEntityId}, 'text', crove_finance.bank_party_rule_hash('text', ${key}), ${input.partyId}, ${ctx.actor.userId}, ${ctx.now}, ${input.voucherId})
+    VALUES (${ctx.orgId}, ${input.legalEntityId}, 'text', crove_finance.bank_party_rule_hash('text', ${hashed(key)}), ${input.partyId}, ${ctx.actor.userId}, ${ctx.now}, ${input.voucherId})
     ON CONFLICT ON CONSTRAINT bank_party_rule_key_uq DO NOTHING
     RETURNING id`.execute(ctx.trx);
   return rows[0] ? { ruleId: rows[0].id } : null;

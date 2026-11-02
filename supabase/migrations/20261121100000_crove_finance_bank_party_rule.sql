@@ -79,9 +79,11 @@ SELECT crove_kernel.apply_tenant_rls('crove_finance.bank_party_rule');
 -- Made and removed whole.
 REVOKE UPDATE ON crove_finance.bank_party_rule FROM crove_tenant;
 
+-- The entity: the one named, or the entity of the voucher whose approval taught the rule (crove_finance.legal_entity_fill with
+-- its parent), never changed.
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.bank_party_rule;
-CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id ON crove_finance.bank_party_rule
-  FOR EACH ROW EXECUTE FUNCTION crove_finance.legal_entity_fill();
+CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id, source_voucher_id ON crove_finance.bank_party_rule
+  FOR EACH ROW EXECUTE FUNCTION crove_finance.legal_entity_fill('crove_finance.cash_voucher', 'source_voucher_id');
 ALTER TABLE crove_finance.bank_party_rule ENABLE ALWAYS TRIGGER b_legal_entity;
 DROP POLICY IF EXISTS le_scope ON crove_finance.bank_party_rule;
 CREATE POLICY le_scope ON crove_finance.bank_party_rule AS RESTRICTIVE FOR ALL TO crove_tenant
