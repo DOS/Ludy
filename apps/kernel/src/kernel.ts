@@ -501,6 +501,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           mailer: resolved.mail,
           // Meta's data deletion callback for the Ads connection (plan section 9): with the Meta ads app configured.
           ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { adsDeletion: { appSecret: config.CHANNEL_META_ADS_APP_SECRET } } : {}),
+          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
@@ -554,7 +555,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
+            channels: { broker: resolved.broker, conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

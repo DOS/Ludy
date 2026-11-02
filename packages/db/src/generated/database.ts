@@ -81,6 +81,7 @@ export interface CroveKernelSchema {
   'crove_kernel.conversation_message': KernelConversationMessageTable;
   'crove_kernel.conversation_note': KernelConversationNoteTable;
   'crove_kernel.conversation_read': KernelConversationReadTable;
+  'crove_kernel.conversation_setting': KernelConversationSettingTable;
   'crove_kernel.currency': KernelCurrencyTable;
   'crove_kernel.external_call': KernelExternalCallTable;
   'crove_kernel.extraction': KernelExtractionTable;
@@ -1016,6 +1017,11 @@ export interface KernelChannelConnectionTable {
   expires_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   connected_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  granted_by_hash: string | null;
+  history_synced_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  gap_from: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  gap_to: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  history_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_identity */
@@ -1028,6 +1034,9 @@ export interface KernelConversationIdentityTable {
   party_id: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  erased_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  profile_checked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  profile_requested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.conversation_message */
@@ -1075,6 +1084,16 @@ export interface KernelConversationReadTable {
   conversation_id: ColumnType<string, string, NotGranted>;
   user_id: ColumnType<string, string, NotGranted>;
   last_read_seq: Generated<number>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_kernel.conversation_setting */
+export interface KernelConversationSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  retention_months: number | null;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 

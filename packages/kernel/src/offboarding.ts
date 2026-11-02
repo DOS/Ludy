@@ -42,7 +42,16 @@ export const EXPORT_TABLES = {
   'kernel.availability_rule': { from: 'crove_kernel.availability_rule', omit: [] },
   'kernel.calendar_event': { from: 'crove_kernel.calendar_event', omit: [] },
   // Connected channel accounts (ADR-0025). Their sealed tokens (crove_kernel.credential) are secrets and stay out.
-  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: [] },
+  // The keyed hash of the Meta user who granted a connection (Meta's data deletion callback) is the deployment's, not the org's.
+  'kernel.channel_connection': { from: 'crove_kernel.channel_connection', omit: ['granted_by_hash'] },
+  // Which members use which channels (#2303), and the conversation core (CV6, #2305): the customers' comments and messages, the
+  // identities they wrote under, the org's internal notes on them and its retention. Read marks are per-member state and stay out.
+  'kernel.channel_access': { from: 'crove_kernel.channel_access', omit: [] },
+  'kernel.conversation_setting': { from: 'crove_kernel.conversation_setting', omit: [] },
+  'kernel.conversation_identity': { from: 'crove_kernel.conversation_identity', omit: [] },
+  'kernel.conversation': { from: 'crove_kernel.conversation', omit: [] },
+  'kernel.conversation_message': { from: 'crove_kernel.conversation_message', omit: [] },
+  'kernel.conversation_note': { from: 'crove_kernel.conversation_note', omit: [] },
   // Outbound mail (#538): the mail log, its delivery events (#539) and the org's suppression list. The address hashes
   // are keyed by the deployment.
   'kernel.mail_message': { from: 'crove_kernel.mail_message', omit: [] },

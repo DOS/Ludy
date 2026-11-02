@@ -15,7 +15,7 @@ import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type Conv
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { HideWork, ReplyWork } from '@crove/kernel';
+import type { HideWork, HistoryWork, ProfileWork, ReplyWork } from '@crove/kernel';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -158,6 +158,83 @@ export async function failUnsendable(runtime: Runtime, job: ConversationJob): Pr
   if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
 }
 
+// The jobs that read from a platform beyond the webhook (CV5b, #2329), on the same queue as a reply: ids only, never a name or a message.
+export type ConversationSyncJob = { orgId: string; connectionId: string; action: 'history' } | { orgId: string; connectionId: string; action: 'profile'; identityId: string };
+
+// The most chats one history read goes through, and the events one ingest call takes.
+const HISTORY_CHATS = 20;
+const INGEST_CHUNK = 200;
+
+// Reads one platform call's worth of what the webhook did not bring: the account's recent history (stored through the same idempotent
+// ingest, with a gap recorded when it could not reach back far enough) or a customer's name. A refused credential is left for the
+// reconnect; a failure worth trying again throws so the queue retries; nothing a platform said is logged, only counts and ids.
+export async function runConversationSync(deps: SendDeps, job: ConversationSyncJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  if (job.action === 'profile') {
+    const work = await deps.runtime.execute<ProfileWork>('kernel.conversation.profile_begin', { identityId: job.identityId, connectionId: job.connectionId }, options);
+    if (work.action !== 'call' || !work.provider || !work.contactId) return 'none';
+    const adapter = deps.adapter(work.provider);
+    if (!adapter?.profile) return 'no_adapter';
+    const opened = await open(deps, job);
+    if (opened.kind === 'refused') return 'refused';
+    let answer: Awaited<ReturnType<NonNullable<ConversationAdapter['profile']>>>;
+    try {
+      answer = await adapter.profile({ externalAccountId: opened.externalAccountId, secret: opened.secret, contactId: work.contactId });
+    } catch {
+      answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
+    }
+    if (answer.kind === 'ok') {
+      await deps.runtime.execute('kernel.conversation.profile_apply', { identityId: job.identityId, displayName: answer.displayName, retry: false }, options);
+      return answer.displayName ? 'named' : 'no_name';
+    }
+    // A refusal that asking again will not change is final (the customer is marked checked); the rest is asked again later.
+    await deps.runtime.execute('kernel.conversation.profile_apply', { identityId: job.identityId, displayName: null, retry: answer.retry }, options);
+    return answer.retry ? 'retry' : 'failed';
+  }
+  const work = await deps.runtime.execute<HistoryWork>('kernel.conversation.history_begin', { connectionId: job.connectionId }, options);
+  if (work.action !== 'call' || !work.provider || !work.since) return 'none';
+  const adapter = deps.adapter(work.provider);
+  if (!adapter?.history) return 'no_adapter';
+  const opened = await open(deps, job);
+  if (opened.kind === 'refused') return 'refused';
+  let answer: Awaited<ReturnType<NonNullable<ConversationAdapter['history']>>>;
+  try {
+    answer = await adapter.history({ externalAccountId: opened.externalAccountId, secret: opened.secret, since: new Date(work.since), maxChats: HISTORY_CHATS });
+  } catch {
+    answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
+  }
+  if (answer.kind === 'failed') {
+    // Asked again by the job's retry, then by the next pass after an hour; a refusal that will not change waits for the reconnect.
+    if (answer.retry) throw new Error('history read failed');
+    return 'failed';
+  }
+  for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
+    await deps.runtime.execute('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+  }
+  await deps.runtime.execute('kernel.conversation.history_record', { connectionId: job.connectionId, complete: answer.complete, gapFrom: answer.complete ? null : work.since, gapTo: answer.complete ? null : answer.oldest }, options);
+  return answer.complete ? 'complete' : 'gap';
+}
+
+// The work the relay hands out each pass (crove_kernel.conversation_sync_due, the worker login's): which connections' history is due,
+// and which customers have no name yet, for the providers whose adapters can read them.
+export async function dueConversationSync(workerDb: Db, providers: { history: string[]; profile: string[] }): Promise<ConversationSyncJob[]> {
+  if (providers.history.length === 0 && providers.profile.length === 0) return [];
+  const { rows } = await sql<{ kind: string; org_id: string; connection_id: string; identity_id: string | null }>`
+    SELECT kind, org_id, connection_id, identity_id FROM crove_kernel.conversation_sync_due(${providers.history}::text[], ${providers.profile}::text[], 60, 50)`.execute(workerDb);
+  return rows.map((r) => (r.kind === 'history' ? { orgId: r.org_id, connectionId: r.connection_id, action: 'history' as const } : { orgId: r.org_id, connectionId: r.connection_id, action: 'profile' as const, identityId: r.identity_id as string }));
+}
+
+// Hands each due piece of work to the worker's queue through the command that marks it handed out and emits its event.
+export async function requestConversationSync(runtime: Runtime, jobs: readonly ConversationSyncJob[]): Promise<number> {
+  let queued = 0;
+  for (const job of jobs) {
+    const input = job.action === 'profile' ? { action: job.action, connectionId: job.connectionId, identityId: job.identityId } : { action: job.action, connectionId: job.connectionId };
+    const result = await runtime.execute<{ queued: boolean }>('kernel.conversation.sync_request', input, { actor: SYSTEM, orgId: job.orgId });
+    if (result.queued) queued++;
+  }
+  return queued;
+}
+
 export interface ConversationJob {
   orgId: string;
   messageId: string;
@@ -182,7 +259,7 @@ type Opened = { kind: 'ok'; externalAccountId: string; secret: string } | { kind
 
 // The credential of a connection, opened here and nowhere else. kernel.channel.credential refuses once the member who connected
 // the account may no longer use it or the connection is not active.
-async function open(deps: SendDeps, job: ConversationJob): Promise<Opened> {
+async function open(deps: SendDeps, job: { orgId: string; connectionId: string }): Promise<Opened> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   let sealed: SealedChannelCredential;
   try {
@@ -197,7 +274,7 @@ async function open(deps: SendDeps, job: ConversationJob): Promise<Opened> {
   return { kind: 'ok', externalAccountId: sealed.externalAccountId, secret };
 }
 
-const expire = async (deps: SendDeps, job: ConversationJob, reason: string, version: string): Promise<void> => {
+const expire = async (deps: SendDeps, job: { orgId: string; connectionId: string }, reason: string, version: string): Promise<void> => {
   await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: job.connectionId, reason, ifVersion: version }, { actor: SYSTEM, orgId: job.orgId });
 };
 
@@ -282,4 +359,64 @@ async function runHide(deps: SendDeps, job: ConversationJob): Promise<string> {
   // Hiding is idempotent: an unclear answer is asked again by the job's retry, which begins the same call once more.
   if (answer.kind === 'unknown') throw new Error('hide outcome unknown');
   return answer.kind;
+}
+
+// The batches of threads one org's purge may take in one daily run, and the orgs one run reaches: a backlog (a long retention just
+// shortened, a first run on old data) is worked off over days rather than in one long transaction chain.
+const PURGE_ORGS = 200;
+const PURGE_BATCHES_PER_ORG = 25;
+const PURGE_BATCH = 200;
+
+// The daily retention purge of the conversation core (CV6): each org that holds a thread past its retention (an owner's choice of
+// 6, 12 or 24 months, or none; the deployment default is 24) gets the purge command in its own system context, in batches. A failing
+// org is logged by name of the error and left for the next run, so one org cannot hold the others behind it. Returns the threads
+// deleted. Nothing a customer wrote is read or logged: only counts.
+export async function purgeExpiredConversations(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
+  const { rows } = await sql<{ org_id: string }>`SELECT org_id FROM crove_kernel.conversation_purge_due(${PURGE_ORGS}::int)`.execute(deps.workerDb);
+  let threads = 0;
+  for (const { org_id: orgId } of rows) {
+    try {
+      for (let batch = 0; batch < PURGE_BATCHES_PER_ORG; batch++) {
+        const out = await deps.runtime.execute<{ threads: number; more: boolean }>('kernel.conversation.purge_expired', { limit: PURGE_BATCH }, { actor: SYSTEM, orgId });
+        threads += out.threads;
+        if (!out.more) break;
+      }
+    } catch (error) {
+      console.error(`[conversations] retention purge of org ${orgId.slice(0, 8)} failed`, error instanceof Error ? error.name : 'error');
+    }
+  }
+  return threads;
+}
+
+// The requests of Meta's data deletion callback that name conversations (crove_kernel.conversation_deletion_*): for each open
+// request that is due, the connections its keyed hash names are closed (as a platform's deletion closes them: the credential is
+// forgotten) and their conversations erased, each in the connection's own org, then the request is completed. A request that names
+// no connection is completed with none. Every step is idempotent, so a pass that dies half way is run again whole; a request that
+// fails is put off five minutes in the database. Returns how many requests it completed.
+export async function runConversationDeletions(deps: { runtime: Runtime; workerDb: Db }): Promise<number> {
+  const { rows } = await sql<{ code: string; org_id: string | null; connection_id: string | null }>`
+    SELECT code, org_id, connection_id FROM crove_kernel.conversation_deletion_claim(50::int)`.execute(deps.workerDb);
+  const byCode = new Map<string, Array<{ orgId: string; connectionId: string }>>();
+  for (const row of rows) {
+    const connections = byCode.get(row.code) ?? [];
+    if (row.org_id && row.connection_id) connections.push({ orgId: row.org_id, connectionId: row.connection_id });
+    byCode.set(row.code, connections);
+  }
+  let completed = 0;
+  for (const [code, connections] of byCode) {
+    try {
+      for (const c of connections) {
+        const options = { actor: SYSTEM, orgId: c.orgId };
+        await deps.runtime.execute('kernel.channel.revoke_by_platform', { connectionId: c.connectionId }, options);
+        await deps.runtime.execute('kernel.conversation.erase_connection', { connectionId: c.connectionId }, options);
+      }
+      await sql`SELECT crove_kernel.conversation_deletion_complete(${code}, ${connections.length}::int)`.execute(deps.workerDb);
+      completed++;
+    } catch (error) {
+      // By code only: nothing of the request or the connections goes to the log.
+      console.error(`[conversations] deletion request ${code.slice(0, 8)} not completed`, error instanceof Error ? error.name : 'error');
+      await sql`SELECT crove_kernel.conversation_deletion_defer(${code})`.execute(deps.workerDb).catch(() => undefined);
+    }
+  }
+  return completed;
 }

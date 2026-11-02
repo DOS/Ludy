@@ -27,7 +27,7 @@ import { videoCoverOf } from './cover.ts';
 import { allowlistedFetch, ConnectorError, type AuthorizeInput, type ExchangeInput, type Fetch, type OAuthConnector } from './oauth.ts';
 import { platformLink, RECENT_PAGES_MAX, RECENT_POSTS_MAX, recentSince } from './recent.ts';
 import type { RecentPost, RecentPostsInput, RecentPostsResult } from './index.ts';
-import type { ConversationAdapter, ConversationCallResult, ConversationReplyInput } from './conversation.ts';
+import type { ConversationAdapter, ConversationCallResult, ConversationHistoryInput, ConversationHistoryResult, ConversationProfileInput, ConversationProfileResult, ConversationReplyInput, InboundConversationEvent } from './conversation.ts';
 
 export const ZALO_HOSTS = ['oauth.zaloapp.com', 'openapi.zalo.me'] as const;
 const TOKEN_URL = 'https://oauth.zaloapp.com/v4/oa/access_token';
@@ -414,6 +414,123 @@ export class ZaloConversations implements ConversationAdapter {
       return conversationError(error);
     }
   }
+
+  // The name Zalo gives a customer: GET oa/user/detail with the user id in `data` [S, U for the answer's shape]. Display name only: no
+  // phone number, address or picture is read into the core.
+  async profile(input: ConversationProfileInput): Promise<ConversationProfileResult> {
+    const s = zaloSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'ZALO_NO_TOKEN' };
+    try {
+      const data = await this.client.api<{ display_name?: unknown; user_alias?: unknown } | null>('GET', 'oa/user/detail', s.accessToken, {
+        base: API_V3,
+        params: { data: JSON.stringify({ user_id: input.contactId }) },
+        timeoutMs: 15_000,
+      });
+      const name = typeof data?.display_name === 'string' ? data.display_name.replaceAll('\u0000', '').trim().slice(0, 200) : '';
+      return { kind: 'ok', displayName: name === '' ? null : name };
+    } catch (error) {
+      return profileFailure(error);
+    }
+  }
+
+  // The recent chats of the OA and their latest messages: GET oa/listrecentchat then, per chat, GET oa/conversation [S, U for both
+  // answers' shapes]. Reads at most `maxChats` chats, `HISTORY_PAGE` messages a call, and nothing older than `since`. The result says
+  // whether it reached back to `since` everywhere: when it did not, the caller records a gap rather than claiming the history is whole.
+  async history(input: ConversationHistoryInput): Promise<ConversationHistoryResult> {
+    const s = zaloSecretOf(input.secret);
+    if (!s) return { kind: 'failed', retry: false, code: 'ZALO_NO_TOKEN' };
+    const events: InboundConversationEvent[] = [];
+    let complete = true;
+    let oldest: number | null = null;
+    try {
+      const chats = await this.client.api<unknown>('GET', 'oa/listrecentchat', s.accessToken, {
+        params: { data: JSON.stringify({ offset: 0, count: HISTORY_PAGE }) },
+        timeoutMs: 20_000,
+      });
+      const users = new Set<string>();
+      for (const chat of Array.isArray(chats) ? chats : []) {
+        const m = chat as ZaloHistoryMessage;
+        const id = m.src === 1 ? idText(m.from_id) : idText(m.to_id);
+        if (id) users.add(id);
+      }
+      // A full page of chats means there may be more than it shows: the history is not whole.
+      if (Array.isArray(chats) && chats.length >= HISTORY_PAGE) complete = false;
+      for (const user of [...users].slice(0, input.maxChats)) {
+        let offset = 0;
+        let reached = false;
+        while (!reached && offset < HISTORY_MAX_MESSAGES) {
+          const page = await this.client.api<unknown>('GET', 'oa/conversation', s.accessToken, {
+            params: { data: JSON.stringify({ user_id: user, offset, count: HISTORY_PAGE }) },
+            timeoutMs: 20_000,
+          });
+          const list = Array.isArray(page) ? (page as ZaloHistoryMessage[]) : [];
+          for (const m of list) {
+            const at = historyTime(m.time);
+            if (at === null) continue;
+            if (at < input.since.getTime()) {
+              reached = true;
+              continue;
+            }
+            const event = historyEvent(m, user, at);
+            if (!event) continue;
+            events.push(event);
+            if (oldest === null || at < oldest) oldest = at;
+          }
+          // A short page is the beginning of the chat: nothing more to read.
+          if (list.length < HISTORY_PAGE) reached = true;
+          offset += HISTORY_PAGE;
+        }
+        if (!reached) complete = false;
+      }
+      if (users.size > input.maxChats) complete = false;
+      return { kind: 'ok', events, complete, oldest: oldest === null ? null : new Date(oldest).toISOString() };
+    } catch (error) {
+      return profileFailure(error);
+    }
+  }
+}
+
+// The messages Zalo returns per call [U], and the most one pass reads.
+const HISTORY_PAGE = 10;
+const HISTORY_MAX_MESSAGES = 50;
+
+// One message of the history answers [U]: `src` 1 is the customer's, 0 the OA's; `time` is milliseconds; a text message carries its
+// text in `message`, any other `type` is an attachment.
+interface ZaloHistoryMessage {
+  message_id?: unknown;
+  src?: unknown;
+  time?: unknown;
+  type?: unknown;
+  message?: unknown;
+  from_id?: unknown;
+  to_id?: unknown;
+}
+const idText = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : null);
+function historyTime(value: unknown): number | null {
+  const ms = typeof value === 'number' ? value : typeof value === 'string' && /^\d{1,16}$/.test(value) ? Number(value) : NaN;
+  if (!Number.isFinite(ms) || ms <= 0) return null;
+  const at = ms < 1e11 ? ms * 1000 : ms;
+  return at >= Date.UTC(2020, 0, 1) && at <= Date.now() + 86_400_000 ? at : null;
+}
+function historyEvent(m: ZaloHistoryMessage, customer: string, at: number): InboundConversationEvent | null {
+  const messageId = idText(m.message_id);
+  if (!messageId || messageId.length > 300) return null;
+  const incoming = m.src === 1;
+  const raw = typeof m.message === 'string' ? m.message.replaceAll('\u0000', '').slice(0, 20_000) : '';
+  const isText = m.type === 'text' || m.type === undefined;
+  const text = raw !== '' && isText ? raw : incoming ? '[Khách gửi một tệp đính kèm]' : '[Trang đã gửi một tệp đính kèm]';
+  return { kind: 'direct', threadId: customer, messageId, direction: incoming ? 'in' : 'out', contact: { id: customer }, text, at: new Date(at).toISOString() };
+}
+
+// A failed read of the profile or the history: a refused token or access is final, a limit or a network failure may pass.
+function profileFailure(error: unknown): { kind: 'failed'; retry: boolean; code?: string } {
+  if (!(error instanceof ZaloError)) return { kind: 'failed', retry: true, code: 'ZALO_UNREACHABLE' };
+  const code = error.code;
+  if ((code !== undefined && TOKEN_ERRORS.has(code)) || error.status === 401) return { kind: 'failed', retry: false, code: 'ZALO_TOKEN' };
+  if (error.status === 429 || code === RATE_LIMITED || code === -223) return { kind: 'failed', retry: true, code: 'ZALO_RATE_LIMIT' };
+  if (code !== undefined && ACCESS_ERRORS.has(code)) return { kind: 'failed', retry: false, code: 'ZALO_OA_ACCESS' };
+  if (error.status >= 500) return { kind: 'failed', retry: true, code: 'ZALO_5XX' };
+  return { kind: 'failed', retry: false, code: code !== undefined ? `ZALO_E${Math.abs(code)}` : `ZALO_HTTP_${error.status}` };
 }
 
 // Zalo's error codes of a customer care message [S], as the core's typed answers: a refused token, a quota or rate limit, a person who

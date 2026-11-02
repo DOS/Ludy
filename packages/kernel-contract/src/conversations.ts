@@ -139,6 +139,9 @@ export const zConversationDetail = z.strictObject({
   parentId: zId.nullable(),
   // Whether a reply can be sent now, else why not (a code the screen turns into words).
   reply: z.strictObject({ allowed: z.boolean(), reason: z.enum(['channel_inactive', 'not_supported', 'window_closed']).nullable() }),
+  // Events of this channel may be missing between these two times (the platform's history could not be read back far enough to fill
+  // them): shown on a thread that was active after `from`.
+  gap: z.strictObject({ from: z.iso.datetime({ offset: true }), to: z.iso.datetime({ offset: true }) }).nullable(),
 });
 export type ConversationDetail = z.infer<typeof zConversationDetail>;
 
@@ -196,4 +199,45 @@ export const zConversationSandboxComment = z.strictObject({
   // A follow-up to this thread's top-level comment instead of a new top-level comment.
   threadId: z.string().min(1).max(300).optional(),
 });
+// What the worker reads beyond the webhook (CV5b, #2329): the account's recent history, and a customer's name. System commands.
+// The relay hands the worker a read of one account's history or one customer's name (kernel.conversation.sync_request).
+export const zConversationSyncRequest = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('history'), connectionId: zId }),
+  z.strictObject({ action: z.literal('profile'), connectionId: zId, identityId: zId }),
+]);
+export const zConversationHistoryBegin = z.strictObject({ connectionId: zId });
+export const zConversationHistoryRecord = z.strictObject({
+  connectionId: zId,
+  // Every chat reached back to `since`: no gap is left. Else the period that may be missing.
+  complete: z.boolean(),
+  gapFrom: z.iso.datetime({ offset: true }).nullable(),
+  gapTo: z.iso.datetime({ offset: true }).nullable(),
+});
+export const zConversationProfileBegin = z.strictObject({ identityId: zId, connectionId: zId });
+export const zConversationProfileApply = z.strictObject({
+  identityId: zId,
+  // The name the platform gave, or null when it has none (a definitive answer); `retry` leaves it to be asked again.
+  displayName: z.string().trim().min(1).max(200).refine(noNul, 'NUL character').nullable(),
+  retry: z.boolean().default(false),
+});
 export const zConversationSandboxQueued = z.strictObject({ queued: z.literal(true) });
+
+// Retention (CV6, #2305): the months a thread is kept after its last message; null keeps it until a person deletes it. An org with
+// no choice has the default.
+export const CONVERSATION_RETENTION_MONTHS = [6, 12, 24] as const;
+export const CONVERSATION_RETENTION_DEFAULT_MONTHS = 24;
+const zRetentionMonths = z.union([z.literal(6), z.literal(12), z.literal(24)]).nullable();
+export const zConversationRetentionSet = z.strictObject({ retentionMonths: zRetentionMonths });
+export const zConversationRetention = z.strictObject({ retentionMonths: zRetentionMonths, isDefault: z.boolean() });
+export type ConversationRetention = z.infer<typeof zConversationRetention>;
+// Erasing a customer: every thread of the same person (their identity on the platform) goes, with its messages, notes and read marks.
+// The thread the button is on names the person; a thread with no identity goes alone. `confirm` is the screen's confirmation.
+export const zConversationEraseContact = z.strictObject({ conversationId: zId, confirm: z.literal(true) });
+export const zConversationErased = z.strictObject({ threads: z.number().int(), messages: z.number().int() });
+export type ConversationErased = z.infer<typeof zConversationErased>;
+// The worker's retention purge of one org, in batches of threads, and the erasure of one connection's conversations that Meta's
+// data deletion callback asks for.
+export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int().min(1).max(1000).default(200) });
+export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
+export type ConversationPurged = z.infer<typeof zConversationPurged>;
+export const zConversationEraseConnection = z.strictObject({ connectionId: zId });

@@ -72,4 +72,22 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await page.getByTestId('conversation-reopen').click();
   await expect(page.getByTestId('conversation-status')).not.toHaveText('Đã xong');
   expect(postId).not.toBe('');
+
+  // The retention (CV6, #2305): 24 months by default, an owner picks 12, and it holds after a reload. Erasing the customer asks to
+  // confirm first and can be cancelled.
+  const retention = page.getByTestId('conversation-retention-select');
+  await expect(retention).toHaveValue('24');
+  await retention.selectOption('12');
+  // A shorter retention asks first: it deletes the older threads tonight.
+  await page.getByTestId('conversation-retention-yes').click();
+  await expect.poll(() => sql<{ m: string }>(`SELECT s.retention_months::text AS m FROM crove_kernel.conversation_setting s JOIN crove_kernel.tenant t ON t.org_id = s.org_id WHERE t.slug = :'slug'`, { slug })[0]?.m).toBe('12');
+  await page.reload();
+  await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
+  // The reopened thread waits for the customer, in Pending.
+  await page.getByTestId('conversation-tab-pending').click();
+  await page.getByTestId('conversation-erase-open').click();
+  await expect(page.getByTestId('conversation-erase-confirm')).toBeVisible();
+  await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
+  await expect(page.getByTestId('conversation-erase-confirm')).toBeHidden();
+  await expect(page.getByTestId('conversation-thread')).toBeVisible();
 });

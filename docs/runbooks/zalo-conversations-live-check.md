@@ -43,6 +43,10 @@ Fill one row per fact as it is settled; commit the table with the fixes it cause
 | 10 | Attachments: the event names and that their address expires after 7 days | [S] | `parseZaloNotice` (placeholders; v1 stores text only) | |
 | 11 | No comment API or webhook exists for the OA | [S, "none found" is not proof] | `zalo_oa.kinds` (private chats only) | |
 | 12 | The webhook is answered 200 within 2 to 5 seconds, and Zalo does not retry on an error status; it resends after an outage with the original timestamp | [S] | the route's answers; ingest is idempotent on `msg_id` | |
+| 14 | **Before `CHANNEL_ZALO_HISTORY=true`:** the `message_id` of `oa/listrecentchat` and `oa/conversation` is the same string as the webhook's `msg_id` for the same message (else the history would store every message twice): compare one message seen both ways, by id only | [U] | `ZaloConversations.history` (`historyEvent`) | |
+| 15 | `GET v2.0/oa/listrecentchat` and `GET v2.0/oa/conversation` take `data={"offset","count"}` and `{"user_id","offset","count"}`, return at most 10 messages a call, newest first, with `message_id`, `src` (1 the customer's), `time` in milliseconds, `type`, `message`, `from_id`, `to_id`; and how far back the API goes | [S, U] | `ZaloConversations.history` | |
+| 16 | `GET v3.0/oa/user/detail?data={"user_id"}` answers `display_name` (nothing else is read); a customer who never followed the OA has none | [S, U] | `ZaloConversations.profile` | |
+| 17 | A history read that is not whole (more than 20 chats, more than 50 messages in a chat, or a full page of chats) shows the gap banner on the threads active after the gap began; a whole read clears it | [U] | `history_record`, `conversationGet` | |
 
 ## 2. Steps
 
@@ -60,7 +64,7 @@ All with the OA's connection made in Ludy (Social > channels > Zalo) by an owner
 
 ## 3. What is not built yet (follow-up issues, same plan)
 
-- **History on reconnect** (`listrecentchat`, `conversation`) and the "events missed" marker: Zalo does not retry on an error status [S], so a notice refused while the key was being rotated, or while the API was down longer than Zalo's resends, is not recovered yet.
+- **History on reconnect** (`listrecentchat`, `conversation`) and the "events missed" marker: built (CV5b, #2329) but off until live-check row 14 passes and `CHANNEL_ZALO_HISTORY=true` is set; each account is read when it connects or reconnects and then hourly, 20 chats of at most 50 messages each and never further back than 7 days (shorter than the 30-day erase tombstone, so an erased customer cannot come back through it). When the read cannot reach back everywhere, the account records the period and its threads show a banner. Not built: recovering a notice refused while the API was down for longer than that window.
 - **Customer images stored as files** (a media address expires after 7 days [S]): v1 stores a placeholder.
-- **The customer's name and picture** (`oa/user/detail`): v1 shows "Người dùng ·<last 4 of the id>".
+- **The customer's name** (`oa/user/detail`): built (CV5b), asked once per customer through the OA that talked to them; with no name the thread shows "Người dùng ·<last 4 of the id>". The picture is not read.
 - **Zalo comments**: no API was found.
