@@ -202,6 +202,22 @@ export const en = {
       bankLines: { label: '{count, plural, one {statement line without a voucher} other {statement lines without a voucher}}', hint: 'Enter a receipt, payment, debit or credit note for each line', open: 'Open bank statements' },
     },
   },
+  today: {
+    items: {
+      financeProposalsVendor: '{count, plural, one {# invoice} other {# invoices}} from {party} waiting for your approval',
+      financeProposalsCustomer: '{count, plural, one {# invoice} other {# invoices}} to {party} waiting for your approval',
+      financeProposalsOther: '{count, plural, one {# document} other {# documents}} waiting for your approval',
+      financeProposalsMore: '{count, plural, one {# more document} other {# more documents}} from other vendors waiting for your approval',
+      financeChecksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
+      financeChecksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
+      financeOriginalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',
+      financeOriginalsFlagged: '{count, plural, one {# original differs} other {# originals differ}} from the posted invoice or cannot be verified',
+      financeStatementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',
+      financeBankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
+      financeVatDue: 'VAT return for {period}: due on {date}',
+      financePeriodClose: 'Lock the books of {period} before {date}',
+    },
+  },
   notifications: {
     title: 'Work notifications',
     subtitle: 'Proposals waiting for your approval, files that could not be read, bank statements and tax portal checks to look at, and periods whose VAT return is due but are not locked.',
@@ -7017,6 +7033,7 @@ export const en = {
       },
     },
     finance: {
+      today: 'Read what needs you in accounting today',
       account: {
         create: 'Add a ledger account',
         update: 'Edit a ledger account',
