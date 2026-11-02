@@ -1,0 +1,4 @@
+# A fake test JWT secret from the closed PR #2371's branch (claude/cv5c-images), commit e7bfd553 line 32 of a test file. It was never on main
+# (the work was squashed into #2372 without it) and it is not a credential. CI's secret scan reads every remote branch, so this one fingerprint
+# is ignored until that branch is deleted; the line can then be removed.
+e7bfd553b95b9338800305aeb8afc4aa5543fe94:apps/kernel/test/conversations-attachments.db.test.ts:generic-api-key:32
