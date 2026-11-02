@@ -292,7 +292,7 @@ suite('conversations on PostgreSQL (#2303)', () => {
     const { messageId } = await exec<{ messageId: string }>(o, o.owner, 'kernel.conversation.reply', { conversationId: id, body: 'Chào bạn', lastSeenSeq: 1 });
     const call = await sys<{ callKey: string }>(o, 'kernel.conversation.reply_begin', { messageId });
     // The echo reaches the worker before the answer is recorded.
-    await ingest(o, ch, [comment('d-1', 'Chào bạn', { kind: 'direct', postId: undefined, direction: 'out', messageId: 'platform-echo-1' })]);
+    await ingest(o, ch, [comment('d-1', 'Chào bạn', { kind: 'direct', postId: undefined, direction: 'out', messageId: 'platform-echo-1', at: new Date().toISOString() })]);
     await sys(o, 'kernel.conversation.reply_record', { messageId, callKey: call.callKey, result: { kind: 'accepted', externalId: 'platform-echo-1' } });
     const seen = await detail(o, o.owner, id);
     expect(seen.messages.map((m) => [m.direction, m.sendState])).toEqual([['in', null], ['out', 'sent']]);
