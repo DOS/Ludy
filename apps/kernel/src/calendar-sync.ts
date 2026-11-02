@@ -306,7 +306,7 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
   const call = (a: WriteBackAction, secret: string) =>
     a.kind === 'delete' || a.summary === null || a.startsAt === null || a.endsAt === null
       ? b.adapter.removeEvent(secret, a.externalId)
-      : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt });
+      : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt, ...(a.conference ? { conference: true } : {}) });
   const record = (a: WriteBackAction, state: 'written' | 'removed' | 'error', error: string) =>
     b.runtime.execute(
       'kernel.calendar.link.record',
@@ -360,6 +360,11 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
       continue;
     }
     forbiddenRun = 0;
+    // A booking that asked for a Google Meet (C7, #1375): the event is written, so the booking learns the outcome now, the join link or that there is none. Before
+    // the record below: a crash between the two repeats the write (it makes no second Meet), and the settle of a booking that is no longer pending does nothing.
+    if (a.kind === 'upsert' && a.conference && 'ok' in result) {
+      await b.runtime.execute('crm.booking.meeting_settle', { calendarEventId: a.eventId, url: result.meetUrl ?? null }, b.options);
+    }
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone
     // until its booking changes.

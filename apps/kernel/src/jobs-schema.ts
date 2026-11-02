@@ -56,6 +56,8 @@ export const QUEUES = {
   // Created by the live calendar check migration (20261113090000): a visitor's booking request or manage ask, decided after the
   // slot is checked live at the hosts' connected calendars (#2139).
   crmBookingLive: 'crm-booking-live',
+  // Created by the booking Meet migration (20261121130000): the delayed job that settles a booking whose Google Meet is still pending (C7, #1375).
+  crmBookingMeet: 'crm-booking-meet',
   // Created by the contact import expiry migration (20261116100000): the daily sweep of staged import rows past 7 days.
   crmImportExpire: 'crm-import-expire',
   // Created by the stale-deal next step migration (20261120110000): the daily rule that raises a next step for a stale open deal (#2381).
@@ -143,6 +145,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.crmBookingRemind]: 'none',
   // The live check reaches the calendar adapters (channels.calendars); the decision itself is a command.
   [QUEUES.crmBookingLive]: ['provider:channel'],
+  // The settle is a command; the Meet itself is made by the calendar write-back job.
+  [QUEUES.crmBookingMeet]: 'none',
   [QUEUES.crmImportExpire]: 'none',
   [QUEUES.crmDealStale]: 'none',
   [QUEUES.periodBalanceVerify]: 'none',

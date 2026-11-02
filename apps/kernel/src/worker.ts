@@ -150,6 +150,14 @@ type BookingJob =
   // A member who left the org or whose role changed (#1382): their booking feed may need revoking.
   | { orgId: string; memberEventId: string };
 
+// A booking waiting for its Google Meet (C7, #1375): settled as failed when no outcome came in time.
+interface BookingMeetJob {
+  orgId: string;
+  bookingId: string;
+}
+// How long a booking may wait for its Meet before it goes on without one (the mails wait for the outcome).
+const BOOKING_MEET_WAIT_SECONDS = 180;
+
 interface BookingRemindJob {
   orgId: string;
   bookingId: string;
@@ -998,6 +1006,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       const actor = { type: 'system' as const, component: 'crm.booking' };
       if (requestId) await deps.runtime.execute('crm.booking.manage', { bookingId, requestId }, { actor, orgId });
       else await deps.runtime.execute('crm.booking.confirm', { bookingId }, { actor, orgId });
+    });
+    // A booking's Google Meet that did not come in time (C7, #1375): settled as failed, so the confirmation mails the booking was
+    // holding back go out with the type's fixed link, if it has one. A booking whose Meet was settled meanwhile is left alone.
+    await boss.work<BookingMeetJob>(QUEUES.crmBookingMeet, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      await deps.runtime.execute('crm.booking.meeting_settle', { bookingId: job.data.bookingId, url: null }, { actor: { type: 'system', component: 'crm.booking' }, orgId: job.data.orgId });
     });
     // Reminders (#1319): a job per booking, time and lead, run when it is due; the command mails only while the booking
     // is confirmed and still starts then.
@@ -1982,6 +1996,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, `${bookingId}:${requestId}`),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
+                  retryBackoff: true,
+                });
+              }
+              // A booking waiting for its Google Meet (C7, #1375): the job that settles it as failed if the Meet has not come by then.
+              if (crm && row.type === 'crm.booking.meeting_pending') {
+                const bookingId = String(row.payload.booking_id);
+                return boss.send(QUEUES.crmBookingMeet, { orgId: row.org_id, bookingId } satisfies BookingMeetJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingMeet, bookingId),
+                  startAfter: BOOKING_MEET_WAIT_SECONDS,
+                  retryLimit: BOOKING_RETRY_LIMIT,
+                  retryDelay: 10,
                   retryBackoff: true,
                 });
               }

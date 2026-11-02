@@ -19,7 +19,7 @@ Let a member of an org publish a booking page, so a client books a meeting in a 
 
 **Later (same plan, not v1):**
 - External calendars: Google Calendar, Microsoft 365, CalDAV, two-way free/busy through connectors (needs the owner's OAuth app credentials).
-- Meeting links created per booking (Google Meet, Zoom, Teams).
+- Meeting links created per booking (Google Meet, Zoom, Teams). C7 (#1375) builds the Google Meet one only, see "C7 as built" below; Zoom and Teams need more OAuth apps and stay out.
 - Team event types: round-robin and collective (all hosts free).
 - Deal links once CRM deals exist; paid bookings; AI that proposes slots from an email or a chat message (always a proposal a human approves); the `crm.scheduler` agent template (ADR-0029).
 
@@ -74,6 +74,18 @@ Instants are stored in UTC, with the IANA zone they were set in. The page shows 
 | C5 | "Lịch hẹn" in the app: list, cancel or move by the host, booking on the party's timeline | e2e: book from the public page, see it in the app, cancel it, the slot is free again |
 
 Later steps (C6 external calendars, C7 meeting links, C8 team event types) get their issues when v1 is done.
+
+### C7 as built (#1375): a Google Meet per booking
+
+Narrowed by the OPC/SME gate: an event type's location can be a **Google Meet created per booking**, through the host's Google connection of C6, or, as before, a fixed link. No AI part, on purpose.
+- **No new Google scope.** C6's `calendar.events.owned` (the write-back scope) covers the event insert that makes the Meet: Google's `events.insert` takes `conferenceDataVersion=1` and a `conferenceData.createRequest` of the type `hangoutsMeet` in the same call. So no runbook step is added to the OAuth consent screen.
+- **The event type.** A new location kind `google_meet` (the fixed link in `location_value` is optional and is the fallback). Only the host picks it, for a one-host type, and only with an active Google connection that has write-back on: a connection is its member's alone (the database shows it to nobody else), so an owner or admin cannot pick it for someone else, and a team type cannot have it in this slice. A type that already has it keeps it when someone else edits the rest. A host without a Google connection sees the kind is unavailable and keeps phone, in person or the fixed link.
+- **Where the Meet is made.** In the C6 write-back job. `crm.booking.confirm` confirms a booking of a `google_meet` type as `meeting_state = 'pending'` when the host's connection can write; its calendar event carries `conference = true`, the write-back plan hands the worker the flag, and the Google adapter inserts the event with the conference request (its `requestId` is the event's id, so a retry never makes a second Meet) and reads the join link back (`hangoutLink`, else the video entry point; a request Google has not finished is looked at again twice). Only a `https://meet.google.com/...` address is kept as a link, in the adapter, in the command and in a CHECK of the table. A 400 on the insert (an account that cannot host Meet) writes the event without a conference.
+- **Stored on the booking.** `crove_crm.booking.meeting_state` (`none`, `pending`, `ready`, `failed`) and `meeting_url`, set by the system command `crm.booking.meeting_settle`, which the worker calls after the Google call and before it records the link (a crash between the two repeats a write that makes no second Meet), or the delayed job below. A move patches the same event (the same Meet); a cancel deletes it (the Meet goes with it).
+- **Mails and `.ics`.** The confirmation mails of a Meet booking are queued when the outcome is known (seconds), so the first mail already carries the link in its text, its `.ics` `LOCATION`, `URL` and description; the host's private calendar feed shows it too. Reminders and moves read the booking as it is when they are sent. A cancelled booking names no link.
+- **A Google failure leaves the booking valid.** No link, an address that is not a Meet one, or no outcome within 3 minutes (a worker that was down, an outage: the delayed job `crm-booking-meet`, queued when the booking is confirmed, settles it) settles the booking as `failed`: its event stops asking for a conference, the mails go out with the type's fixed link when it has one, and the host's mail and the bookings list say that the Meet could not be made. The visitor's mail says nothing of the failure.
+- **What the AI part is.** None. Preparing a meeting brief from the deal and the conversation is a later item.
+- **Not in this slice:** Zoom and Teams, a Meet for a team type, the Meet of a booking made before the type was switched to it, and picking Meet for another host.
 
 ## 5. Exit criteria (v1)
 

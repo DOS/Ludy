@@ -112,6 +112,18 @@ function BookingRow({
               .filter((n): n is string => n !== null)
               .join(', ')}
           </p>
+          {/* The Google Meet of the booking (C7): its link once made, that it is being made, or that Google could not make it (the booking stands). */}
+          {b.status === 'confirmed' && b.meeting.state === 'ready' && b.meeting.url && (
+            <a href={b.meeting.url} target="_blank" rel="noopener noreferrer" className="text-xs text-link underline-offset-4 hover:underline" data-testid="booking-meet-link">
+              {t('meet.join')}
+            </a>
+          )}
+          {b.status === 'confirmed' && b.meeting.state === 'pending' && <p className="text-xs text-muted-foreground">{t('meet.pending')}</p>}
+          {b.status === 'confirmed' && b.meeting.state === 'failed' && (
+            <Badge variant="warning" data-testid="booking-meet-failed">
+              {t('meet.failed')}
+            </Badge>
+          )}
         </TableCell>
         <TableCell className="px-4 text-sm">
           <p className="font-medium text-foreground">{b.visitor.name ?? t('erased')}</p>

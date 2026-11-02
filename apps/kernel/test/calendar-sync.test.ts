@@ -704,3 +704,47 @@ describe('syncCalendars', () => {
     expect(await sweep(failing.runtime, { google_calendar: adapter() })).toMatchObject({ retry: 1, disconnected: 0 });
   });
 });
+
+// A booking that asked for a Google Meet (C7, #1375): the event is written with the conference asked for, and the booking learns the outcome (the join link, or
+// none) before the link is recorded, so a crash between the two repeats a write that makes no second Meet and the settle of a booking no longer pending does nothing.
+describe('write-back of an event that asked for a conference', () => {
+  const on = { ...fresh, writeBack: true };
+  const MEET = 'https://meet.google.com/abc-defg-hij';
+  const meet = { eventId: 'e1', externalId: 'ext1ext1ext1', kind: 'upsert', summary: 'Tư vấn: Lan', startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T03:00:00.000Z', conference: true, hash: 'sha256:aaa' };
+  const plain = { ...meet, eventId: 'e2', externalId: 'ext2ext2ext2', conference: false };
+  const settles = (calls: Call[]) => calls.filter((c) => c.name === 'crm.booking.meeting_settle').map((c) => c.input);
+
+  it('asks the adapter for a conference and tells the booking the join link before it records the write', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    const asked: Array<boolean | undefined> = [];
+    const a = adapter({ writeEvent: async (_secret, event) => (asked.push(event.conference), { ok: true, meetUrl: MEET }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(asked).toEqual([true]);
+    expect(settles(calls)).toEqual([{ calendarEventId: 'e1', url: MEET }]);
+    const names = calls.map((c) => c.name);
+    expect(names.indexOf('crm.booking.meeting_settle')).toBeLessThan(names.indexOf('kernel.calendar.link.record'));
+  });
+
+  it('tells the booking there is no Meet when the event was written without one', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    expect(await run(runtime, adapter({ writeEvent: async () => ({ ok: true, meetUrl: null }) }))).toMatchObject({ outcome: 'synced' });
+    expect(settles(calls)).toEqual([{ calendarEventId: 'e1', url: null }]);
+    // And one an adapter answers plain ok to (no conference was made or reported) is also no link.
+    const second = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    await run(second.runtime, adapter());
+    expect(settles(second.calls)).toEqual([{ calendarEventId: 'e1', url: null }]);
+  });
+
+  it('tells the booking nothing when the write did not happen, and nothing for an event that asked for no conference', async () => {
+    for (const answer of [{ failed: 'backendError', transient: true }, { failed: 'invalid' }, { scope: true }, { gone: true }] as const) {
+      const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+      await run(runtime, adapter({ writeEvent: async () => answer }));
+      expect(settles(calls), JSON.stringify(answer)).toEqual([]);
+    }
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [plain] });
+    const asked: Array<boolean | undefined> = [];
+    await run(runtime, adapter({ writeEvent: async (_secret, event) => (asked.push(event.conference), { ok: true }) }));
+    expect(asked).toEqual([undefined]);
+    expect(settles(calls)).toEqual([]);
+  });
+});
