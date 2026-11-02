@@ -37,11 +37,16 @@ export const kernelManifest = defineModule({
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
         { source_url: 'pii' },
       ),
+      // Vy's reply draft (#2310): its text exists only while the draft is live, tainted, derived from a customer's words (personal data of a third party).
+      conversation_draft: columns(
+        ['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'basis_seq', 'source', 'requested_by', 'state', 'tainted', 'draft_length', 'final_length', 'edit_size', 'created_at', 'written_at', 'decided_at'],
+        { body: 'pii' },
+      ),
       conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'pii', display_name: 'pii' }),
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted'], { external_message_id: 'pii', body: 'pii' }),
       conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
       conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
-      conversation_setting: columns(['org_id', 'id', 'retention_months', 'set_by', 'created_at', 'updated_at']),
+      conversation_setting: columns(['org_id', 'id', 'retention_months', 'auto_draft', 'set_by', 'created_at', 'updated_at']),
       credential: columns(['org_id', 'connection_id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
       currency: columns(['code', 'minor_units']),
       ddl_event: columns(['id', 'occurred_at', 'session_role', 'set_role', 'command_tag', 'object_type', 'schema_name', 'object_identity', 'backend_pid', 'backend_start', 'alerted_at'], { client_addr: 'pii' }),
@@ -83,6 +88,8 @@ export const kernelManifest = defineModule({
       role: columns(['key', 'module', 'scope']),
       role_assignment: columns(['org_id', 'id', 'user_id', 'role_key', 'legal_entity_id', 'scope', 'granted_by', 'granted_at']),
       role_permission: columns(['role_key', 'permission']),
+      // An org's saved reply (#2310): its own text for a common answer, written by its members.
+      saved_reply: columns(['org_id', 'id', 'title', 'body', 'keywords', 'use_count', 'created_by', 'created_at', 'updated_at']),
       saved_view: columns(['org_id', 'id', 'user_id', 'scope', 'name', 'sort', 'shared', 'created_at', 'updated_at'], { filters: 'pii' }),
       security_event: columns(['id', 'window_start', 'caller', 'command', 'code', 'target_org', 'overflow', 'refusals', 'first_at', 'last_at']),
       security_signal_seen: columns(['signal', 'subject', 'alerted_at']),
@@ -127,6 +134,7 @@ export const kernelManifest = defineModule({
     { type: 'kernel.channel_connection', table: 'channel_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation', table: 'conversation', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation_attachment', table: 'conversation_attachment', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.conversation_draft', table: 'conversation_draft', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation_identity', table: 'conversation_identity', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation_message', table: 'conversation_message', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.file', table: 'file', legalEntityScoped: false, audit: 'command' },
@@ -139,6 +147,7 @@ export const kernelManifest = defineModule({
     { type: 'kernel.position', table: 'position', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.proposal', table: 'proposal', legalEntityScoped: true, audit: 'command' },
     { type: 'kernel.role_assignment', table: 'role_assignment', legalEntityScoped: true, audit: 'command' },
+    { type: 'kernel.saved_reply', table: 'saved_reply', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.task', table: 'task', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.

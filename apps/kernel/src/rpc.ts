@@ -1905,6 +1905,30 @@ export function createRpcHandler(
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
       setRetention: os.conversations.setRetention.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.retention_set', input, { actor, orgId }))),
       eraseContact: os.conversations.eraseContact.handler(({ context, input }) => keyed(context, 'kernel.conversation.erase_contact', input)),
+      // "Vy soạn": asking is rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since each ask leads to a
+      // paid model call in the worker; no counter of its own.
+      draftRequest: os.conversations.draftRequest.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const ticket = drafts.take(orgId, actor.type === 'user' ? actor.userId : 'system');
+          if (!ticket.allowed) {
+            throw new DomainError('RATE_LIMITED', 429, ticket.reason === 'busy' ? 'Đang chờ AI trả lời, hãy đợi xong rồi thử tiếp' : 'Đã dùng AI nhiều lần trong phút này, hãy thử lại sau ít phút', {
+              retryAfterSeconds: ticket.retryAfterSeconds,
+            });
+          }
+          try {
+            return await runtime.execute('kernel.conversation.draft_request', input, { actor, orgId });
+          } finally {
+            ticket.release();
+          }
+        }),
+      ),
+      draftDiscard: os.conversations.draftDiscard.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.draft_discard', input, { actor, orgId }))),
+      autoDraft: os.conversations.autoDraft.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.auto_draft', {}, { actor, orgId }))),
+      setAutoDraft: os.conversations.setAutoDraft.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.auto_draft_set', input, { actor, orgId }))),
+      savedReplies: os.conversations.savedReplies.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.saved_reply_list', input, { actor, orgId }))),
+      createSavedReply: os.conversations.createSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_create', input, { actor, orgId }))),
+      updateSavedReply: os.conversations.updateSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_update', input, { actor, orgId }))),
+      deleteSavedReply: os.conversations.deleteSavedReply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.saved_reply_delete', input, { actor, orgId }))),
       sandboxComment: os.conversations.sandboxComment.handler(({ context, input }) =>
         inOrg(context, async (orgId, actor) => {
           // The intake is shared by every org, so a demo comment is limited per org: thirty a minute.

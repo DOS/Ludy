@@ -753,6 +753,13 @@ export type ConversationMessageTable = Refine<
 // A customer's image of a message (#2357): pending while only the platform's address is known, stored once its bytes are.
 export const ATTACHMENT_STATES = ['pending', 'stored'] as const;
 export const ATTACHMENT_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+// Vy's reply draft of a thread (#2310): asked for (requested), written (live), then used, discarded or made stale by a newer customer message.
+export const DRAFT_STATES = ['requested', 'live', 'used', 'discarded', 'stale'] as const;
+export const DRAFT_SOURCES = ['auto', 'asked'] as const;
+export type ConversationDraftTable = Refine<
+  G.KernelConversationDraftTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; source: (typeof DRAFT_SOURCES)[number]; state: Generated<(typeof DRAFT_STATES)[number]> }
+>;
 export type ConversationAttachmentTable = Refine<
   G.KernelConversationAttachmentTable,
   { kind: (typeof CONVERSATION_KINDS)[number]; state: Generated<(typeof ATTACHMENT_STATES)[number]>; content_type: (typeof ATTACHMENT_CONTENT_TYPES)[number] | null }
@@ -859,6 +866,7 @@ type Refined = Tables<{
   'crove_kernel.conversation': ConversationTable;
   'crove_kernel.conversation_message': ConversationMessageTable;
   'crove_kernel.conversation_attachment': ConversationAttachmentTable;
+  'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

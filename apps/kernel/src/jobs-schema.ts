@@ -73,6 +73,8 @@ export const QUEUES = {
   adsSync: 'ads-sync',
   // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
   conversationsReply: 'kernel-conversation-reply',
+  // Created by the conversation drafts migration (20261119200000): Vy's draft of a reply to a customer's message, ids only in its data (#2310).
+  conversationsDraft: 'kernel-conversation-draft',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -155,6 +157,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.adsSync]: ['provider:ad_platform'],
   // The platform's reply and hide calls of the conversation core, through the publishers' conversation adapters (the offline sandbox reaches nothing).
   [QUEUES.conversationsReply]: CHANNELS,
+  // The model reads a thread's text and writes the draft (packages/agent's ConversationWriter): the AI endpoint, nothing else.
+  [QUEUES.conversationsDraft]: ['provider:ai'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

@@ -32,6 +32,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { isAdOAuthProvider } from '../lib/ads.ts';
 import { getConfig } from '../lib/auth.ts';
+import { AutoDraftSetting, SavedRepliesManager } from '../components/conversation-drafts.tsx';
 import { rememberOAuthAttempt } from '../lib/oauth.ts';
 import { connectPlatforms, minuteLabel, parseMinute, providerName } from '../lib/social.ts';
 import { shuffleRange } from '../lib/social-queue-order.ts';
@@ -395,6 +396,7 @@ export function SocialChannelsPage() {
   const me = useQuery(orpc.me.get.queryOptions());
   const role = me.data?.orgs.find((o) => o.slug === slug)?.role;
   const isAdmin = role === 'owner' || role === 'admin';
+  const canWriteReplies = role === 'owner' || role === 'admin' || role === 'member';
   const voices = useQuery(orpc.social.brandVoices.list.queryOptions({ input: {} }));
   const orgVoice = voices.data?.find((v) => v.connectionId === null);
   const channelVoice = new Map((voices.data ?? []).filter((v) => v.connectionId !== null).map((v) => [v.connectionId as string, v]));
@@ -539,6 +541,10 @@ export function SocialChannelsPage() {
       />
       <div className="grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <div className="space-y-3">
+          <Card className="block space-y-3 p-4" data-testid="conversation-replies-card">
+            <SavedRepliesManager canWrite={canWriteReplies} />
+            <AutoDraftSetting isAdmin={isAdmin} />
+          </Card>
           <Card className="block space-y-2 p-4">
             <div>
               <p className="text-sm font-medium text-foreground">{t('voice.orgTitle')}</p>
