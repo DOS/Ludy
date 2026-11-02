@@ -8,6 +8,8 @@ export interface InvoiceParty {
   address: string | null;
   email: string | null;
   phone: string | null;
+  // The bank account the party names on the invoice (STKNHang, #2380); absent when the reading gave none.
+  bankAccount?: string | null | undefined;
 }
 
 // TChat in the e-invoice XML: 1 goods/services, 2 promotion, 3 trade discount, 4 note.

@@ -82,12 +82,15 @@ function findHDon(value: unknown, depth = 0): Node | null {
 }
 
 function party(node: unknown): InvoiceParty {
+  const bankAccount = text(node, 'STKNHang');
   return {
     name: text(node, 'Ten') ?? text(node, 'HVTNMHang') ?? '',
     taxCode: text(node, 'MST'),
     address: text(node, 'DChi'),
     email: text(node, 'DCTDTu'),
     phone: text(node, 'SDThoai'),
+    // The account the invoice names, left out when it names none (#2380).
+    ...(bankAccount ? { bankAccount } : {}),
   };
 }
 

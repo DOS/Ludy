@@ -24,6 +24,8 @@ export interface CroveCrmSchema {
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.booking_feed': CrmBookingFeedTable;
   'crove_crm.deal': CrmDealTable;
+  'crove_crm.deal_next_step': CrmDealNextStepTable;
+  'crove_crm.deal_setting': CrmDealSettingTable;
   'crove_crm.event_type': CrmEventTypeTable;
   'crove_crm.import_batch': CrmImportBatchTable;
   'crove_crm.import_row': CrmImportRowTable;
@@ -312,6 +314,32 @@ export interface CrmBookingTable {
   manage_outcome: string | null;
   cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   hold_event_ids: Generated<string[]>;
+}
+
+/** crove_crm.deal_next_step */
+export interface CrmDealNextStepTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  deal_id: ColumnType<string, string, NotGranted>;
+  reason: ColumnType<string, string, NotGranted>;
+  assignee_user_id: ColumnType<string | null, string | null, NotGranted>;
+  since_on: ColumnType<string, string, NotGranted>;
+  raised_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  status: Generated<string>;
+  snoozed_until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  resolved_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  resolved_by: string | null;
+  closed_reason: string | null;
+}
+
+/** crove_crm.deal_setting */
+export interface CrmDealSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  stale_days: Generated<number>;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_crm.deal */
