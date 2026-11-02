@@ -70,7 +70,7 @@ test('a vendor group of clean invoices is approved in one action, and a rule sho
                                   WHEN c ->> 'status' = 'warn' THEN c || '{"status":"pass"}'::jsonb ELSE c END)
                    FROM jsonb_array_elements(p.payload -> 'checks') c))
          FROM crove_kernel.tenant t
-        WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending' AND p.kind = 'finance.purchase.record'`,
+        WHERE t.org_id = p.org_id AND t.slug = :'slug' AND p.status = 'pending' AND p.kind = 'finance.purchase'`,
       { slug },
     );
     const group = page.getByTestId('proposal-group');
