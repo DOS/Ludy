@@ -27,7 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
 
 // What the customer wrote and what Vy wrote in these tests: none of it may be found in an audit row, an event or a log.
-const CUSTOMER_TEXT = 'Áo thun cotton này giá bao nhiêu vậy shop? (bí mật của khách 777)';
+const CUSTOMER_TEXT = 'Áo thun cotton này giá bao nhiêu vậy shop? (bí mật của khách xyzzy)';
 const DRAFT_TEXT = 'Dạ áo thun cotton giá [giá] ạ, bạn cần size nào ạ?';
 
 suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
@@ -229,8 +229,8 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       expect(Number((await rows<{ amount: string }>("SELECT sum(amount)::text AS amount FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'ai_cost'", [o.orgId]))[0]?.amount)).toBeCloseTo(1.6, 6);
       // Nobody's text in an audit row or an event: the customer's and Vy's (ids, lengths and codes only).
       const leaks = await rows<{ n: string }>(
-        `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%777%' OR detail::text LIKE '%cotton%' OR detail::text LIKE '%Dạ áo%'))
-              + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%777%' OR payload::text LIKE '%cotton%' OR payload::text LIKE '%Dạ áo%')) AS n`,
+        `SELECT (SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND (detail::text LIKE '%xyzzy%' OR detail::text LIKE '%cotton%' OR detail::text LIKE '%Dạ áo%'))
+              + (SELECT count(*) FROM crove_kernel.outbox_event WHERE org_id = $1 AND (payload::text LIKE '%xyzzy%' OR payload::text LIKE '%cotton%' OR payload::text LIKE '%Dạ áo%')) AS n`,
         [o.orgId],
       );
       expect(Number(leaks[0]?.n)).toBe(0);
@@ -255,7 +255,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
     it('leaves no draft, with no alarm, when the model fails, is refused by its own checks, or the org is over its AI cost limit', async () => {
       const o = await org();
       const cases: Array<[string, ReplyDraftResult | Error, string]> = [
-        ['err', new Error('boom: prompt text 777 leaked in the error'), 'error'],
+        ['err', new Error('boom: prompt text xyzzy leaked in the error'), 'error'],
         ['figures', { kind: 'none', code: 'FIGURES' }, 'none'],
         ['empty', { kind: 'none', code: 'EMPTY' }, 'none'],
       ];
@@ -274,7 +274,7 @@ suite('Vy’s drafts and the saved replies on PostgreSQL (CV8, #2310)', () => {
       }
       expect((await drafts(o)).map((d) => [d.state, d.body])).toEqual([['discarded', null], ['discarded', null], ['discarded', null]]);
       // What an error said (it may quote the prompt) is never logged.
-      expect(logged.join('\n')).not.toContain('777');
+      expect(logged.join('\n')).not.toContain('xyzzy');
       // The failed call's tokens still count; once the org is over its limit the next draft is not asked of the model at all.
       await ingest(o, [event('limit')]);
       const id = await threadOf(o, 'limit');
