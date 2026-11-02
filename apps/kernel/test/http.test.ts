@@ -260,8 +260,10 @@ describe('configuration guards', () => {
     // The Pages pair may be the same app too: one app may serve reading, writing and publishing.
     const pages = { CHANNEL_META_APP_ID: write.CHANNEL_META_ADS_WRITE_APP_ID, CHANNEL_META_APP_SECRET: write.CHANNEL_META_ADS_WRITE_APP_SECRET };
     expect(() => loadConfig({ ...base, ...read, ...write, ...pages })).not.toThrow();
-    expect(() => loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'http://books.example.com' })).toThrow(/must be https/);
-    expect(loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_WRITE_APP_ID).toBe('1234567890');
+    // A deployment others reach does not take the write app yet: with the one app, the person's reading tokens can change campaigns after
+    // running ads is switched off, until that switch-off also closes them (ADR-0043 point 4). The read ads pair alone is fine there.
+    expect(() => loadConfig({ ...base, ...auth, ...read, ...write, PUBLIC_URL: 'https://books.example.com' })).toThrow(/CHANNEL_META_ADS_WRITE_APP_ID is for a deployment of the owner's own account only/);
+    expect(loadConfig({ ...base, ...auth, ...read, PUBLIC_URL: 'https://books.example.com' }).CHANNEL_META_ADS_APP_ID).toBe('1234567890');
   });
 
   // #212: org exports are sealed at rest on every public deployment; a key must be 32 bytes.

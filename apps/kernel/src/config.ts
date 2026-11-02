@@ -753,6 +753,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
     }
+    // ADR-0043 point 4 (W0b): the write Meta app is the read ads app, so once the owner connects to run ads, that person's reading tokens can
+    // change campaigns too, and stay able to after running ads is switched off, until switching it off also closes the reading connections
+    // of the person who granted the write one. A deployment others reach does not take the write app until that lands.
+    if (config.CHANNEL_META_ADS_WRITE_APP_ID) {
+      throw new Error("CHANNEL_META_ADS_WRITE_APP_ID is for a deployment of the owner's own account only, until switching running ads off also closes the reading connections of the person who granted it; leave it empty on a public deployment");
+    }
     if (config.AUTH_SESSION_CHECK === 'off') {
       throw new Error('AUTH_SESSION_CHECK=off keeps signed-out sessions working; use db (bundled Supabase Auth) or jwt');
     }
