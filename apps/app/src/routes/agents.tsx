@@ -5,6 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
+import { defaultCoworkerName } from '@crove/kernel-contract';
 import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -682,6 +683,7 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
                   <Badge variant="secondary">{t('aiBadge')}</Badge>
                 </div>
                 <p className="text-xs text-subtle-foreground">{t('templateMeta', { module: moduleName(tpl.module), risk: tpl.maxRisk, cap: String(tpl.dailyRunCap) })}</p>
+                {defaultCoworkerName(tpl.module) && <p className="text-xs text-subtle-foreground">{t('defaultName', { name: defaultCoworkerName(tpl.module) ?? '' })}</p>}
                 {!tpl.moduleEnabled && (
                   <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                     <AlertDescription className="text-warning">{t('moduleDisabled', { module: moduleName(tpl.module) })}</AlertDescription>
