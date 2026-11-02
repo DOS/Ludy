@@ -102,7 +102,7 @@ async function vietnamNow(ctx: CommandContext): Promise<{ day: string; minute: n
 //   proposals       pending ones of their entities whose approver snapshot holds the member, a viewer none: an approximation of the
 //                   approval screen's list (it also asks the member's role and the org's preset now), never more than the member's own
 //                   entities and snapshot;
-//   notifications   their unread notifications of the work kinds in their entities, the approval-waiting ones left to the proposals count, up to
+//   notifications   their unread notifications of every kind in their entities, the approval-waiting ones left to the proposals count, up to
 //                   NOTIFICATION_UNREAD_CAP each;
 //   messages        conversations waiting for a reply (New, unassigned or assigned to them), as conversation_access lets the role read
 //                   them: owners and admins every one, a member the comment threads of the channels they may use (every channel when
@@ -221,7 +221,7 @@ export const todayMailSend = defineCommand({
       }
     }
     // Counts only: no address, no member.
-    ctx.audit({ members: claimed.length, mails, suppressed, skipped });
+    ctx.audit({ members: claimed.length, mails, suppressed, unwritten: skipped });
     return { state: 'sent', day: now.day, members: claimed.length, mails, suppressed };
   },
 });

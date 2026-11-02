@@ -27,7 +27,6 @@ export const zTodayMail = z.object({
   home: z.string().regex(new RegExp(`^/o/${SLUG}/overview$`)),
   settings: z.string().regex(new RegExp(`^/o/${SLUG}/notifications\\?todayMail=off$`)),
 });
-export type TodayMailPayload = z.infer<typeof zTodayMail>;
 
 // The texts, with {brand} for the product name and {org} for the org's name.
 const TEXT = {
