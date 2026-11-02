@@ -32,6 +32,11 @@ export const kernelManifest = defineModule({
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
+      // A customer's image of a message (#2357): its platform address is personal data (cleared when the bytes are stored), the rest is metadata.
+      conversation_attachment: columns(
+        ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
+        { source_url: 'pii' },
+      ),
       conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'pii', display_name: 'pii' }),
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted'], { external_message_id: 'pii', body: 'pii' }),
       conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
@@ -121,6 +126,7 @@ export const kernelManifest = defineModule({
     { type: 'kernel.calendar_connection', table: 'calendar_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.channel_connection', table: 'channel_connection', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation', table: 'conversation', legalEntityScoped: false, audit: 'command' },
+    { type: 'kernel.conversation_attachment', table: 'conversation_attachment', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation_identity', table: 'conversation_identity', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.conversation_message', table: 'conversation_message', legalEntityScoped: false, audit: 'command' },
     { type: 'kernel.file', table: 'file', legalEntityScoped: false, audit: 'command' },

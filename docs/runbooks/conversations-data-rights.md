@@ -45,15 +45,23 @@ What it cannot do, and what the owner can do about it:
 
 ## 4. Export, offboarding and the org purge
 
-- The org export (`kernel.org.offboard`, and the owner's export on request) lists `kernel.conversation`, `kernel.conversation_message`, `kernel.conversation_identity`, `kernel.conversation_note`, `kernel.conversation_setting` and `kernel.channel_access`. The messages are the org's data and personal data of third parties: the export is sealed, kept 35 to 90 days, and whoever downloads it takes on the duty of care. Read marks are per-member state and stay out; the keyed hash of who granted a connection is the deployment's and stays out too.
+- The org export (`kernel.org.offboard`, and the owner's export on request) lists `kernel.conversation`, `kernel.conversation_message`, `kernel.conversation_attachment` (metadata of a customer's images, never their bytes or the address they came from), `kernel.conversation_identity`, `kernel.conversation_note`, `kernel.conversation_setting` and `kernel.channel_access`. The messages are the org's data and personal data of third parties: the export is sealed, kept 35 to 90 days, and whoever downloads it takes on the duty of care. Read marks are per-member state and stay out; the keyed hash of who granted a connection is the deployment's and stays out too.
 - The org purge (offboarding, after the grace period) deletes the conversation tables and the settings with the rest of the org's rows.
+
+### Customers' images
+
+- An image a customer sends on Zalo is a `crove_kernel.conversation_attachment` row bound to its message and a blob under `conversation/<org_id>/<random id>` (never a kernel file, so the file list, the file route and the files export never show it). Those who read the message read the image; nobody else does, by any route (the table, `kernel.conversation.attachment_get`, `GET /api/conversations/attachments/:id`).
+- **It goes with its message:** `erase_contact`, the retention purge, `erase_connection`, a platform removal of the message and the org purge delete the row, and a trigger queues its blob in `crove_kernel.conversation_blob_doomed` in the same transaction. The worker deletes the object from the store within about a minute (a pending image's key after an hour, so an in-flight fetch cannot leave an orphan) and tells the database; the org purge also deletes the stored images' blobs before it commits. On a versioned bucket a delete leaves a noncurrent version: the bucket's lifecycle rule for noncurrent versions must cover the `conversation/` prefix as it does `inbound/` and `export/` (see [org-offboarding.md](org-offboarding.md)), or an erased customer's image stays in the bucket as a noncurrent version.
+- **The platform's address** of a pending image is personal data: it is in `conversation_attachment.source_url` only until the bytes are stored, deleted with the row at six days or after five failed tries, never in a job, an event, an audit row or a log, and left out of the export.
+- **A backup** of the database or the bucket holds an erased image until the backup's own retention ends, as it holds an erased message.
+- **Alerts:** `[conversations] <n> blob(s) not deleted; claimed again after the lease` when the store refused a delete (the keys stay queued; a count that keeps growing means the store or its credentials are wrong).
 
 ## 5. What this does not do yet
 
 - **A replayed or redelivered notice does not bring an erased customer back (#2348).** The intake refuses any message of an erased customer dated at or before the erasure, so a captured signed body replayed within the window, or a platform's redelivery, is dropped; a message dated later is the customer writing again and opens a new thread. The tombstone is dropped by the nightly job after 30 days (longer than any redelivery or the 24-hour age limit of a Zalo notice). Purged threads are not tombstoned: they are months old, and a notice that old is refused by its age.
 - **The Meta callback finds nothing in production until a connector sets the hash:** no connection carries `granted_by_hash` yet (CV2 and CV7 set it), so until then a request completes with none; tests set the hash directly.
 
-- **Images and files of a customer's message** are not stored in this slice (a placeholder names their kind), so none are deleted here; the slice that stores them (CV4 and CV5b, #2329) deletes the files with their message, through the same commands.
+- **Customers' images (CV5c, #2357)** are stored (below); videos, audio, files and stickers are not (a placeholder names their kind), so none are deleted here.
 - **Drafts** (`conversation_draft`, CV8) do not exist yet.
 - **A retention per channel or per kind** is not offered: one number for the org.
 

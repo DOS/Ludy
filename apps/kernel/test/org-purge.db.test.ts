@@ -3,7 +3,7 @@
 // the rest with its blobs, closes the org and writes one audit row with counts and the reason, a rerun changes
 // nothing, a failed blob delete rolls everything back, held blobs stay, and another org is untouched. Who may run it is
 // in test/invariant/org-purge.db.test.ts. Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -147,6 +147,31 @@ suite('org purge on PostgreSQL (#1024)', () => {
         [org.orgId, post, variant, hash, member],
       );
       const free = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.task (org_id, title, source, created_by_type) VALUES ($1, 'Free', 'human', 'system') RETURNING id`, [org.orgId])).rows[0]?.id;
+      // A customer's two images (CV5c, #2357): one stored, with its blob in the store under its own key, one still pending. Deleted with the
+      // org's other rows, the stored one's blob in the same command.
+      const thread = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.conversation (org_id, channel_connection_id, kind, external_thread_id) VALUES ($1, $2, 'direct', $3) RETURNING id`,
+          [org.orgId, connection, `thread-${tag}`],
+        )
+      ).rows[0]?.id;
+      const message = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_kernel.conversation_message (org_id, conversation_id, channel_connection_id, kind, seq, direction, external_message_id, sent_at, author_kind, body)
+           VALUES ($1, $2, $3, 'direct', 1, 'in', $4, now(), 'contact', '[Khách gửi ảnh]') RETURNING id`,
+          [org.orgId, thread, connection, `msg-${tag}`],
+        )
+      ).rows[0]?.id;
+      const imageBytes = new TextEncoder().encode(`image-${tag}`);
+      const imageKey = `conversation/${org.orgId}/${randomBytes(32).toString('hex')}`;
+      const pendingKey = `conversation/${org.orgId}/${randomBytes(32).toString('hex')}`;
+      store.blobs.set(imageKey, imageBytes);
+      await c.query(
+        `INSERT INTO crove_kernel.conversation_attachment (org_id, message_id, channel_connection_id, kind, state, source_url, storage_key, generation, sha256, content_type, size_bytes, stored_at)
+         VALUES ($1, $2, $3, 'direct', 'stored', NULL, $4, $5, $6, 'image/png', $7, now()),
+                ($1, $2, $3, 'direct', 'pending', $8, $9, NULL, NULL, NULL, NULL, NULL)`,
+        [org.orgId, message, connection, imageKey, `content:${'b'.repeat(64)}`, 'b'.repeat(64), imageBytes.byteLength, `https://cdn.zdn.vn/${tag}.png`, pendingKey],
+      );
       // A customer only a ledger line names (a sale on 131): no foreign key points at it.
       const ledgerParty = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Khách nợ', $2) RETURNING id`, [org.orgId, `ledger-${tag}@purge.test`])).rows[0]?.id;
       await c.query('BEGIN');
@@ -188,7 +213,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
       // A member's own to-do (#1673), made from the private note: deleted too, before the note it names.
       await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
-      return { stray, position, parent, pinned, free, ledgerParty };
+      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey };
     });
     return { org, owner, ownerEmail, member, booked, loose, partyEmail, proposalId, ...ids };
   }
@@ -357,6 +382,13 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await one('SELECT id FROM crove_kernel.file WHERE org_id = $1', [s.org.orgId])).toEqual({ id: s.booked.fileId });
     expect(store.blobs.has(s.booked.storageKey)).toBe(true);
     expect(store.blobs.has(s.loose.storageKey)).toBe(false);
+    // A customer's images (CV5c): both rows and the stored one's blob go in the same command; the pending image's key waits in the queue of
+    // doomed blobs for the worker (nothing was written under it), and the other org's image and blob stay.
+    expect(before['crove_kernel.conversation_attachment']).toBe(2);
+    expect(after['crove_kernel.conversation_attachment'] ?? 0).toBe(0);
+    expect(store.blobs.has(s.imageKey)).toBe(false);
+    expect(store.blobs.has(other.imageKey)).toBe(true);
+    expect((await admin(async (c) => (await c.query('SELECT storage_key FROM crove_kernel.conversation_blob_doomed WHERE storage_key LIKE $1', [`conversation/${s.org.orgId}/%`])).rows)).map((r) => r.storage_key).sort()).toEqual([s.imageKey, s.pendingKey].sort());
     // The booked party and the one only a ledger line names stay, anonymized; the stray one is deleted.
     expect(after['crove_kernel.party']).toBe(2);
     expect(
@@ -415,9 +447,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
       detail: {
         reason: 'Owner left, export downloaded',
         minDays: 30,
-        blobs: { deleted: 1, held: 0 },
+        blobs: { deleted: 2, held: 0 },
         counts: {
           deleted: expect.objectContaining({
+            'crove_kernel.conversation_attachment': 2,
             'crove_kernel.tenant_member': 2,
             'crove_kernel.file': 1,
             'crove_kernel.party': 1,
@@ -586,11 +619,12 @@ suite('org purge on PostgreSQL (#1024)', () => {
     try {
       const { code, out } = await run(s.org.slug);
       expect(code).toBe(0);
-      expect(out).toContain('blobs deleted 0, held 1 (under a retention hold, left in place)');
+      // The org's customer image (CV5c) is deleted, the held file's blob is not.
+      expect(out).toContain('blobs deleted 1, held 1 (under a retention hold, left in place)');
     } finally {
       held = null;
     }
     expect(store.blobs.has(s.loose.storageKey)).toBe(true);
-    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 0, held: 1 } });
+    expect((await purgeAudits(s.org.orgId))[0]?.detail).toMatchObject({ blobs: { deleted: 1, held: 1 } });
   });
 });

@@ -137,6 +137,7 @@ import type { TaxCodeLookup } from './tax-lookup.ts';
 import type { PortalSync } from './portal-sync.ts';
 import { hasVideoTrack, imageSize, sniffVideo, videoDurationMs, type ImageSize } from './media-probe.ts';
 import { safeFilename, sniffType } from './sniff.ts';
+import { sniffConversationImage } from './conversation-media.ts';
 import { directTransferOrigin } from './storage.ts';
 import {
   MAX_BUFFERED_BYTES,
@@ -1564,6 +1565,38 @@ export function createHttpApp(deps: HttpDeps) {
           'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
           'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           'x-content-type-options': 'nosniff',
+          'cache-control': 'private, no-store',
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // A customer's image of a conversation message (CV5c, #2357): the bytes of one stored image, to the member who may read its message. The
+  // authorization is the database's (kernel.conversation.attachment_get reads under the row policy of the thread, so a member limited to
+  // other channels, one without the direct-message permission, and an agent get the same 404 as an id that does not exist). Only an image is
+  // ever served: the type is read from the bytes again here (never the stored label alone), anything else is 404, and the answer can neither
+  // be rendered as a page nor run a script (nosniff, a CSP that allows nothing, sandbox, no store in any cache).
+  app.get('/api/conversations/attachments/:id', async (c) => {
+    try {
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const file = await runtime.query<{ contentType: string; sizeBytes: number; sha256: string; generation: string; storageKey: string }>(
+        'kernel.conversation.attachment_get',
+        { attachmentId: c.req.param('id') },
+        { actor: actorOf(user), orgId },
+      );
+      const bytes = await readVerified(store, { key: file.storageKey, generation: file.generation, sha256: file.sha256 }, file.sizeBytes);
+      const type = sniffConversationImage(bytes);
+      if (!type) throw new DomainError('ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
+      return new Response(body(bytes), {
+        headers: {
+          'content-type': type,
+          'content-disposition': `inline; filename="image.${type === 'image/jpeg' ? 'jpg' : type.slice('image/'.length)}"`,
+          'content-security-policy': "default-src 'none'; sandbox",
+          'x-content-type-options': 'nosniff',
+          'cross-origin-resource-policy': 'same-site',
           'cache-control': 'private, no-store',
         },
       });

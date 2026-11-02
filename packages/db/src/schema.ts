@@ -737,6 +737,13 @@ export type ConversationMessageTable = Refine<
     hide_request: (typeof MESSAGE_HIDE_REQUESTS)[number] | null;
   }
 >;
+// A customer's image of a message (#2357): pending while only the platform's address is known, stored once its bytes are.
+export const ATTACHMENT_STATES = ['pending', 'stored'] as const;
+export const ATTACHMENT_CONTENT_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'] as const;
+export type ConversationAttachmentTable = Refine<
+  G.KernelConversationAttachmentTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; state: Generated<(typeof ATTACHMENT_STATES)[number]>; content_type: (typeof ATTACHMENT_CONTENT_TYPES)[number] | null }
+>;
 // Bookings of the public booking page (#1318): requested, then confirmed or refused by the worker.
 export const BOOKING_STATUSES = ['pending', 'confirmed', 'refused', 'cancelled'] as const;
 export const BOOKING_REFUSALS = ['taken', 'unavailable'] as const;
@@ -837,6 +844,7 @@ type Refined = Tables<{
   'crove_kernel.channel_connection': ChannelConnectionTable;
   'crove_kernel.conversation': ConversationTable;
   'crove_kernel.conversation_message': ConversationMessageTable;
+  'crove_kernel.conversation_attachment': ConversationAttachmentTable;
   'crove_kernel.external_call': ExternalCallTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;

@@ -23,6 +23,10 @@ import {
   CONVERSATION_PREVIEW_CHARS,
   conversationRules,
   zConversationAssign,
+  zConversationAttachmentGet,
+  zConversationAttachmentRecord,
+  zConversationAttachmentRequest,
+  zConversationAttachmentSource,
   zConversationCounted,
   zConversationCounts,
   zConversationEraseConnection,
@@ -46,6 +50,7 @@ import {
   zConversationSyncRequest,
   zConversationSettle,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
+  type ConversationAttachmentView,
   type ConversationCounted,
   type ConversationErased,
   type ConversationPurged,
@@ -61,7 +66,7 @@ import {
 import { z } from 'zod';
 import { zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -73,6 +78,7 @@ export const CONVERSATION_MESSAGES_MAX = 500;
 export const REPLY_QUEUED = 'kernel.conversation.reply_queued';
 export const HIDE_QUEUED = 'kernel.conversation.hide_queued';
 export const SYNC_QUEUED = 'kernel.conversation.sync_queued';
+export const ATTACHMENT_QUEUED = 'kernel.conversation.attachment_queued';
 
 const requireUser = (ctx: Pick<CommandContext, 'actor'>): string => {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -216,13 +222,31 @@ export const conversationIngest = defineCommand({
   },
 });
 
+// The pending rows of a message's images (CV5c, #2357), each with a blob key of its own reserved now.
+async function addAttachments(ctx: CommandContext, messageId: string, connectionId: string, kind: ConversationKind, images: ReadonlyArray<{ url: string }>): Promise<void> {
+  await ctx.trx
+    .insertInto('crove_kernel.conversation_attachment')
+    .values(
+      images.map((a) => ({
+        org_id: ctx.orgId,
+        message_id: messageId,
+        channel_connection_id: connectionId,
+        kind,
+        source_url: a.url,
+        storage_key: conversationKey(ctx.orgId, newConversationBlobId()),
+        created_at: ctx.now,
+      })),
+    )
+    .execute();
+}
+
 const customerLock = (ctx: CommandContext, provider: string, externalUserId: string) =>
   sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.conversation.customer:${ctx.orgId}:${provider}:${externalUserId}`}, 0))`.execute(ctx.trx);
 
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
-    .select(['id', 'body', 'platform_removed_at'])
+    .select(['id', 'body', 'direction', 'platform_removed_at'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
     .where('external_message_id', '=', event.messageId)
@@ -236,6 +260,13 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', existing.id)
         .execute();
+      // The images go with the body (their blobs are queued for deletion by the delete trigger).
+      await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
+    } else if (!event.removed && !existing.platform_removed_at && existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
+      // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
+      // the message has none, so a redelivery does not add them again.
+      const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
+      if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
     }
     return 'duplicates';
   }
@@ -423,7 +454,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   }
 
   const seq = conversation.last_seq + 1;
-  await ctx.trx
+  const stored = await ctx.trx
     .insertInto('crove_kernel.conversation_message')
     .values({
       org_id: ctx.orgId,
@@ -442,7 +473,12 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
     })
-    .execute();
+    .returning('id')
+    .executeTakeFirstOrThrow();
+  // The images a customer's message carries (CV5c, #2357): a pending row each, with the platform's address (personal data, cleared when the
+  // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
+  // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
+  if (event.direction === 'in' && event.attachments && event.attachments.length > 0) await addAttachments(ctx, stored.id, connectionId, event.kind, event.attachments);
 
   const inbound = event.direction === 'in';
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
@@ -616,6 +652,25 @@ export const conversationGet = defineQuery({
       const found = await ctx.trx.selectFrom('crove_kernel.conversation_identity').select(['id', 'display_name', 'external_user_id']).where('org_id', '=', ctx.orgId).where('id', 'in', authorIds).execute();
       for (const a of found) authors.set(a.id, { name: a.display_name, tail: a.external_user_id.slice(-4) });
     }
+    // The stored images of these messages, as the reader's own rule shows them (row-level security: the image is read by those who read its
+    // message, and by nobody else, whatever route they ask by).
+    const images = new Map<string, ConversationAttachmentView[]>();
+    if (messages.length > 0) {
+      const found = await ctx.trx
+        .selectFrom('crove_kernel.conversation_attachment')
+        .select(['id', 'message_id', 'content_type', 'width', 'height'])
+        .where('org_id', '=', ctx.orgId)
+        .where('state', '=', 'stored')
+        .where('message_id', 'in', messages.map((m) => m.id))
+        .orderBy('created_at')
+        .orderBy('id')
+        .execute();
+      for (const a of found) {
+        const list = images.get(a.message_id) ?? [];
+        list.push({ id: a.id, contentType: a.content_type as ConversationAttachmentView['contentType'], width: a.width, height: a.height });
+        images.set(a.message_id, list);
+      }
+    }
     const notes = await ctx.trx
       .selectFrom('crove_kernel.conversation_note')
       .select(['id', 'author_user_id', 'body', 'created_at'])
@@ -663,7 +718,7 @@ export const conversationGet = defineQuery({
           authorName: m.author_identity_id ? (authors.get(m.author_identity_id)?.name ?? null) : null,
           authorTail: m.author_identity_id ? (authors.get(m.author_identity_id)?.tail ?? null) : null,
           body: m.body,
-          attachments: m.attachments,
+          attachments: images.get(m.id) ?? [],
           sentAt: m.sent_at.toISOString(),
           sendState: m.send_state as ConversationDetail['messages'][number]['sendState'],
           sendErrorCode: m.send_error_code,
@@ -1648,6 +1703,164 @@ export const conversationProfileApply = defineCommand({
   },
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Customers' images (CV5c, #2357). The platform fetch is the worker's; these commands say what to fetch and record what came back. An image
+// is a conversation_attachment row (never a kernel file), read by those who read its message; its address is personal data, never in an
+// audit row, an event, a log or a job.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// Hands the worker one pending image to fetch: marks it handed out (the relay asks again after a few minutes if the job did not finish; only a
+// fetch that failed and may be asked again counts as a try, in attachment_record) and
+// emits the event the queue takes, with ids only. R2 and external, like a reply: the call it leads to reaches the platform's media host.
+export const conversationAttachmentRequest = defineCommand({
+  name: 'kernel.conversation.attachment_request',
+  input: zConversationAttachmentRequest,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation_attachment', id: input.attachmentId }),
+  handler: async (ctx, input): Promise<{ queued: boolean }> => {
+    requireSystem(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.conversation_attachment')
+      .select(['channel_connection_id', 'state'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.attachmentId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.state !== 'pending') return { queued: false };
+    const connection = await connectionOf(ctx, row.channel_connection_id);
+    if (!connection || connection.status !== 'active') return { queued: false };
+    await ctx.trx
+      .updateTable('crove_kernel.conversation_attachment')
+      .set({ requested_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.attachmentId)
+      .execute();
+    await ctx.emit(ATTACHMENT_QUEUED, { attachmentId: input.attachmentId, connectionId: row.channel_connection_id });
+    ctx.audit({ attachment_id: input.attachmentId });
+    return { queued: true };
+  },
+});
+
+export interface AttachmentSource {
+  provider: string;
+  // The platform's address of the image: personal data, read here for the one fetch and put nowhere.
+  sourceUrl: string;
+  storageKey: string;
+}
+
+// What the fetch needs, for a pending image of an active connection; null when there is nothing to fetch (the image was erased, dropped,
+// or already stored), so a job that outlived its row stops.
+export const conversationAttachmentSource = defineQuery({
+  name: 'kernel.conversation.attachment_source',
+  input: zConversationAttachmentSource,
+  access: 'system',
+  handler: async (ctx, input): Promise<AttachmentSource | null> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.conversation_attachment')
+      .select(['channel_connection_id', 'state', 'source_url', 'storage_key'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.attachmentId)
+      .executeTakeFirst();
+    if (!row || row.state !== 'pending' || !row.source_url) return null;
+    const connection = await connectionOf(ctx, row.channel_connection_id);
+    if (!connection || connection.status !== 'active') return null;
+    return { provider: connection.provider, sourceUrl: row.source_url, storageKey: row.storage_key };
+  },
+});
+
+// Records what the fetch came to. Stored: the bytes are in the store under the reserved key, so the row becomes final, the address is cleared
+// and the message lists it. Failed: asking again later (the row stays and the relay hands it out again after the retry time, up to five
+// tries) or never (the row goes, with its address, and the message keeps its placeholder). A row that is gone (the customer was erased, the
+// message removed, the six days passed) records nothing: the blob the fetch wrote is then queued by the row's own deletion and removed.
+export const conversationAttachmentRecord = defineCommand({
+  name: 'kernel.conversation.attachment_record',
+  input: zConversationAttachmentRecord,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation_attachment', id: input.attachmentId }),
+  handler: async (ctx, input): Promise<{ recorded: boolean }> => {
+    requireSystem(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.conversation_attachment')
+      .select(['message_id', 'state'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.attachmentId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row || row.state !== 'pending') return { recorded: false };
+    if (input.outcome === 'stored') {
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_attachment')
+        .set({
+          state: 'stored',
+          source_url: null,
+          generation: input.generation,
+          sha256: input.sha256,
+          content_type: input.contentType,
+          size_bytes: input.sizeBytes,
+          width: input.width,
+          height: input.height,
+          stored_at: ctx.now,
+        })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.attachmentId)
+        .execute();
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_message')
+        .set({ attachments: sql<string[]>`pg_catalog.array_append(attachments, ${input.attachmentId}::uuid)` })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', row.message_id)
+        .execute();
+      ctx.audit({ attachment_id: input.attachmentId, outcome: 'stored', size_bytes: input.sizeBytes, content_type: input.contentType });
+      return { recorded: true };
+    }
+    if (!input.retry) {
+      await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('id', '=', input.attachmentId).execute();
+    } else {
+      // A fetch that was made and may be asked again: it counts as a try (five at most; a hand-out that no job ran does not).
+      await ctx.trx
+        .updateTable('crove_kernel.conversation_attachment')
+        .set({ fetch_attempts: sql<number>`fetch_attempts + 1` })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.attachmentId)
+        .execute();
+    }
+    ctx.audit({ attachment_id: input.attachmentId, outcome: input.retry ? 'retry' : 'dropped', code: input.code });
+    return { recorded: true };
+  },
+});
+
+export interface AttachmentFile {
+  id: string;
+  contentType: string;
+  sizeBytes: number;
+  sha256: string;
+  generation: string;
+  storageKey: string;
+}
+
+// The stored image the caller may read, for the authenticated route that serves its bytes. Row-level security is the whole rule: an image of
+// a message the caller cannot read is not found, the same answer as one that does not exist.
+export const conversationAttachmentGet = defineQuery({
+  name: 'kernel.conversation.attachment_get',
+  input: zConversationAttachmentGet,
+  access: ALL,
+  handler: async (ctx, input): Promise<AttachmentFile> => {
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.conversation_attachment')
+      .select(['id', 'content_type', 'size_bytes', 'sha256', 'generation', 'storage_key'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.attachmentId)
+      .where('state', '=', 'stored')
+      .executeTakeFirst();
+    if (!row || !row.content_type || row.size_bytes === null || !row.sha256 || !row.generation) throw new DomainError('ATTACHMENT_NOT_FOUND', 404, 'Không tìm thấy ảnh này');
+    return { id: row.id, contentType: row.content_type, sizeBytes: row.size_bytes, sha256: row.sha256, generation: row.generation, storageKey: row.storage_key };
+  },
+});
+
 export const conversationCommands = [
   conversationIngest,
   conversationReply,
@@ -1673,5 +1886,7 @@ export const conversationCommands = [
   conversationProfileBegin,
   conversationProfileApply,
   conversationSyncRequest,
+  conversationAttachmentRequest,
+  conversationAttachmentRecord,
 ];
-export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention];
+export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet];

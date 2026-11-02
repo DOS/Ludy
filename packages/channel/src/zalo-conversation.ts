@@ -43,8 +43,24 @@ export function zaloSignatureOk(input: ZaloSignatureInput): boolean {
   return current || previous;
 }
 
-// What a customer's attachment is called in the thread: v1 stores text only, so an attachment is a placeholder naming its kind, with no
-// address (a media address is personal data and expires after seven days [S]).
+// The hosts Zalo serves a customer's media from [S, U: the real hosts are settled by the live check, row 18 of the runbook]: a suffix of a
+// host name, matched on a label boundary. The worker fetches an image only from one of these (or of the deployment's own list,
+// CHANNEL_ZALO_MEDIA_HOSTS), on every hop of a redirect.
+export const ZALO_MEDIA_HOSTS: readonly string[] = ['zdn.vn', 'zadn.vn', 'zalo.me', 'zaloapp.com', 'zalocdn.com'];
+
+// Whether a host name is one of the allowed suffixes, or a subdomain of one. The name is compared in lower case, and a name that merely ends
+// with the same letters (notzdn.vn) is not a subdomain.
+export function mediaHostAllowed(host: string, suffixes: readonly string[]): boolean {
+  const name = host.toLowerCase().replace(/\.$/, '');
+  return suffixes.some((suffix) => {
+    const s = suffix.toLowerCase().replace(/^\./, '');
+    return s !== '' && (name === s || name.endsWith(`.${s}`));
+  });
+}
+
+// What a customer's attachment is called in the thread: the placeholder naming its kind. A customer's image is also fetched and shown
+// (CV5c, #2357) when the notice carries its address and the fetch succeeds; the placeholder stays when it does not, so the address itself
+// is never in the text (a media address is personal data and expires after seven days [S]).
 const CUSTOMER_PLACEHOLDERS: Readonly<Record<string, string>> = {
   // A text message with no text (#2348): not an attachment, so it is not called one.
   user_send_text: '[Khách gửi tin nhắn trống]',
@@ -64,7 +80,7 @@ interface ZaloEvent {
   timestamp?: unknown;
   sender?: { id?: unknown };
   recipient?: { id?: unknown };
-  message?: { msg_id?: unknown; text?: unknown };
+  message?: { msg_id?: unknown; text?: unknown; attachments?: unknown };
 }
 
 // An id is a string, or a whole number a double holds exactly: a larger one was rounded by JSON.parse and would match no connection.
@@ -82,6 +98,23 @@ function atOf(value: unknown): string | null {
   if (ms < 1e11) ms *= 1000;
   const date = new Date(ms);
   return ms >= Date.UTC(2020, 0, 1) && ms <= Date.now() + 86_400_000 && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+}
+
+// The most images one message gives and the longest address kept (the core's own limits).
+const IMAGES_MAX = 5;
+const IMAGE_URL_MAX = 2000;
+function imagesOf(value: unknown): Array<{ kind: 'image'; url: string }> {
+  if (!Array.isArray(value)) return [];
+  const out: Array<{ kind: 'image'; url: string }> = [];
+  for (const item of value) {
+    if (out.length >= IMAGES_MAX) break;
+    const a = item as { type?: unknown; payload?: { url?: unknown } } | null;
+    if (!a || typeof a !== 'object') continue;
+    const url = a.payload?.url;
+    if (a.type !== 'image' || typeof url !== 'string' || url.length === 0 || url.length > IMAGE_URL_MAX || !url.startsWith('https://') || url.includes('\u0000')) continue;
+    out.push({ kind: 'image', url });
+  }
+  return out;
 }
 
 // The notice's events in the core's words. Events that are not a message (follow, unfollow, delivered, seen) give none: nothing to
@@ -111,6 +144,9 @@ export function parseZaloNotice(body: Uint8Array): ConversationNotice {
   // An attachment's own name, kept beside its caption when it has one.
   const placeholder = fromCustomer ? (CUSTOMER_PLACEHOLDERS[name] ?? '[Khách gửi một tệp đính kèm]') : OA_PLACEHOLDER;
   const attachment = name !== 'user_send_text' && name !== 'oa_send_text';
+  // The images of a customer's image message [S: attachments[].payload.url, type image]: https addresses only, a few at most. An address that
+  // is not one, or an attachment of another shape, is left out and the message keeps its placeholder.
+  const images = name === 'user_send_image' ? imagesOf(e.message?.attachments) : [];
   const event: InboundConversationEvent = {
     kind: 'direct',
     threadId: customer,
@@ -119,6 +155,7 @@ export function parseZaloNotice(body: Uint8Array): ConversationNotice {
     contact: { id: customer },
     text: text === null ? placeholder : attachment ? `${text}\n${placeholder}`.slice(0, TEXT_MAX) : text,
     at,
+    ...(images.length > 0 ? { attachments: images } : {}),
   };
   return { accountId: oa, events: [event] };
 }
