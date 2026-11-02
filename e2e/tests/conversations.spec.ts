@@ -85,6 +85,12 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await expect(page.getByTestId('conversation-retention-select')).toHaveValue('12');
   // The reopened thread waits for the customer, in Pending.
   await page.getByTestId('conversation-tab-pending').click();
+  // The customer's message has its own erase button (for a customer who only replied in a thread), apart from the thread's.
+  await expect(page.getByTestId('conversation-message-erase-open').first()).toBeVisible();
+  await page.getByTestId('conversation-message-erase-open').first().click();
+  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeVisible();
+  await page.getByTestId('conversation-message-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
+  await expect(page.getByTestId('conversation-message-erase-confirm')).toBeHidden();
   await page.getByTestId('conversation-erase-open').click();
   await expect(page.getByTestId('conversation-erase-confirm')).toBeVisible();
   await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();

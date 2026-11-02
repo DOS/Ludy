@@ -230,16 +230,16 @@ function EraseContactButton({ conversation, onErased, messageId, label = 'eraseO
   const stepUp = isStepUpRequired(erase.error);
   if (!asking) {
     return (
-      <Button type="button" size="sm" variant="ghost" data-testid="conversation-erase-open" onClick={() => setAsking(true)}>
+      <Button type="button" size="sm" variant="ghost" data-testid={messageId ? 'conversation-message-erase-open' : 'conversation-erase-open'} onClick={() => setAsking(true)}>
         {t(label)}
       </Button>
     );
   }
   return (
-    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid="conversation-erase-confirm">
+    <div role="alertdialog" aria-label={t('eraseOpen')} className="w-full space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm" data-testid={messageId ? 'conversation-message-erase-confirm' : 'conversation-erase-confirm'}>
       <p>{t('eraseWarn', { channel: conversation.channel.displayName })}</p>
       <div className="flex gap-2">
-        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid="conversation-erase-yes" onClick={() => erase.mutate()}>
+        <Button type="button" size="sm" variant="destructive" disabled={erase.isPending} data-testid={messageId ? 'conversation-message-erase-yes' : 'conversation-erase-yes'} onClick={() => erase.mutate()}>
           {t('eraseYes')}
         </Button>
         <Button
