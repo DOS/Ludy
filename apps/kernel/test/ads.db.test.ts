@@ -1587,6 +1587,70 @@ suite('ads on PostgreSQL (#2217)', () => {
         expect(await adsDeletionStatus(api, second)).toMatchObject({ accounts: 1 });
       });
     });
+
+    // #2378: the deterministic spend flags. Owners and admins read them; the figures are seeded in the second org (so no other account
+    // reads yesterday) at a fixed instant, and the flags are the ones the rules call for: no cap, no pace or day flag; a cost per result that
+    // jumped is flagged without a cap; a cap brings the pace and the day flag, with the numbers they are based on.
+    describe('the spend flags (#2378)', () => {
+      const NOW = '2026-11-10T05:00:00.000Z';
+      const asOutsider = () => ({ type: 'user' as const, userId: outsider.userId, aal: 'aal1' as const, sessionId: outsider.session });
+      it('raises exactly the flags the seeded figures call for, for owners and admins only', async () => {
+        // Members and viewers do not read what shows spend.
+        for (const who of [member, viewer]) expect((await callAs(who, 'ads/flags', undefined)).status, who.email).toBe(403);
+        expect((await callAs(owner, 'ads/flags', undefined)).status).toBe(200);
+        expect((await callAs(adminAccount, 'ads/flags', undefined)).status).toBe(200);
+        // An account of the second org with figures: VND, Ho Chi Minh City, synced through the 9th, the figures of the 1st to the 9th.
+        const made = await rpc('ads/connectSandbox', await tokenFor(outsider), { displayName: 'Cờ chi tiêu', idempotencyKey: randomUUID() }, otherSlug);
+        expect(made.status, JSON.stringify(made.body)).toBe(200);
+        const mine = made.body.adAccountId as string;
+        await row(`UPDATE crove_ads.ad_account SET synced_through = NULL WHERE org_id = $1 AND id <> $2`, [otherOrgId, mine]);
+        await row(`UPDATE crove_ads.ad_account SET currency = 'VND', time_zone = 'Asia/Ho_Chi_Minh', result_kind = 'purchase', synced_through = '2026-11-09' WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]);
+        const entity = (await row<{ legal_entity_id: string }>(`SELECT legal_entity_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine]))[0]?.legal_entity_id as string;
+        const seed = (level: 'account' | 'campaign', objectId: string, name: string, day: string, spend: string, purchases: string | null) =>
+          row(
+            `INSERT INTO crove_ads.ad_spend_day (org_id, ad_account_id, legal_entity_id, level, external_object_id, object_name, day, currency, spend, impressions, clicks, results)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'VND', $8, 0, 0, $9::jsonb)`,
+            [otherOrgId, mine, entity, level, objectId, name, day, spend, purchases === null ? '{}' : JSON.stringify({ purchase: purchases })],
+          );
+        for (let d = 1; d <= 9; d++) {
+          const day = `2026-11-${String(d).padStart(2, '0')}`;
+          await seed('account', 'acct', 'Cờ chi tiêu', day, '10000', null);
+          // Campaign A cost 1 000 a result up to the 6th and 3 000 for the last 3 days; campaign B stays at 1 000.
+          await seed('campaign', 'c1', 'Chiến dịch A', day, d <= 6 ? '100000' : '300000', '100');
+          await seed('campaign', 'c2', 'Chiến dịch B', day, '100000', '100');
+        }
+        const flagsOf = async () => ((await api.query('ads.flags', { now: NOW }, { actor: asOutsider(), orgId: otherOrgId })) as Array<Record<string, unknown>>).filter((f) => f.adAccountId === mine);
+        // No cap on this account: no pace flag and no day flag; only the cost per result that jumped, from the account's own figures.
+        const before = await flagsOf();
+        expect(before.map((f) => f.kind)).toEqual(['cpr']);
+        expect(before[0]).toMatchObject({ campaignId: 'c1', campaignName: 'Chiến dịch A', currency: 'VND', day: '2026-11-09', recentCost: '3000', medianCost: '1000', ratio: '3.00', recentResults: '300', historyDays: 6 });
+        // A monthly cap of 250 000 and a daily cap of 5 000 on the account (the signed-in owner sets them): the pace and the day flag, in decimal.
+        const caps = async (text: string) => {
+          const c = await pool.connect();
+          try {
+            await c.query('BEGIN');
+            const token = mintContextToken(process.env.CROVE_CONTEXT_TOKEN_KEY ?? '', { userId: outsider.userId, orgId: otherOrgId, sessionId: null, aal: 'aal1', mfaAt: null });
+            await c.query('SELECT crove_kernel.enter_user_context($1::uuid, $2::text)', [otherOrgId, token]);
+            await c.query('INSERT INTO crove_ads.ad_org_setting (org_id) VALUES ($1) ON CONFLICT DO NOTHING', [otherOrgId]);
+            await c.query(text, [otherOrgId, mine, outsider.userId]);
+            await c.query('COMMIT');
+          } finally {
+            await c.query('ROLLBACK').catch(() => undefined);
+            c.release();
+          }
+        };
+        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '250000', 'VND', $3), ($1, 'account', $2, 'daily', '5000', 'VND', $3)`);
+        const after = await flagsOf();
+        expect(after.map((f) => f.kind).sort()).toEqual(['cpr', 'day', 'pace']);
+        expect(after.find((f) => f.kind === 'pace')).toEqual({ kind: 'pace', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', cap: '250000', spent: '90000', projected: '300000', elapsedDays: 9, daysInMonth: 30 });
+        expect(after.find((f) => f.kind === 'day')).toEqual({ kind: 'day', scope: 'account', adAccountId: mine, accountName: 'Cờ chi tiêu', currency: 'VND', period: 'daily', cap: '5000', share: '5000', day: '2026-11-09', spend: '10000', ratio: '2.00' });
+        // A cap above the projection and above the day's spend raises neither (a raised cap is the latest row of its key).
+        await caps(`INSERT INTO crove_ads.ad_spend_cap (org_id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, 'account', $2, 'monthly', '300000', 'VND', $3), ($1, 'account', $2, 'daily', '9000', 'VND', $3)`);
+        expect((await flagsOf()).map((f) => f.kind)).toEqual(['cpr']);
+        // A flag moves nothing: the cap rows and the account's flags of running ads are as they were.
+        expect(await row(`SELECT write_enabled FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [otherOrgId, mine])).toEqual([{ write_enabled: false }]);
+      });
+    });
   });
 
   // A3 (#2219): an account whose token the platform refused is paused and its owners told; connecting again resumes it with

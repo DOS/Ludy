@@ -1390,6 +1390,18 @@ export const vi = {
       capFirst: 'Hiện chưa có hạn mức nào; đây là hạn mức đầu tiên: {amount}.',
       capFromTo: 'Từ {previous} thành {amount}.',
     },
+    // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
+    flags: {
+      title: 'Cảnh báo chi tiêu',
+      hint: 'Tính từ số liệu đã lưu bằng quy tắc cố định, không dùng mô hình AI. Cảnh báo không thay đổi gì: nó chỉ chỉ ra chỗ cần xem.',
+      paceOrg: 'Với tốc độ này, tổ chức sẽ chi {projected} trong tháng, vượt hạn mức tháng {cap}: đã chi {spent} trong {elapsed} ngày đầu của {days} ngày.',
+      paceAccount: 'Với tốc độ này, {account} sẽ chi {projected} trong tháng, vượt hạn mức tháng {cap}: đã chi {spent} trong {elapsed} ngày đầu của {days} ngày.',
+      dayOrg: 'Tổ chức đã chi {spend} vào {day}, gấp {ratio} lần phần của một ngày theo hạn mức {period} ({share} một ngày; hạn mức {cap}).',
+      dayAccount: '{account} đã chi {spend} vào {day}, gấp {ratio} lần phần của một ngày theo hạn mức {period} ({share} một ngày; hạn mức {cap}).',
+      cpr: '{campaign} ({account}): 3 ngày gần nhất tốn {recent} cho mỗi kết quả, gấp {ratio} lần mức trung vị {median} của 14 ngày trước đó ({results} kết quả).',
+      periodDaily: 'ngày',
+      periodMonthly: 'tháng',
+    },
     // An account whose connection stopped (#2219): why, since when, and what resumes it.
     paused: {
       token_expired: 'Từ {since}, Meta không còn nhận mã truy cập của tài khoản này nên Ludy đã tạm dừng cập nhật. Không mất ngày nào: sau khi kết nối lại, hệ thống lấy tiếp từ ngày chưa chốt gần nhất.',
@@ -6816,6 +6828,7 @@ export const vi = {
         prepare_set: 'Đề nghị đặt hoặc tăng hạn mức chi tiêu quảng cáo',
         set: 'Đặt hoặc tăng hạn mức chi tiêu quảng cáo (đề nghị đã duyệt)',
       },
+      flags: 'Xem các cảnh báo tốc độ chi tiêu và chi phí cho mỗi kết quả của tài khoản quảng cáo',
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',
         unblock: 'Mở lại các lần chạy quảng cáo (đề nghị đã duyệt)',
