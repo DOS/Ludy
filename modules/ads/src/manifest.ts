@@ -21,8 +21,6 @@ export const adsManifest = defineModule({
         ],
         { granted_by_hash: 'pii', write_granted_by_hash: 'pii' },
       ),
-      // The org's thresholds of the spend flags (#2378): org-wide, no legal entity; a NULL threshold is the default.
-      ad_flag_setting: columns(['org_id', 'id', 'pace_min_days', 'day_factor', 'cpr_factor', 'cpr_min_results', 'cpr_min_history_days', 'set_by', 'updated_at']),
       // A campaign draft (W1, #2295): one campaign with its ad set and ad, in the account's legal entity. The names and texts are business text the
       // owner or the AI coworker wrote for an ad, never a customer's, so internal.
       ad_campaign_draft: columns([
@@ -30,6 +28,8 @@ export const adsManifest = defineModule({
         'page_connection_id', 'source_post_id', 'media_file_id', 'variants', 'origin', 'ai_fields', 'max_spend', 'proposal_id', 'approved_at', 'created_by', 'updated_by',
         'created_at', 'updated_at',
       ]),
+      // The org's thresholds of the spend flags (#2378): org-wide, no legal entity; a NULL threshold is the default.
+      ad_flag_setting: columns(['org_id', 'id', 'pace_min_days', 'day_factor', 'cpr_factor', 'cpr_min_results', 'cpr_min_history_days', 'set_by', 'updated_at']),
       // The org's switches of running ads (ADR-0043, #2294): org-wide, no legal entity.
       ad_org_setting: columns(['org_id', 'id', 'write_enabled', 'launches_blocked', 'updated_by', 'updated_at']),
       // A spend cap of the org or of one ad account, a row per change (the history).
