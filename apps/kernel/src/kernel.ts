@@ -555,7 +555,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
+            channels: { broker: resolved.broker, conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

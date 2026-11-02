@@ -52,7 +52,7 @@ import { withJobLogContext } from './log.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
-import { failUnsendable, purgeExpiredConversations, runConversationDeletions, runConversationIntake, runConversationJob, sweepStaleReplies, type ConversationJob } from './conversations-worker.ts';
+import { dueConversationSync, failUnsendable, requestConversationSync, purgeExpiredConversations, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepStaleReplies, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
@@ -367,6 +367,9 @@ export interface WorkerDeps {
   // them, with the credentials it opens.
   channels?: {
     broker: CredentialBroker;
+    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY): off until the live check has settled the
+    // shapes of the platform's history answers (docs/runbooks/zalo-conversations-live-check.md).
+    conversationHistory?: boolean;
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
@@ -1076,12 +1079,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const conversationPublishers = deps.channels?.publishers;
   const conversationBroker = deps.channels?.broker;
   if (conversationPublishers && conversationBroker) {
-    await boss.work<ConversationJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
+    await boss.work<ConversationJob | ConversationSyncJob>(QUEUES.conversationsReply, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
-      const outcome = await runConversationJob(
-        { runtime: deps.runtime, broker: conversationBroker, adapter: (provider) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) },
-        job.data,
-      );
+      const sendDeps = { runtime: deps.runtime, broker: conversationBroker, adapter: (provider: string) => (Object.hasOwn(conversationPublishers, provider) ? conversationPublishers[provider]?.conversations : undefined) };
+      // A history read or a name lookup (CV5b) shares the queue of a reply: ids only in the job, and only the action and ids in the log.
+      if (job.data.action === 'history' || job.data.action === 'profile') {
+        const outcome = await runConversationSync(sendDeps, job.data);
+        console.log(`[conversations] ${job.data.action} ${job.data.action === 'profile' ? job.data.identityId : job.data.connectionId}: ${outcome}`);
+        return;
+      }
+      const outcome = await runConversationJob(sendDeps, job.data);
       console.log(`[conversations] ${job.data.action} ${job.data.messageId}: ${outcome}`);
     });
   }
@@ -1853,6 +1860,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
               // A reply or a hide of the conversation core (#2303): the job begins the call (committed as started), makes it
               // with the connection's credential and records the answer. A reply is never repeated by a job after an unclear
               // answer, and a retry only covers a failure before the call began; a hide is idempotent.
+              if (row.type === 'kernel.conversation.sync_queued' && deps.channels?.publishers && deps.channels.broker) {
+                // A read of an account's history or a customer's name (CV5b): ids only in the job.
+                const action = row.payload.action === 'profile' ? 'profile' : 'history';
+                const syncJob: ConversationSyncJob =
+                  action === 'profile'
+                    ? { orgId: row.org_id, connectionId: String(row.payload.connectionId), action, identityId: String(row.payload.identityId) }
+                    : { orgId: row.org_id, connectionId: String(row.payload.connectionId), action };
+                await boss.send(QUEUES.conversationsReply, syncJob, { singletonKey: jobKey(row.org_id, QUEUES.conversationsReply, `${action}:${row.event_id}`), retryLimit: 2, retryDelay: 60, retryBackoff: true });
+              }
               if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
                 const messageId = String(row.payload.messageId);
                 const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
@@ -2076,6 +2092,14 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // Meta's data deletion requests that name conversations (CV6, #2305), the same callback as the Ads one above.
       await runConversationDeletions({ runtime: deps.runtime, workerDb: deps.workerDb });
       await sweepStaleReplies({ workerDb: deps.workerDb, runtime: deps.runtime });
+      // What the webhook did not bring (CV5b, #2329): the recent history of an account that is due (the first read of a new or
+      // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
+      // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.
+      if (conversationPublishers && conversationBroker) {
+        const withMethod = (method: 'history' | 'profile') => Object.entries(conversationPublishers).filter(([, p]) => typeof p.conversations?.[method] === 'function').map(([id]) => id);
+        const due = await dueConversationSync(deps.workerDb, { history: deps.channels?.conversationHistory ? withMethod('history') : [], profile: withMethod('profile') });
+        await requestConversationSync(deps.runtime, due);
+      }
     } catch (error) {
       console.error('[relay]', error);
     } finally {

@@ -15,7 +15,7 @@ import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type Conv
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import type { HideWork, ReplyWork } from '@crove/kernel';
+import type { HideWork, HistoryWork, ProfileWork, ReplyWork } from '@crove/kernel';
 import { opsAlert } from './ops-alert.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'conversations' };
@@ -158,6 +158,83 @@ export async function failUnsendable(runtime: Runtime, job: ConversationJob): Pr
   if (work.action === 'call' && work.callKey) await runtime.execute('kernel.conversation.reply_record', { messageId: job.messageId, callKey: work.callKey, result }, options);
 }
 
+// The jobs that read from a platform beyond the webhook (CV5b, #2329), on the same queue as a reply: ids only, never a name or a message.
+export type ConversationSyncJob = { orgId: string; connectionId: string; action: 'history' } | { orgId: string; connectionId: string; action: 'profile'; identityId: string };
+
+// The most chats one history read goes through, and the events one ingest call takes.
+const HISTORY_CHATS = 20;
+const INGEST_CHUNK = 200;
+
+// Reads one platform call's worth of what the webhook did not bring: the account's recent history (stored through the same idempotent
+// ingest, with a gap recorded when it could not reach back far enough) or a customer's name. A refused credential is left for the
+// reconnect; a failure worth trying again throws so the queue retries; nothing a platform said is logged, only counts and ids.
+export async function runConversationSync(deps: SendDeps, job: ConversationSyncJob): Promise<string> {
+  const options = { actor: SYSTEM, orgId: job.orgId };
+  if (job.action === 'profile') {
+    const work = await deps.runtime.execute<ProfileWork>('kernel.conversation.profile_begin', { identityId: job.identityId, connectionId: job.connectionId }, options);
+    if (work.action !== 'call' || !work.provider || !work.contactId) return 'none';
+    const adapter = deps.adapter(work.provider);
+    if (!adapter?.profile) return 'no_adapter';
+    const opened = await open(deps, job);
+    if (opened.kind === 'refused') return 'refused';
+    let answer: Awaited<ReturnType<NonNullable<ConversationAdapter['profile']>>>;
+    try {
+      answer = await adapter.profile({ externalAccountId: opened.externalAccountId, secret: opened.secret, contactId: work.contactId });
+    } catch {
+      answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
+    }
+    if (answer.kind === 'ok') {
+      await deps.runtime.execute('kernel.conversation.profile_apply', { identityId: job.identityId, displayName: answer.displayName, retry: false }, options);
+      return answer.displayName ? 'named' : 'no_name';
+    }
+    // A refusal that asking again will not change is final (the customer is marked checked); the rest is asked again later.
+    await deps.runtime.execute('kernel.conversation.profile_apply', { identityId: job.identityId, displayName: null, retry: answer.retry }, options);
+    return answer.retry ? 'retry' : 'failed';
+  }
+  const work = await deps.runtime.execute<HistoryWork>('kernel.conversation.history_begin', { connectionId: job.connectionId }, options);
+  if (work.action !== 'call' || !work.provider || !work.since) return 'none';
+  const adapter = deps.adapter(work.provider);
+  if (!adapter?.history) return 'no_adapter';
+  const opened = await open(deps, job);
+  if (opened.kind === 'refused') return 'refused';
+  let answer: Awaited<ReturnType<NonNullable<ConversationAdapter['history']>>>;
+  try {
+    answer = await adapter.history({ externalAccountId: opened.externalAccountId, secret: opened.secret, since: new Date(work.since), maxChats: HISTORY_CHATS });
+  } catch {
+    answer = { kind: 'failed', retry: true, code: 'ADAPTER_ERROR' };
+  }
+  if (answer.kind === 'failed') {
+    // Asked again by the job's retry, then by the next pass after an hour; a refusal that will not change waits for the reconnect.
+    if (answer.retry) throw new Error('history read failed');
+    return 'failed';
+  }
+  for (let i = 0; i < answer.events.length; i += INGEST_CHUNK) {
+    await deps.runtime.execute('kernel.conversation.ingest', { connectionId: job.connectionId, events: answer.events.slice(i, i + INGEST_CHUNK) }, options);
+  }
+  await deps.runtime.execute('kernel.conversation.history_record', { connectionId: job.connectionId, complete: answer.complete, gapFrom: answer.complete ? null : work.since, gapTo: answer.complete ? null : answer.oldest }, options);
+  return answer.complete ? 'complete' : 'gap';
+}
+
+// The work the relay hands out each pass (crove_kernel.conversation_sync_due, the worker login's): which connections' history is due,
+// and which customers have no name yet, for the providers whose adapters can read them.
+export async function dueConversationSync(workerDb: Db, providers: { history: string[]; profile: string[] }): Promise<ConversationSyncJob[]> {
+  if (providers.history.length === 0 && providers.profile.length === 0) return [];
+  const { rows } = await sql<{ kind: string; org_id: string; connection_id: string; identity_id: string | null }>`
+    SELECT kind, org_id, connection_id, identity_id FROM crove_kernel.conversation_sync_due(${providers.history}::text[], ${providers.profile}::text[], 60, 50)`.execute(workerDb);
+  return rows.map((r) => (r.kind === 'history' ? { orgId: r.org_id, connectionId: r.connection_id, action: 'history' as const } : { orgId: r.org_id, connectionId: r.connection_id, action: 'profile' as const, identityId: r.identity_id as string }));
+}
+
+// Hands each due piece of work to the worker's queue through the command that marks it handed out and emits its event.
+export async function requestConversationSync(runtime: Runtime, jobs: readonly ConversationSyncJob[]): Promise<number> {
+  let queued = 0;
+  for (const job of jobs) {
+    const input = job.action === 'profile' ? { action: job.action, connectionId: job.connectionId, identityId: job.identityId } : { action: job.action, connectionId: job.connectionId };
+    const result = await runtime.execute<{ queued: boolean }>('kernel.conversation.sync_request', input, { actor: SYSTEM, orgId: job.orgId });
+    if (result.queued) queued++;
+  }
+  return queued;
+}
+
 export interface ConversationJob {
   orgId: string;
   messageId: string;
@@ -182,7 +259,7 @@ type Opened = { kind: 'ok'; externalAccountId: string; secret: string } | { kind
 
 // The credential of a connection, opened here and nowhere else. kernel.channel.credential refuses once the member who connected
 // the account may no longer use it or the connection is not active.
-async function open(deps: SendDeps, job: ConversationJob): Promise<Opened> {
+async function open(deps: SendDeps, job: { orgId: string; connectionId: string }): Promise<Opened> {
   const options = { actor: SYSTEM, orgId: job.orgId };
   let sealed: SealedChannelCredential;
   try {
@@ -197,7 +274,7 @@ async function open(deps: SendDeps, job: ConversationJob): Promise<Opened> {
   return { kind: 'ok', externalAccountId: sealed.externalAccountId, secret };
 }
 
-const expire = async (deps: SendDeps, job: ConversationJob, reason: string, version: string): Promise<void> => {
+const expire = async (deps: SendDeps, job: { orgId: string; connectionId: string }, reason: string, version: string): Promise<void> => {
   await deps.runtime.execute('kernel.channel.mark_expired', { connectionId: job.connectionId, reason, ifVersion: version }, { actor: SYSTEM, orgId: job.orgId });
 };
 

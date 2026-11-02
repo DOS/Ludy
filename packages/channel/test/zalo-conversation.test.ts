@@ -188,3 +188,68 @@ describe('ZaloConversations.reply', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('ZaloConversations.profile and history (CV5b, #2329; the answers shapes are [U] until the live check)', () => {
+  const profile = (adapter: ZaloConversations) => adapter.profile({ externalAccountId: 'oa-1', secret: SECRET, contactId: 'u-100' });
+
+  it("reads a customer's display name with the user id in `data`, and takes no other field", async () => {
+    const { calls, fetchImpl } = zalo([{ body: { error: 0, message: 'Success', data: { display_name: '  Trần Thị Khách  ', user_id: 'u-100', phone: '0912345678', avatar: 'https://x/y.png' } } }]);
+    expect(await profile(new ZaloConversations(APP, fetchImpl))).toEqual({ kind: 'ok', displayName: 'Trần Thị Khách' });
+    expect(calls[0]?.url).toBe(`https://openapi.zalo.me/v3.0/oa/user/detail?data=${encodeURIComponent('{"user_id":"u-100"}')}`);
+    expect(calls[0]?.headers.get('access_token')).toBe('zalo-access-1');
+    // No name is a definitive answer, not a failure.
+    expect(await profile(new ZaloConversations(APP, zalo([{ body: { error: 0, data: { display_name: '' } } }]).fetchImpl))).toEqual({ kind: 'ok', displayName: null });
+    expect(await profile(new ZaloConversations(APP, zalo([{ body: { error: 0, data: {} } }]).fetchImpl))).toEqual({ kind: 'ok', displayName: null });
+  });
+
+  it('says whether a failed profile read is worth asking again', async () => {
+    const answer = async (status: number, error: number | undefined) => profile(new ZaloConversations(APP, zalo([{ status, body: error === undefined ? { message: 'x' } : { error, message: 'x' } }]).fetchImpl));
+    expect(await answer(200, -216)).toEqual({ kind: 'failed', retry: false, code: 'ZALO_TOKEN' });
+    expect(await answer(200, -32)).toEqual({ kind: 'failed', retry: true, code: 'ZALO_RATE_LIMIT' });
+    expect(await answer(502, undefined)).toEqual({ kind: 'failed', retry: true, code: 'ZALO_5XX' });
+    expect(await answer(200, -224)).toEqual({ kind: 'failed', retry: false, code: 'ZALO_OA_ACCESS' });
+    expect(await profile(new ZaloConversations(APP, zalo([{ throws: true }]).fetchImpl))).toEqual({ kind: 'failed', retry: true, code: 'ZALO_UNREACHABLE' });
+    expect(await profile(new ZaloConversations(APP, zalo([]).fetchImpl)).catch(() => 'threw')).toBeDefined();
+  });
+
+  const NOW = Date.now();
+  const msg = (id: string, src: 0 | 1, at: number, text: string, extra: Record<string, unknown> = {}) => ({ message_id: id, src, time: at, type: 'text', message: text, from_id: src === 1 ? 'u-100' : 'oa-1', to_id: src === 1 ? 'oa-1' : 'u-100', ...extra });
+
+  it('reads the recent chats and their messages back to the window, and says it reached it', async () => {
+    const { calls, fetchImpl } = zalo([
+      { body: { error: 0, data: [msg('l-1', 1, NOW - 60_000, 'tin mới nhất')] } },
+      { body: { error: 0, data: [msg('h-3', 0, NOW - 30_000, 'Dạ còn ạ'), msg('h-2', 1, NOW - 60_000, 'Shop còn hàng không?'), msg('h-1', 1, NOW - 9 * 86_400_000, 'tin quá cũ')] } },
+    ]);
+    const out = await new ZaloConversations(APP, fetchImpl).history({ externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 7 * 86_400_000), maxChats: 20 });
+    expect(out.kind).toBe('ok');
+    if (out.kind !== 'ok') return;
+    expect(out.complete).toBe(true);
+    expect(out.events.map((e) => [e.messageId, e.direction, e.text, e.contact.id, e.threadId, e.kind])).toEqual([
+      ['h-3', 'out', 'Dạ còn ạ', 'u-100', 'u-100', 'direct'],
+      ['h-2', 'in', 'Shop còn hàng không?', 'u-100', 'u-100', 'direct'],
+    ]);
+    expect(calls[0]?.url).toContain('/v2.0/oa/listrecentchat?data=');
+    expect(calls[1]?.url).toContain('/v2.0/oa/conversation?data=');
+    expect(JSON.parse(new URL(calls[1]?.url as string).searchParams.get('data') as string)).toEqual({ user_id: 'u-100', offset: 0, count: 10 });
+  });
+
+  it('says it did not reach back when a chat has more than it read or there are more chats than it reads, and maps attachments to placeholders', async () => {
+    // A full page of ten messages all inside the window and the cap on messages reached: not complete.
+    const page = (from: number) => Array.from({ length: 10 }, (_, i) => msg(`p-${from + i}`, 1, NOW - (from + i + 1) * 60_000, `tin ${from + i}`));
+    const chats = { body: { error: 0, data: [msg('l-1', 1, NOW - 1000, 'x')] } };
+    const { fetchImpl } = zalo([chats, ...[0, 10, 20, 30, 40].map((n) => ({ body: { error: 0, data: page(n) } }))]);
+    const out = await new ZaloConversations(APP, fetchImpl).history({ externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 7 * 86_400_000), maxChats: 20 });
+    expect(out.kind === 'ok' && out.complete).toBe(false);
+    expect(out.kind === 'ok' && out.events).toHaveLength(50);
+    const attach = zalo([chats, { body: { error: 0, data: [msg('a-1', 1, NOW - 5000, '', { type: 'photo' }), msg('a-2', 0, NOW - 4000, '', { type: 'file' })] } }]);
+    const got = await new ZaloConversations(APP, attach.fetchImpl).history({ externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 86_400_000), maxChats: 20 });
+    expect(got.kind === 'ok' && got.events.map((e) => e.text)).toEqual(['[Khách gửi một tệp đính kèm]', '[Trang đã gửi một tệp đính kèm]']);
+  });
+
+  it('fails a history read with a refused token as final and a lost connection as worth trying again, and returns nothing partial', async () => {
+    const input = { externalAccountId: 'oa-1', secret: SECRET, since: new Date(NOW - 86_400_000), maxChats: 20 };
+    expect(await new ZaloConversations(APP, zalo([{ body: { error: -216, message: 'x' } }]).fetchImpl).history(input)).toEqual({ kind: 'failed', retry: false, code: 'ZALO_TOKEN' });
+    expect(await new ZaloConversations(APP, zalo([{ throws: true }]).fetchImpl).history(input)).toEqual({ kind: 'failed', retry: true, code: 'ZALO_UNREACHABLE' });
+    expect(await new ZaloConversations(APP, zalo([{ body: { error: 0, data: [msg('l-1', 1, NOW - 1000, 'x')] } }, { body: { error: -32, message: 'x' } }]).fetchImpl).history(input)).toEqual({ kind: 'failed', retry: true, code: 'ZALO_RATE_LIMIT' });
+  });
+});

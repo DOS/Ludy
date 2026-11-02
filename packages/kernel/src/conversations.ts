@@ -28,6 +28,8 @@ import {
   zConversationEraseConnection,
   zConversationEraseContact,
   zConversationGet,
+  zConversationHistoryBegin,
+  zConversationHistoryRecord,
   zConversationHide,
   zConversationId,
   zConversationIngest,
@@ -35,10 +37,13 @@ import {
   zConversationList,
   zConversationMarkRead,
   zConversationNoteAdd,
+  zConversationProfileApply,
+  zConversationProfileBegin,
   zConversationPurgeExpired,
   zConversationReply,
   zConversationRetentionSet,
   zConversationSandboxComment,
+  zConversationSyncRequest,
   zConversationSettle,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationCounted,
@@ -67,6 +72,7 @@ export const CONVERSATION_MESSAGES_MAX = 500;
 
 export const REPLY_QUEUED = 'kernel.conversation.reply_queued';
 export const HIDE_QUEUED = 'kernel.conversation.hide_queued';
+export const SYNC_QUEUED = 'kernel.conversation.sync_queued';
 
 const requireUser = (ctx: Pick<CommandContext, 'actor'>): string => {
   if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới thực hiện được việc này');
@@ -620,6 +626,12 @@ export const conversationGet = defineQuery({
     if (!connection || connection.status !== 'active') reason = 'channel_inactive';
     else if (!rules || !rules.kinds.includes(row.kind as ConversationKind)) reason = 'not_supported';
     else if (row.reply_window_until && row.reply_window_until.getTime() < Date.now()) reason = 'window_closed';
+    let gap: ConversationDetail['gap'] = null;
+    const lastAt = row.last_message_at;
+    if (connection && lastAt) {
+      const g = await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['gap_from', 'gap_to']).where('org_id', '=', ctx.orgId).where('id', '=', row.channel_connection_id).executeTakeFirst();
+      if (g?.gap_from && g.gap_to && lastAt.getTime() >= g.gap_from.getTime()) gap = { from: g.gap_from.toISOString(), to: g.gap_to.toISOString() };
+    }
     return {
       conversation,
       // Oldest first on screen.
@@ -644,6 +656,8 @@ export const conversationGet = defineQuery({
       notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString() })),
       parentId,
       reply: { allowed: reason === null, reason },
+      // A gap the history read could not fill, shown on the threads that were alive after it began.
+      gap,
     };
   },
 });
@@ -1431,6 +1445,154 @@ export const conversationEraseConnection = defineCommand({
   },
 });
 
+// ---------------------------------------------------------------------------------------------------------------------
+// What the worker reads beyond the webhook (CV5b, #2329). The platform calls are the worker's; these commands only say what to ask,
+// and record what came back. Nothing of a name or a message is in an audit row, only ids and flags.
+// ---------------------------------------------------------------------------------------------------------------------
+
+// How far back one history read goes, and so how far back a message may be brought in: shorter than the erase tombstone (30 days), so a
+// message of an erased customer cannot come back through it.
+const HISTORY_WINDOW_DAYS = 7;
+
+// Hands the worker a read from a platform: its account's recent history, or a customer's name. The relay calls it for what
+// crove_kernel.conversation_sync_due lists, and it marks the work as handed out (for 30 minutes, 10 for a name), so the same work is not
+// handed out every pass; its event is what the worker's queue takes (as a reply's is), so the platform call is made by a job with only
+// ids in it. R2 and external, like a reply: the call it leads to reaches a platform.
+export const conversationSyncRequest = defineCommand({
+  name: 'kernel.conversation.sync_request',
+  input: zConversationSyncRequest,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ queued: boolean }> => {
+    requireSystem(ctx);
+    const connection = await connectionOf(ctx, input.connectionId);
+    if (!connection || connection.status !== 'active') return { queued: false };
+    if (input.action === 'history') {
+      await ctx.trx.updateTable('crove_kernel.channel_connection').set({ history_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.connectionId).execute();
+      await ctx.emit(SYNC_QUEUED, { action: 'history', connectionId: input.connectionId });
+    } else {
+      await ctx.trx.updateTable('crove_kernel.conversation_identity').set({ profile_requested_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', input.identityId).execute();
+      await ctx.emit(SYNC_QUEUED, { action: 'profile', connectionId: input.connectionId, identityId: input.identityId });
+    }
+    ctx.audit({ action: input.action, connection_id: input.connectionId });
+    return { queued: true };
+  },
+});
+
+export interface HistoryWork {
+  action: 'call' | 'none';
+  provider?: string;
+  since?: string;
+}
+
+export const conversationHistoryBegin = defineCommand({
+  name: 'kernel.conversation.history_begin',
+  input: zConversationHistoryBegin,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<HistoryWork> => {
+    requireSystem(ctx);
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['provider', 'status', 'history_synced_at', 'connected_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .executeTakeFirst();
+    if (!row || row.status !== 'active') return { action: 'none' };
+    // Back to the last read, or to the connection's start, and never further than the window.
+    const floor = new Date(ctx.now.getTime() - HISTORY_WINDOW_DAYS * 24 * HOUR_MS);
+    const from = row.history_synced_at ?? row.connected_at;
+    return { action: 'call', provider: row.provider, since: (from && from.getTime() > floor.getTime() ? from : floor).toISOString() };
+  },
+});
+
+export const conversationHistoryRecord = defineCommand({
+  name: 'kernel.conversation.history_record',
+  input: zConversationHistoryRecord,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input): Promise<{ complete: boolean }> => {
+    requireSystem(ctx);
+    // A read that reached back everywhere leaves no gap (and clears an older one); else the period is kept for the threads to show.
+    await ctx.trx
+      .updateTable('crove_kernel.channel_connection')
+      .set(
+        input.complete
+          ? { history_synced_at: ctx.now, gap_from: null, gap_to: null }
+          : { history_synced_at: ctx.now, gap_from: input.gapFrom ? new Date(input.gapFrom) : null, gap_to: input.gapTo ? new Date(input.gapTo) : ctx.now },
+      )
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    ctx.audit({ connection_id: input.connectionId, complete: input.complete });
+    return { complete: input.complete };
+  },
+});
+
+export interface ProfileWork {
+  action: 'call' | 'none';
+  provider?: string;
+  contactId?: string;
+}
+
+export const conversationProfileBegin = defineCommand({
+  name: 'kernel.conversation.profile_begin',
+  input: zConversationProfileBegin,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation_identity', id: input.identityId }),
+  handler: async (ctx, input): Promise<ProfileWork> => {
+    requireSystem(ctx);
+    const identity = await ctx.trx
+      .selectFrom('crove_kernel.conversation_identity')
+      .select(['provider', 'external_user_id', 'display_name', 'erased_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.identityId)
+      .executeTakeFirst();
+    const connection = await connectionOf(ctx, input.connectionId);
+    // A customer erased, already named or with no live connection is not asked about.
+    if (!identity || identity.erased_at || identity.display_name || !connection || connection.status !== 'active' || connection.provider !== identity.provider) return { action: 'none' };
+    return { action: 'call', provider: identity.provider, contactId: identity.external_user_id };
+  },
+});
+
+export const conversationProfileApply = defineCommand({
+  name: 'kernel.conversation.profile_apply',
+  input: zConversationProfileApply,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.conversation_identity', id: input.identityId }),
+  handler: async (ctx, input): Promise<{ named: boolean }> => {
+    requireSystem(ctx);
+    // A name the platform gave is kept only where there is none yet and the customer has not been erased since; `retry` leaves the
+    // customer to be asked again.
+    const set = input.retry
+      ? { updated_at: ctx.now }
+      : input.displayName
+        ? { display_name: input.displayName, profile_checked_at: ctx.now, updated_at: ctx.now }
+        : { profile_checked_at: ctx.now, updated_at: ctx.now };
+    const res = await ctx.trx
+      .updateTable('crove_kernel.conversation_identity')
+      .set(set)
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.identityId)
+      .where('erased_at', 'is', null)
+      .where('display_name', 'is', null)
+      .executeTakeFirst();
+    const named = !input.retry && input.displayName !== null && Number(res.numUpdatedRows) > 0;
+    ctx.audit({ identity_id: input.identityId, named, retry: input.retry });
+    return { named };
+  },
+});
+
 export const conversationCommands = [
   conversationIngest,
   conversationReply,
@@ -1451,5 +1613,10 @@ export const conversationCommands = [
   conversationEraseContact,
   conversationPurgeExpired,
   conversationEraseConnection,
+  conversationHistoryBegin,
+  conversationHistoryRecord,
+  conversationProfileBegin,
+  conversationProfileApply,
+  conversationSyncRequest,
 ];
 export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention];
