@@ -29,11 +29,12 @@ import {
 } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { createMailMessage } from '@crove/kernel';
-import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
 import { RECEIVABLE_ACCOUNT } from '@crove/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import {
   REMINDER_REPEAT_DAYS,
+  addDays,
   allocateReceivable,
   noticeLevel,
   overdueOf,
@@ -46,6 +47,7 @@ import {
 } from './domain/payment-reminder.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
+import { readCollectionSetting } from './collection-settings.ts';
 import { oneLine } from './missing-invoices.ts';
 import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, zPaymentReminderMail, type PaymentReminderMail } from './payment-reminder-mail.ts';
 
@@ -70,6 +72,13 @@ interface Customer {
   email: string | null;
   receivable: Receivable;
   overdue: OpenInvoice[];
+  // The payment terms that dated its invoices: its own when it has set them, else the org's.
+  termsDays: number;
+  // Its own terms when it set them (null: the org's), and the last day with no reminder when it is paused.
+  ownTermsDays: number | null;
+  pausedUntil: string | null;
+  // No reminder is drafted or sent for it today.
+  paused: boolean;
 }
 
 // The customers of one legal entity with a positive balance on 131, their sales invoices laid under it (domain/payment-reminder.ts),
@@ -107,20 +116,42 @@ async function loadCustomers(ctx: QueryContext, entity: string, today: string, o
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
     .execute();
   const byParty = new Map(parties.map((p) => [p.id, p]));
+  // What the org and each customer set (#2488, slice 3): the terms date the invoices, a pause keeps the customer out of the list, the draft and the send.
+  const org = await readCollectionSetting(ctx);
+  // The settings sit on the kept party; a party marked as a duplicate afterwards may still hold its own row (nothing moves it), so every party of the group is read: the
+  // kept party's row wins, else the one whose pause runs longest, so a pause is never lost to a merge.
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.customer_collection as c')
+    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
+    .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
+    .where('c.org_id', '=', ctx.orgId)
+    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
+    .execute();
+  const own = new Map<string, { terms_days: number | null; paused_until: string | null }>();
+  for (const r of rows.filter((x) => x.party_id !== x.group_id)) {
+    const held = own.get(r.group_id);
+    if (!held || (r.paused_until ?? '') > (held.paused_until ?? '')) own.set(r.group_id, { terms_days: r.terms_days, paused_until: r.paused_until });
+  }
+  for (const r of rows.filter((x) => x.party_id === x.group_id)) own.set(r.group_id, { terms_days: r.terms_days, paused_until: r.paused_until });
+
   return owed.flatMap((o) => {
     const party = byParty.get(o.party_id);
     if (!party) return [];
+    const set = own.get(o.party_id);
+    const termsDays = set?.terms_days ?? org.termsDays;
     const receivable = allocateReceivable(
       invoices.filter((i) => i.party_id === o.party_id).map((i) => ({ id: i.id, series: i.invoice_series, number: i.invoice_number, date: i.invoice_date, total: i.total, currency: i.currency })),
       o.balance,
       today,
+      termsDays,
     );
-    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable) }];
+    const pausedUntil = set?.paused_until ?? null;
+    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable), termsDays, ownTermsDays: set?.terms_days ?? null, pausedUntil, paused: pausedUntil !== null && pausedUntil >= today }];
   });
 }
 
 // The last reminder each customer was sent: the newest mail of any notice level that went (or is going) out, read from the mail log.
-async function lastReminders(ctx: QueryContext, partyIds: readonly string[]): Promise<Map<string, { at: string; level: NoticeLevel }>> {
+async function lastReminders(ctx: QueryContext, entity: string, partyIds: readonly string[], states: readonly string[] = REMINDED_STATES): Promise<Map<string, { at: string; level: NoticeLevel }>> {
   const out = new Map<string, { at: string; level: NoticeLevel }>();
   if (partyIds.length === 0) return out;
   const rows = await ctx.trx
@@ -129,7 +160,9 @@ async function lastReminders(ctx: QueryContext, partyIds: readonly string[]): Pr
     .where('org_id', '=', ctx.orgId)
     .where('source', 'like', `${PAYMENT_REMINDER_SOURCE}%`)
     .where('source_id', 'in', [...partyIds])
-    .where('status', 'in', [...REMINDED_STATES])
+    .where('status', 'in', [...states] as Array<(typeof REMINDED_STATES)[number] | 'suppressed'>)
+    // Of this entity's invoices (a customer can owe in several); a mail with no entity on it counts for each.
+    .where(sql<boolean>`coalesce(payload ->> 'legalEntityId', ${entity}) = ${entity}`)
     .orderBy('created_at', 'desc')
     .execute();
   for (const row of rows) {
@@ -168,14 +201,22 @@ export const paymentRemindersList = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<PaymentReminderList> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    const customers = (await loadCustomers(ctx, entity, await databaseToday(ctx.trx))).filter((c) => c.overdue.length > 0);
+    const everyone = (await loadCustomers(ctx, entity, await databaseToday(ctx.trx))).filter((c) => c.overdue.length > 0);
+    // A paused customer is not in the list to remind; it is listed apart, with the day its pause ends, so a person can lift it.
+    const customers = everyone.filter((c) => !c.paused);
+    const paused = everyone.filter((c) => c.paused);
     customers.sort((a, b) => Math.max(...b.overdue.map((i) => i.daysOverdue)) - Math.max(...a.overdue.map((i) => i.daysOverdue)) || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId));
     const shown = customers.slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX);
-    const last = await lastReminders(ctx, shown.map((c) => c.partyId));
+    const last = await lastReminders(ctx, entity, shown.map((c) => c.partyId));
     return zPaymentReminderList.parse({
       currency: await bookCurrency(ctx),
       customers: shown.map((c) => summary(c, last.get(c.partyId))),
       more: customers.length > shown.length,
+      termsDays: (await readCollectionSetting(ctx)).termsDays,
+      paused: paused
+        .sort((a, b) => (a.pausedUntil ?? '').localeCompare(b.pausedUntil ?? '') || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId))
+        .slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX)
+        .map((c) => ({ partyId: c.partyId, name: c.name, pausedUntil: c.pausedUntil as string, ownTermsDays: c.ownTermsDays, invoiceCount: c.overdue.length, total: totalOf(c.overdue) })),
     });
   },
 });
@@ -207,6 +248,13 @@ async function orgName(ctx: QueryContext, entity: string): Promise<string> {
 // One plain address: no space, comma, semicolon or angle bracket, so a party's email can never name a second recipient.
 const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
 
+// A digest of the very invoices of a draft (their ids, sorted): the draft carries it, the send recomputes it, so a customer with any number of invoices is held to the
+// set the person reviewed without sending the ids back.
+function invoiceKey(invoices: readonly OpenInvoice[]): string {
+  return sha256Hex(invoices.map((i) => `${i.id}:${i.dueDate}:${i.amountDue}`).sort().join(','));
+}
+
+const customerPaused = () => new DomainError('CUSTOMER_PAUSED', 409, 'Đang tạm dừng nhắc khách hàng này; bỏ tạm dừng rồi gửi lại');
 const nothingOverdue = () => new DomainError('NOTHING_OVERDUE', 409, 'Khách hàng này không còn hóa đơn nào quá hạn');
 
 export const paymentReminderDraft = defineQuery({
@@ -217,13 +265,18 @@ export const paymentReminderDraft = defineQuery({
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
-    const row = summary(customer, (await lastReminders(ctx, [customer.partyId])).get(customer.partyId));
+    if (customer.paused) throw customerPaused();
+    const row = summary(customer, (await lastReminders(ctx, entity, [customer.partyId])).get(customer.partyId));
     return zPaymentReminderDraft.parse({
       partyId: customer.partyId,
       name: customer.name,
       email: customer.email,
       currency: await bookCurrency(ctx),
       org: await orgName(ctx, entity),
+      termsDays: customer.termsDays,
+      orgTermsDays: (await readCollectionSetting(ctx)).termsDays,
+      ownTermsDays: customer.ownTermsDays,
+      invoiceKey: invoiceKey(customer.overdue),
       level: row.level,
       lang: row.lang,
       invoices: customer.overdue.map((i) => ({ id: i.id, series: i.series, number: i.number, date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue })),
@@ -249,11 +302,11 @@ export const paymentReminderSend = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.payment_reminder:${ctx.orgId}:${input.partyId}`}, 0))`.execute(ctx.trx);
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
+    if (customer.paused) throw customerPaused();
     const level = noticeLevel(customer.overdue) as NoticeLevel;
     const total = totalOf(customer.overdue);
     // What the person reviewed: the notice level, the total and the very invoices (a payment on one and a due date reached on another can leave the total as it was).
-    const reviewed = [...input.invoiceIds].sort().join(',');
-    if (level !== input.level || total !== input.total || reviewed !== customer.overdue.map((i) => i.id).sort().join(',')) {
+    if (level !== input.level || total !== input.total || input.invoiceKey !== invoiceKey(customer.overdue)) {
       throw new DomainError('STALE_REMINDER', 409, 'Sổ sách đã thay đổi từ lúc bạn mở bản nháp (có khoản vừa được thanh toán hoặc đã sang mức nhắc khác); hãy mở lại bản nháp để xem số liệu mới');
     }
     const email = customer.email?.trim() ?? '';
@@ -267,6 +320,7 @@ export const paymentReminderSend = defineCommand({
       .where('source', '=', source)
       .where('source_id', '=', customer.partyId)
       .where('status', 'in', [...REMINDED_STATES])
+      .where(sql<boolean>`coalesce(payload ->> 'legalEntityId', ${entity}) = ${entity}`)
       .where('created_at', '>', since)
       .limit(1)
       .executeTakeFirst();
@@ -282,6 +336,7 @@ export const paymentReminderSend = defineCommand({
     const currency = await bookCurrency(ctx);
     const shown = customer.overdue.slice(0, PAYMENT_REMINDER_INVOICES_MAX);
     const payload: PaymentReminderMail = {
+      legalEntityId: entity,
       lang: reminderLang(customer.overdue),
       level,
       org: await orgName(ctx, entity),
@@ -320,6 +375,18 @@ export const paymentReminderSend = defineCommand({
     return { messageId: mail.id, status, level };
   },
 });
+
+// The Monday of the week `today` (a YYYY-MM-DD date in Vietnam) falls in, and how many customers of the entity that are overdue and not paused were sent no reminder
+// since then: what the weekly "Hôm nay cần bạn" item counts (#2488, slice 3). Nothing is drafted or sent by counting.
+export async function remindersToSendThisWeek(ctx: QueryContext, entity: string, today: string): Promise<{ monday: string; count: number }> {
+  const day = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const monday = addDays(today, -((day + 6) % 7));
+  const since = new Date(`${monday}T00:00:00+07:00`).toISOString();
+  // Only customers a reminder can reach (an email that sends), and a mail the customer's blocked address refused counts as dealt with this week, so the item can clear.
+  const due = (await loadCustomers(ctx, entity, today)).filter((c) => c.overdue.length > 0 && !c.paused && PLAIN_ADDRESS.test(c.email?.trim() ?? ''));
+  const last = await lastReminders(ctx, entity, due.map((c) => c.partyId), [...REMINDED_STATES, 'suppressed']);
+  return { monday, count: due.filter((c) => (last.get(c.partyId)?.at ?? '') < since).length };
+}
 
 export const paymentReminderQueries = [paymentRemindersList, paymentReminderDraft];
 export const paymentReminderCommands = [paymentReminderSend];

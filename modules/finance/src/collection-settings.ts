@@ -10,7 +10,7 @@
 // never a name.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { zCustomerCollectionSet, zId, zTermsDays } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 
@@ -18,7 +18,6 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
-export const zTermsDays = z.number().int().min(1).max(365);
 // The terms the reminders have always assumed, until the org sets another.
 const DEFAULT_TERMS_DAYS = 30;
 // A pause runs to a date in the next two years: far enough for a customer in a long dispute, near enough that it cannot be forgotten for good.
@@ -138,13 +137,14 @@ export const customerCollectionGet = defineQuery({
 export const customerCollectionSet = defineCommand({
   name: 'finance.customer_collection.set',
   // pausedUntil: the last day with no reminder (YYYY-MM-DD), or null.
-  input: z.object({ partyId: zId, termsDays: zTermsDays.nullable(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() }),
+  // Only what is named changes: a field left out keeps its value (so lifting a pause does not overwrite terms someone changed meanwhile).
+  input: zCustomerCollectionSet,
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
   target: (input) => ({ type: 'finance.customer_collection', id: input.partyId }),
   handler: async (ctx, input): Promise<CustomerCollection> => {
-    if (input.pausedUntil !== null) {
+    if (input.pausedUntil !== undefined && input.pausedUntil !== null) {
       const when = Date.parse(`${input.pausedUntil}T00:00:00Z`);
       // Not before 2000: a date PostgreSQL cannot hold (year 0) is refused here, not by the database.
       if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil || input.pausedUntil < '2000-01-01') throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
@@ -155,17 +155,19 @@ export const customerCollectionSet = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.customer_collection:${ctx.orgId}:${kept}`}, 0))`.execute(ctx.trx);
     const before = await readCustomer(ctx, kept);
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+    const termsDays = input.termsDays === undefined ? before.termsDays : input.termsDays;
+    const pausedUntil = input.pausedUntil === undefined ? before.pausedUntil : input.pausedUntil;
     // Nothing to keep and nothing kept, or the same values again: no row is made or touched (who set it and when stay as they were).
-    if (input.termsDays === before.termsDays && input.pausedUntil === before.pausedUntil) {
-      ctx.audit({ partyId: kept, termsDays: input.termsDays, pausedUntil: input.pausedUntil, changed: false });
+    if (termsDays === before.termsDays && pausedUntil === before.pausedUntil) {
+      ctx.audit({ partyId: kept, termsDays, pausedUntil, changed: false });
       return before;
     }
     await ctx.trx
       .insertInto('crove_finance.customer_collection')
-      .values({ org_id: ctx.orgId, party_id: kept, terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId })
-      .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId, updated_at: ctx.now }))
+      .values({ org_id: ctx.orgId, party_id: kept, terms_days: termsDays, paused_until: pausedUntil, set_by: userId })
+      .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: termsDays, paused_until: pausedUntil, set_by: userId, updated_at: ctx.now }))
       .execute();
-    ctx.audit({ partyId: kept, termsDays: input.termsDays, previousTermsDays: before.termsDays, pausedUntil: input.pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
+    ctx.audit({ partyId: kept, termsDays, previousTermsDays: before.termsDays, pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
     return readCustomer(ctx, kept);
   },
 });
