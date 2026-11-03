@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
+import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
@@ -38,13 +39,18 @@ interface Draft {
   issues: Array<{ field: string; code: string }>;
 }
 
+// A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
+const PREFIX = '010010910';
+const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
+const BAD_TAX_CODE = `${PREFIX}${((enterpriseCheckDigit(PREFIX) ?? 0) + 1) % 10}`;
+
 const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
 const form = (seriesId: string | null, extra: Record<string, unknown> = {}) => ({
   draftId: null,
   legalEntityId: null,
   date: today(),
   seriesId,
-  buyer: { kind: 'business', partyId: null, taxCode: '0100109106', name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
+  buyer: { kind: 'business', partyId: null, taxCode: VALID_TAX_CODE, name: 'Công ty Mua Thử', address: '1 Phố Thử, Hà Nội', email: null },
   lines: [
     { description: 'Hàng A', unit: 'cái', quantity: '2', unitPrice: '100000', vatRate: '10%' },
     { description: 'Hàng B', unit: null, quantity: '1.5', unitPrice: '33333', vatRate: '8%' },
@@ -159,7 +165,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const o = await org();
     const bad = form(null, {
       date: '2999-01-01',
-      buyer: { kind: 'business', partyId: null, taxCode: '0100109107', name: null, address: null, email: 'nope' },
+      buyer: { kind: 'business', partyId: null, taxCode: BAD_TAX_CODE, name: null, address: null, email: 'nope' },
       lines: [{ description: ' ', unit: null, quantity: '0', unitPrice: '5', vatRate: '7%' }],
     });
     const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', bad);

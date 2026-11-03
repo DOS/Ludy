@@ -2,14 +2,20 @@
 // The amounts and the checks of a sales e-invoice draft (#2500): decimal arithmetic to the whole dong, the VAT rates a provider accepts, and the issue codes on their
 // fields.
 import { describe, expect, it } from 'vitest';
+import { enterpriseCheckDigit } from '@crove/l10n-vn';
 import { checkDraft, computeDraft, normalizeVatRate, type DraftInput } from '../src/domain/einvoice-draft.ts';
+
+// A synthetic tax code made at run time (the repository holds no checksum-valid one): a nine digit prefix and its check digit, and the same with the check digit off by one.
+const PREFIX = '010010910';
+const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
+const BAD_TAX_CODE = `${PREFIX}${((enterpriseCheckDigit(PREFIX) ?? 0) + 1) % 10}`;
 
 const line = (extra: Partial<DraftInput['lines'][number]> = {}) => ({ description: 'Hàng', unit: 'cái', quantity: '1', unitPrice: '100000', vatRate: '10%', ...extra });
 const draft = (extra: Partial<DraftInput> = {}): DraftInput => ({
   date: '2026-11-03',
   currency: 'VND',
   seriesId: '00000000-0000-4000-8000-000000000001',
-  buyer: { kind: 'business', taxCode: '0100109106', name: 'Công ty Mua', address: '1 Phố Thử', email: null },
+  buyer: { kind: 'business', taxCode: VALID_TAX_CODE, name: 'Công ty Mua', address: '1 Phố Thử', email: null },
   lines: [line()],
   ...extra,
 });
@@ -60,7 +66,7 @@ describe('checkDraft', () => {
   it('asks a business buyer for a valid tax code, a name and an address, and an individual for a name', () => {
     expect(codes(draft({ buyer: { kind: 'business', taxCode: null, name: null, address: null, email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_REQUIRED', 'buyer.name:BUYER_NAME_REQUIRED', 'buyer.address:BUYER_ADDRESS_REQUIRED']);
     expect(codes(draft({ buyer: { kind: 'business', taxCode: '12345', name: 'A', address: 'B', email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_INVALID']);
-    expect(codes(draft({ buyer: { kind: 'business', taxCode: '0100109107', name: 'A', address: 'B', email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_CHECKSUM']);
+    expect(codes(draft({ buyer: { kind: 'business', taxCode: BAD_TAX_CODE, name: 'A', address: 'B', email: null } }))).toEqual(['buyer.taxCode:BUYER_TAX_CODE_CHECKSUM']);
     expect(codes(draft({ buyer: { kind: 'individual', taxCode: null, name: null, address: null, email: null } }))).toEqual(['buyer.name:BUYER_NAME_REQUIRED']);
     expect(codes(draft({ buyer: { kind: 'individual', taxCode: '012345678901', name: 'Một Người', address: null, email: null } }))).toEqual([]);
     expect(codes(draft({ buyer: { kind: 'consumer', taxCode: null, name: null, address: null, email: null } }))).toEqual([]);
