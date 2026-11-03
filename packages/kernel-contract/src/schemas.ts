@@ -627,6 +627,9 @@ export const zCashVoucherProposal = z.object({
   // How the voucher's party was found when it was made from a bank line (#2385): the matcher's suggestion or the person's
   // own choice, as the server checked it when the voucher was asked for.
   matchedBy: zBankMatchedBy.optional(),
+  // The warnings the server raised when the voucher was asked for (#2419): an unusual amount of a payment. Absent when
+  // there is none; an anomaly flag keeps the proposal out of a bulk approval, as on an invoice (#2380).
+  checks: z.array(zCheck).max(10).optional(),
   // The legal entity whose books the voucher is posted in (#1280), resolved when it was asked for. Absent on proposals
   // made before #1280: the entity resolved for the approver.
   legalEntityId: zId.optional(),

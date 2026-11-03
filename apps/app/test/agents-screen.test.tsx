@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'use-intl';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
+import { COWORKERS } from '../src/i18n/brand.ts';
 import { catalog } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -55,13 +56,13 @@ const ENTITY = { kind: 'company', taxCode: null, parentId: null, createdAt: '202
 const oneEntity = [{ ...ENTITY, id: 'e1', name: 'Công ty An', isDefault: true }];
 const twoEntities = [...oneEntity, { ...ENTITY, id: 'e2', name: 'Chi nhánh Hà Nội', kind: 'branch', isDefault: false }];
 
-function page(role: string | null, entities = oneEntity): string {
+function page(role: string | null, entities = oneEntity, tpls: typeof templates = templates): string {
   const qc = client.current;
   qc.clear();
   qc.setQueryData(['legalEntities', 'list'], entities);
   qc.setQueryData(['org', 'get'], { role, members: [member] });
   qc.setQueryData(['chart', 'get'], chart);
-  qc.setQueryData(['chart', 'templates'], templates);
+  qc.setQueryData(['chart', 'templates'], tpls);
   qc.setQueryData(['agents', 'budgets'], []);
   return renderToStaticMarkup(
     <QueryClientProvider client={qc}>
@@ -83,6 +84,17 @@ describe('AgentsPage', () => {
     expect(agentHeld).toContain(`aria-label="${en.agents.aiBadge}"`);
     expect(memberHeld).toContain('Clerk');
     expect(memberHeld).not.toContain(`aria-label="${en.agents.aiBadge}"`);
+  });
+
+  it('shows the name a template agent takes: the coworker of its module, none for a module without one', () => {
+    const finance = { ...templates[0]!, key: 'finance.chief_accountant', module: 'finance' };
+    const crm = { ...templates[0]!, key: 'crm.scheduler', module: 'crm', title: 'Scheduler' };
+    const notes = { ...templates[0]!, key: 'notes.x', module: 'notes', title: 'Notes helper' };
+    const html = page('owner', oneEntity, [finance, crm, notes]);
+    const cards = html.split('data-testid="template"').slice(1);
+    expect(cards[0]).toContain(`Default name: ${COWORKERS.finance}`);
+    expect(cards[1]).toContain(`Default name: ${COWORKERS.sales}`);
+    expect(cards[2]).not.toContain('Default name');
   });
 
   it('gives owners every control', () => {

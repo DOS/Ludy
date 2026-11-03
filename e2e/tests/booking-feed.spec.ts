@@ -10,7 +10,7 @@ test('recreate and revoke the booking feed address through a dialog that names t
   await page.goto('/');
   await signInNewUser(page, email);
   await createOrg(page, 'Công ty Lịch Đăng Ký');
-  await page.getByRole('navigation').getByRole('link', { name: 'CRM', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Lịch hẹn' }).click();
 
   const card = page.getByTestId('booking-feed');

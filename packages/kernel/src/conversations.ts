@@ -61,6 +61,20 @@ import {
   zSavedReplyUpdate,
   SAVED_REPLIES_MAX,
   CONVERSATION_DRAFT_MESSAGES,
+  CONVERSATION_OTHERS_MAX,
+  CONVERSATION_COMPOSING_EVERY_SECONDS,
+  CONVERSATION_COMPOSING_SECONDS,
+  zConversationComposing,
+  zAvailabilitySet,
+  zConversationSetIntent,
+  zConversationIntentSuggest,
+  zConversationContactMatches,
+  CONVERSATION_CONTACT_MATCHES_MAX,
+  CONVERSATION_INTENT_CHARS,
+  CONVERSATION_INTENT_MESSAGES,
+  phoneKeysIn,
+  type Availability,
+  type ConversationIntent,
   CONVERSATION_RETENTION_DEFAULT_MONTHS,
   type ConversationAttachmentView,
   type ConversationAutoDraft,
@@ -79,9 +93,10 @@ import {
   type SavedReplyView,
 } from '@crove/kernel-contract';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { notifyMembers, ownersAndAdmins } from './notifications.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -536,6 +551,13 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', conversation.id)
     .execute();
+  // A thread that is New now and was not before (a first message, or a customer writing again after it was answered or resolved) is told to the
+  // members who can answer it (CV3).
+  // Not for a message the platform dated more than a day ago: an old thread brought in by a history read or a reconcile is not news, and a burst of
+  // them would be a notice for each reader.
+  if (inbound && status === 'new' && (conversation.status !== 'new' || conversation.last_seq === 0) && sentAt.getTime() > ctx.now.getTime() - NEW_NOTICE_AGE_MS) {
+    await routeNewConversation(ctx, conversation.id, conversation.assignee_user_id, seq);
+  }
   return 'stored';
 }
 
@@ -563,6 +585,10 @@ interface SummaryRow {
   reply_window_until: Date | null;
   preview: string | null;
   read_seq: number | null;
+  // The other members typing a reply now (CV3): markers not expired, never the viewer's own.
+  composing: string[] | null;
+  // The intent a person applied (CV3, #2306), or null.
+  intent: string | null;
 }
 
 // The summary columns of a thread with its channel, customer, party, last message and the viewer's read mark. Row-level
@@ -570,10 +596,12 @@ interface SummaryRow {
 const summarySelect = (orgId: string, viewer: string | null) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          c.identity_id, i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
-         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until,
+         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent,
          (SELECT m.body FROM crove_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id ORDER BY m.seq DESC LIMIT 1) AS preview,
-         r.last_read_seq AS read_seq
+         r.last_read_seq AS read_seq,
+         (SELECT pg_catalog.array_agg(x.user_id ORDER BY x.updated_at, x.user_id) FROM crove_kernel.conversation_composing x
+          WHERE x.org_id = c.org_id AND x.conversation_id = c.id AND x.expires_at > now() AND x.user_id IS DISTINCT FROM ${viewer}::uuid) AS composing
   FROM crove_kernel.conversation c
   JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
   LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
@@ -599,6 +627,8 @@ function toSummary(row: SummaryRow): ConversationSummary {
     replyWindowUntil: iso(row.reply_window_until),
     preview: previewOf(row.preview ?? ''),
     unread: row.last_seq > (row.read_seq ?? 0),
+    composing: row.composing ?? [],
+    intent: row.intent as ConversationIntent | null,
   };
 }
 
@@ -616,6 +646,18 @@ export const conversationList = defineQuery({
     if (input.connectionId) where.push(sql`c.channel_connection_id = ${input.connectionId}::uuid`);
     if (input.assignee === 'me') where.push(sql`c.assignee_user_id = ${me}::uuid`);
     if (input.assignee === 'none') where.push(sql`c.assignee_user_id IS NULL`);
+    if (input.intent === 'none') where.push(sql`c.intent IS NULL`);
+    else if (input.intent) where.push(sql`c.intent = ${input.intent}`);
+    if (input.q) {
+      // The customer's name, the contact's name, or any message of the thread, ignoring case, Vietnamese marks and punctuation (search_fold, as the
+      // contacts' search does). Text that folds to nothing (only punctuation) is no search: every thread stays. The folded text is matched with LIKE's own
+      // characters escaped, so a fold that keeps one cannot widen the match.
+      const needle = sql`'%' || replace(replace(replace(crove_kernel.search_fold(${input.q}), '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
+      where.push(sql`(crove_kernel.search_fold(${input.q}) = '' OR crove_kernel.search_fold(COALESCE(i.display_name, '')) LIKE ${needle} ESCAPE '\\'
+        OR crove_kernel.search_fold(COALESCE(p.name, '')) LIKE ${needle} ESCAPE '\\'
+        OR EXISTS (SELECT 1 FROM crove_kernel.conversation_message sm WHERE sm.org_id = c.org_id AND sm.conversation_id = c.id
+                   AND crove_kernel.search_fold(sm.body) LIKE ${needle} ESCAPE '\\'))`);
+    }
     if (input.posts) {
       const pairs = input.posts.map((p) => sql`(c.channel_connection_id = ${p.connectionId}::uuid AND c.external_post_id = ${p.externalPostId})`);
       where.push(sql`(${sql.join(pairs, sql` OR `)})`);
@@ -748,8 +790,29 @@ export const conversationGet = defineQuery({
       .executeTakeFirst();
     const lastCustomer = [...messages].find((m) => m.direction === 'in' && m.platform_removed_at === null && m.body.trim() !== '');
     const suggestions = lastCustomer && lastCustomer.seq === row.last_seq ? matchSavedReplies(lastCustomer.body, await savedRepliesOf(ctx), 3) : [];
+    // The customer's other threads that this reader may read (row-level security), for the contact panel: what they are and where they stand.
+    const otherRows = row.identity_id
+      ? await ctx.trx
+          .selectFrom('crove_kernel.conversation as o')
+          .innerJoin('crove_kernel.channel_connection as oc', (j) => j.onRef('oc.org_id', '=', 'o.org_id').onRef('oc.id', '=', 'o.channel_connection_id'))
+          .select(['o.id', 'o.kind', 'o.status', 'o.channel_connection_id', 'oc.provider', 'oc.display_name', 'o.last_message_at'])
+          .where('o.org_id', '=', ctx.orgId)
+          .where('o.identity_id', '=', row.identity_id)
+          .where('o.id', '<>', input.conversationId)
+          .orderBy(sql`o.last_message_at DESC NULLS LAST`)
+          .orderBy('o.id', 'desc')
+          .limit(CONVERSATION_OTHERS_MAX)
+          .execute()
+      : [];
     return {
       conversation,
+      others: otherRows.map((o) => ({
+        id: o.id,
+        kind: o.kind as ConversationKind,
+        status: o.status as ConversationSummary['status'],
+        channel: { connectionId: o.channel_connection_id, provider: o.provider, displayName: o.display_name },
+        lastMessageAt: iso(o.last_message_at),
+      })),
       draft: draftRow ? { id: draftRow.id, state: draftRow.state as 'requested' | 'live', source: draftRow.source, body: draftRow.state === 'live' ? draftRow.body : null, tainted: true as const } : null,
       suggestions,
       // Oldest first on screen.
@@ -860,6 +923,8 @@ export const conversationReply = defineCommand({
       .where('id', '=', conversation.id)
       .execute();
     await markRead(ctx, conversation.id, me, seq);
+    // The replier is no longer typing: their "is replying" marker goes with the send.
+    await ctx.trx.deleteFrom('crove_kernel.conversation_composing').where('org_id', '=', ctx.orgId).where('conversation_id', '=', conversation.id).where('user_id', '=', me).execute();
     // The drafts of the thread end with this reply: the one it began from is used (its length, the length sent and the size of the edit are kept, never the
     // text), any other is discarded; a saved reply it began from is counted.
     const open = await ctx.trx
@@ -1268,7 +1333,19 @@ async function mayAssign(ctx: CommandContext, conversation: ConversationRow, use
   const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member || member.role === 'viewer') return false;
   if (member.role === 'owner' || member.role === 'admin') return true;
-  if (conversation.kind === 'direct') return false;
+  if (conversation.kind === 'direct') {
+    // A private message is handled by a member who holds the permission to read it (the desk.agent role, CV3), through an org-wide assignment.
+    const held = await ctx.trx
+      .selectFrom('crove_kernel.role_assignment as a')
+      .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
+      .select('a.id')
+      .where('a.org_id', '=', ctx.orgId)
+      .where('a.user_id', '=', userId)
+      .where('a.legal_entity_id', 'is', null)
+      .where('p.permission', '=', 'kernel.conversation.direct.read')
+      .executeTakeFirst();
+    if (!held) return false;
+  }
   const rows = await ctx.trx.selectFrom('crove_kernel.channel_access').select('channel_connection_id').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).execute();
   return rows.length === 0 || rows.some((r) => r.channel_connection_id === conversation.channel_connection_id);
 }
@@ -1393,6 +1470,136 @@ export const conversationLinkContact = defineCommand({
   },
 });
 
+// A person applies an intent to a thread, changes it or clears it (CV3, #2306): their own decision, in their name. What the AI coworker suggests is read
+// apart (kernel.conversation.intent_source feeds it) and never stored; this label is the only thing kept, and the database refuses every writer but a
+// person. Nothing is routed, assigned, resolved or hidden by it. The audit row holds the label (one of five words), never a text.
+export const conversationSetIntent = defineCommand({
+  name: 'kernel.conversation.set_intent',
+  input: zConversationSetIntent,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation', id: input.conversationId }),
+  handler: async (ctx, input): Promise<{ conversationId: string; intent: ConversationIntent | null }> => {
+    const me = requireUser(ctx);
+    const conversation = await lockConversation(ctx, input.conversationId);
+    const row = await ctx.trx.selectFrom('crove_kernel.conversation').select('intent').where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).executeTakeFirstOrThrow();
+    const before = (row.intent as ConversationIntent | null) ?? null;
+    if (before !== input.intent) {
+      await ctx.trx
+        .updateTable('crove_kernel.conversation')
+        .set({ intent: input.intent, intent_set_by: input.intent ? me : null, intent_set_at: input.intent ? ctx.now : null, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', conversation.id)
+        .execute();
+    }
+    ctx.audit({ conversation_id: conversation.id, label: input.intent, before, ...(before === input.intent ? { unchanged: true } : {}) });
+    return { conversationId: conversation.id, intent: input.intent };
+  },
+});
+
+export interface IntentSource {
+  id: string;
+  lastSeq: number;
+  // The customer's last messages (tainted external text), oldest first, each cut short.
+  texts: string[];
+}
+
+// What the intent suggestion reads: for each of the threads the caller may read (row-level security decides, so a thread they may not read is not here),
+// the customer's last messages. Read only; the model call is made by the API's handler outside this transaction, through the AI meter.
+export const conversationIntentSource = defineQuery({
+  name: 'kernel.conversation.intent_source',
+  input: zConversationIntentSuggest,
+  access: WRITERS,
+  handler: async (ctx, input): Promise<IntentSource[]> => {
+    const { rows } = await sql<{ id: string; last_seq: number; texts: string[] | null }>`
+      SELECT c.id, c.last_seq,
+             (SELECT pg_catalog.array_agg(t.body ORDER BY t.seq) FROM (
+                SELECT pg_catalog.left(m.body, ${CONVERSATION_INTENT_CHARS}) AS body, m.seq FROM crove_kernel.conversation_message m
+                WHERE m.org_id = c.org_id AND m.conversation_id = c.id AND m.direction = 'in' AND m.platform_removed_at IS NULL AND pg_catalog.btrim(m.body) <> ''
+                ORDER BY m.seq DESC LIMIT ${CONVERSATION_INTENT_MESSAGES}) t) AS texts
+      FROM crove_kernel.conversation c
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ANY(${input.conversationIds}::uuid[])`.execute(ctx.trx);
+    const byId = new Map(rows.map((r) => [r.id, { id: r.id, lastSeq: r.last_seq, texts: r.texts ?? [] }]));
+    // In the order asked, each thread once.
+    return [...new Set(input.conversationIds)].flatMap((id) => {
+      const found = byId.get(id);
+      return found ? [found] : [];
+    });
+  },
+});
+
+export interface ContactCandidates {
+  // The name the platform gave the customer (tainted), when it gave one.
+  customerName: string | null;
+  // Contacts of the org that carry a phone number the customer wrote in this thread (deterministic: the phone key).
+  phone: Array<{ partyId: string; name: string }>;
+  // Contacts whose name resembles the customer's (the words they share, ignoring case and Vietnamese marks), the likeliest first.
+  names: Array<{ partyId: string; name: string }>;
+}
+
+// The contacts a thread's customer may be, for a person to link (CV3, #2306). A thread already linked has none to suggest. The phone match is
+// deterministic: a number the customer wrote, in the form of the party's own phone key. The name match is the words the two names share. Row-level
+// security applies to the thread and to the contacts, so a member sees only what they may. Nothing is linked here: link_contact is a person's click.
+export const conversationContactCandidates = defineQuery({
+  name: 'kernel.conversation.contact_candidates',
+  input: zConversationContactMatches,
+  access: WRITERS,
+  handler: async (ctx, input): Promise<ContactCandidates> => {
+    const { rows } = await sql<{ party_id: string | null; identity_name: string | null }>`
+      SELECT c.party_id, i.display_name AS identity_name
+      FROM crove_kernel.conversation c
+      LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
+    const thread = rows[0];
+    if (!thread) throw notFound();
+    const none: ContactCandidates = { customerName: thread.identity_name, phone: [], names: [] };
+    if (thread.party_id !== null) return none;
+    // The numbers the customer wrote in this thread, most recent messages first.
+    const written = await sql<{ body: string }>`
+      SELECT pg_catalog.left(m.body, 2000) AS body FROM crove_kernel.conversation_message m
+      WHERE m.org_id = ${ctx.orgId}::uuid AND m.conversation_id = ${input.conversationId}::uuid AND m.direction = 'in' AND m.platform_removed_at IS NULL
+      ORDER BY m.seq DESC LIMIT 20`.execute(ctx.trx);
+    const keys: string[] = [];
+    for (const { body } of written.rows) for (const key of phoneKeysIn(body)) if (!keys.includes(key) && keys.length < 3) keys.push(key);
+    const phone =
+      keys.length === 0
+        ? []
+        : (
+            await sql<{ id: string; name: string }>`
+              SELECT p.id, p.name FROM crove_kernel.party p
+              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.phone IS NOT NULL AND crove_kernel.phone_key(p.phone) = ANY(${keys}::text[])
+              ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
+          ).rows;
+    // Words of two letters or more, folded; a one-word name needs that word, a longer one needs two of its words, so "Nguyễn" alone does not match everyone.
+    // The stored search column (its GIN index) narrows the contacts to those with any of the words before a name is folded, so a big address book is not
+    // folded name by name.
+    const names =
+      thread.identity_name === null
+        ? []
+        : (
+            await sql<{ id: string; name: string }>`
+              WITH tok AS (
+                SELECT DISTINCT w FROM pg_catalog.unnest(pg_catalog.string_to_array(crove_kernel.search_fold(${thread.identity_name}), ' ')) AS w WHERE pg_catalog.length(w) >= 2
+              ), need AS (SELECT LEAST(2, pg_catalog.count(*))::int AS n FROM tok),
+              q AS (SELECT pg_catalog.to_tsquery('pg_catalog.simple', pg_catalog.string_agg(w, ' | ')) AS tsq FROM tok),
+              near AS (
+                SELECT p.id, p.name, crove_kernel.search_fold(p.name) AS folded FROM crove_kernel.party p, q
+                WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.search @@ q.tsq
+              )
+              SELECT near.id, near.name FROM near JOIN tok ON pg_catalog.strpos(' ' || near.folded || ' ', ' ' || tok.w || ' ') > 0
+              GROUP BY near.id, near.name HAVING pg_catalog.count(*) >= (SELECT n FROM need) AND (SELECT n FROM need) > 0
+              ORDER BY pg_catalog.count(*) DESC, near.name, near.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX + 3}`.execute(ctx.trx)
+          ).rows;
+    const phoneIds = new Set(phone.map((r) => r.id));
+    return {
+      customerName: thread.identity_name,
+      phone: phone.map((r) => ({ partyId: r.id, name: r.name })),
+      names: names.filter((r) => !phoneIds.has(r.id)).map((r) => ({ partyId: r.id, name: r.name })),
+    };
+  },
+});
+
 export const conversationMarkRead = defineCommand({
   name: 'kernel.conversation.mark_read',
   input: zConversationMarkRead,
@@ -1404,6 +1611,151 @@ export const conversationMarkRead = defineCommand({
     const conversation = await lockConversation(ctx, input.conversationId);
     await markRead(ctx, conversation.id, me, Math.min(input.seq, conversation.last_seq));
     return { conversationId: conversation.id };
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The inbox (CV3, #2306): who is replying, who is available, whom a new conversation is told to, and the Home read
+// ---------------------------------------------------------------------------------------------------------------------
+
+// The notification kind of a conversation that needs an answer: ids only, the screen reads the thread itself.
+export const CONVERSATION_NEW = 'kernel.conversation_new';
+// A thread whose newest customer message is older than this is not told as new.
+const NEW_NOTICE_AGE_MS = 24 * 3_600_000;
+
+// Tells the members who can answer a conversation that has become New: the assignee when there is one and they can read it; else the available
+// members who can read it; else the owners and admins (whoever is away). The readers are those the database lets read the thread
+// (crove_kernel.conversation_readers, the same rule as conversation_access, never a viewer). One notification per member for each time a thread becomes
+// New (the key carries the message that did it), no text in it.
+async function routeNewConversation(ctx: CommandContext, conversationId: string, assignee: string | null, seq: number): Promise<number> {
+  const { rows } = await sql<{ user_id: string; available: boolean }>`SELECT user_id, available FROM crove_kernel.conversation_readers(${conversationId}::uuid)`.execute(ctx.trx);
+  // A member who turned this kind off is not told: the choice below is made among those who did not, so the fallback still runs when the available
+  // readers all muted it.
+  const muted = new Set((await sql<{ user_id: string }>`SELECT user_id FROM crove_kernel.notification_mute WHERE org_id = ${ctx.orgId}::uuid AND kind = ${CONVERSATION_NEW}`.execute(ctx.trx)).rows.map((r) => r.user_id));
+  const open = rows.filter((r) => !muted.has(r.user_id));
+  let users: string[] = [];
+  if (assignee && open.some((r) => r.user_id === assignee)) users = [assignee];
+  else {
+    users = open.filter((r) => r.available).map((r) => r.user_id);
+    if (users.length === 0) {
+      const admins = new Set(await ownersAndAdmins(ctx));
+      users = open.filter((r) => admins.has(r.user_id)).map((r) => r.user_id);
+    }
+  }
+  if (users.length === 0) return 0;
+  return notifyMembers(ctx, { kind: CONVERSATION_NEW, users, key: `conversation:${conversationId}:${seq}`, subject: { type: 'kernel.conversation', id: conversationId } });
+}
+
+// "Linh is replying": a member typing a reply marks the thread for 60 seconds, at most once in 20 seconds per thread and member (a later call inside the
+// window changes nothing and answers `marked: false`). The marker is read with the thread (the summary's `composing`), by those who read it, never
+// the member's own; the member who sends (or leaves) removes theirs. No text: the thread's id in the audit row.
+export const conversationComposing = defineCommand({
+  name: 'kernel.conversation.composing',
+  input: zConversationComposing,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<{ marked: boolean }> => {
+    const me = requireUser(ctx);
+    // The thread as this member reads it: one they may not read is not found, and the marker's own policy refuses one they may not write.
+    const thread = await ctx.trx
+      .selectFrom('crove_kernel.conversation')
+      .select(['id', 'channel_connection_id', 'kind'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.conversationId)
+      .executeTakeFirst();
+    if (!thread) throw notFound();
+    const current = await ctx.trx
+      .selectFrom('crove_kernel.conversation_composing')
+      .select('updated_at')
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', thread.id)
+      .where('user_id', '=', me)
+      .executeTakeFirst();
+    if (current && ctx.now.getTime() - current.updated_at.getTime() < CONVERSATION_COMPOSING_EVERY_SECONDS * 1000) return { marked: false };
+    const expires = new Date(ctx.now.getTime() + CONVERSATION_COMPOSING_SECONDS * 1000);
+    await ctx.trx
+      .insertInto('crove_kernel.conversation_composing')
+      .values({ org_id: ctx.orgId, conversation_id: thread.id, channel_connection_id: thread.channel_connection_id, kind: thread.kind, user_id: me, expires_at: expires, updated_at: ctx.now })
+      .onConflict((oc) => oc.columns(['org_id', 'conversation_id', 'user_id']).doUpdateSet({ expires_at: expires, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ conversation_id: thread.id });
+    return { marked: true };
+  },
+});
+
+// A member's availability: available, or away (until a time, or until they say so). It only decides whom a new conversation is told to; an away member
+// still reads and answers whatever they open.
+export const conversationSetAvailability = defineCommand({
+  name: 'kernel.conversation.set_availability',
+  input: zAvailabilitySet,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  handler: async (ctx, input): Promise<Availability['me']> => {
+    const me = requireUser(ctx);
+    const until = input.status === 'away' && input.until ? new Date(input.until) : null;
+    if (until && until.getTime() <= ctx.now.getTime()) throw new DomainError('AVAILABILITY_PAST', 422, 'Giờ quay lại phải ở tương lai');
+    await ctx.trx
+      .insertInto('crove_kernel.member_availability')
+      .values({ org_id: ctx.orgId, user_id: me, status: input.status, until, updated_at: ctx.now })
+      .onConflict((oc) => oc.columns(['org_id', 'user_id']).doUpdateSet({ status: input.status, until, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ status: input.status });
+    return { userId: me, status: input.status, until: until ? until.toISOString() : null };
+  },
+});
+
+// The team's availability for the inbox: every member who set it, and the caller's own (available when never set). An `until` that has passed reads as
+// available again.
+export const conversationAvailability = defineQuery({
+  name: 'kernel.conversation.availability',
+  input: z.strictObject({}),
+  access: WRITERS,
+  handler: async (ctx): Promise<Availability> => {
+    const me = viewerOf(ctx);
+    const rows = await ctx.trx.selectFrom('crove_kernel.member_availability').select(['user_id', 'status', 'until']).where('org_id', '=', ctx.orgId).orderBy('user_id').execute();
+    const now = Date.now();
+    const entry = (r: { user_id: string; status: string; until: Date | null }): Availability['me'] => {
+      const over = r.status === 'away' && r.until !== null && r.until.getTime() <= now;
+      return { userId: r.user_id, status: over ? 'available' : (r.status as 'available' | 'away'), until: over || r.until === null ? null : r.until.toISOString() };
+    };
+    const members = rows.map(entry);
+    return { me: members.find((m) => m.userId === me) ?? { userId: me ?? '', status: 'available', until: null }, members };
+  },
+});
+
+// Home's "Hôm nay cần bạn" (#2383): the conversations that wait for this member, read by the member's own rule (a thread they may not read, because of a
+// channel limit or a missing direct-message permission, is not here): New and unassigned, or assigned to them, with the customer's message last. One
+// item that counts them and the oldest few, each with the end of the platform's reply window when there is one. No text and no name: the items carry
+// the channel's provider code and an id, and `href` is a path inside the org (Home puts the org in front). A viewer cannot answer, so reads none.
+const TODAY_CONVERSATIONS = 5;
+export const conversationToday = defineQuery({
+  name: 'kernel.conversation.today',
+  input: z.strictObject({}),
+  access: ALL,
+  handler: async (ctx): Promise<TodayItem[]> => {
+    const me = viewerOf(ctx);
+    if (!me || ctx.role === 'viewer') return [];
+    const waiting = sql`FROM crove_kernel.conversation c JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.channel_connection_id
+      WHERE c.org_id = ${ctx.orgId}::uuid AND c.status = 'new' AND (c.assignee_user_id IS NULL OR c.assignee_user_id = ${me}::uuid)`;
+    const { rows: total } = await sql<{ n: string }>`SELECT count(*)::text AS n ${waiting}`.execute(ctx.trx);
+    const count = Number(total[0]?.n ?? 0);
+    if (count === 0) return [];
+    const { rows } = await sql<{ id: string; provider: string; reply_window_until: Date | null }>`
+      SELECT c.id, ch.provider, c.reply_window_until ${waiting} ORDER BY c.last_inbound_at ASC NULLS LAST, c.id LIMIT ${TODAY_CONVERSATIONS}`.execute(ctx.trx);
+    const items: TodayItem[] = [{ kind: 'message', app: 'conversations', id: 'unanswered', title: { key: 'conversations.unanswered', params: { count } }, count, href: '/social/inbox?status=new' }];
+    for (const r of rows) {
+      items.push({
+        kind: 'message',
+        app: 'conversations',
+        id: `conversation:${r.id}`,
+        title: { key: 'conversations.oneUnanswered', params: { provider: r.provider } },
+        ...(r.reply_window_until ? { dueAt: r.reply_window_until.toISOString() } : {}),
+        href: `/social/inbox?c=${r.id}`,
+      });
+    }
+    return zTodayItems.parse(items);
   },
 });
 
@@ -2307,7 +2659,10 @@ export const conversationCommands = [
   conversationReopen,
   conversationNoteAdd,
   conversationLinkContact,
+  conversationSetIntent,
   conversationMarkRead,
+  conversationComposing,
+  conversationSetAvailability,
   conversationSandboxComment,
   conversationRetentionSet,
   conversationEraseContact,
@@ -2329,4 +2684,4 @@ export const conversationCommands = [
   conversationDraftRecord,
   conversationDraftDiscard,
 ];
-export const conversationQueries = [conversationList, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];
+export const conversationQueries = [conversationList, conversationIntentSource, conversationContactCandidates, conversationAvailability, conversationToday, conversationCounts, conversationGet, conversationRetention, conversationAttachmentSource, conversationAttachmentGet, conversationSavedReplyList, conversationAutoDraft, conversationDraftSource];

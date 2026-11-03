@@ -4,7 +4,7 @@
 import { hostname } from 'node:os';
 import { serve } from '@hono/node-server';
 import { memberMeter } from './ai-meter.ts';
-import { ConversationWriter, InvoiceExtractor, SchedulingReader, SocialWriter, type InvoiceReader } from '@crove/agent';
+import { ConversationWriter, InboxReader, InvoiceExtractor, SchedulingReader, SocialWriter, TodayWriter, type InvoiceReader } from '@crove/agent';
 import {
   BlueskyPublisher,
   TelegramPublisher,
@@ -139,6 +139,10 @@ export interface KernelAdapters {
   scheduler?: Pick<SchedulingReader, 'read'> | null;
   // Vy's reply drafts for the conversation core (CV8, #2310) through the same endpoint; null: no draft is made and "Vy soạn" says so.
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
+  // Vy's daily brief on Home (#2383) through the same endpoint; null: Home shows the plain template.
+  today?: Pick<TodayWriter, 'brief'> | null;
+  // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
+  inboxReader?: Pick<InboxReader, 'intents' | 'rank'> | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -408,6 +412,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
     writer: adapters.writer ?? null,
     scheduler: adapters.scheduler ?? null,
     conversationWriter: adapters.conversationWriter ?? null,
+    today: adapters.today ?? null,
+    inboxReader: adapters.inboxReader ?? null,
     storage: adapters.storage,
     mail: adapters.mail ?? createLogProvider(),
     broker: adapters.broker ?? noCredentialBroker,
@@ -513,8 +519,9 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           pool,
           aiEnabled: resolved.ai !== null,
           aiMeter: (actor) => memberMeter(runtime, actor, { price: { inputPerMTok: config.AI_PRICE_INPUT_PER_MTOK, outputPerMTok: config.AI_PRICE_OUTPUT_PER_MTOK } }),
-          ...(resolved.writer ? { socialWriter: socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null) } : {}),
+          ...(resolved.writer ? { socialWriter: { ...socialDrafter(resolved.writer, config.AI_VISION === 'true' ? store : null), ...(resolved.today ? { brief: resolved.today.brief.bind(resolved.today) } : {}) } } : {}),
           ...(resolved.scheduler ? { bookingReader: resolved.scheduler } : {}),
+          ...(resolved.inboxReader ? { conversationReader: resolved.inboxReader } : {}),
           ...(config.TAX_CODE_LOOKUP_URL ? { taxLookup: createTaxCodeLookup(config.TAX_CODE_LOOKUP_URL) } : {}),
           ...(config.TAX_PORTAL_SYNC === 'true' ? { portalSync: createPortalSync({ runtime, store, broker: resolved.broker, stepMs: config.TAX_PORTAL_STEP_SECONDS * 1000, client: createTaxPortalClient(config.TAX_PORTAL_URL ? { baseUrl: config.TAX_PORTAL_URL } : {}) }) } : {}),
           mailer: resolved.mail,
@@ -712,6 +719,8 @@ export function defaultAdapters(config: Config): KernelAdapters {
     writer: aiConfig ? new SocialWriter(aiConfig) : null,
     scheduler: aiConfig ? new SchedulingReader(aiConfig) : null,
     conversationWriter: aiConfig ? new ConversationWriter(aiConfig) : null,
+    today: aiConfig ? new TodayWriter(aiConfig) : null,
+    inboxReader: aiConfig ? new InboxReader(aiConfig) : null,
     // API and worker build the same store from config; with STORAGE=s3 they share no volume (T7).
     storage: createBlobStore(config),
     // SMTP from SMTP_*; without SMTP_HOST, the log fallback.

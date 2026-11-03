@@ -22,6 +22,7 @@ export * from './crm-deals.ts';
 export * from './contact-import.ts';
 export * from './conversations.ts';
 export * from './today.ts';
+export * from './coworkers.ts';
 
 export const ORG_HEADER = 'x-crove-org';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
@@ -86,6 +87,7 @@ export * from './calendar.ts';
 export * from './crm.ts';
 export * from './notes.ts';
 export * from './ads.ts';
+export * from './ads-campaign.ts';
 export * from './manifest.ts';
 export * from './screens.ts';
 export * from './saved-view.ts';

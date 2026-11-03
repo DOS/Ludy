@@ -31,13 +31,15 @@ export const kernelManifest = defineModule({
       channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive' }),
       context_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       context_token_key: columns(['slot', 'installed_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
-      conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
+      conversation: columns(['org_id', 'id', 'channel_connection_id', 'kind', 'parent_conversation_id', 'identity_id', 'party_id', 'status', 'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'opened_at', 'resolved_at', 'resolved_by', 'intent', 'intent_set_by', 'intent_set_at', 'created_at', 'updated_at'], { external_thread_id: 'pii', external_post_id: 'pii' }),
       // A customer's image of a message (#2357): its platform address is personal data (cleared when the bytes are stored), the rest is metadata.
       conversation_attachment: columns(
         ['org_id', 'id', 'message_id', 'channel_connection_id', 'kind', 'state', 'storage_key', 'generation', 'sha256', 'content_type', 'size_bytes', 'width', 'height', 'requested_at', 'fetch_attempts', 'created_at', 'stored_at'],
         { source_url: 'pii' },
       ),
-      // Vy's reply draft (#2310): its text exists only while the draft is live, tainted, derived from a customer's words (personal data of a third party).
+      // The "you are replying" marker (CV3, #2306): who is typing and until when; ids and times only.
+      conversation_composing: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'user_id', 'expires_at', 'updated_at']),
+      // A reply draft (#2310): its text exists only while the draft is live, tainted, derived from a customer's words (personal data of a third party).
       conversation_draft: columns(
         ['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'basis_seq', 'source', 'requested_by', 'state', 'tainted', 'draft_length', 'final_length', 'edit_size', 'created_at', 'written_at', 'decided_at'],
         { body: 'pii' },
@@ -66,6 +68,8 @@ export const kernelManifest = defineModule({
       mail_hash_key: columns(['id', 'created_at'], { k_ipad: 'sensitive', k_opad: 'sensitive' }),
       mail_message: columns(['org_id', 'id', 'stream', 'source', 'source_id', 'template_key', 'template_version', 'to_hash', 'message_id_header', 'status', 'attempts', 'provider', 'provider_message_id', 'error_code', 'created_by', 'created_at', 'updated_at', 'sent_at'], { to_address: 'contact', subject: 'pii', payload: 'pii' }),
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
+      // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
+      member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
       member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids'], { email: 'contact' }),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
@@ -121,10 +125,9 @@ export const kernelManifest = defineModule({
     },
   },
   // The approval commands name finance.proposal.approve, which the finance manifest declares. Its own: reading private messages
-  // (#2303, plan docs/plan/conversations.md section 8), which conversation_access asks of the database. No role holds it yet: the
-  // Service inbox (CV3) seeds it for desk.agent, with the invariant step that allows that seed; until then only owners and admins
-  // read a private message.
-  permissions: [{ key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: [] }],
+  // (#2303, plan docs/plan/conversations.md section 8), which conversation_access asks of the database. The Service inbox (CV3, #2306) seeds it
+  // for desk.agent: owners, admins and the holders of that role read private messages, other members and viewers never.
+  permissions: [{ key: 'kernel.conversation.direct.read', risk: 'R1', defaultRoles: ['desk.agent'] }],
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.
   entities: [

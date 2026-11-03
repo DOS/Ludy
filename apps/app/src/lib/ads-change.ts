@@ -28,11 +28,17 @@ export function adsChangeText(change: AdsChange, t: Translate, money: (amount: s
       const detail = change.previous === null ? t('ads.change.capFirst', { amount }) : t('ads.change.capFromTo', { previous: money(change.previous, change.previousCurrency ?? change.currency), amount });
       return { title, detail };
     }
+    case 'campaign_launch':
+      // The plan's name and account, and what the approver signs: the largest amount, the days and the daily budget, in the account's currency.
+      return {
+        title: t('ads.change.campaignLaunch', { name: change.plan.name, account: change.adAccountName }),
+        detail: t('ads.change.campaignLaunchDetail', { amount: money(change.amount, change.currency), days: change.days, daily: money(change.plan.dailyBudget, change.currency) }),
+      };
   }
 }
 
 // One line of the Ads screen's list of waiting requests: the sentence, and for a cap the amounts too.
 export function adsChangeLine(change: AdsChange, t: Translate, money: (amount: string, currency: string) => string): string {
   const { title, detail } = adsChangeText(change, t, money);
-  return change.change === 'cap_set' ? `${title} ${detail}` : title;
+  return change.change === 'cap_set' || change.change === 'campaign_launch' ? `${title} ${detail}` : title;
 }

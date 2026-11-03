@@ -11,7 +11,8 @@ test('an agency sees each client’s Social figures on the overview and opens th
   const first = await createOrg(page, 'Công ty An Bình');
 
   await test.step('the first company has a post waiting for review on its sandbox channel', async () => {
-    await page.getByRole('navigation').getByRole('link', { name: 'Mạng xã hội' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
     await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
     await page.getByLabel('Tên kênh thử').fill('Fanpage An Bình');
     await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();
@@ -32,7 +33,7 @@ test('an agency sees each client’s Social figures on the overview and opens th
   await test.step('the overview shows each company’s Social figures', async () => {
     await page.goto('/');
     await expect(page).toHaveURL(/\/clients$/);
-    await expect(page.getByRole('columnheader', { name: 'Mạng xã hội' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Engage' })).toBeVisible();
     const anBinh = page.getByRole('row').filter({ hasText: 'Công ty An Bình' });
     const binhMinh = page.getByRole('row').filter({ hasText: 'Công ty Bình Minh' });
     await expect(anBinh.getByRole('link', { name: '1 bài chờ duyệt' })).toBeVisible();

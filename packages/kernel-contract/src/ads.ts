@@ -3,6 +3,7 @@
 // results their platforms report, read only. The inputs its commands and queries take and the views they return; the app
 // reads the same types. Money is a decimal string, never a number (AGENTS.md); counts are whole numbers.
 import { z } from 'zod';
+import { zAdsCampaignPlan } from './ads-campaign.ts';
 import { zTimeZone } from './calendar.ts';
 import { zAccountCode, zId, zLocalDate, zMoney } from './schemas.ts';
 
@@ -198,6 +199,17 @@ export const zAdsChange = z.discriminatedUnion('change', [
     previousCurrency: z.string().nullable(),
   }),
   z.object({ change: z.literal('launches_unblock') }),
+  // A drafted campaign to run (W1, #2295): the whole plan and the largest amount it can spend, which is what the approver signs.
+  z.object({
+    change: z.literal('campaign_launch'),
+    draftId: zId,
+    adAccountId: zId,
+    adAccountName: z.string(),
+    amount: z.string(),
+    currency: zCurrency,
+    days: z.number().int(),
+    plan: zAdsCampaignPlan,
+  }),
 ]);
 export type AdsChange = z.infer<typeof zAdsChange>;
 export const zAdsProposalView = z.object({ change: zAdsChange.nullable() });
@@ -218,6 +230,7 @@ export const zAdsChangeRequest = z.discriminatedUnion('change', [
     })
     .refine(capNamesAccount, capNamesAccountIssue),
   z.strictObject({ change: z.literal('launches_unblock'), idempotencyKey: zId }),
+  z.strictObject({ change: z.literal('campaign_launch'), draftId: zId, idempotencyKey: zId }),
 ]);
 export type AdsChangeRequest = z.infer<typeof zAdsChangeRequest>;
 

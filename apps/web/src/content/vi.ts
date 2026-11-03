@@ -8,7 +8,7 @@ export const vi = {
   meta: {
     title: 'Ludy: hệ điều hành doanh nghiệp trọn gói, mỗi phòng ban một đội AI',
     description:
-      `${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.crm} lo bán hàng, ${N.engage} lo marketing và khách hàng. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
+      `${N.gm} điều phối cả đội: ${N.finance} lo kế toán, ${N.sales} lo hộp thư, khách hàng và bán hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt. Ludy là hệ điều hành doanh nghiệp mã nguồn mở, cài trên máy chủ của bạn.`,
   },
   nav: {
     label: 'Điều hướng chính',
@@ -28,7 +28,7 @@ export const vi = {
   },
   hero: {
     title: 'Hệ\u00a0điều\u00a0hành doanh\u00a0nghiệp trọn\u00a0gói, mỗi phòng\u00a0ban một đội\u00a0AI.',
-    lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.crm} lo bán\u00a0hàng, ${N.engage} lo marketing và khách\u00a0hàng. Bạn chỉ duyệt.`,
+    lead: `${N.gm} điều phối cả đội: ${N.finance} lo kế\u00a0toán, ${N.sales} lo hộp\u00a0thư, khách\u00a0hàng và bán\u00a0hàng, ${N.marketing} lo marketing. Bạn chỉ duyệt.`,
     primary: 'Tự cài đặt miễn phí',
     secondary: 'Xem mã nguồn trên GitHub',
     note: 'Mã nguồn mở AGPL. Cài trên máy chủ của bạn bằng docker compose. Ludy Cloud sắp ra mắt.',
@@ -212,7 +212,7 @@ export const vi = {
       { id: 'minh', kind: 'person', name: 'Anh Minh', role: 'Marketing', initials: 'M', chip: { tone: 'warn', label: '1 bài chờ duyệt' }, budget: null },
       { id: 'acc', kind: 'agent', name: `${N.finance}`, role: 'Báo cáo cho Chị Lan', initials: '', chip: null, budget: { used: '1.240.000', total: '2.000.000 ₫', pct: 62, risk: 'R1' } },
       { id: 'tasks', kind: 'tasks', name: 'Công việc', role: '3 việc đang mở, 1 do agent nhận', initials: '', chip: null, budget: null },
-      { id: 'social', kind: 'agent', name: `${N.engage}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
+      { id: 'social', kind: 'agent', name: `${N.marketing}`, role: 'Báo cáo cho Anh Minh', initials: '', chip: null, budget: { used: '310.000', total: '1.000.000 ₫', pct: 31, risk: 'R1' } },
     ],
     panels: {
       tuan: {
@@ -236,7 +236,7 @@ export const vi = {
       minh: {
         kicker: 'Người',
         title: 'Anh Minh',
-        sub: `Marketing. Duyệt bài của ${N.engage} trước khi đăng.`,
+        sub: `Marketing. Duyệt bài của ${N.marketing} trước khi đăng.`,
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ anh duyệt', note: '' },
         ],
@@ -263,7 +263,7 @@ export const vi = {
       },
       social: {
         kicker: 'Đồng nghiệp AI',
-        title: `${N.engage}`,
+        title: `${N.marketing}`,
         sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, đăng khi có người duyệt.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ Anh Minh duyệt', note: '' },
@@ -397,7 +397,7 @@ export const vi = {
       running: 'Đang chạy',
       roster: [
         { name: `${N.finance}`, risk: 'R1', manager: 'Quản lý: Chị Lan', spent: '1.240.000 / 2.000.000 ₫', pct: 62 },
-        { name: `${N.engage}`, risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
+        { name: `${N.marketing}`, risk: 'R1', manager: 'Quản lý: Anh Minh', spent: '310.000 / 1.000.000 ₫', pct: 31 },
       ],
     },
     tasks: {
@@ -455,7 +455,7 @@ export const vi = {
       body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước.',
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
-        { name: `${N.engage}`, initials: '', agent: true },
+        { name: `${N.marketing}`, initials: '', agent: true },
       ],
       weekLabel: 'Lịch đăng tuần 16/10 đến 22/10/2026',
       todayLabel: 'Hôm nay',
@@ -502,7 +502,7 @@ export const vi = {
       noSlots: 'Kín lịch',
       pickedLabel: 'Đã chọn',
       booked: { title: 'Lịch hẹn mới', who: 'Cty TNHH Gạo Sạch Miền Tây', when: '14:00, T3 20/10/2026', state: 'Đã xác nhận' },
-      suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.crm} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
+      suggest: `Khách nhắn "chiều thứ Ba được không?": ${N.sales} gợi ý 14:00 hoặc 15:30, Chị Hoa xem rồi gửi trả lời.`,
     },
   },
   trust: {

@@ -19,6 +19,7 @@ import { GuidePage } from './routes/guide.tsx';
 import { InboxDetailPage } from './routes/inbox-detail.tsx';
 import { InboxPage } from './routes/inbox.tsx';
 import { OverviewPage } from './routes/overview.tsx';
+import { ReportsPage } from './routes/reports.tsx';
 import { InvitePage } from './routes/invite.tsx';
 import { JournalPage } from './routes/journal.tsx';
 import { NotificationsPage } from './routes/notifications.tsx';
@@ -35,7 +36,8 @@ import { SocialPage } from './routes/social.tsx';
 import { SocialImportPage } from './routes/social-import.tsx';
 import { SocialSnippetsPage } from './routes/social-snippets.tsx';
 import { SocialNotificationsPage } from './routes/social-notifications.tsx';
-import { SocialCommentsPage } from './routes/social-comments.tsx';
+import { SocialInboxPage } from './routes/social-inbox.tsx';
+import { parseConversationInboxSearch } from './lib/conversation-inbox.ts';
 import { SocialLabelsPage } from './routes/social-labels.tsx';
 import { SocialIdeasPage } from './routes/social-ideas.tsx';
 import { SocialBioPage } from './routes/social-bio.tsx';
@@ -51,6 +53,7 @@ import { parseJournalSearch, parseTextSearch } from './lib/search.ts';
 import { parseTasksSearch } from './lib/agents.ts';
 import { parseNotesSearch } from './lib/notes.ts';
 import { parseAdsSearch } from './lib/ads.ts';
+import { parseReportsSearch } from './lib/reports.ts';
 import { parseLedgerSearch } from './lib/ledger.ts';
 import { parseInboxSearch } from './lib/review.ts';
 import { parseAuditSearch } from './lib/audit.ts';
@@ -420,7 +423,17 @@ const socialChannelsRoute = createRoute({ getParentRoute: () => socialRoute, pat
 const socialImportRoute = createRoute({ getParentRoute: () => socialRoute, path: 'import', component: SocialImportPage });
 const socialSnippetsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'snippets', component: SocialSnippetsPage });
 const socialNotificationsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'notifications', component: SocialNotificationsPage });
-const socialCommentsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'comments', component: SocialCommentsPage });
+// The Inbox of the Social app (CV3, #2306): comments and private messages in three panes; ?status=&kind=&channel=&assignee=&q= keep the tab and the filters,
+// ?c= the open thread (where Home's and a notification's links go).
+const socialInboxRoute = createRoute({ getParentRoute: () => socialRoute, path: 'inbox', validateSearch: parseConversationInboxSearch, component: SocialInboxPage });
+// The comment inbox of CV1 (#2303) moved into the Inbox group: its old address opens the Inbox on the comment threads.
+const socialCommentsRoute = createRoute({
+  getParentRoute: () => socialRoute,
+  path: 'comments',
+  beforeLoad: ({ params }) => {
+    throw redirect({ to: '/o/$slug/social/inbox', params: { slug: (params as { slug: string }).slug }, search: { kind: 'comment_thread' } });
+  },
+});
 const socialLabelsRoute = createRoute({ getParentRoute: () => socialRoute, path: 'labels', component: SocialLabelsPage });
 const socialIdeasRoute = createRoute({ getParentRoute: () => socialRoute, path: 'ideas', component: SocialIdeasPage });
 const socialBioRoute = createRoute({ getParentRoute: () => socialRoute, path: 'bio', component: SocialBioPage });
@@ -469,7 +482,26 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
+// The reports of the Engage app (#2435), the last item of its menu: ?area= is the tab shown (the conversations, the sales, the posts or the ads).
+const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'reports', validateSearch: parseReportsSearch, component: ReportsPage });
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
+
+// The CRM screens joined the Engage app (#2435) and kept their addresses. The `crm/...` addresses that docs/plan/crm.md wrote for them (the
+// rail's CRM app once opened on its bookings) open the screen itself, with the search it had.
+function crmAlias(path: string, to: '/o/$slug/bookings' | '/o/$slug/contacts' | '/o/$slug/contacts/import' | '/o/$slug/deals') {
+  return createRoute({
+    getParentRoute: () => orgRoute,
+    path,
+    beforeLoad: ({ params }) => {
+      throw redirect({ to, params: { slug: (params as { slug: string }).slug }, search: true });
+    },
+  });
+}
+const crmRoute = crmAlias('crm', '/o/$slug/bookings');
+const crmBookingsRoute = crmAlias('crm/bookings', '/o/$slug/bookings');
+const crmDealsRoute = crmAlias('crm/deals', '/o/$slug/deals');
+const crmContactsRoute = crmAlias('crm/contacts', '/o/$slug/contacts');
+const crmContactImportRoute = crmAlias('crm/contacts/import', '/o/$slug/contacts/import');
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -486,7 +518,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, notesRoute, myWorkRoute, adsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

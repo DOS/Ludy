@@ -8,9 +8,11 @@ export function slot<T>(installed: readonly string[], module: string, value: T):
   return installed.includes(module) ? { status: 'ok', value } : { status: 'not_installed', module };
 }
 
-// The items whose module is installed, in order.
-export function installedItems<T extends { module: string }>(installed: readonly string[], items: readonly T[]): T[] {
+// The items whose module is installed, in order. An item of a screen that serves several modules (the reports, #2435) is
+// there where any of them is installed.
+export function installedItems<T extends { module: string; modules?: readonly string[] | undefined }>(installed: readonly string[], items: readonly T[]): T[] {
   return items.flatMap((item) => {
+    if (item.modules) return item.modules.some((m) => installed.includes(m)) ? [item] : [];
     const answer = slot(installed, item.module, item);
     return answer.status === 'ok' ? [answer.value] : [];
   });
@@ -19,7 +21,7 @@ export function installedItems<T extends { module: string }>(installed: readonly
 // Every screen under /o/$slug with its module, from the manifests (#1652). A path segment `$name` matches any one
 // segment; a screen with fewer of them comes first, so 'social/new' wins over 'social/$id'.
 const SCREENS = (Object.entries(MODULE_SCREENS) as Array<[string, ModuleScreens]>)
-  .flatMap(([module, screens]) => screens.routes.map((route) => ({ module, segments: route.path.split('/') })))
+  .flatMap(([module, screens]) => screens.routes.map((route) => ({ module, modules: route.modules, segments: route.path.split('/') })))
   .sort((a, b) => a.segments.filter((s) => s.startsWith('$')).length - b.segments.filter((s) => s.startsWith('$')).length);
 
 // A path segment as the router compares it: decoded, and in lower case, since its routes match without regard to
@@ -32,21 +34,28 @@ function segmentOf(raw: string): string {
   }
 }
 
-// The module of the screen at a path (/o/<slug>/<screen>...), or null for a path no manifest declares (the org's
-// index, a path outside an org).
-export function moduleOfPath(pathname: string): string | null {
+// The declared screen at a path (/o/<slug>/<screen>...), or null for a path no manifest declares (the org's index, a
+// path outside an org).
+function screenOfPath(pathname: string) {
   const [, o, slug, ...rest] = pathname.replace(/\/+$/, '').split('/');
   if (segmentOf(o ?? '') !== 'o' || !slug || rest.length === 0) return null;
   const segments = rest.map(segmentOf);
-  const found = SCREENS.find((s) => s.segments.length === segments.length && s.segments.every((seg, i) => seg.startsWith('$') || seg === segments[i]));
-  return found?.module ?? null;
+  return SCREENS.find((s) => s.segments.length === segments.length && s.segments.every((seg, i) => seg.startsWith('$') || seg === segments[i])) ?? null;
+}
+
+// The module of the screen at a path, or null for a path no manifest declares.
+export function moduleOfPath(pathname: string): string | null {
+  return screenOfPath(pathname)?.module ?? null;
 }
 
 // Whether the screen at a path may open: its module is installed, or it belongs to the kernel or to no module. A
-// screen of a module the deployment leaves out redirects to the inbox (ADR-0031 §3), whichever module it is.
+// screen that serves several modules (the reports, #2435) opens where any of them is installed. A screen of a module the
+// deployment leaves out redirects to the inbox (ADR-0031 §3), whichever module it is.
 export function screenInstalled(installed: readonly string[], pathname: string): boolean {
-  const module = moduleOfPath(pathname);
-  return module === null || module === 'kernel' || installed.includes(module);
+  const screen = screenOfPath(pathname);
+  if (screen === null) return true;
+  if (screen.modules) return screen.modules.some((m) => installed.includes(m));
+  return screen.module === 'kernel' || installed.includes(screen.module);
 }
 
 // The module of a screen outside /o/$slug (#1660), from the route's own path as the router writes it ('/-/b/$org/$type',

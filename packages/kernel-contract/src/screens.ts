@@ -82,11 +82,16 @@ const SOCIAL_SCREENS = {
     { path: 'social/feeds' },
     { path: 'social/bio' },
     { path: 'social/notifications' },
-    // The comment inbox (#2303): the comments on the org's own posts, answered in Social.
+    // The Inbox (CV3, #2306): comments and private messages together, in three panes. The path `inbox` is the kernel's documents Inbox, so Social's is
+    // under `social/`. The comment inbox of CV1 (#2303) keeps its address and redirects here.
+    { path: 'social/inbox' },
     { path: 'social/comments' },
     { path: 'social/$id' },
     // The content plan to print (#978), outside the org's frame so only the plan reaches the paper.
     { path: 'print/social-plan' },
+    // The reports of the one Engage app (#2435): a tab for each area whose module runs (conversations and posts: social; sales: crm;
+    // ads: ads). The screen belongs to no one module, so it opens, and its menu item shows, where any of the three runs.
+    { path: 'reports', modules: ['social', 'crm', 'ads'] },
   ],
   outside: [
     // A page shared into a new draft (#1235), before the org is known.
@@ -98,24 +103,41 @@ const SOCIAL_SCREENS = {
     { path: '/-/review', public: true },
     { path: '/-/report', public: true },
   ],
+  // One app, "Ludy Engage" (app id `social`, #2435), with four groups in the order apps/app/src/lib/apps.ts fixes: Hộp thư (`inbox`), Khách hàng & Bán
+  // hàng (`sales`, the crm module's), Marketing (`marketing`: posts here, Ads from its module) and Báo cáo (`reports`, a single item).
   nav: [
-    { app: 'social', group: 'social', path: 'social', label: 'social' },
-    { app: 'social', group: 'social', path: 'social/comments', label: 'comments' },
-    { app: 'social', group: 'social', path: 'social/notifications', label: 'notifications' },
+    // The Hộp thư group (CV3): one Inbox, shown when this module is enabled, with the comments of the org's posts and the private
+    // messages together (a private message only to those who may read it).
+    { app: 'social', group: 'inbox', path: 'social/inbox', label: 'socialInbox' },
+    { app: 'social', group: 'marketing', path: 'social', label: 'social' },
+    { app: 'social', group: 'marketing', path: 'social/notifications', label: 'notifications' },
+    { app: 'social', group: 'reports', path: 'reports', label: 'reports' },
   ],
 } as const satisfies ModuleScreens;
 
+// The crm module's screens sit in the Engage app since #2435 (the rail no longer has a CRM app); the screens keep their addresses. The `crm/...`
+// addresses the plan once wrote (docs/plan/crm.md) redirect to them.
 const CRM_SCREENS = {
   // Bookings of the public booking page (#1320).
-  routes: [{ path: 'bookings' }, { path: 'deals' }, { path: 'contacts' }, { path: 'contacts/import' }],
+  routes: [
+    { path: 'bookings' },
+    { path: 'deals' },
+    { path: 'contacts' },
+    { path: 'contacts/import' },
+    { path: 'crm' },
+    { path: 'crm/bookings' },
+    { path: 'crm/deals' },
+    { path: 'crm/contacts' },
+    { path: 'crm/contacts/import' },
+  ],
   // The public booking page (#1318), no account.
   outside: [{ path: '/-/b/$org/$type', public: true }],
   nav: [
-    { app: 'crm', group: 'crm', path: 'bookings', label: 'bookings' },
-    // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
-    { app: 'crm', group: 'crm', path: 'deals', label: 'deals' },
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
-    { app: 'crm', group: 'crm', path: 'contacts', label: 'contacts' },
+    { app: 'social', group: 'sales', path: 'contacts', label: 'contacts' },
+    // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
+    { app: 'social', group: 'sales', path: 'deals', label: 'deals' },
+    { app: 'social', group: 'sales', path: 'bookings', label: 'bookings' },
   ],
 } as const satisfies ModuleScreens;
 
@@ -129,12 +151,12 @@ const NOTES_SCREENS = {
   ],
 } as const satisfies ModuleScreens;
 
-// Ads (#2217, ads plan docs/plan/ads.md section 2 "Where Ads sits in the app"): a group of the Social app on the rail, after its
-// posting group. Its module's own entry, so the group shows only where the deployment runs the module; with Social off the
-// app still shows, with this group alone.
+// Ads (#2217, ads plan docs/plan/ads.md section 2 "Where Ads sits in the app"): an item of the Marketing group of the Social app on the rail,
+// after the posts (#2435). Its module's own entry, so the item shows only where the deployment runs the module; with Social off the app
+// still shows, with this item alone.
 const ADS_SCREENS = {
   routes: [{ path: 'ads' }],
-  nav: [{ app: 'social', group: 'ads', path: 'ads', label: 'ads' }],
+  nav: [{ app: 'social', group: 'marketing', path: 'ads', label: 'ads' }],
 } as const satisfies ModuleScreens;
 
 export const MODULE_SCREENS = {

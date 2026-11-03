@@ -7,7 +7,7 @@ import { createMemoryHistory, createRouter, isNotFound } from '@tanstack/react-r
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { ADMIN_ITEMS, ALL_NAV, APPS, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
+import { ADMIN_ITEMS, ALL_NAV, APPS, GROUP_ORDER, appOfPath, installedApps, isHeadedGroup } from '../src/lib/apps.ts';
 import { moduleOfOutsideRoute, moduleOfPath, outsideInstalled, screenInstalled } from '../src/lib/modules.ts';
 
 // What the org route's guard reads: a signed-in session and the modules of /api/config, set per test.
@@ -151,12 +151,19 @@ describe('module screens against the router (#1652)', () => {
         expect(messages.apps, `nav.apps.${app.id}`).toHaveProperty(app.id);
         expect(messages.appNames, `nav.appNames.${app.id}`).toHaveProperty(app.id);
       }
-      // A group after an app's first carries a heading in the menu, in both languages.
-      for (const group of app.groups.slice(1)) {
-        expect(isHeadedGroup(group.id), `group ${group.id} of ${app.id}`).toBe(true);
-        expect(viMessages.nav.groups).toHaveProperty(group.id);
-        expect(en.nav.groups).toHaveProperty(group.id);
+      // A group carries a heading in the menu, in both languages, unless it is the app's first (the app's name says what it holds) or the
+      // reports item of the Engage app (#2435), which is one item and has no group name of its own.
+      for (const [index, group] of app.groups.entries()) {
+        if (isHeadedGroup(group.id)) {
+          expect(viMessages.nav.groups, `vi nav.groups.${group.id}`).toHaveProperty(group.id);
+          expect(en.nav.groups, `en nav.groups.${group.id}`).toHaveProperty(group.id);
+        } else {
+          expect(index === 0 || group.id === 'reports', `group ${group.id} of ${app.id}`).toBe(true);
+        }
       }
+      // An app whose modules do not give the order of its groups names it, and names every group it has.
+      const order = GROUP_ORDER[app.id];
+      if (order) expect(app.groups.map((g) => g.id), `order of the groups of ${app.id}`).toEqual(order);
     }
   });
 
@@ -171,22 +178,25 @@ describe('module screens against the router (#1652)', () => {
           ['parties', ['/o/$slug/customers', '/o/$slug/vendors']],
         ],
       ],
-      // Ads is a group of the Social app (ads plan section 2), after the posting group.
+      // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
+      // Khách hàng & Bán hàng (the crm module's screens), Marketing (the posts and, from the ads module, Ads, ads plan section 2) and one Báo cáo item.
+      // The rail has no CRM app of its own.
       [
         'social',
         [
-          ['social', ['/o/$slug/social', '/o/$slug/social/comments', '/o/$slug/social/notifications']],
-          ['ads', ['/o/$slug/ads']],
+          ['inbox', ['/o/$slug/social/inbox']],
+          ['sales', ['/o/$slug/contacts', '/o/$slug/deals', '/o/$slug/bookings']],
+          ['marketing', ['/o/$slug/social', '/o/$slug/social/notifications', '/o/$slug/ads']],
+          ['reports', ['/o/$slug/reports']],
         ],
       ],
-      ['crm', [['crm', ['/o/$slug/bookings', '/o/$slug/deals', '/o/$slug/contacts']]]],
     ]);
     expect(ADMIN_ITEMS.map((i) => [i.to, i.label])).toEqual([
       ['/o/$slug/agents', 'agents'],
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'social', 'comments', 'notifications', 'ads', 'bookings', 'deals', 'contacts', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'socialInbox', 'contacts', 'deals', 'bookings', 'social', 'notifications', 'ads', 'reports', 'agents', 'settings',
     ]);
   });
 });
@@ -216,13 +226,38 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     expect(appOfPath('/o/acme/guide')).toBe('accounting');
   });
 
-  it('shows Ads as a group of the Social app, alone in it where Social is off, and not at all where Ads is off', () => {
+  it('shows Ads as an item of the Marketing group of the Engage app, alone in it where Social is off, and not at all where Ads is off', () => {
     const groupsOf = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => g.id);
-    expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['social', 'ads']);
-    expect(groupsOf(['kernel', 'ads'])).toEqual(['ads']);
-    expect(groupsOf(['kernel', 'social'])).toEqual(['social']);
+    expect(groupsOf(['kernel', 'social', 'ads'])).toEqual(['inbox', 'marketing', 'reports']);
+    expect(groupsOf(['kernel', 'ads'])).toEqual(['marketing', 'reports']);
+    expect(groupsOf(['kernel', 'social'])).toEqual(['inbox', 'marketing', 'reports']);
     expect(groupsOf(['kernel'])).toBeUndefined();
     expect(appOfPath('/o/acme/ads')).toBe('social');
+  });
+
+  // The Engage app (#2435): each group and item shows only where its module runs, the reports item where any of the three modules does.
+  it('shows the groups and items of the modules that run in the Engage app, and the reports item where any of its modules does', () => {
+    const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => [g.id, g.items.map((i) => i.label)]);
+    const SALES = ['contacts', 'deals', 'bookings'];
+    expect(menu(['kernel', 'social', 'crm', 'ads'])).toEqual([
+      ['inbox', ['socialInbox']],
+      ['sales', SALES],
+      ['marketing', ['social', 'notifications', 'ads']],
+      ['reports', ['reports']],
+    ]);
+    // Only crm: the sales group and the reports item (its sales tab alone, tabs.test in reports.test.ts).
+    expect(menu(['kernel', 'crm'])).toEqual([['sales', SALES], ['reports', ['reports']]]);
+    // Only social: the inbox, the posts and the reports item.
+    expect(menu(['kernel', 'social'])).toEqual([['inbox', ['socialInbox']], ['marketing', ['social', 'notifications']], ['reports', ['reports']]]);
+    // Only ads: Ads alone under Marketing.
+    expect(menu(['kernel', 'ads'])).toEqual([['marketing', ['ads']], ['reports', ['reports']]]);
+    // None of the three: no Engage app at all, whatever else runs, and the reports screen is not opened.
+    expect(menu(['kernel', 'finance', 'notes'])).toBeUndefined();
+    expect(installedApps(['kernel', 'finance', 'social', 'crm', 'notes', 'ads']).map((a) => a.id)).toEqual(['home', 'accounting', 'social']);
+    expect(screenInstalled(['kernel', 'crm'], '/o/acme/reports')).toBe(true);
+    expect(screenInstalled(['kernel', 'ads'], '/o/acme/reports')).toBe(true);
+    expect(screenInstalled(['kernel', 'finance', 'notes'], '/o/acme/reports')).toBe(false);
+    expect(moduleOfPath('/o/acme/reports')).toBe('social');
   });
 
   // Where the router lands after loading an address: a router of the app's own route tree on a memory history, so the
@@ -233,6 +268,20 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     await r.load();
     return r.state.location.pathname;
   };
+  // The same, with the search the router ended on.
+  const landingWithSearch = async (address: string) => {
+    const r = createRouter({ routeTree: router.routeTree, history: createMemoryHistory({ initialEntries: [address] }), isServer: false });
+    await r.load();
+    return `${r.state.location.pathname}${r.state.location.searchStr}`;
+  };
+  // The addresses docs/plan/crm.md wrote for the CRM screens, each with the address that opens the screen now.
+  const CRM_ALIASES = new Map([
+    ['/o/acme/crm', '/o/acme/bookings'],
+    ['/o/acme/crm/bookings', '/o/acme/bookings'],
+    ['/o/acme/crm/deals', '/o/acme/deals'],
+    ['/o/acme/crm/contacts', '/o/acme/contacts'],
+    ['/o/acme/crm/contacts/import', '/o/acme/contacts/import'],
+  ]);
 
   it('sends every screen of crm, social, notes and ads to the inbox through the router, and opens the others', async () => {
     session.modules = ['kernel', 'finance'];
@@ -249,9 +298,40 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
         expect(screenInstalled(session.modules, path), path).toBe(true);
-        expect(await landing(path), path).toBe(path);
+        // The comment inbox of CV1 moved into the Inbox group (CV3, #2306): its old address is still a route, and it lands on the Inbox's comments.
+        // The `crm/...` addresses open the CRM screens in the Engage app (#2435).
+        const lands = path === '/o/acme/social/comments' ? '/o/acme/social/inbox' : (CRM_ALIASES.get(path) ?? path);
+        expect(await landing(path), path).toBe(lands);
       }
     }
+  });
+
+  // The screens of the CRM kept their addresses when they joined the Engage app (#2435), and the `crm/...` ones docs/plan/crm.md wrote open them,
+  // with their search: every old address, route by route.
+  it('opens every old crm address on its screen in the Engage app, keeping the search', async () => {
+    session.modules = ['kernel', 'social', 'crm'];
+    expect([...CRM_ALIASES.keys()].sort()).toEqual(['/o/acme/crm', '/o/acme/crm/bookings', '/o/acme/crm/contacts', '/o/acme/crm/contacts/import', '/o/acme/crm/deals']);
+    for (const [from, to] of CRM_ALIASES) {
+      expect(await landing(from), from).toBe(to);
+      expect(appOfPath(to), to).toBe('social');
+      expect(await landingWithSearch(`${from}?tab=next`), from).toBe(`${to}?tab=next`);
+    }
+    // The screens themselves, and the links that name them (Home's, a notification's), are where they were.
+    for (const path of ['/o/acme/bookings', '/o/acme/deals', '/o/acme/contacts', '/o/acme/contacts/import']) {
+      expect(await landing(path), path).toBe(path);
+      expect(appOfPath(path), path).toBe('social');
+    }
+    expect(await landingWithSearch('/o/acme/deals?tab=next')).toBe('/o/acme/deals?tab=next');
+    // With the crm module off the old addresses go to the inbox, as the screens do.
+    session.modules = ['kernel', 'social'];
+    for (const from of CRM_ALIASES.keys()) expect(await landing(from), from).toBe('/o/acme/inbox');
+    // The reports screen opens where any of its modules runs, and nowhere else.
+    for (const modules of [['kernel', 'crm'], ['kernel', 'social'], ['kernel', 'ads']]) {
+      session.modules = modules;
+      expect(await landing('/o/acme/reports'), modules.join()).toBe('/o/acme/reports');
+    }
+    session.modules = ['kernel', 'finance', 'notes'];
+    expect(await landing('/o/acme/reports')).toBe('/o/acme/inbox');
   });
 });
 

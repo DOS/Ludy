@@ -5,6 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useId, useMemo, useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
+import { defaultCoworkerName } from '@crove/kernel-contract';
 import { Alert, AlertDescription, AlertTitle } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -682,6 +683,7 @@ function Templates({ perms, entities, entitiesReady }: { perms: AgentPermissions
                   <Badge variant="secondary">{t('aiBadge')}</Badge>
                 </div>
                 <p className="text-xs text-subtle-foreground">{t('templateMeta', { module: moduleName(tpl.module), risk: tpl.maxRisk, cap: String(tpl.dailyRunCap) })}</p>
+                {defaultCoworkerName(tpl.module) && <p className="text-xs text-subtle-foreground">{t('defaultName', { name: defaultCoworkerName(tpl.module) ?? '' })}</p>}
                 {!tpl.moduleEnabled && (
                   <Alert className="border-warning/30 bg-warning/10 text-warning" role="note">
                     <AlertDescription className="text-warning">{t('moduleDisabled', { module: moduleName(tpl.module) })}</AlertDescription>
@@ -861,7 +863,7 @@ function BudgetForm({ agents }: { agents: Agent[] }) {
 }
 
 // The features the app has a name for (aiMeter.features); the keys are the server's with the dot as an underscore.
-const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'kernel_unattributed'] as const;
+const AI_FEATURE_NAMES = ['finance_invoice_extract', 'social_draft', 'social_rewrite', 'social_hashtags', 'social_alt_text', 'social_ideas', 'social_summary', 'crm_booking_schedule', 'conversation_draft', 'conversation_intent', 'conversation_contact_rank', 'kernel_unattributed'] as const;
 
 // This month's AI use by feature and by agent (#2382): the meter's ledger, numbers only. Owners and admins.
 function AiUse({ agents }: { agents: Agent[] }) {

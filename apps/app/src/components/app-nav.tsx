@@ -14,7 +14,7 @@ import { ThemeSwitcher } from './theme-switcher.tsx';
 import { Logo } from './ui.tsx';
 
 // Shorter or clearer names inside the menu: the work notifications fit the column next to their count, and Social's
-// items say what they hold, since the app itself is named "Mạng xã hội" in the switcher. None may contain another
+// items say what they hold, since the app itself is named "Engage" in the switcher. None may contain another
 // item's name: a link is found by its name (e2e), and a name inside another matches both.
 const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotifications' | 'socialPosts'>> = {
   alerts: 'alertsShort',
@@ -22,11 +22,12 @@ const IN_MENU_LABEL: Partial<Record<NavLabel, 'alertsShort' | 'socialNotificatio
   social: 'socialPosts',
 };
 
-const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial', crm: 'appCrm' };
+const APP_ICON: Record<AppId, NavIconName> = { home: 'appHome', accounting: 'appAccounting', social: 'appSocial' };
 
 // A menu item's icon is the one named like its label (packages/ui nav-icon.tsx). Ads has none of its own yet, so it takes
-// the banknote of the vouchers, money spent; the type fails to compile for a label that has neither.
-const OWN_ICON = { ads: 'vouchers' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
+// the banknote of the vouchers, money spent, and the reports take the spreadsheet of the VAT return; the type fails to
+// compile for a label that has neither.
+const OWN_ICON = { ads: 'vouchers', socialInbox: 'inbox', reports: 'vat' } as const satisfies { [L in Exclude<NavLabel, NavIconName>]: NavIconName };
 const menuIcon = (label: NavLabel): NavIconName => (label in OWN_ICON ? OWN_ICON[label as keyof typeof OWN_ICON] : (label as NavIconName));
 
 export interface ShellNavProps {
@@ -148,13 +149,13 @@ export function ShellNav({ slug, apps, app, inApp, badges, orgs, email, onOpenPa
           )}
           {current?.groups.map((group, index) => {
             const labelId = `${orgSelectId}-${group.id}`;
-            // The app's first group needs no heading: the app's name above it says what it holds.
-            const heading = index > 0 && isHeadedGroup(group.id) ? group.id : null;
+            // A group named by the app itself (the first of the other apps) needs no heading, and neither does the reports item.
+            const heading = isHeadedGroup(group.id) ? group.id : null;
             return (
               <section
                 key={group.id}
                 className={index === 0 ? '' : 'mt-3'}
-                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': t(`appNames.${current.id}`) })}
+                {...(heading ? { 'aria-labelledby': labelId } : { 'aria-label': group.id === 'reports' ? t('reports') : t(`appNames.${current.id}`) })}
               >
                 {heading && (
                   // A label, not a heading: the page's own heading stays the only one with a screen's name ("Khách hàng").
