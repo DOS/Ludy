@@ -418,7 +418,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
         { ...person('An'), company: '0123456780' },
         { ...person('Bình'), company: 'cong ty tnhh a chau' },
         { ...person('Cường'), company: 'Công ty Mới Toanh' },
-        { ...person('Dũng'), company: '0999999990' },
+        { ...person('Dũng'), company: '0999999991' },
         { ...person('Em'), company: 'Hai Bạn' },
         { ...row({ name: 'Công ty Khác', kind: 'organization' }), company: 'Công ty Mới Toanh' },
         { ...person('Giang'), company: '   ' },
