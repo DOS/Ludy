@@ -7194,8 +7194,6 @@ export const en = {
       ALREADY_REMINDED: 'This customer was reminded at this level in the last 3 days. You can still send again if you confirm.',
       PAY_TO_NOT_FOUND: 'The chosen bank account is gone. Choose again.',
       CUSTOMER_PAUSED: 'Reminders for this customer are paused. Lift the pause, then send again.',
-      PAUSE_DATE_INVALID: 'The pause date is not valid.',
-      PAUSE_TOO_LONG: 'A pause can run two years from today at most.',
       REMINDER_INVALID: 'The message could not be made from the figures on hand (an invoice number or date is too long or not valid). Check this customer\'s invoices.',
       NOT_FLAGGED: 'This invoice does not need its non-cash payment checked',
       VOUCHER_NOT_BANK: 'Only a bank payment voucher of the organization can be linked, and only to an invoice paid by bank',

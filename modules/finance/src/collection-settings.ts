@@ -86,9 +86,20 @@ async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string):
     // Ties between rows of duplicates that never had a pause resolve by party id, so a read always answers the same.
     .orderBy('c.party_id')
     .execute();
+  return mergeGroupRows(rows, kept);
+}
+
+// What a duplicate group has set, from the rows of its parties, which the caller lists by party id. The terms are the kept party's own when it has any, else the first
+// duplicate's that has some; the pause is the latest one anywhere in the group, so a pause is never lost to a merge and never hidden by a row that only holds terms.
+export function mergeGroupRows(
+  rows: ReadonlyArray<{ party_id: string; terms_days: number | null; paused_until: string | null }>,
+  kept: string,
+): { terms_days: number | null; paused_until: string | null } | undefined {
+  if (rows.length === 0) return undefined;
   const own = rows.find((r) => r.party_id === kept);
-  if (own) return own;
-  return rows.reduce<(typeof rows)[number] | undefined>((best, r) => (!best || (r.paused_until ?? '') > (best.paused_until ?? '') ? r : best), undefined);
+  const terms = own?.terms_days ?? rows.find((r) => r.terms_days !== null)?.terms_days ?? null;
+  const pause = rows.reduce<string | null>((best, r) => (r.paused_until !== null && (best === null || r.paused_until > best) ? r.paused_until : best), null);
+  return { terms_days: terms, paused_until: pause };
 }
 
 async function readCustomer(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<CustomerCollection> {
@@ -167,6 +178,14 @@ export const customerCollectionSet = defineCommand({
       .values({ org_id: ctx.orgId, party_id: kept, terms_days: termsDays, paused_until: pausedUntil, set_by: userId })
       .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: termsDays, paused_until: pausedUntil, set_by: userId, updated_at: ctx.now }))
       .execute();
+    // The kept party's row now holds the group's merged settings (what `before` read, with this change), so the rows of its duplicates are cleared: otherwise the
+    // latest pause anywhere in the group could not be lifted, nor old terms of a duplicate shown again once the kept party's terms are cleared.
+    await sql`
+      UPDATE crove_finance.customer_collection c
+      SET terms_days = NULL, paused_until = NULL, set_by = ${userId}, updated_at = ${ctx.now}
+      FROM crove_kernel.party x
+      WHERE c.org_id = ${ctx.orgId} AND x.org_id = c.org_id AND x.id = c.party_id AND x.duplicate_of = ${kept} AND c.party_id <> ${kept}
+        AND (c.terms_days IS NOT NULL OR c.paused_until IS NOT NULL)`.execute(ctx.trx);
     ctx.audit({ partyId: kept, termsDays, previousTermsDays: before.termsDays, pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
     return readCustomer(ctx, kept);
   },

@@ -458,10 +458,14 @@ function SettingsCard({ canManage }: { canManage: boolean }) {
 function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
   const t = useTranslations('paymentReminders');
   const [terms, setTerms] = useState(draft.ownTermsDays === null ? '' : String(draft.ownTermsDays));
-  const [until, setUntil] = useState('');
+  // null: the date was not touched, so the pause is left as it is (a colleague may have set it since the draft opened).
+  const [until, setUntil] = useState<string | null>(null);
   const save = useMutation(orpc.paymentReminders.customer.set.mutationOptions({ onSuccess: refreshReminders }));
   const days = terms.trim() === '' ? null : Number(terms);
   const valid = days === null || (Number.isInteger(days) && days >= 1 && days <= 365);
+  // Only what the person changed is sent, so saving the terms never undoes a pause someone else set, and the other way round.
+  const changes = { ...(days !== draft.ownTermsDays ? { termsDays: days } : {}), ...(until !== null ? { pausedUntil: until === '' ? null : until } : {}) };
+  const changed = Object.keys(changes).length > 0;
   const id = `reminder-own-${draft.partyId}`;
   return (
     <details className="mt-3 rounded-lg border border-dashed p-3 text-sm">
@@ -474,7 +478,7 @@ function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-pause`}>{t('customer.pauseUntil')}</Label>
-          <DateInput id={`${id}-pause`} value={until} onChange={setUntil} min={vietnamToday()} />
+          <DateInput id={`${id}-pause`} value={until ?? ''} onChange={setUntil} min={vietnamToday()} />
           <p className="text-xs text-subtle-foreground">{t('customer.pauseHint')}</p>
         </div>
       </div>
@@ -483,8 +487,8 @@ function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
           variant="outline"
           size="sm"
           loading={save.isPending}
-          disabled={!valid || (until !== '' && until < vietnamToday())}
-          onClick={() => save.mutate({ partyId: draft.partyId, termsDays: days, pausedUntil: until === '' ? null : until })}
+          disabled={!valid || !changed || (until !== null && until !== '' && until < vietnamToday())}
+          onClick={() => save.mutate({ partyId: draft.partyId, ...changes })}
           data-testid="reminder-customer-save"
         >
           {t('customer.save')}

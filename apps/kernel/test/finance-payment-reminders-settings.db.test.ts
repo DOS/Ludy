@@ -302,6 +302,18 @@ suite('payment reminder settings (#2488)', () => {
     for (const dup of [one, two]) await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
     const expected = one < two ? 20 : 40;
     for (let i = 0; i < 3; i++) expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: expected });
+    // A pause set on a duplicate is not hidden by a row of the kept party that holds only terms; the latest pause of the group stands.
+    const keptTwo = await customer(o, 'Công ty Giữ Lại Sáu');
+    const dupTwo = await customer(o, 'Công ty Trùng Sáu');
+    const pause = daysFromNow(20);
+    await execute(o, 'finance.customer_collection.set', { partyId: keptTwo, termsDays: 45 });
+    await execute(o, 'finance.customer_collection.set', { partyId: dupTwo, pausedUntil: pause });
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dupTwo, keptTwo]));
+    expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: keptTwo })).toEqual({ partyId: keptTwo, termsDays: 45, effectiveTermsDays: 45, pausedUntil: pause });
+    // Lifting it through the kept party lifts the whole group's pause and keeps the terms (a field left out keeps its value), and a viewer cannot.
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: keptTwo, pausedUntil: null }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await execute<Customer>(o, 'finance.customer_collection.set', { partyId: keptTwo, pausedUntil: null }, o.member)).toEqual({ partyId: keptTwo, termsDays: 45, effectiveTermsDays: 45, pausedUntil: null });
+    expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: dupTwo })).toMatchObject({ partyId: keptTwo, pausedUntil: null });
     // A set through a duplicate lands on the kept party (the locks of lockedKeptParty see the merge) and wins from then on.
     await execute(o, 'finance.customer_collection.set', { partyId: two, termsDays: 55, pausedUntil: null });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: one })).toMatchObject({ partyId: kept, termsDays: 55 });

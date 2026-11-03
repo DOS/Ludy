@@ -47,7 +47,7 @@ import {
 } from './domain/payment-reminder.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
-import { readCollectionSetting } from './collection-settings.ts';
+import { mergeGroupRows, readCollectionSetting } from './collection-settings.ts';
 import { oneLine } from './missing-invoices.ts';
 import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, zPaymentReminderMail, type PaymentReminderMail } from './payment-reminder-mail.ts';
 
@@ -119,20 +119,20 @@ async function loadCustomers(ctx: QueryContext, entity: string, today: string, o
   // What the org and each customer set (#2488, slice 3): the terms date the invoices, a pause keeps the customer out of the list, the draft and the send.
   const org = await readCollectionSetting(ctx);
   // The settings sit on the kept party; a party marked as a duplicate afterwards may still hold its own row (nothing moves it), so every party of the group is read: the
-  // kept party's row wins, else the one whose pause runs longest, so a pause is never lost to a merge.
+  // terms are the kept party's, else a duplicate's, and the pause is the latest of the group (the same rule as the customer's own screen: mergeGroupRows).
   const rows = await ctx.trx
     .selectFrom('crove_finance.customer_collection as c')
     .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
     .select([kept.as('group_id'), 'c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
+    .orderBy('c.party_id')
     .execute();
   const own = new Map<string, { terms_days: number | null; paused_until: string | null }>();
-  for (const r of rows.filter((x) => x.party_id !== x.group_id)) {
-    const held = own.get(r.group_id);
-    if (!held || (r.paused_until ?? '') > (held.paused_until ?? '')) own.set(r.group_id, { terms_days: r.terms_days, paused_until: r.paused_until });
+  for (const groupId of new Set(rows.map((r) => r.group_id))) {
+    const merged = mergeGroupRows(rows.filter((r) => r.group_id === groupId), groupId);
+    if (merged) own.set(groupId, merged);
   }
-  for (const r of rows.filter((x) => x.party_id === x.group_id)) own.set(r.group_id, { terms_days: r.terms_days, paused_until: r.paused_until });
 
   return owed.flatMap((o) => {
     const party = byParty.get(o.party_id);

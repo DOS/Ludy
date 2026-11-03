@@ -7191,8 +7191,6 @@ export const vi = {
       ALREADY_REMINDED: 'Khách hàng này đã được nhắc ở mức này trong 3 ngày qua. Bạn vẫn có thể gửi lại nếu xác nhận.',
       PAY_TO_NOT_FOUND: 'Tài khoản nhận tiền đã chọn không còn. Hãy chọn lại.',
       CUSTOMER_PAUSED: 'Đang tạm dừng nhắc khách hàng này. Bỏ tạm dừng rồi gửi lại.',
-      PAUSE_DATE_INVALID: 'Ngày tạm dừng không hợp lệ.',
-      PAUSE_TOO_LONG: 'Chỉ tạm dừng nhắc tối đa hai năm kể từ hôm nay.',
       REMINDER_INVALID: 'Không soạn được thư từ số liệu hiện có (số hóa đơn hoặc ngày quá dài hoặc không hợp lệ). Hãy kiểm tra các hóa đơn của khách hàng này.',
       NOT_FLAGGED: 'Hóa đơn này không cần kiểm tra chứng từ thanh toán không dùng tiền mặt',
       VOUCHER_NOT_BANK: 'Chỉ gắn được giấy báo Nợ của tổ chức, và chỉ khi hóa đơn đã thanh toán qua ngân hàng',
