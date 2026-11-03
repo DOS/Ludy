@@ -456,8 +456,8 @@ export const vi = {
       points: [
         'Hộp thư chung cho tin nhắn riêng của khách; kênh nối được hôm nay là Zalo OA (đã làm xong, chưa thử với một OA thật)',
         'Danh sách liên hệ dùng chung với Ludy Kế toán, cơ hội bán hàng trên bảng theo giai đoạn và trang đặt lịch công khai',
-        'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác; với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
-        'Xem quảng cáo Facebook và Instagram, và báo cáo cho từng phần',
+        'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác (đã làm xong, chưa thử với tài khoản thật); với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
+        'Xem quảng cáo Facebook và Instagram (đã làm xong, chưa thử với tài khoản thật), và báo cáo cho từng phần',
       ],
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },

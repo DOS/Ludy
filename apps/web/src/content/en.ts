@@ -456,8 +456,8 @@ export const en: Dictionary = {
       points: [
         "A shared inbox for customers' private messages; the channel you can connect today is Zalo OA (built, not yet tried with a real OA)",
         'A contact list shared with Ludy Accounting, sales deals on a board by stage, and a public booking page',
-        "Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more; for the large platforms, whoever installs Ludy sets up that platform's app first",
-        'See your Facebook and Instagram ads, and a report for each part',
+        "Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more (built, not yet tried with a real account); for the large platforms, whoever installs Ludy sets up that platform's app first",
+        'See your Facebook and Instagram ads (built, not yet tried with a real account), and a report for each part',
       ],
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },

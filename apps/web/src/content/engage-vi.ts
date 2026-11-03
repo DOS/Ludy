@@ -81,10 +81,10 @@ export const engageVi = {
         lead: 'Lên lịch bài cho nhiều kênh và xem quảng cáo cùng một chỗ, mọi bài đều qua người duyệt.',
         points: [
           'Mỗi bài có một nội dung và một bản cho từng kênh, kiểm tra riêng cho từng kênh, xem trước, và lịch, bảng hoặc danh sách sắp đăng',
-          'Kênh gồm Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
+          'Kênh gồm Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác: đã làm xong, chưa thử với tài khoản thật của kênh nào. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
           'Mỗi bài cần người duyệt trước khi đăng, có quy trình nhiều bước, danh sách kiểm tra và liên kết cho khách duyệt không cần đăng nhập',
           'Báo cáo cho khách dưới dạng liên kết chia sẻ, bản in, có thương hiệu riêng và có thể hẹn lịch gửi',
-          'Quảng cáo: xem chi tiêu, lượt hiển thị, lượt nhấp và kết quả của quảng cáo Facebook và Instagram theo ngày, tháng và chiến dịch, đối chiếu chi tiêu với sổ kế toán khi dùng Ludy Kế toán. Cần khoá Meta do người cài đặt cấu hình',
+          'Quảng cáo: xem chi tiêu, lượt hiển thị, lượt nhấp và kết quả của quảng cáo Facebook và Instagram theo ngày, tháng và chiến dịch, đối chiếu chi tiêu với sổ kế toán khi dùng Ludy Kế toán. Cần khoá Meta do người cài đặt cấu hình. Đã làm xong, chưa thử với tài khoản quảng cáo thật',
         ],
       },
       {

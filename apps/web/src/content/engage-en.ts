@@ -76,10 +76,10 @@ export const engageEn: EngageCopy = {
         lead: 'Schedule posts for many channels and watch your ads in one place, and every post goes through a person.',
         points: [
           'A post has one text and a variant for each channel, checked per channel, with a preview, and a calendar, board or list of what is coming',
-          'Channels include Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and many more. For the large platforms the installer registers that platform\'s app first',
+          'Channels include Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and many more: built, not yet tried with a real account on any of them. For the large platforms the installer registers that platform\'s app first',
           'Every post needs a person\'s approval before it goes out, with multi-step review, checklists and a review link clients can use without signing in',
           'Reports for clients as a shareable link, a printout, with your own branding, and they can be scheduled',
-          'Ads: see spend, impressions, clicks and results of Facebook and Instagram ads by day, month and campaign, and compare spend with the books when you use Ludy Accounting. Needs a Meta key the installer sets up',
+          'Ads: see spend, impressions, clicks and results of Facebook and Instagram ads by day, month and campaign, and compare spend with the books when you use Ludy Accounting. Needs a Meta key the installer sets up. Built, not yet tried with a real ad account',
         ],
       },
       {
