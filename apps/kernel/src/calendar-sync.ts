@@ -362,8 +362,15 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
     forbiddenRun = 0;
     // A booking that asked for a Google Meet (C7, #1375): the event is written, so the booking learns the outcome now, the join link or that there is none. Before
     // the record below: a crash between the two repeats the write (it makes no second Meet), and the settle of a booking that is no longer pending does nothing.
-    if (a.kind === 'upsert' && a.conference && 'ok' in result) {
-      await b.runtime.execute('crm.booking.meeting_settle', { calendarEventId: a.eventId, url: result.meetUrl ?? null }, b.options);
+    // A settle that fails must not stall the write-back (the event is written, and an event that asks for a conference skips the attempt cap of its link):
+    // the error is named in the log, never quoted, the event is recorded as written below, and the booking learns its outcome from the delayed crm-booking-meet job
+    // within minutes. The settle is the crm module's command: with crm off there is no booking to tell.
+    if (a.kind === 'upsert' && a.conference && 'ok' in result && b.runtime.installed('crm')) {
+      try {
+        await b.runtime.execute('crm.booking.meeting_settle', { calendarEventId: a.eventId, url: result.meetUrl ?? null }, b.options);
+      } catch (error: unknown) {
+        console.error('[calendar-sync] settling the Meet of a booking failed', error instanceof Error ? error.name : typeof error);
+      }
     }
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone

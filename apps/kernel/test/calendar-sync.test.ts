@@ -26,9 +26,15 @@ interface Call {
   input: Record<string, unknown>;
 }
 
-function fakeRuntime(state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null, credential: unknown, plan: { actions: unknown[] } = { actions: [] }) {
+function fakeRuntime(
+  state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null,
+  credential: unknown,
+  plan: { actions: unknown[] } = { actions: [] },
+  behaviour: { settleFails?: Error; crm?: boolean } = {},
+) {
   const calls: Call[] = [];
   const runtime = {
+    installed: (module: string) => module !== 'crm' || behaviour.crm !== false,
     query: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'query', name, input });
       if (name === 'kernel.calendar.connection_state') return state;
@@ -41,6 +47,7 @@ function fakeRuntime(state: { status: string; provider: string; expiresAt: strin
     },
     execute: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'execute', name, input });
+      if (name === 'crm.booking.meeting_settle' && behaviour.settleFails) throw behaviour.settleFails;
       if (name === 'kernel.calendar.busy_replace') return { replaced: true, added: 2, removed: 1 };
       if (name === 'kernel.calendar.refresh') return { refreshed: true, updatedAt: '2026-11-03T05:30:00.000Z' };
       if (name === 'kernel.calendar.finish_disconnect') return { finished: true };
@@ -761,5 +768,29 @@ describe('write-back of an event that asked for a conference', () => {
     await run(runtime, adapter({ writeEvent: async (_secret, event) => (asked.push(event.conference), { ok: true }) }));
     expect(asked).toEqual([undefined]);
     expect(settles(calls)).toEqual([]);
+  });
+
+  it('records the write and goes on to the next event when the settle throws, naming the error in the log and quoting nothing', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet, plain] }, { settleFails: new Error('Tư vấn: Lan khach@example.test secret') });
+    const wrote: string[] = [];
+    const a = adapter({ writeEvent: async (_secret, event) => (wrote.push(event.externalId), { ok: true, meetUrl: MEET }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    // Both events were written and both links recorded: the failing settle stalled neither.
+    expect(wrote).toEqual(['ext1ext1ext1', 'ext2ext2ext2']);
+    const recorded = calls.filter((c) => c.name === 'kernel.calendar.link.record').map((c) => c.input);
+    expect(recorded).toHaveLength(2);
+    expect(settles(calls)).toHaveLength(1);
+    expect(JSON.stringify(log.mock.calls)).toContain('Error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('khach@example.test');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret');
+    log.mockRestore();
+  });
+
+  it('leaves a booking alone, and still records the write, when the crm module is not installed', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] }, { crm: false });
+    expect(await run(runtime, adapter({ writeEvent: async () => ({ ok: true, meetUrl: MEET }) }))).toMatchObject({ outcome: 'synced' });
+    expect(settles(calls)).toEqual([]);
+    expect(calls.some((c) => c.name === 'kernel.calendar.link.record')).toBe(true);
   });
 });

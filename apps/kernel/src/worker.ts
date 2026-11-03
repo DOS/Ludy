@@ -1659,28 +1659,31 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       return done.busy ? 'busy' : done.retry > 0 ? 'retry' : 'ran';
     } catch (error) {
       console.error('[calendar-sync] sweep', error instanceof Error ? error.name : typeof error);
-      return 'ran';
+      // A sweep that threw has served no one: a booking job's request for it is kept and tried again (the periodic timer ignores the answer).
+      return 'retry';
     } finally {
       calendarSyncing = false;
     }
   };
   // A sweep a booking job asks for (below), at most one a minute from the start of the last one. A request is kept until a sweep has run for it: one made inside the
   // minute, or while this process (or another worker process) is sweeping, waits for its turn instead of being dropped, and any number of requests while one waits are
-  // one sweep. It gives up after about ten minutes, when the 15 minute sweep has come round anyway.
+  // one sweep. It gives up after about ten minutes from the latest request (each request moves the limit, so one made near it is still served), when the 15 minute
+  // sweep has come round anyway.
   const SWEEP_ASK_MIN_MS = 60_000;
   const SWEEP_ASK_GIVE_UP_MS = 10 * 60_000;
   let calendarSweepAskedAt = 0;
   let calendarSweepWanted = false;
   let calendarSweepWaiting = false;
+  let calendarSweepUntil = 0;
   const askCalendarSweep = () => {
     calendarSweepWanted = true;
+    calendarSweepUntil = Date.now() + SWEEP_ASK_GIVE_UP_MS;
     if (calendarSweepWaiting) return;
     calendarSweepWaiting = true;
-    const until = Date.now() + SWEEP_ASK_GIVE_UP_MS;
     const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     void (async () => {
       try {
-        while (calendarSweepWanted && Date.now() < until) {
+        while (calendarSweepWanted && Date.now() < calendarSweepUntil) {
           const wait = calendarSweepAskedAt + SWEEP_ASK_MIN_MS - Date.now();
           if (wait > 0) {
             await pause(wait);

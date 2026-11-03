@@ -8,7 +8,7 @@
 --    the booking's mails wait for the outcome, so the first mail already carries the link), ready (meeting_url is the join link, only ever a
 --    meet.google.com address) or failed (Google did not give one: the booking stands and the fixed link, if any, is used).
 -- 3. (crove_kernel.calendar_event.conference, the flag that asks the provider to make a conference for the event, is in its own crove_kernel migration,
---    20261121170000.)
+--    crove_kernel_calendar_event_conference; nothing in this file reads it, so the order of the two does not matter.)
 -- 4. The queue crm-booking-meet: the delayed job that settles a booking whose Meet is still pending after a few minutes (a worker that was
 --    down, a Google outage), so no mail waits for ever.
 SET LOCAL lock_timeout = '2s';
