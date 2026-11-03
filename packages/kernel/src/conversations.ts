@@ -1285,6 +1285,10 @@ export const conversationReplySettle = defineCommand({
       ctx.audit({ message_id: message.id, action: 'mark_sent' });
       return { messageId: message.id, state: 'sent' };
     }
+    // An email whose send is unknown may have gone out: it is not sent again blindly (a second copy would reach the customer), a person marks it sent.
+    if (message.kind === 'email' && message.send_state === 'unknown') {
+      throw new DomainError('EMAIL_SEND_UNKNOWN', 409, 'Thư này có thể đã đi. Hãy kiểm tra rồi đánh dấu là đã gửi');
+    }
     const connection = await connectionOf(ctx, message.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     const thread = await ctx.trx.selectFrom('crove_kernel.conversation').select(['reply_window_until', 'last_seq']).where('org_id', '=', ctx.orgId).where('id', '=', message.conversation_id).executeTakeFirst();
@@ -1298,7 +1302,9 @@ export const conversationReplySettle = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', message.id)
       .execute();
-    await ctx.emit(REPLY_QUEUED, { conversationId: message.conversation_id, messageId: message.id, connectionId: message.channel_connection_id });
+    // An email goes out again as a new mail of the pipeline; any other channel as a new call of the worker.
+    if (message.kind === 'email') await queueEmailReply(ctx, await lockConversation(ctx, message.conversation_id), message.id, message.body);
+    else await ctx.emit(REPLY_QUEUED, { conversationId: message.conversation_id, messageId: message.id, connectionId: message.channel_connection_id });
     ctx.audit({ message_id: message.id, action: 'retry', attempt: message.send_attempt + 1 });
     return { messageId: message.id, state: 'queued' };
   },

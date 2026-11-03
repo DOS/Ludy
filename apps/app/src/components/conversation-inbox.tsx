@@ -16,6 +16,7 @@ import { Textarea } from '@crove/ui/components/textarea';
 import { cn } from '@crove/ui/lib/utils';
 import { Empty, ErrorText, Spinner } from './ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
+import { splitQuoted } from '../lib/email-text.ts';
 import { client, errorMessage, fetchConversationImage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { StepUpPrompt } from './two-factor.tsx';
 import { DraftPanel } from './conversation-drafts.tsx';
@@ -36,7 +37,7 @@ export interface PostRef {
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -136,6 +137,7 @@ export function ConversationListItem({ conversation: c, open, onOpen, suggested 
             {c.lastMessageAt ? f.dateTime(c.lastMessageAt) : ''}
           </span>
         </span>
+        {c.kind === 'email' && c.subject && <span className={cn('truncate', c.unread ? 'font-medium text-foreground' : 'text-foreground')}>{c.subject}</span>}
         <span className="truncate text-muted-foreground">{c.preview || t('noText')}</span>
         <span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span className="flex min-w-0 items-center gap-1.5">
@@ -203,6 +205,11 @@ export function ConversationThread({ conversationId, onGone }: { conversationId:
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
+          {c.kind === 'email' && c.subject && (
+            <p className="truncate text-sm text-foreground" data-testid="conversation-subject">
+              {c.subject}
+            </p>
+          )}
           <p className="truncate text-xs text-muted-foreground">
             {c.channel.displayName}
             {c.contact.partyName && c.contact.displayName ? ` · ${c.contact.displayName}` : ''}
@@ -433,13 +440,24 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
   const settle = useMutation({ mutationFn: (action: 'retry' | 'mark_sent') => client.conversations.settle({ messageId: m.id, action }), onSuccess: refresh });
   const hide = useMutation({ mutationFn: (hidden: boolean) => client.conversations.hide({ messageId: m.id, hidden }), onSuccess: refresh });
   const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed;
+  // An email from the customer: what they wrote this time, and the history and signature behind "show quoted text" (a display rule; the whole text is stored).
+  const [showQuoted, setShowQuoted] = useState(false);
+  const email = detail.conversation.kind === 'email' && !mine && !m.removed ? splitQuoted(m.body) : null;
   return (
     <li className={cn('flex', mine ? 'justify-end' : 'justify-start')} data-testid="conversation-message" data-direction={m.direction}>
       <div className={cn('max-w-[85%] space-y-1 rounded-lg border border-border px-3 py-2 text-sm', mine ? 'bg-muted' : 'bg-background', m.hidden && 'opacity-60')}>
         <p className="text-xs text-muted-foreground">
           {author} · {f.dateTime(m.sentAt)}
         </p>
-        {m.removed ? <p className="italic text-muted-foreground">{t('removed')}</p> : <p className="whitespace-pre-wrap break-words text-foreground">{m.body}</p>}
+        {m.removed ? <p className="italic text-muted-foreground">{t('removed')}</p> : <p className="whitespace-pre-wrap break-words text-foreground">{email ? email.fresh : m.body}</p>}
+        {email && email.quoted !== '' && (
+          <>
+            <Button type="button" size="sm" variant="ghost" aria-expanded={showQuoted} data-testid="conversation-quoted-toggle" onClick={() => setShowQuoted((v) => !v)}>
+              {t(showQuoted ? 'quoted.hide' : 'quoted.show')}
+            </Button>
+            {showQuoted && <p className="whitespace-pre-wrap break-words border-l-2 border-border pl-2 text-muted-foreground" data-testid="conversation-quoted">{email.quoted}</p>}
+          </>
+        )}
         {!m.removed && m.attachments.map((a) => <MessageImage key={a.id} attachment={a} />)}
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {m.sendState && m.sendState !== 'sent' && (
@@ -452,9 +470,11 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
           )}
           {canWrite && (m.sendState === 'failed' || m.sendState === 'unknown') && (
             <>
-              <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
-                {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
-              </Button>
+              {!(detail.conversation.kind === 'email' && m.sendState === 'unknown') && (
+                <Button type="button" size="sm" variant="outline" loading={settle.isPending} onClick={() => settle.mutate('retry')}>
+                  {m.sendState === 'unknown' ? t('sendAgainUnknown') : t('sendAgain')}
+                </Button>
+              )}
               {m.sendState === 'unknown' && (
                 <Button type="button" size="sm" variant="ghost" loading={settle.isPending} onClick={() => settle.mutate('mark_sent')}>
                   {t('wasSent')}
@@ -524,7 +544,9 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
   };
   return (
     <form onSubmit={submit} className="space-y-2" aria-label={t('replyLabel')}>
-      <p className="text-xs text-muted-foreground">{t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}</p>
+      <p className="text-xs text-muted-foreground">
+        {detail.conversation.kind === 'email' ? t('replyEmail') : t(detail.conversation.kind === 'direct' ? 'replyPrivate' : 'replyPublic', { channel: detail.conversation.channel.displayName })}
+      </p>
       <DraftPanel
         detail={detail}
         onUse={(draft) => {

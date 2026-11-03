@@ -13,7 +13,7 @@ import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import type { ExtractClient } from '@crove/extract-contract';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import type { ConversationDetail, ConversationListed, OrgDetail } from '@crove/kernel-contract';
+import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
 import { Runtime, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
@@ -43,12 +43,18 @@ class MemoryStore implements BlobStore {
   }
 }
 
+// The part of the org detail this test reads.
+interface OrgDetail {
+  conversationAddress?: string | null;
+  inboundAddress?: string | null;
+}
+
 interface MailParts {
   from?: string;
   to: string;
   subject?: string;
   messageId?: string;
-  inReplyTo?: string;
+  inReplyTo?: string | undefined;
   references?: string;
   body?: string;
   html?: string;
