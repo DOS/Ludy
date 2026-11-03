@@ -9,7 +9,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
-import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { PARTY_KIND_HOLDERS, createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import type { Party } from '@crove/kernel-contract';
 import { Runtime } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries } from '@crove/mod-crm';
@@ -151,6 +151,29 @@ suite('the company of a person and the accounting (#2438)', () => {
     await expect(rename(person.partyId, linked.version, 'organization', 'Bình Lê')).rejects.toMatchObject({ code: 'PARTY_HAS_COMPANY', status: 422 });
     const cleared = await execute<{ version: number }>(o, 'kernel.party.set_company', { partyId: person.partyId, companyId: null, version: linked.version });
     await rename(person.partyId, cleared.version, 'organization', 'Bình Lê');
+  });
+
+  it('knows every table that points at a party: each foreign key to party either holds its kind or is listed as not reading it', async () => {
+    // A table added later with a foreign key to party fails here until it is put on one side: PARTY_KIND_HOLDERS (the rows that pin a party's kind) or this list.
+    const NOT_READING_THE_KIND = ['crove_notes.link.party_id', 'crove_crm.import_row.match_party_id'];
+    const { rows } = await admin((c) =>
+      c.query<{ ref: string }>(
+        `SELECT DISTINCT n.nspname || '.' || c.relname || '.' || a.attname AS ref
+           FROM pg_constraint k
+           JOIN pg_class c ON c.oid = k.conrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+           JOIN LATERAL unnest(k.conkey) AS u (attnum) ON true
+           JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = u.attnum
+          WHERE k.contype = 'f' AND k.confrelid = 'crove_kernel.party'::regclass AND a.attname <> 'org_id'`,
+      ),
+    );
+    const holders = PARTY_KIND_HOLDERS.map(([table, column]) => `${table}.${column}`);
+    const unknown = rows.map((r) => r.ref).filter((ref) => !holders.includes(ref) && !NOT_READING_THE_KIND.includes(ref));
+    expect(unknown).toEqual([]);
+    expect(holders.filter((h) => NOT_READING_THE_KIND.includes(h))).toEqual([]);
+    // Everything listed as pinning the kind exists (a renamed column fails here and in the kind-change test), but the ledger line has no foreign key: it is the one
+    // holder the catalog cannot show.
+    expect(holders.filter((h) => !rows.some((r) => r.ref === h))).toEqual(['crove_finance.journal_line.party_id']);
   });
 
   it('refuses a company the writer cannot see, as the legal-entity policy to come on party will hide one (#1538)', async () => {

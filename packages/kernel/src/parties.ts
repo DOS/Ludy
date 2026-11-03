@@ -86,21 +86,28 @@ export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
   }
 }
 
-// Whether anything points at a party: a document or a voucher or a ledger line of the books, a vendor rule, a deal, a booking, a person who works at it, a party merged
-// into it, or a contact thread. A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one
-// click); one that is pointed at keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
+// Whether anything points at a party: a document or a voucher or a ledger line of the books, a vendor or categorization rule, a deal, a booking, a person who works at
+// it, a party merged into it, or a contact thread. A note linked to the party and a staged import match do not hold the kind: neither reads it. The database test lists
+// every foreign key to party, so a table added later has to be put on one side or the other.
+// A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one click); one that is pointed at
+// keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
+export const PARTY_KIND_HOLDERS = [
+  ['crove_finance.purchase_document', 'party_id'],
+  ['crove_finance.cash_voucher', 'party_id'],
+  ['crove_finance.journal_line', 'party_id'],
+  ['crove_finance.vendor_account_rule', 'party_id'],
+  ['crove_finance.categorization_rule', 'vendor_party_id'],
+  ['crove_crm.deal', 'party_id'],
+  ['crove_crm.booking', 'party_id'],
+  ['crove_kernel.conversation_identity', 'party_id'],
+  ['crove_kernel.conversation', 'party_id'],
+  ['crove_kernel.party', 'company_id'],
+  ['crove_kernel.party', 'duplicate_of'],
+] as const;
+
 async function partyPointedAt(ctx: CommandContext, partyId: string): Promise<boolean> {
-  const { rows } = await sql<{ used: boolean }>`
-    SELECT (
-      EXISTS (SELECT 1 FROM crove_finance.purchase_document x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_finance.journal_line x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_finance.vendor_account_rule x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_crm.deal x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_crm.booking x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_kernel.conversation_identity x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
-      OR EXISTS (SELECT 1 FROM crove_kernel.party x WHERE x.org_id = ${ctx.orgId}::uuid AND (x.company_id = ${partyId}::uuid OR x.duplicate_of = ${partyId}::uuid))
-    ) AS used`.execute(ctx.trx);
+  const holders = PARTY_KIND_HOLDERS.map(([table, column]) => sql`EXISTS (SELECT 1 FROM ${sql.table(table)} x WHERE x.org_id = ${ctx.orgId}::uuid AND x.${sql.id(column)} = ${partyId}::uuid)`);
+  const { rows } = await sql<{ used: boolean }>`SELECT (${sql.join(holders, sql` OR `)}) AS used`.execute(ctx.trx);
   return rows[0]?.used === true;
 }
 
