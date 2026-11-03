@@ -13,6 +13,7 @@ import { generateText, Output } from 'ai';
 import { z } from 'zod';
 import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
+import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -54,9 +55,15 @@ const zCompanyRankOut = z.object({
   order: z.array(z.number().int()).describe('The numbers of the companies the contact could work at, most likely first'),
 });
 
+const zReminderOut = z.object({
+  lead: z.string().describe('The lead-in before the list of invoices: one to three plain sentences, with no figure, name or link'),
+  closing: z.string().describe('The closing after the list: one or two plain sentences, with no figure, name or link'),
+});
+
 // The model calls, replaceable in tests: what it answered and the tokens it used (for the org's AI cost limit).
 export type IntentGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zIntentOut> | null; usage?: AiUsage }>;
 export type RankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zRankOut> | null; usage?: AiUsage }>;
+export type ReminderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReminderOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
 
 const INTENT_SYSTEM = [
@@ -111,9 +118,10 @@ export class InboxReader {
   private readonly generateIntents: IntentGenerator;
   private readonly generateRank: RankGenerator;
   private readonly generateCompanyRank: CompanyRankGenerator;
+  private readonly generateReminder: ReminderGenerator;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator } = {}) {
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -136,6 +144,14 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('crm.company_rank', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zCompanyRankOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateReminder =
+      generators.reminder ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.payment_reminder', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zReminderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -190,5 +206,13 @@ export class InboxReader {
       if (Number.isInteger(index) && index >= 0 && index < names.length && !order.includes(index)) order.push(index);
     }
     return [...order, ...own.filter((i) => !order.includes(i))];
+  }
+
+  /** The lead-in and the closing of a payment reminder, in the tone of its notice level (#2488), or why there are none: the model is told no fact and its text is
+   * refused when it holds a figure, a link, or is empty or too long (reminder.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async reminderWords(request: ReminderWordsRequest, onUsage?: (usage: AiUsage) => void): Promise<ReminderWordsResult> {
+    const { output, usage } = await this.generateReminder({ system: reminderInstructions(request), prompt: reminderPrompt(request) });
+    if (usage) onUsage?.(usage);
+    return checkReminderWords(request, output);
   }
 }

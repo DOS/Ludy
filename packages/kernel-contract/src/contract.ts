@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent } from './payment-reminder.ts';
+import { zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
@@ -1570,6 +1570,10 @@ export const contract = {
     list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(zPaymentReminderList),
     draft: oc.input(z.object({ partyId: zId, legalEntityId: zId.optional() })).output(zPaymentReminderDraft),
     send: oc.input(zPaymentReminderSend).output(zPaymentReminderSent),
+    // The finance coworker's wording of the lead-in and the closing (#2488, slice 2), read-only and stored nowhere: the model is told the notice level, the
+    // language and the sender's name, never a fact of the books, and its text is refused when it holds a figure or a link. Any refusal leaves words null and the
+    // screen on the fixed template words.
+    wording: oc.input(zPaymentReminderWordingAsk).output(zPaymentReminderWording),
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
