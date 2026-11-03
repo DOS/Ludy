@@ -111,7 +111,8 @@ export const customerCollectionSet = defineCommand({
   handler: async (ctx, input): Promise<CustomerCollection> => {
     if (input.pausedUntil !== null) {
       const when = Date.parse(`${input.pausedUntil}T00:00:00Z`);
-      if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil) throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
+      // Not before 2000: a date PostgreSQL cannot hold (year 0) is refused here, not by the database.
+      if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil || input.pausedUntil < '2000-01-01') throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
       if (when - ctx.now.getTime() > PAUSE_MAX_DAYS * DAY_MS) throw new DomainError('PAUSE_TOO_LONG', 422, `Chỉ tạm dừng nhắc tối đa ${PAUSE_MAX_DAYS} ngày kể từ hôm nay`);
     }
     const kept = await keptParty(ctx, input.partyId);

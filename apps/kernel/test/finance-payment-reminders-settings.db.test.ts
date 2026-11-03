@@ -160,7 +160,7 @@ suite('payment reminder settings (#2488)', () => {
   it('refuses a pause that is not a date or runs past two years, and terms outside the range', async () => {
     const o = await org();
     const p = await customer(o, 'Công ty Khách Hàng Ba');
-    for (const pausedUntil of ['2026-02-30', '2026-13-01', 'tomorrow']) {
+    for (const pausedUntil of ['2026-02-30', '2026-13-01', 'tomorrow', '0000-01-01', '1999-12-31']) {
       await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil })).rejects.toBeTruthy();
     }
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: daysFromNow(800) })).rejects.toMatchObject({ code: 'PAUSE_TOO_LONG' });
