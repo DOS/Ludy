@@ -251,7 +251,7 @@ export const paymentReminderSend = defineCommand({
       throw new DomainError('STALE_REMINDER', 409, 'Sổ sách đã thay đổi từ lúc bạn mở bản nháp (có khoản vừa được thanh toán hoặc đã sang mức nhắc khác); hãy mở lại bản nháp để xem số liệu mới');
     }
     const email = customer.email?.trim() ?? '';
-    if (!email.includes('@')) throw new DomainError('EMAIL_REQUIRED', 409, 'Khách hàng này chưa có email; hãy nhập email trong hồ sơ khách hàng rồi gửi lại');
+    if (!email.includes('@')) throw new DomainError('CUSTOMER_EMAIL_REQUIRED', 409, 'Khách hàng này chưa có email; hãy nhập email trong hồ sơ khách hàng rồi gửi lại');
     const source = `${PAYMENT_REMINDER_SOURCE}${level}`;
     const since = new Date(ctx.now.getTime() - REMINDER_REPEAT_DAYS * DAY_MS);
     const recent = await ctx.trx

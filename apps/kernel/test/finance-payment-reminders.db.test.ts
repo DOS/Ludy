@@ -295,7 +295,7 @@ suite('customer payment reminders (#2488)', () => {
     await sale(o, withEmail, '51', dated(3), '600000');
     const d1 = await draft(o, noEmail);
     expect(d1.email).toBeNull();
-    await expect(execute(o, 'finance.payment_reminder.send', sendInput(d1))).rejects.toMatchObject({ code: 'EMAIL_REQUIRED' });
+    await expect(execute(o, 'finance.payment_reminder.send', sendInput(d1))).rejects.toMatchObject({ code: 'CUSTOMER_EMAIL_REQUIRED' });
     const d2 = await draft(o, withEmail);
     await expect(execute(o, 'finance.payment_reminder.send', sendInput(d2, { payToId: randomUUID() }))).rejects.toMatchObject({ code: 'PAY_TO_NOT_FOUND' });
     // A viewer reads the list and the draft but cannot send.
