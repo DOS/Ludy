@@ -58,8 +58,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_token_revoke',
   'crove_ads.ad_token_seal',
-  'crove_finance.collection_setting',
-  'crove_finance.customer_collection',
   'crove_notes.link',
   'crove_notes.note',
 ]);

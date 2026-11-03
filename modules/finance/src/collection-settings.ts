@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// What the org sets for its payment reminders ("nhắc thu nợ", #2488, slice 3): the payment terms, a customer's own terms and a pause, and the weekly item.
+// - finance.collection_setting.get (every role): the org's terms in days (30 until it sets another) and whether the weekly "Hôm nay cần bạn" item is on.
+// - finance.collection_setting.set (owners and admins; R1, audited): the org's terms and the weekly switch.
+// - finance.customer_collection.get (every role): one customer's own terms and its pause, with the terms that apply to it.
+// - finance.customer_collection.set (owners, admins and members; R1, audited): a customer's own terms (null: the org's) and the date up to which no reminder
+//   is drafted for it (null: not paused).
+// Nothing here sends a mail or drafts one: the settings are read by the reminders (terms, pause) and by the Home item (the switch). A customer is the kept party
+// of a duplicate group, as on the customers list, so setting it on a duplicate sets it on the one that stays. The audit rows hold ids, the numbers and the date,
+// never a name.
+import { sql } from 'kysely';
+import { z } from 'zod';
+import { zId } from '@crove/kernel-contract';
+import type { MemberRole } from '@crove/db';
+import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
+
+const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
+const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
+const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+
+export const zTermsDays = z.number().int().min(1).max(365);
+// The terms the reminders have always assumed, until the org sets another.
+const DEFAULT_TERMS_DAYS = 30;
+// A pause runs to a date in the next two years: far enough for a customer in a long dispute, near enough that it cannot be forgotten for good.
+export const PAUSE_MAX_DAYS = 730;
+
+export interface CollectionSetting {
+  termsDays: number;
+  weeklyItem: boolean;
+}
+export interface CustomerCollection {
+  partyId: string;
+  // The customer's own terms, or null for the org's.
+  termsDays: number | null;
+  // The terms that apply to it.
+  effectiveTermsDays: number;
+  pausedUntil: string | null;
+}
+
+const DAY_MS = 86_400_000;
+
+export async function readCollectionSetting(ctx: Pick<QueryContext, 'trx' | 'orgId'>): Promise<CollectionSetting> {
+  const row = await ctx.trx.selectFrom('crove_finance.collection_setting').select(['terms_days', 'weekly_item']).where('org_id', '=', ctx.orgId).executeTakeFirst();
+  return { termsDays: row?.terms_days ?? DEFAULT_TERMS_DAYS, weeklyItem: row?.weekly_item ?? false };
+}
+
+// The kept party of a duplicate group: the settings sit on it, whichever party of the group a caller names. A party of another org, or none, is not found.
+async function keptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<string> {
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.party')
+    .select(sql<string>`coalesce(duplicate_of, id)`.as('kept'))
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', partyId)
+    .executeTakeFirst();
+  if (!row) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy khách hàng này');
+  return row.kept;
+}
+
+async function readCustomer(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<CustomerCollection> {
+  const kept = await keptParty(ctx, partyId);
+  const [row, setting] = await Promise.all([
+    ctx.trx.selectFrom('crove_finance.customer_collection').select(['terms_days', 'paused_until']).where('org_id', '=', ctx.orgId).where('party_id', '=', kept).executeTakeFirst(),
+    readCollectionSetting(ctx),
+  ]);
+  const termsDays = row?.terms_days ?? null;
+  return { partyId: kept, termsDays, effectiveTermsDays: termsDays ?? setting.termsDays, pausedUntil: row?.paused_until ?? null };
+}
+
+export const collectionSettingGet = defineQuery({
+  name: 'finance.collection_setting.get',
+  input: z.object({}),
+  access: ALL,
+  handler: async (ctx): Promise<CollectionSetting> => readCollectionSetting(ctx),
+});
+
+export const collectionSettingSet = defineCommand({
+  name: 'finance.collection_setting.set',
+  input: z.object({ termsDays: zTermsDays, weeklyItem: z.boolean() }),
+  // It changes when an invoice falls due in the reminders and shows or hides one Home item: no money moves, nothing is sent.
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<CollectionSetting> => {
+    const before = await readCollectionSetting(ctx);
+    const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+    await ctx.trx
+      .insertInto('crove_finance.collection_setting')
+      .values({ org_id: ctx.orgId, terms_days: input.termsDays, weekly_item: input.weeklyItem, set_by: userId })
+      .onConflict((oc) => oc.column('org_id').doUpdateSet({ terms_days: input.termsDays, weekly_item: input.weeklyItem, set_by: userId, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ termsDays: input.termsDays, previousTermsDays: before.termsDays, weeklyItem: input.weeklyItem, previousWeeklyItem: before.weeklyItem });
+    return { termsDays: input.termsDays, weeklyItem: input.weeklyItem };
+  },
+});
+
+export const customerCollectionGet = defineQuery({
+  name: 'finance.customer_collection.get',
+  input: z.object({ partyId: zId }),
+  access: ALL,
+  handler: async (ctx, input): Promise<CustomerCollection> => readCustomer(ctx, input.partyId),
+});
+
+export const customerCollectionSet = defineCommand({
+  name: 'finance.customer_collection.set',
+  // pausedUntil: the last day with no reminder (YYYY-MM-DD), or null.
+  input: z.object({ partyId: zId, termsDays: zTermsDays.nullable(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: EDITORS,
+  target: (input) => ({ type: 'finance.customer_collection', id: input.partyId }),
+  handler: async (ctx, input): Promise<CustomerCollection> => {
+    if (input.pausedUntil !== null) {
+      const when = Date.parse(`${input.pausedUntil}T00:00:00Z`);
+      if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil) throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
+      if (when - ctx.now.getTime() > PAUSE_MAX_DAYS * DAY_MS) throw new DomainError('PAUSE_TOO_LONG', 422, `Chỉ tạm dừng nhắc tối đa ${PAUSE_MAX_DAYS} ngày kể từ hôm nay`);
+    }
+    const kept = await keptParty(ctx, input.partyId);
+    const before = await readCustomer(ctx, kept);
+    const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+    if (input.termsDays === null && input.pausedUntil === null && before.termsDays === null && before.pausedUntil === null) {
+      // Nothing to keep and nothing kept: no row is made for a customer with no setting.
+      ctx.audit({ partyId: kept, termsDays: null, pausedUntil: null, changed: false });
+      return before;
+    }
+    await ctx.trx
+      .insertInto('crove_finance.customer_collection')
+      .values({ org_id: ctx.orgId, party_id: kept, terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId })
+      .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId, updated_at: ctx.now }))
+      .execute();
+    ctx.audit({ partyId: kept, termsDays: input.termsDays, previousTermsDays: before.termsDays, pausedUntil: input.pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
+    return readCustomer(ctx, kept);
+  },
+});
+
+export const collectionSettingCommands = [collectionSettingSet, customerCollectionSet];
+export const collectionSettingQueries = [collectionSettingGet, customerCollectionGet];

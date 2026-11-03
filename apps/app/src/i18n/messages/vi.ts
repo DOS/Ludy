@@ -7700,6 +7700,14 @@ export const vi = {
       bank_party_rules: {
         list: 'Xem các quy tắc khớp dòng sao kê',
       },
+      collection_setting: {
+        get: 'Xem cài đặt nhắc thu nợ của tổ chức',
+        set: 'Đổi cài đặt nhắc thu nợ của tổ chức',
+      },
+      customer_collection: {
+        get: 'Xem cài đặt nhắc thu nợ của một khách hàng',
+        set: 'Đổi kỳ hạn hoặc tạm dừng nhắc thu nợ của một khách hàng',
+      },
       categorization_rule: {
         create: 'Thêm quy tắc định khoản',
         remove: 'Xóa quy tắc định khoản',

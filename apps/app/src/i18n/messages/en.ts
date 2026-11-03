@@ -7703,6 +7703,14 @@ export const en = {
       bank_party_rules: {
         list: 'List bank line rules',
       },
+      collection_setting: {
+        get: 'View the org\'s payment reminder settings',
+        set: 'Change the org\'s payment reminder settings',
+      },
+      customer_collection: {
+        get: 'View a customer\'s payment reminder settings',
+        set: 'Change a customer\'s payment terms or pause its reminders',
+      },
       categorization_rule: {
         create: 'Add an account rule',
         remove: 'Remove an account rule',
