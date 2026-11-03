@@ -57,6 +57,7 @@ const MACHINERY = new Set([
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_launch',
+  'crove_finance.einvoice_connection',
   'crove_finance.einvoice_draft',
   'crove_finance.einvoice_draft_line',
   'crove_finance.einvoice_series',
@@ -690,6 +691,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.fixed_asset', values: asset }],
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
+      };
+    },
+  },
+  // #2501: an org's connection to an e-invoice provider (ADR-0044 point 2): the channel connection that holds the sealed credential, the seller's tax code and the
+  // entity it issues for (the org's default, by its trigger). Tenant roles update only the last connection test (a column grant), so the update probes assign
+  // the state to itself.
+  'crove_finance.einvoice_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'einvoice_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: '0101234564' },
       };
     },
   },
