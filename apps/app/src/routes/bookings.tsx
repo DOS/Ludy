@@ -177,7 +177,8 @@ export function BookingsPage() {
     ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }),
     enabled: org.data !== undefined,
     // A Google Meet that is still being made (C7, #1375) settles within minutes and sends no stream hint: while a listed booking waits for it, the list is read again.
-    refetchInterval: (query) => (query.state.data?.some((b) => b.meeting.state === 'pending') ? MEET_POLL_MS : false),
+    // A cancelled booking never settles, so only confirmed ones keep the poll going.
+    refetchInterval: (query) => (query.state.data?.some((b) => b.status === 'confirmed' && b.meeting.state === 'pending') ? MEET_POLL_MS : false),
   });
   const now = Date.now();
   const names = new Map((org.data?.members ?? []).map((m) => [m.userId, m.displayName ?? m.email]));

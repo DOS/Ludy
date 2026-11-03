@@ -840,7 +840,11 @@ export const calendarWriteBackPlan = defineQuery({
         if (!window) continue;
         const hash = writeBackHash(new Date(e.starts_at), new Date(e.ends_at), e.title);
         const unchanged = link !== undefined && link.synced_hash === hash;
-        if (unchanged && (link.state === 'written' || link.state === 'removed' || link.attempts >= CALENDAR_LINK_MAX_ATTEMPTS)) continue;
+        // An event that still asks for a conference from this connection is written again, whatever its link says: the connection may have become the elected one after it wrote
+        // the event without (the first one went away), or Google had not finished the Meet. The request names the event, so a repeat makes no second Meet, and the settle clears the
+        // flag (a settled booking is never asked again).
+        const wantsMeet = e.conference && asksForMeet;
+        if (unchanged && !wantsMeet && (link.state === 'written' || link.state === 'removed' || link.attempts >= CALENDAR_LINK_MAX_ATTEMPTS)) continue;
         actions.push({ eventId: e.id, externalId, kind: 'upsert', summary: e.title ?? 'Lịch hẹn', startsAt: new Date(e.starts_at).toISOString(), endsAt: new Date(e.ends_at).toISOString(), conference: e.conference && asksForMeet, hash });
       }
     };

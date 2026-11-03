@@ -138,7 +138,9 @@ export async function renderBookingMail(input: MailTemplateInput, now: () => Dat
     // The host is told, in the mail of a new booking, when the Google Meet could not be made: the booking stands, with the fixed link when the type has one. `failed` is only
     // ever set for a booking whose type asked for a Meet when it was confirmed, so the type's kind now (the host may have switched it since) does not matter.
     if (p.meeting.state === 'failed' && p.kind === 'confirmed') {
-      details.push(['Lưu ý', place.link ? 'Chưa tạo được liên kết Google Meet; đã dùng liên kết cố định của loại lịch hẹn này.' : 'Chưa tạo được liên kết Google Meet và loại lịch hẹn này chưa có liên kết cố định: hãy gửi liên kết cho khách.']);
+      // The fixed link is the type's location only while the type is still an online one: after a switch to a place or a phone the value is an address or a number.
+      const fixedLink = place.link !== null && (p.locationKind === 'video' || p.locationKind === 'google_meet');
+      details.push(['Lưu ý', fixedLink ? 'Chưa tạo được liên kết Google Meet; đã dùng liên kết cố định của loại lịch hẹn này.' : 'Chưa tạo được liên kết Google Meet và loại lịch hẹn này chưa có liên kết cố định: hãy gửi liên kết cho khách.']);
     }
     details.push(['Khách', p.visitorName]);
     if (visitor?.email) details.push(['Email', oneLine(visitor.email)]);

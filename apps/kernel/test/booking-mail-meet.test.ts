@@ -104,6 +104,10 @@ describe('the mails of a Google Meet booking', () => {
     // `failed` is only ever set for a booking whose type asked for a Meet when it was confirmed: the type's kind now does not matter.
     const switched = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'failed', url: null }), () => NOW);
     expect(switched?.text).toContain('Chưa tạo được liên kết Google Meet');
+    // After a switch to a place the type's value is an address: the note does not call it a link.
+    const place = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'in_person', location: '12 Lê Lợi' }, { state: 'failed', url: null }), () => NOW);
+    expect(place?.text).toContain('hãy gửi liên kết cho khách');
+    expect(place?.text).not.toContain('đã dùng liên kết cố định');
     const never = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'none', url: null }), () => NOW);
     expect(never?.text).not.toContain('Google Meet');
     // A booking's later mails (a reminder, a move) do not repeat the failure: the host heard it with the new booking.

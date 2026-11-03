@@ -1615,14 +1615,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
     });
   let calendarSyncing = false;
-  // 'ran', 'busy' (another worker process holds the sweep) or 'skipped' (this process is sweeping already, or has no calendar adapters).
-  const calendarSweep = async (): Promise<'ran' | 'busy' | 'skipped'> => {
+  // 'ran', 'retry' (a connection failed passingly and the next sweep takes it up again), 'busy' (another worker process holds the sweep) or 'skipped' (this process is
+  // sweeping already, or has no calendar adapters).
+  const calendarSweep = async (): Promise<'ran' | 'retry' | 'busy' | 'skipped'> => {
     if (calendarSyncing || !channels) return 'skipped';
     calendarSyncing = true;
     try {
       const done = await syncCalendars({ runtime: deps.runtime, broker: channels.broker, workerDb: deps.workerDb, adapters: calendars, exclusive: calendarExclusive, lockConnection: calendarConnectionLock });
       if (done.synced + done.expired + done.retry + done.disconnected > 0) console.log(`[calendar-sync] synced ${done.synced}, expired ${done.expired}, to retry ${done.retry}, disconnected ${done.disconnected}`);
-      return done.busy ? 'busy' : 'ran';
+      return done.busy ? 'busy' : done.retry > 0 ? 'retry' : 'ran';
     } catch (error) {
       console.error('[calendar-sync] sweep', error instanceof Error ? error.name : typeof error);
       return 'ran';
@@ -1661,7 +1662,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
           const result = await calendarSweep();
           if (result !== 'ran') {
             calendarSweepWanted = true;
-            await pause(result === 'busy' ? 10_000 : 2_000);
+            await pause(result === 'skipped' ? 2_000 : 10_000);
           }
         }
       } finally {

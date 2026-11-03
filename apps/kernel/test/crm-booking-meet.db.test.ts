@@ -311,7 +311,14 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       const eventId = (await b.state()).calendar_event_id;
       expect((await plan(first)).actions).toEqual([expect.objectContaining({ eventId, kind: 'upsert', conference: true })]);
       // The same event is written to the second calendar, without a conference request.
-      expect((await plan(second)).actions).toEqual([expect.objectContaining({ eventId, kind: 'upsert', conference: false })]);
+      const written = (await plan(second)).actions[0] as WriteBackAction;
+      expect(written).toMatchObject({ eventId, kind: 'upsert', conference: false });
+      // The second wrote it; then the first goes away before it made the Meet. The second is the elected one now and writes the event again, with the request, though its
+      // link says written for the same event: nothing else would ever ask for the Meet.
+      await worker.execute('kernel.calendar.link.record', { connectionId: second, eventId, externalId: written.externalId, state: 'written', syncedHash: written.hash }, { actor: SYSTEM, orgId: o.orgId });
+      expect((await plan(second)).actions).toEqual([]);
+      await app.execute('kernel.calendar.write_back.set', { connectionId: first, enabled: false }, { actor: asUser(o.host), orgId: o.orgId });
+      expect((await plan(second)).actions).toEqual([expect.objectContaining({ eventId, kind: 'upsert', conference: true })]);
     });
 
     it('shows the join link of a ready booking in the booking feed of the host, whatever kind its type has now, and the fixed link before', async () => {

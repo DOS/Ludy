@@ -63,16 +63,18 @@ function EventTypeForm({
   // A Google Meet per booking needs the host's own Google connection with write-back on, so only the host picks it, for a one-host type; a type that already has
   // it keeps the option, so the form still shows what it is.
   const connections = useQuery(orpc.calendar.connections.queryOptions());
-  const meetReady = (connections.data ?? []).some((c) => c.provider === 'google' && c.status === 'active' && c.writeBack);
+  // writeBack is the member's switch; canWriteBack says the grant still carries the events permission (a plain reconnect drops it while the switch stays on).
+  const meetReady = (connections.data ?? []).some((c) => c.provider === 'google' && c.status === 'active' && c.writeBack && c.canWriteBack);
   const mayPickMeet = meetReady && draft.hostUserId === me && draft.assignment === 'single';
   const locationKinds = EVENT_TYPE_LOCATION_KINDS.filter((k) => k !== 'google_meet' || mayPickMeet || draft.locationKind === 'google_meet');
+  // A Meet type whose host or assignment is changed away from the rule (the host themselves, alone, with Google connected) falls back to a link before it is
+  // submitted: the server would refuse it with EVENT_TYPE_MEET_UNAVAILABLE. Every change of the host or the assignment goes through it.
+  const meetOnlyWhereAllowed = (next: EventTypeDraft): EventTypeDraft =>
+    next.locationKind === 'google_meet' && !(meetReady && next.hostUserId === me && next.assignment === 'single') ? { ...next, locationKind: 'video' } : next;
   const set = <K extends keyof EventTypeDraft>(key: K, value: EventTypeDraft[K]) =>
     setDraft((d) => {
       const next = { ...d, [key]: value };
-      // A Meet type whose host or assignment is changed away from the rule (the host themselves, alone, with Google connected) falls back to a link before it is
-      // submitted: the server would refuse it with EVENT_TYPE_MEET_UNAVAILABLE.
-      if ((key === 'hostUserId' || key === 'assignment') && next.locationKind === 'google_meet' && !(meetReady && next.hostUserId === me && next.assignment === 'single')) next.locationKind = 'video';
-      return next;
+      return key === 'hostUserId' || key === 'assignment' ? meetOnlyWhereAllowed(next) : next;
     });
   // Each number's error sits under it, the co-hosts' under their list, checked on leaving the field and on submit
   // (DESIGN.md §4.2, #2004); the server checks again.
@@ -157,7 +159,7 @@ function EventTypeForm({
         )
       )}
       <div className="flex flex-wrap gap-2">
-        <NativeSelect className="min-w-48 flex-1" value={draft.hostUserId} disabled={!manager} onChange={(e) => setDraft((d) => withHost(d, e.target.value))} aria-label={t('fields.host')}>
+        <NativeSelect className="min-w-48 flex-1" value={draft.hostUserId} disabled={!manager} onChange={(e) => setDraft((d) => meetOnlyWhereAllowed(withHost(d, e.target.value)))} aria-label={t('fields.host')}>
           {hostChoices(members, me, manager).map((m) => (
             <NativeSelectOption key={m.userId} value={m.userId}>
               {m.displayName ?? m.email}
