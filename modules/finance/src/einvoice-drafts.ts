@@ -149,7 +149,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
   };
 }
 
-async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
+export async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
   const row = await selectDrafts(ctx).where('id', '=', id).executeTakeFirst();
   if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
   return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today);

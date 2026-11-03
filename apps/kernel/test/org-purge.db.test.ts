@@ -240,13 +240,19 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
       return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
     });
+    // The first step, draft to submitting, is a person's approved issue (finance-einvoice-issue.db.test.ts); here it is set up as the database owner with the triggers off.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      await c.query(`UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await c.query('COMMIT');
+    });
     // The issue job's own path: a worker login in the org's system context moves the draft to issued, with the guards on.
     const job = await workerPool.connect();
     try {
       await job.query('BEGIN');
       await job.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
-      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'submitting' WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
-      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge' WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge', issued_number = 'C26TSB/1', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
       await job.query('COMMIT');
     } catch (error) {
       await job.query('ROLLBACK').catch(() => undefined);

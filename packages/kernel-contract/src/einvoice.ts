@@ -209,3 +209,18 @@ export const zEInvoiceConnectionTested = z.object({ state: z.enum(EINVOICE_CONNE
 export type EInvoiceConnectionTested = z.infer<typeof zEInvoiceConnectionTested>;
 
 export const zEInvoiceSeriesSetDefault = z.strictObject({ seriesId: zId });
+
+// Issuing a draft (ADR-0044 point 3, #2502): the request for approval and what it holds. The payload names the draft, the hash of everything it is issued from (the database
+// computes it from the stored rows: einvoice_content_hash) and the total, so a draft changed after the request cannot be issued under it. No personal data: the card reads the
+// draft itself.
+export const EINVOICE_ISSUE_COMMAND = 'finance.einvoice.issue';
+export const EINVOICE_ISSUE_KIND = 'finance.einvoice_issue';
+export const zEInvoiceIssuePayload = z.strictObject({
+  draftId: zId,
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+  // The draft's total, a decimal string: the database matches it against the draft's own at the approval.
+  amount: z.string().regex(/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
+});
+export type EInvoiceIssuePayload = z.infer<typeof zEInvoiceIssuePayload>;

@@ -16,7 +16,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const RUNNER = 'crove_test_runner';
 // Roles are cluster-wide. When an earlier run already created them, the runner gets the ADMIN OPTION it
 // would hold as their creator.
-const CROVE_ROLES = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_auth_reader'];
+const CROVE_ROLES = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_definer_einvoice', 'crove_auth_reader'];
 
 // A run's database is crove_test_runner_<id> (plus <id>_notowner) and its roles t100_test_runner_<id>_*, with
 // <id> = <Date.now()>_<random>. Another run's leftovers are swept once they are this old and unused.
@@ -377,6 +377,7 @@ suite('migrations with a runner that is not a superuser', () => {
       expect(rows).toEqual([
         { role: 'crove_app', temp: false },
         { role: 'crove_auth_reader', temp: false },
+        { role: 'crove_definer_einvoice', temp: false },
         { role: 'crove_definer_tenant', temp: false },
         { role: 'crove_tenant', temp: false },
         { role: 'crove_worker', temp: false },
