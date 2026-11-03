@@ -208,12 +208,18 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
       expect(issue, column).toMatch(/^#\d+$/);
       expect(reason.length, column).toBeGreaterThan(20);
       expect(expires, column).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-      // An allowance that has run out fails only where the store exists: a table that is not there holds nothing, and the change that removes or
-      // extends the allowance can then still pass this file.
-      if (found.includes(column)) expect(today <= expires, `the allowance of ${column} expired on ${expires} (${issue}): pin the behaviour in tests and remove it, or extend it by an owner decision`).toBe(true);
+      // Whether the store exists is the table's, not the column's: a table that is not there holds nothing, and the change that removes or extends the
+      // allowance can then still pass this file. Where the table exists, its column must be the bytea envelope the scan finds (a text column of base64
+      // under the same name would escape the scan, and the allowance would never expire), and the allowance must not have run out.
+      const [schema, table] = column.split('.') as [string, string];
+      const exists = (await admin((c) => c.query<{ ok: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ok', [`${schema}.${table}`]))).rows[0]?.ok === true;
+      if (exists) {
+        expect(found, `${schema}.${table} exists, so it must have the bytea envelope column ${column} that this allowance names`).toContain(column);
+        expect(today <= expires, `the allowance of ${column} expired on ${expires} (${issue}): pin the behaviour in tests and remove it, or extend it by an owner decision`).toBe(true);
+      }
     }
     // Nothing but the named stores and an allowed one that exists; an allowed one that does not exist yet is accepted.
-    expect(found.filter((col) => !SEALED_STORES.includes(col) && !(col in SEALED_ALLOWANCES))).toEqual([]);
+    expect(found.filter((col) => !SEALED_STORES.includes(col) && !Object.hasOwn(SEALED_ALLOWANCES, col))).toEqual([]);
     expect(SEALED_STORES.filter((col) => !found.includes(col))).toEqual([]);
   });
 

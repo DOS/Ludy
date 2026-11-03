@@ -433,6 +433,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // The revoke at the platform of a closed ads connection's token (W2-1, #2296; pending): its state, count and next try, never the token (that is in
   // crove_ads.ad_token_seal, definer-only). Written by the system context and definers alone: no tenant role inserts, updates or deletes a row.
   'crove_ads.ad_token_revoke': {
+    systemWritesOnly: 'only the system context and the revoke definers write the state of a revoke (#2296); a member context is refused',
     make: (o) => {
       const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
       return {
