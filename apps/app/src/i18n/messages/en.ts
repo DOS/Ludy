@@ -1203,7 +1203,7 @@ export const en = {
     },
     autoDraft: {
       label: 'Let {sales} read customers’ conversations to draft and suggest',
-      hint: "The customer's messages and contact names go to the system's AI service to draft a reply when a new conversation arrives, to suggest an intent and to suggest a contact. Turn it off if you do not want that; a draft you ask for yourself still works.",
+      hint: "The customer's messages and contact names go to the system's AI service to draft a reply when a new conversation arrives, to suggest an intent, to suggest a contact and to suggest the company a contact works at (the names of your contacts and companies are sent for that). Turn it off if you do not want that; a draft you ask for yourself still works.",
     },
     retention: {
       title: 'How long conversations are kept',

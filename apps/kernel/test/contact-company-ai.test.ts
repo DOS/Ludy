@@ -53,6 +53,19 @@ describe('suggestCompanies', () => {
     expect(quiet.asked).toEqual([]);
   });
 
+  it('asks the model nothing when the other rules have filled the list, and shows each name once whatever a reader answers', async () => {
+    const full = setup(async () => [0, 1]);
+    const many = Array.from({ length: 5 }, (_, i) => c(`t${i}`));
+    const answer = await suggestCompanies(full.ai, ORG, USER, found({ taxCode: many, names: [c('a'), c('b')] }));
+    expect(answer.ai).toBe('used');
+    expect(answer.candidates.map((x) => x.reason)).toEqual(['tax_code', 'tax_code', 'tax_code', 'tax_code', 'tax_code']);
+    expect(full.asked).toEqual([]);
+    // A reader that repeats an index, or names one that was not offered, adds nothing twice.
+    const odd = setup(async () => [1, 1, 7, 0]);
+    const once = await suggestCompanies(odd.ai, ORG, USER, found({ names: [c('a'), c('b')] }));
+    expect(once.candidates.map((x) => x.partyId)).toEqual(['b', 'a']);
+  });
+
   it('keeps every company in its own order, with a named state and no error, when the model is off, busy, spent or failing', async () => {
     const names = [c('a'), c('b')];
     const order = (r: Awaited<ReturnType<typeof suggestCompanies>>) => r.candidates.map((x) => x.partyId);

@@ -78,7 +78,8 @@ const SUGGESTIONS_STALE_MS = 5 * 60_000;
 function CompanySuggestions({ person }: { person: Contact }) {
   const t = useTranslations('contacts.company');
   const found = useQuery({
-    queryKey: ['company-suggestions', person.id, person.version],
+    // Under the contacts' own key, so a link, an import or an edit anywhere refreshes it (refreshParties).
+    queryKey: [...orpc.crm.contacts.key(), 'company-suggestions', person.id, person.version],
     queryFn: () => client.crm.contacts.companySuggestions({ partyId: person.id }),
     // An answer that is not one yet (busy) is asked again soon, a few times.
     staleTime: (query) => (query.state.data?.ai === 'busy' ? 0 : SUGGESTIONS_STALE_MS),
@@ -96,7 +97,9 @@ function CompanySuggestions({ person }: { person: Contact }) {
         {candidates.map((c) => (
           <li key={c.partyId} className="flex items-center justify-between gap-2 px-2 py-1.5">
             <span className="min-w-0">
-              <span className="block truncate text-foreground">{c.name}</span>
+              <span className="block truncate text-foreground" title={c.name}>
+                {c.name}
+              </span>
               <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
             </span>
             <Button
@@ -104,6 +107,7 @@ function CompanySuggestions({ person }: { person: Contact }) {
               size="sm"
               variant="outline"
               aria-label={t('linkThis', { name: c.name })}
+              disabled={link.isPending}
               loading={link.isPending && link.variables?.companyId === c.partyId}
               onClick={() => link.mutate({ partyId: person.id, companyId: c.partyId, version: person.version })}
             >

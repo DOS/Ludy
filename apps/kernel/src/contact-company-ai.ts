@@ -25,8 +25,8 @@ export async function suggestCompanies(ai: CompanyAi, orgId: string, userId: str
     ai: state,
     candidates: [...sure, ...names.map((c) => ({ partyId: c.partyId, name: c.name, reason: 'name' as const }))].slice(0, COMPANY_SUGGESTIONS_MAX),
   });
-  // One name or none needs no ranking: nothing is asked of the model.
-  if (found.names.length < 2 || found.label === null) return result('used', found.names);
+  // One name or none needs no ranking, and neither does a list the other rules have already filled: nothing is asked of the model.
+  if (found.names.length < 2 || found.label === null || sure.length >= COMPANY_SUGGESTIONS_MAX) return result('used', found.names);
   if (!ai.reader) return result('off', found.names);
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return result('busy', found.names);
@@ -36,7 +36,8 @@ export async function suggestCompanies(ai: CompanyAi, orgId: string, userId: str
       found.label,
       found.names.map((c) => c.name),
     );
-    const ranked = order.flatMap((i) => (found.names[i] ? [found.names[i]] : []));
+    // Each offered name once, whatever the reader answered: an index outside the list or a repeat adds nothing.
+    const ranked = [...new Set(order)].flatMap((i) => (found.names[i] ? [found.names[i]] : []));
     // The names the model was not shown (past its bound) keep their place after the ranked ones.
     return result('used', [...ranked, ...found.names.filter((c) => !ranked.includes(c))]);
   } catch (error: unknown) {
