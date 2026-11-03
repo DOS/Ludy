@@ -144,6 +144,7 @@ export function googleHostsOnly(fetchImpl?: Fetch): Fetch {
 interface TokenAnswer {
   access_token?: unknown;
   refresh_token?: unknown;
+  refresh_token_expires_in?: unknown;
   scope?: unknown;
 }
 
@@ -364,8 +365,11 @@ export class GoogleAdsConnector implements OAuthConnector {
   readonly pkce = true;
   private readonly client: GoogleAdsClient;
 
-  constructor(app: GoogleAdsAppConfig, options: { fetch?: Fetch; version?: string } = {}) {
+  private readonly now: () => Date;
+
+  constructor(app: GoogleAdsAppConfig, options: { fetch?: Fetch; version?: string; now?: () => Date } = {}) {
     this.client = new GoogleAdsClient(app, options.fetch, options.version);
+    this.now = options.now ?? (() => new Date());
   }
 
   authorizeUrl(input: AuthorizeInput): string {
@@ -398,8 +402,12 @@ export class GoogleAdsConnector implements OAuthConnector {
       throw connectorError(googleAdsError(error));
     });
     const secret = JSON.stringify({ refreshToken: answer.refresh_token } satisfies GoogleAdsSecret);
-    // A refresh token does not expire on a timer (it ends when the person revokes it, after six months unused, or after 7 days in testing mode),
-    // so there is no date: the sync learns it from Google's answer (invalid_grant) and the connection is marked expired.
-    return accounts.map((a) => ({ provider: GOOGLE_ADS_PROVIDER, externalAccountId: a.externalAccountId, displayName: a.displayName, scopes: [...granted], expiresAt: null, secret }));
+    // A refresh token ends when the person revokes it or after six months unused, with no date to know; but one issued to a consent screen left in
+    // Testing lasts 7 days, and Google then says so in the answer (`refresh_token_expires_in`, in seconds) [U: the answer's field is not on the pages
+    // read, so it is used only when present]. That date is the connection's own, so the Ads screen can warn before it lapses and the sync marks the
+    // connection expired on it; without it there is no date, and the sync learns of an end from Google's answer (invalid_grant).
+    const seconds = Number(answer.refresh_token_expires_in);
+    const expiresAt = Number.isFinite(seconds) && seconds > 0 && seconds <= 366 * 86_400 ? new Date(this.now().getTime() + seconds * 1000) : null;
+    return accounts.map((a) => ({ provider: GOOGLE_ADS_PROVIDER, externalAccountId: a.externalAccountId, displayName: a.displayName, scopes: [...granted], expiresAt, secret }));
   }
 }

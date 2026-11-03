@@ -55,7 +55,7 @@ const platform = (answers: Answer[]) => {
 };
 const connector = (answers: Answer[]) => {
   const { fetch, calls } = recorded(answers);
-  return { connector: new GoogleAdsConnector(APP, { fetch }), calls };
+  return { connector: new GoogleAdsConnector(APP, { fetch, now: () => NOW }), calls };
 };
 
 const TOKEN = { body: { access_token: 'access-1', expires_in: 3599, token_type: 'Bearer' } };
@@ -131,6 +131,17 @@ describe('the Google Ads connection', () => {
       redirect_uri: redirectUri,
       code_verifier: 'verifier-1',
     });
+  });
+
+  it('gives the connection a date when Google says the refresh token is short-lived (a consent screen left in Testing), so the screen can warn before it lapses', async () => {
+    const testing = { body: { access_token: 'a', refresh_token: 'r', scope: 'https://www.googleapis.com/auth/adwords', refresh_token_expires_in: 604799 } };
+    const [account] = await connector([testing, LIST, customer(), customer({ manager: true }), customer({ manager: true })]).connector.exchange({ code: 'c', redirectUri, codeVerifier: null });
+    expect(account?.expiresAt?.toISOString()).toBe('2026-11-10T07:59:59.000Z');
+    // A nonsense value is no date.
+    for (const bad of ['x', -5, 0, 1e12]) {
+      const [a] = await connector([{ body: { ...testing.body, refresh_token_expires_in: bad } }, LIST, customer(), customer({ manager: true }), customer({ manager: true })]).connector.exchange({ code: 'c', redirectUri, codeVerifier: null });
+      expect(a?.expiresAt, String(bad)).toBeNull();
+    }
   });
 
   it('makes no connection when the person reaches no readable account (the caller says so in words of its own)', async () => {
