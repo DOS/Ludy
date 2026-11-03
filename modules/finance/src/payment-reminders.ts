@@ -309,8 +309,8 @@ export const paymentReminderSend = defineCommand({
     });
     const status = mail.status === 'suppressed' ? 'suppressed' : 'queued';
     await ctx.activity(
-      'kernel.party',
-      customer.partyId,
+      'kernel.mail_message',
+      mail.id,
       'payment_reminder.sent',
       status === 'suppressed' ? 'Không gửi được thư nhắc thu nợ: địa chỉ email của khách hàng đang bị chặn' : `Gửi thư nhắc thu nợ mức ${level} cho khách hàng, ${customer.overdue.length} hóa đơn quá hạn`,
       { legalEntityId: entity },

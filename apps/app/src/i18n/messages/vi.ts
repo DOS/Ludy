@@ -7759,6 +7759,13 @@ export const vi = {
       bank_party_rules: {
         list: 'Xem các quy tắc khớp dòng sao kê',
       },
+      payment_reminder: {
+        draft: 'Soạn thư nhắc thu nợ của một khách hàng',
+        send: 'Gửi thư nhắc thu nợ cho khách hàng',
+      },
+      payment_reminders: {
+        list: 'Xem khách hàng có hóa đơn quá hạn thanh toán',
+      },
       categorization_rule: {
         create: 'Thêm quy tắc định khoản',
         remove: 'Xóa quy tắc định khoản',

@@ -7762,6 +7762,13 @@ export const en = {
       bank_party_rules: {
         list: 'List bank line rules',
       },
+      payment_reminder: {
+        draft: 'Draft a payment reminder for a customer',
+        send: 'Send a payment reminder to a customer',
+      },
+      payment_reminders: {
+        list: 'List customers with overdue invoices',
+      },
       categorization_rule: {
         create: 'Add an account rule',
         remove: 'Remove an account rule',
