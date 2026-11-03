@@ -331,7 +331,9 @@ export function PaymentRemindersPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const canSend = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
-  const [reviewing, setReviewing] = useState<string[] | null>(null);
+  // Each opening of the review is a fresh one (its own key): reopening a customer whose reminder just went out starts a new draft, not the sent one.
+  const [reviewing, setReviewing] = useState<{ ids: string[]; opened: number } | null>(null);
+  const open = (ids: string[]) => setReviewing((r) => ({ ids, opened: (r?.opened ?? 0) + 1 }));
   const customers = list.data?.customers ?? [];
   const currency = list.data?.currency ?? 'VND';
   const ids = useMemo(() => customers.filter((c) => checked.has(c.partyId)).map((c) => c.partyId), [customers, checked]);
@@ -352,7 +354,7 @@ export function PaymentRemindersPage() {
         subtitle={t('subtitle')}
         actions={
           canSend && customers.length > 0 ? (
-            <Button disabled={ids.length === 0} onClick={() => setReviewing(ids)} data-testid="reminder-compose-selected">
+            <Button disabled={ids.length === 0} onClick={() => open(ids)} data-testid="reminder-compose-selected">
               {t('composeSelected', { count: ids.length })}
             </Button>
           ) : undefined
@@ -377,14 +379,14 @@ export function PaymentRemindersPage() {
           </div>
           <DataTable head={['', t('columns.customer'), t('columns.invoices'), t('columns.overdue'), t('columns.level'), t('columns.owed'), t('columns.last'), '']} numeric={[2, 3, 5]}>
             {customers.map((c) => (
-              <Row key={c.partyId} customer={c} currency={currency} checked={checked.has(c.partyId)} onCheck={(value) => toggle(c.partyId, value)} onOpen={() => setReviewing([c.partyId])} />
+              <Row key={c.partyId} customer={c} currency={currency} checked={checked.has(c.partyId)} onCheck={(value) => toggle(c.partyId, value)} onOpen={() => open([c.partyId])} />
             ))}
           </DataTable>
           {list.data?.more && <p className="mt-3 text-xs text-subtle-foreground">{t('more')}</p>}
           <p className="mt-3 text-xs text-subtle-foreground">{t('termsNote')}</p>
         </>
       )}
-      {reviewing && canSend && <Review key={reviewing.join(',')} ids={reviewing} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
+      {reviewing && canSend && <Review key={reviewing.opened} ids={reviewing.ids} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
     </>
   );
 }

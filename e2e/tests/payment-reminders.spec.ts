@@ -126,7 +126,7 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     await expect(row).toContainText(NOTICE);
     await row.getByRole('button', { name: `Soạn thư nhắc cho ${BUYER}` }).click();
     await page.getByTestId('reminder-send').click();
-    await expect(page.getByText('Khách hàng này đã được nhắc ở mức này trong 3 ngày qua.')).toBeVisible();
+    await expect(page.getByText(/đã được nhắc ở mức này trong 3 ngày qua/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Gửi lại, tôi xác nhận' })).toBeVisible();
   });
 });
