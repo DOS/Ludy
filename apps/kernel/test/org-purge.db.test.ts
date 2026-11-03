@@ -172,8 +172,11 @@ suite('org purge on PostgreSQL (#1024)', () => {
                 ($1, $2, $3, 'direct', 'pending', $8, $9, NULL, NULL, NULL, NULL, NULL)`,
         [org.orgId, message, connection, imageKey, `content:${'b'.repeat(64)}`, 'b'.repeat(64), imageBytes.byteLength, `https://cdn.zdn.vn/${tag}.png`, pendingKey],
       );
-      // A customer only a ledger line names (a sale on 131): no foreign key points at it.
-      const ledgerParty = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Khách nợ', $2) RETURNING id`, [org.orgId, `ledger-${tag}@purge.test`])).rows[0]?.id;
+      // A customer only a ledger line names (a sale on 131): no foreign key points at it. A person who works at a company no voucher names (#2438): the company goes
+      // and the kept person's link with it (ON DELETE SET NULL), instead of the purge stopping on the foreign key.
+      const ledgerParty = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'person', 'Khách nợ', $2) RETURNING id`, [org.orgId, `ledger-${tag}@purge.test`])).rows[0]?.id;
+      const oldCompany = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'organization', 'Công ty cũ của khách nợ') RETURNING id`, [org.orgId])).rows[0]?.id;
+      await c.query('UPDATE crove_kernel.party SET company_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ledgerParty, oldCompany]);
       await c.query('BEGIN');
       const entry = (
         await c.query<{ id: string }>(
@@ -398,6 +401,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
       { named: true, email: null, phone: null, address: null },
     ]);
     expect(await one('SELECT id FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ id: s.ledgerParty });
+    // The kept person's company went with the purge and the link was cleared, not left to stop it.
+    expect(await one('SELECT company_id FROM crove_kernel.party WHERE org_id = $1 AND id = $2', [s.org.orgId, s.ledgerParty])).toEqual({ company_id: null });
     // The booked invoice's proposal stays (the approval trail); the stray one is deleted.
     expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
@@ -453,7 +458,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_kernel.conversation_attachment': 2,
             'crove_kernel.tenant_member': 2,
             'crove_kernel.file': 1,
-            'crove_kernel.party': 1,
+            'crove_kernel.party': 2,
             'crove_kernel.task': 3,
             'crove_kernel.task_comment': 1,
             'crove_kernel.position': 1,

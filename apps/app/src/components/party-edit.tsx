@@ -27,10 +27,13 @@ export const refreshParties = () => {
 // A party's name and contact details, edited in a row under it by owners, admins and members. The version read goes
 // back with the save, so an edit made meanwhile by someone else is refused rather than overwritten. A tax code can be
 // added but not changed: it is how invoices find their party.
-export function EditParty({ party, ns, onDone }: { party: EditableFields; ns: PartyScreen; onDone: () => void }) {
+// kind: set only by the contacts screen (#2438), which lets a person or a company be switched when nothing points at it: the select shows with one plain line saying
+// when it works, and the server's refusal shows if it does not.
+export function EditParty({ party, ns, onDone, kind }: { party: EditableFields; ns: PartyScreen; onDone: () => void; kind?: 'person' | 'organization' }) {
   const t = useTranslations(ns);
   const tc = useTranslations('common');
   const [form, setForm] = useState({
+    kind: kind ?? 'person',
     name: party.name,
     taxCode: party.taxCode ?? '',
     address: party.address ?? '',
@@ -53,7 +56,7 @@ export function EditParty({ party, ns, onDone }: { party: EditableFields; ns: Pa
     if (key === 'taxCode') return taxCodeLocked || !form.taxCode.trim() || normalizeTaxCode(form.taxCode) ? null : t('taxCodeInvalid');
     return !form.email.trim() || isEmailAddress(form.email) ? null : t('emailInvalid');
   });
-  const field = (key: keyof typeof form, props: { type?: string; maxLength: number; disabled?: boolean; required?: boolean }, hint = false) => {
+  const field = (key: Exclude<keyof typeof form, 'kind'>, props: { type?: string; maxLength: number; disabled?: boolean; required?: boolean }, hint = false) => {
     const id = `party-${party.id}-${key}`;
     const checked = key === 'name' || key === 'taxCode' || key === 'email' ? key : null;
     const error = checked ? fields.of(checked) : undefined;
@@ -89,6 +92,7 @@ export function EditParty({ party, ns, onDone }: { party: EditableFields; ns: Pa
       address: orNull(form.address),
       email: orNull(form.email),
       phone: orNull(form.phone),
+      ...(kind && form.kind !== kind ? { kind: form.kind } : {}),
     });
   };
   return (
@@ -105,6 +109,18 @@ export function EditParty({ party, ns, onDone }: { party: EditableFields; ns: Pa
       {field('address', { maxLength: 500 })}
       {field('email', { type: 'email', maxLength: 254 })}
       {field('phone', { type: 'tel', maxLength: 30 })}
+      {kind && (
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`party-${party.id}-kind`}>{t('fields.kind')}</Label>
+          <NativeSelect id={`party-${party.id}-kind`} aria-describedby={fieldHintId(`party-${party.id}-kind`)} value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value === 'organization' ? 'organization' : 'person' })}>
+            <NativeSelectOption value="person">{t('kind.person')}</NativeSelectOption>
+            <NativeSelectOption value="organization">{t('kind.organization')}</NativeSelectOption>
+          </NativeSelect>
+          <p id={fieldHintId(`party-${party.id}-kind`)} className="text-xs text-subtle-foreground">
+            {t('kindChangeHint')}
+          </p>
+        </div>
+      )}
       <div className="flex items-end gap-2">
         <Button type="submit" variant="outline" size="sm" disabled={save.isPending}>
           {t('save')}

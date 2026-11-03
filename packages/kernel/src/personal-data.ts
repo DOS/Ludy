@@ -501,9 +501,9 @@ export const personalDataErase = defineCommand({
 
     // Parties the value identifies, and whether the books name them.
     const partyMatch = sql<boolean>`(${match('email', 'p.email') ?? never} OR ${match('phone', 'p.phone') ?? never} OR ${match('tax_code', 'p.tax_code') ?? never})`;
-    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; documented: boolean }>`
+    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
-             p.tax_code IS NOT NULL AS tax_code,
+             p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,
              (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
@@ -519,6 +519,9 @@ export const personalDataErase = defineCommand({
           email: null,
           phone: null,
           address: null,
+          // The company a person works at (#2438) is a fact about the person, not a line of the books: it goes with the contact details, for a party the books name
+          // (which keeps its name and tax code) as for one they do not (which loses its name too).
+          company_id: null,
           ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME } : {}),
           version: eb('version', '+', 1),
           updated_at: ctx.now,
@@ -526,9 +529,22 @@ export const personalDataErase = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', party.id)
         .execute();
+      // The people who worked at a forgotten company are not left pointing at the placeholder name.
+      if (forget) {
+        // The matched parties count their own link in the loop; the others are counted here.
+        const unlinked = await ctx.trx
+          .updateTable('crove_kernel.party')
+          .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
+          .where('org_id', '=', ctx.orgId)
+          .where('company_id', '=', party.id)
+          .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
+          .executeTakeFirst();
+        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
+      }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
       add('crove_kernel.party.address', Number(party.address));
+      add('crove_kernel.party.company_id', Number(party.company));
       if (forget) {
         add('crove_kernel.party.name', 1);
         add('crove_kernel.party.tax_code', Number(party.tax_code));

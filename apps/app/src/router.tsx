@@ -71,7 +71,7 @@ import { SHARE_PATH, forgetShare, pendingShare, readShareFragment, readShareOrg,
 import { TaskDetailPage, TasksPage } from './routes/tasks.tsx';
 import { BookingsPage } from './routes/bookings.tsx';
 import { ContactImportPage } from './routes/contact-import.tsx';
-import { ContactsPage } from './routes/contacts.tsx';
+import { CompaniesPage, ContactsPage } from './routes/contacts.tsx';
 import { DealsPage } from './routes/deals.tsx';
 import { NotesPage } from './routes/notes.tsx';
 import { MyWorkPage } from './routes/my-work.tsx';
@@ -473,6 +473,8 @@ const tasksRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks', 
 const bookingsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'bookings', component: BookingsPage });
 // The contacts of the CRM (#2228): the org's parties with search, filters and saved views.
 const contactsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts', component: ContactsPage });
+// The companies, apart from the people (#2438): the same list with the kind fixed.
+const companiesRoute = createRoute({ getParentRoute: () => orgRoute, path: 'companies', component: CompaniesPage });
 // Importing contacts from a CSV (#2229).
 const contactImportRoute = createRoute({ getParentRoute: () => orgRoute, path: 'contacts/import', component: ContactImportPage });
 // The org's deals (#2225), with the crm module.
@@ -522,7 +524,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, companiesRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
