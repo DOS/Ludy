@@ -5,7 +5,9 @@
 // - finance.einvoice.job_begin (system; R2 external): locks the draft, decides what the job does next (send, ask the provider by the key, or poll) and commits the call to the
 //   external_call ledger BEFORE it is made. A call found `started` or `ambiguous` is never sent again: the job asks the provider by the key first. The seller's tax code on the
 //   connection must be the entity's CURRENT one, and the draft's stored amounts must equal what its stored lines compute to; otherwise the draft is `failed` with a code and
-//   nothing is sent.
+//   nothing is sent, and the draft goes back to a draft with the code on screen (it was never sent). A problem on our side with an invoice the provider has or may have (the
+//   credential, the connection) never ends it: the draft keeps its state and is asked about again later, until the day is over. A call started a moment ago is in flight and
+//   is left alone, and one asked about before its time has come is too.
 // - finance.einvoice.job_record (system; R1): writes what came back (issued, pending, still pending, rejected, lost answer, nothing found under the key, failed) into the draft and
 //   the call. A rejection sends the draft back to `draft` with a new key (a rejected invoice's key is never reused) and the code on screen. A pending invoice not answered within
 //   a day is `failed` with STATUS_UNKNOWN.
@@ -13,14 +15,23 @@
 // No audit fact, ledger row or error carries a credential, the buyer's data or a provider's own text: ids, codes and counts only.
 import { sql } from 'kysely';
 import { z } from 'zod';
+import type { Db } from '@crove/db';
 import type { EInvoiceRequest } from '@crove/einvoice';
 import { zId } from '@crove/kernel-contract';
 import { defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
-import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
+import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
 import { computeDraft } from './domain/einvoice-draft.ts';
 
 const plain = (value: string): string => money(value).toFixed();
+
+// A page of the drafts whose time has come (crove_finance.einvoice_due, the worker login's alone), for the worker's sweep, which pages through them all in key order.
+export const EINVOICE_DUE_PAGE = 1000;
+export async function einvoiceDue(workerDb: Db, after: { orgId: string; draftId: string } | null): Promise<Array<{ orgId: string; draftId: string }>> {
+  const { rows } = await sql<{ org_id: string; draft_id: string }>`
+    SELECT org_id, draft_id FROM crove_finance.einvoice_due(${after?.orgId ?? null}::uuid, ${after?.draftId ?? null}::uuid, ${EINVOICE_DUE_PAGE}::int)`.execute(workerDb);
+  return rows.map((r) => ({ orgId: r.org_id, draftId: r.draft_id }));
+}
 
 const issueKey = (draftKey: string) => `einvoice:issue:${draftKey}`;
 const statusKey = (draftKey: string, tail: string) => `einvoice:status:${draftKey}:${tail}`;
@@ -62,7 +73,7 @@ async function endCall(ctx: CommandContext, key: string, end: CallEnd): Promise<
 }
 
 const selectCall = (ctx: CommandContext, key: string) =>
-  ctx.trx.selectFrom('crove_kernel.external_call').select(['state', 'calls', 'external_ref']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
+  ctx.trx.selectFrom('crove_kernel.external_call').select(['state', 'calls', 'external_ref', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', key).executeTakeFirst();
 
 const selectDraft = (ctx: CommandContext, draftId: string) =>
   ctx.trx.selectFrom('crove_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId).where('id', '=', draftId.toLowerCase()).forUpdate().executeTakeFirst();
@@ -87,15 +98,45 @@ export type EInvoiceJobBegin =
 
 const none = (reason: string): EInvoiceJobBegin => ({ action: 'none', reason });
 
-// The draft `failed` before anything was sent (or while it waits), with the code that says why.
-async function failDraft(ctx: CommandContext, draft: DraftRow, code: string): Promise<void> {
+// A draft that could not be sent, and nothing was: it is `failed` for the code and at once a draft again with a new key, so the person fixes what the code says (a tax code, the
+// connection) and issues it again with a new approval; the code stays on the draft until then.
+async function releaseDraft(ctx: CommandContext, draft: DraftRow, code: string): Promise<void> {
   await ctx.trx
     .updateTable('crove_finance.einvoice_draft')
     .set({ state: 'failed', error_code: code, next_check_at: null, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draft.id)
     .execute();
-  ctx.audit({ draftId: draft.id, failed: code });
+  await ctx.trx
+    .updateTable('crove_finance.einvoice_draft')
+    .set({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0, updated_at: ctx.now })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', draft.id)
+    .execute();
+  ctx.audit({ draftId: draft.id, released: code });
+}
+
+// A problem on our side with an invoice the provider has or may have (the credential, the connection): it keeps its state and is asked about again a minute later. Past the day it
+// is `failed` with STATUS_UNKNOWN for a person to look at, as for any question that keeps failing.
+async function holdDraft(ctx: CommandContext, draft: DraftRow, code: string): Promise<string> {
+  if (draft.submitted_at && statusDeadlinePassed(new Date(draft.submitted_at), ctx.now)) {
+    await ctx.trx
+      .updateTable('crove_finance.einvoice_draft')
+      .set({ state: 'failed', error_code: EINVOICE_ERROR_CODES.statusUnknown, next_check_at: null, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', draft.id)
+      .execute();
+    ctx.audit({ draftId: draft.id, state: 'failed', code: EINVOICE_ERROR_CODES.statusUnknown });
+    return 'failed';
+  }
+  await ctx.trx
+    .updateTable('crove_finance.einvoice_draft')
+    .set({ error_code: code, next_check_at: new Date(ctx.now.getTime() + AMBIGUOUS_RETRY_SECONDS * 1000), check_attempts: draft.check_attempts + 1, updated_at: ctx.now })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', draft.id)
+    .execute();
+  ctx.audit({ draftId: draft.id, held: code });
+  return draft.state;
 }
 
 // The connection a draft issues through: the entity's own connection to the series' provider, active, and, for a first send, with the seller's tax code the entity has NOW (the
@@ -186,18 +227,25 @@ export const einvoiceJobBegin = defineCommand({
     if (filesPending) action = 'files';
     else if (draft.state === 'pending') action = 'poll';
     else if (!issue) action = 'issue';
-    else if (issue.state === 'started' || issue.state === 'ambiguous') action = 'ask';
-    else return none('CALL_ENDED');
+    else if (issue.state === 'started' || issue.state === 'ambiguous') {
+      // A send started a moment ago is in flight (or being retried after a crash): the provider is asked about it once it is old enough to have answered or given up.
+      if (issue.state === 'started' && ctx.now.getTime() - new Date(issue.updated_at).getTime() < IN_FLIGHT_SECONDS * 1000) return none('IN_FLIGHT');
+      action = 'ask';
+    } else return none('CALL_ENDED');
+    // Never asked faster than the check time the last answer set.
+    if (action !== 'files' && draft.next_check_at !== null && new Date(draft.next_check_at).getTime() > ctx.now.getTime()) return none('NOT_DUE');
     const target = await connectionFor(ctx, draft, action === 'issue');
     if ('code' in target) {
-      // An issued invoice is never failed: its evidence waits for the connection to be made again.
-      if (action !== 'files') await failDraft(ctx, draft, target.code);
+      // An issued invoice is never failed: its evidence waits for the connection to be made again. One the provider has or may have is held, never ended; only a send
+      // that was never made goes back to a draft.
+      if (action === 'issue') await releaseDraft(ctx, draft, target.code);
+      else if (action !== 'files') await holdDraft(ctx, draft, target.code);
       return none(target.code);
     }
     const { request, consistent } = await requestFor(ctx, draft, target);
     if (action === 'files') return { action, draftId: draft.id, legalEntityId: draft.legal_entity_id, key: draft.idempotency_key, ref: draft.provider_ref, connectionId: target.connectionId, channelProvider: target.channelProvider, adapter: target.adapter, request };
     if (action === 'issue' && !consistent) {
-      await failDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch);
+      await releaseDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch);
       return none(EINVOICE_ERROR_CODES.draftMismatch);
     }
     const provider = target.channelProvider;
@@ -301,6 +349,12 @@ export const einvoiceJobRecord = defineCommand({
         // The draft stays as it is; the issue call (if that was the step) stays ambiguous, and the next try asks first.
         if (input.step === 'issue') await endCall(ctx, issueCall, { state: 'ambiguous', kind: result.kind === 'unreachable' || result.kind === 'timeout' ? 'transient' : 'unknown', code: result.kind.toUpperCase() });
         else await closeStatus({ state: 'ambiguous', kind: 'transient', code: result.kind.toUpperCase() });
+        // A question that keeps failing is held to the same day as one that keeps answering `pending`: past it the invoice is `failed` with STATUS_UNKNOWN, for a person to look at.
+        if (draft.submitted_at && statusDeadlinePassed(new Date(draft.submitted_at), ctx.now)) {
+          await update({ state: 'failed', error_code: EINVOICE_ERROR_CODES.statusUnknown, next_check_at: null });
+          ctx.audit({ draftId: draft.id, state: 'failed', code: EINVOICE_ERROR_CODES.statusUnknown });
+          return { recorded: true, state: 'failed' };
+        }
         await update({ next_check_at: new Date(ctx.now.getTime() + AMBIGUOUS_RETRY_SECONDS * 1000), check_attempts: draft.check_attempts + 1 });
         ctx.audit({ draftId: draft.id, ambiguous: result.kind });
         return { recorded: true, state: draft.state };
@@ -318,24 +372,32 @@ export const einvoiceJobRecord = defineCommand({
           .returning('id')
           .executeTakeFirst();
         if (!again) return { recorded: false, state: draft.state };
+        // The provider has nothing under the key, so nothing was sent: what stops the send now returns the draft to a draft.
         const target = await connectionFor(ctx, draft, true);
         if ('code' in target) {
-          await failDraft(ctx, draft, target.code);
-          return { recorded: true, state: 'failed' };
+          await endCall(ctx, issueCall, { state: 'failed', kind: 'permission', code: target.code });
+          await releaseDraft(ctx, draft, target.code);
+          return { recorded: true, state: 'draft' };
         }
         const { request, consistent } = await requestFor(ctx, draft, target);
         if (!consistent) {
-          await failDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch);
-          return { recorded: true, state: 'failed' };
+          await endCall(ctx, issueCall, { state: 'failed', kind: 'bad_request', code: EINVOICE_ERROR_CODES.draftMismatch });
+          await releaseDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch);
+          return { recorded: true, state: 'draft' };
         }
         return { recorded: true, state: draft.state, resend: request };
       }
       case 'failed': {
-        await update({ state: 'failed', error_code: result.code, next_check_at: null });
-        if (input.step === 'issue') await endCall(ctx, issueCall, { state: 'failed', kind: result.code === 'CREDENTIALS' ? 'permission' : 'transient', code: result.code });
-        else await closeStatus({ state: 'failed', kind: result.code === 'CREDENTIALS' ? 'permission' : 'transient', code: result.code });
-        ctx.audit({ draftId: draft.id, state: 'failed', code: result.code });
-        return { recorded: true, state: 'failed' };
+        const kind = result.code === 'CREDENTIALS' ? 'permission' : 'transient';
+        if (input.step === 'issue') {
+          // The send was refused before it was made: nothing was sent, so the draft goes back to a draft with the code on screen.
+          await endCall(ctx, issueCall, { state: 'failed', kind, code: result.code });
+          await releaseDraft(ctx, draft, result.code);
+          return { recorded: true, state: 'draft' };
+        }
+        // A question to the provider about an invoice it has or may have: our problem (the credential) never ends the invoice. It is asked about again later.
+        await closeStatus({ state: 'ambiguous', kind, code: result.code });
+        return { recorded: true, state: await holdDraft(ctx, draft, result.code) };
       }
     }
   },

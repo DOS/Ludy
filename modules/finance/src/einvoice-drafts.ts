@@ -181,6 +181,7 @@ export const einvoiceDraftList = defineQuery({
         issuedNumber: row.issued_number,
         errorCode: row.error_code,
         evidenceStored: row.signed_file_id !== null,
+        updatedAt: new Date(row.updated_at).toISOString(),
       };
     });
   },

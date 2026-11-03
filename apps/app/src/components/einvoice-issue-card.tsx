@@ -10,7 +10,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
 import { CardSkeleton, ErrorText } from './ui.tsx';
 
-export function EInvoiceIssueCard({ id, title, slug }: { id: string; title: string; slug: string }) {
+export function EInvoiceIssueCard({ id, title, slug, pending }: { id: string; title: string; slug: string; pending: boolean }) {
   const t = useTranslations('inboxDetail');
   const f = useFormat();
   const view = useQuery(orpc.einvoice.drafts.issueRequest.queryOptions({ input: { proposalId: id } }));
@@ -35,7 +35,8 @@ export function EInvoiceIssueCard({ id, title, slug }: { id: string; title: stri
           <p className="text-xs text-subtle-foreground">{t('issueIrreversible')}</p>
         </div>
       ) : null}
-      {draft && !draft.current && (
+      {/* Only a request still waiting can be refused for a change: an approved, rejected or expired one has no approval left to refuse. */}
+      {pending && draft && !draft.current && (
         <Alert data-testid="einvoice-issue-stale">
           <AlertDescription>{t('issueStale')}</AlertDescription>
         </Alert>

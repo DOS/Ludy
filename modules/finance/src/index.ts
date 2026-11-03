@@ -37,6 +37,7 @@ import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoic
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { einvoiceIssueCommands, einvoiceIssueQueries } from './einvoice-issue.ts';
 import { einvoiceJobCommands } from './einvoice-job.ts';
+export { EINVOICE_DUE_PAGE, einvoiceDue } from './einvoice-job.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';

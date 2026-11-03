@@ -223,7 +223,8 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     control.pendingPolls = 2;
     expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'pending' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', provider_ref: expect.any(String), check_attempts: 1, next_check_at: expect.any(Date), signed_file_id: null });
-    // Not due yet: nothing to ask from the sweep; the first question is due after its wait.
+    // Not due yet: nothing is asked before the time the last answer set (the sweep may queue a draft twice); the first question is due after its wait.
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'NOT_DUE' });
     await due(o, draftId);
     expect(await run(o, draftId, provider)).toEqual({ action: 'poll', state: 'pending' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', check_attempts: 2 });
@@ -242,6 +243,28 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     await run(o, draftId, provider);
     await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
     expect(await run(o, draftId, provider)).toEqual({ action: 'poll', state: 'failed' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', next_check_at: null });
+  });
+
+  it('holds a question that keeps failing to the same day: past it the invoice is failed with STATUS_UNKNOWN, not asked about for ever', async () => {
+    const o = await org();
+    const draftId = await submitted(o);
+    const { provider, control } = createSandboxEInvoiceProvider();
+    control.script('pending');
+    control.pendingPolls = 10_000;
+    await run(o, draftId, provider);
+    // The provider cannot be reached any more: each question ends ambiguous and is tried again a minute later, until the day is over.
+    const down: EInvoiceProvider = {
+      ...provider,
+      status: async () => {
+        throw new EInvoiceProviderError('unreachable');
+      },
+    };
+    await due(o, draftId);
+    expect(await run(o, draftId, down)).toEqual({ action: 'poll', state: 'pending' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', check_attempts: 2, next_check_at: expect.any(Date) });
+    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    expect(await run(o, draftId, down)).toEqual({ action: 'poll', state: 'failed' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', next_check_at: null });
   });
 
@@ -269,7 +292,9 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'submitting' });
     expect(await draftRow(o, draftId)).toMatchObject({ state: 'submitting', next_check_at: expect.any(Date), check_attempts: 1 });
     expect((await calls(o)).map((c) => [c.step, c.state])).toEqual([['issue', 'ambiguous']]);
-    // The next run asks by the key first; the provider has the invoice, so it is issued and nothing is sent again.
+    // The next run asks by the key first, once its minute is over; the provider has the invoice, so it is issued and nothing is sent again.
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'NOT_DUE' });
+    await due(o, draftId);
     expect(await run(o, draftId, provider)).toEqual({ action: 'ask', state: 'issued' });
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
     expect((await calls(o)).map((c) => [c.step, c.state])).toEqual(expect.arrayContaining([['issue', 'succeeded'], ['status', 'succeeded'], ['files', 'succeeded']]));
@@ -292,6 +317,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
       },
     };
     expect(await run(o, draftId, flaky)).toEqual({ action: 'issue', state: 'submitting' });
+    await due(o, draftId);
     expect(await run(o, draftId, flaky)).toEqual({ action: 'ask', state: 'issued' });
     const ledger = await calls(o);
     expect(ledger.find((c) => c.step === 'issue')).toMatchObject({ state: 'succeeded', calls: 2 });
@@ -303,7 +329,8 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     await execute(changed, 'kernel.org.set_tax_code', { taxCode: OTHER_TAX_CODE });
     const a = createSandboxEInvoiceProvider();
     expect(await run(changed, changedDraft, a.provider)).toEqual({ action: 'none', state: 'SELLER_TAX_CODE_CHANGED' });
-    expect(await draftRow(changed, changedDraft)).toMatchObject({ state: 'failed', error_code: 'SELLER_TAX_CODE_CHANGED' });
+    // Nothing was sent, so the draft is a draft again with the code on screen and a new key.
+    expect(await draftRow(changed, changedDraft)).toMatchObject({ state: 'draft', error_code: 'SELLER_TAX_CODE_CHANGED', submitted_at: null });
     expect(a.control.calls).toEqual([]);
     expect(await calls(changed)).toEqual([]);
 
@@ -312,7 +339,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     await fixture('UPDATE crove_finance.einvoice_draft_line SET amount = amount + 1 WHERE org_id = $1 AND draft_id = $2 AND line_no = 1', [mismatch.orgId, mismatchDraft]);
     const b = createSandboxEInvoiceProvider();
     expect(await run(mismatch, mismatchDraft, b.provider)).toEqual({ action: 'none', state: 'DRAFT_MISMATCH' });
-    expect(await draftRow(mismatch, mismatchDraft)).toMatchObject({ state: 'failed', error_code: 'DRAFT_MISMATCH' });
+    expect(await draftRow(mismatch, mismatchDraft)).toMatchObject({ state: 'draft', error_code: 'DRAFT_MISMATCH' });
     expect(b.control.calls).toEqual([]);
 
     // The connection was removed between the approval and the job (the request itself is refused without one).
@@ -321,7 +348,7 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1', [bare.orgId]);
     const c = createSandboxEInvoiceProvider();
     expect(await run(bare, bareDraft, c.provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
-    expect(await draftRow(bare, bareDraft)).toMatchObject({ state: 'failed', error_code: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(bare, bareDraft)).toMatchObject({ state: 'draft', error_code: 'PROVIDER_NOT_READY' });
     expect(c.control.calls).toEqual([]);
   });
 
@@ -329,10 +356,53 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     const o = await org();
     const draftId = await submitted(o);
     expect(await runEInvoiceIssue({ runtime: worker, broker, store, providers: {} }, { orgId: o.orgId, draftId })).toMatchObject({ action: 'issue', state: 'provider_off' });
-    // The call was committed and none was made: the next job asks first.
-    expect((await calls(o)).map((c) => [c.step, c.state])).toEqual([['issue', 'started']]);
+    // The call was committed and none was made: it ended failed, and the draft is a draft again with the code on screen (nothing was sent).
+    expect((await calls(o)).map((c) => [c.step, c.state])).toEqual([['issue', 'failed']]);
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'draft', error_code: 'PROVIDER_UNAVAILABLE' });
     // The API login's runtime refuses a system command: only the worker runs the job.
-    await expect(runEInvoiceIssue({ runtime: rt, broker, store, providers: { sandbox: createSandboxEInvoiceProvider().provider } }, { orgId: o.orgId, draftId })).rejects.toBeDefined();
+    await expect(runEInvoiceIssue({ runtime: rt, broker, store, providers: { sandbox: createSandboxEInvoiceProvider().provider } }, { orgId: o.orgId, draftId })).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 });
+  });
+
+  it('never ends an invoice the provider has or may have over our own problem: a refused credential or a missing connection holds it and it is asked about again', async () => {
+    const o = await org();
+    const draftId = await submitted(o);
+    const { provider, control } = createSandboxEInvoiceProvider();
+    control.script('pending');
+    control.pendingPolls = 1;
+    expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'pending' });
+    // The credential is refused when the invoice is asked about: it stays pending with the code on screen, asked about a minute later, not failed.
+    const refused: EInvoiceProvider = {
+      ...provider,
+      status: async () => {
+        throw new EInvoiceProviderError('credentials');
+      },
+    };
+    await due(o, draftId);
+    expect(await run(o, draftId, refused)).toEqual({ action: 'poll', state: 'pending' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', error_code: 'CREDENTIALS', next_check_at: expect.any(Date), check_attempts: 2 });
+    // The connection is gone as well: the same, nothing sent, nothing ended.
+    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1', [o.orgId]);
+    await due(o, draftId);
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'pending', error_code: 'PROVIDER_NOT_READY' });
+    // Past the day it is for a person to look at, never silently lost or sent again.
+    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN' });
+    expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
+  });
+
+  it('leaves a send that started a moment ago alone (it is in flight) and asks about it once it is old enough', async () => {
+    const o = await org();
+    const draftId = await submitted(o);
+    const begin = () => worker.execute<{ action: string; reason?: string }>('finance.einvoice.job_begin', { draftId }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
+    // The first job commits its call and, being cut off, never records an answer; a second job at once finds the call in flight and does nothing.
+    expect(await begin()).toMatchObject({ action: 'issue' });
+    expect(await begin()).toEqual({ action: 'none', reason: 'IN_FLIGHT' });
+    expect((await calls(o)).map((c) => [c.step, c.state])).toEqual([['issue', 'started']]);
+    // Minutes later nobody answered: the provider is asked by the key before anything is sent again.
+    await fixture("UPDATE crove_kernel.external_call SET updated_at = pg_catalog.now() - interval '10 minutes' WHERE org_id = $1 AND key LIKE 'einvoice:issue:%'", [o.orgId]);
+    expect(await begin()).toMatchObject({ action: 'ask' });
   });
 });
 

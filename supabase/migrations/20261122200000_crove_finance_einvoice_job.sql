@@ -10,7 +10,9 @@
 -- minute with no check time (a job that never ran: the event was lost, or the worker was down); an issued one when its evidence is still to store.
 SET LOCAL lock_timeout = '2s';
 
-SELECT crove_jobs.create_queue('finance-einvoice-issue', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
+-- One job per draft at a time: the exclusive policy refuses a second job under the same singleton key while one is waiting, running or being retried (a standard queue
+-- ignores the key, so the event and the sweep could both put a draft to the provider at once).
+SELECT crove_jobs.create_queue('finance-einvoice-issue', '{"policy":"exclusive","deadLetter":"kernel-job.dlq"}'::jsonb);
 
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_due(p_after_org uuid, p_after_draft uuid, p_limit int)
 RETURNS TABLE (org_id uuid, draft_id uuid)

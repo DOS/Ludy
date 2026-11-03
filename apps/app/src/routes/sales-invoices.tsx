@@ -392,7 +392,8 @@ export function SalesInvoicesPage() {
                 {d.state === 'issued' && !d.evidenceStored && <span className="ml-2 text-xs text-subtle-foreground">{t('evidencePending')}</span>}
                 {d.issueCount > 0 && <span className="ml-2 text-xs text-subtle-foreground">{t('issueCount', { count: String(d.issueCount) })}</span>}
                 <DraftNote draft={d} />
-                {canWrite && d.state === 'draft' && d.issueCount === 0 && <IssueAction draft={d} canApprove={canApprove} />}
+                {/* Issuing needs a provider this deployment has switched on: with none, the request would be approved and nothing would send it. */}
+                {canWrite && d.state === 'draft' && d.issueCount === 0 && status.data?.sandbox && <IssueAction key={`${d.id}:${d.updatedAt}`} draft={d} canApprove={canApprove} />}
               </TableCell>
               <TableCell className="px-4 py-3 text-right">
                 {canWrite && d.state === 'draft' && (

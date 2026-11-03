@@ -861,7 +861,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         <div className="mb-6">
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('issueFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('issueNotEligible')}</p>}
-          <EInvoiceIssueCard id={item.id} title={item.title} slug={slug} />
+          <EInvoiceIssueCard id={item.id} title={item.title} slug={slug} pending={pending} />
         </div>
       )}
       {reading && (

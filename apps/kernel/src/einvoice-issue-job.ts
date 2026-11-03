@@ -6,9 +6,7 @@
 // the ordinary intake (kernel.file.ingest naming the draft's entity, then the extraction queue), so the sale is posted only from that XML and waits for an ordinary approval.
 // Nothing here logs or stores a credential, the buyer's data or a provider's own text: codes and ids.
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type EInvoiceOutcome, type EInvoiceProvider, type EInvoiceRequest, type EInvoiceStatusAnswer } from '@crove/einvoice';
-import type { Db } from '@crove/db';
 import { DomainError, fileKey, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { sql } from 'kysely';
 
 const SYSTEM = { type: 'system' as const, component: 'finance.einvoice' };
 
@@ -59,14 +57,6 @@ interface SealedChannelCredential {
   envelope: string;
 }
 
-// A page of the drafts whose time has come (crove_finance.einvoice_due, the worker login's alone), for the sweep.
-export const EINVOICE_DUE_PAGE = 1000;
-export async function einvoiceDue(workerDb: Db, after: { orgId: string; draftId: string } | null): Promise<Array<{ orgId: string; draftId: string }>> {
-  const { rows } = await sql<{ org_id: string; draft_id: string }>`
-    SELECT org_id, draft_id FROM crove_finance.einvoice_due(${after?.orgId ?? null}::uuid, ${after?.draftId ?? null}::uuid, ${EINVOICE_DUE_PAGE}::int)`.execute(workerDb);
-  return rows.map((r) => ({ orgId: r.org_id, draftId: r.draft_id }));
-}
-
 const fromOutcome = (outcome: EInvoiceOutcome): Result => {
   if (outcome.state === 'issued') return { outcome: 'issued', ref: outcome.ref, number: outcome.number, signedAt: outcome.signedAt, taxAuthorityCode: outcome.taxAuthorityCode };
   if (outcome.state === 'pending') return { outcome: 'pending', ref: outcome.ref };
@@ -87,10 +77,14 @@ export async function runEInvoiceIssue(deps: EInvoiceIssueDeps, job: EInvoiceIss
   const begun = await deps.runtime.execute<Begun>('finance.einvoice.job_begin', { draftId: job.draftId }, options);
   if (begun.action === 'none') return { action: 'none', state: begun.reason ?? 'none' };
   const { action, connectionId, adapter, key, request, draftId, legalEntityId } = begun as Omit<Required<Begun>, 'reason' | 'action'> & { action: 'issue' | 'ask' | 'poll' | 'files' };
-  // The adapter switched off on this deployment: nothing is sent; the call stays as it was and a later job asks first.
-  if (!Object.hasOwn(deps.providers, adapter)) return { action, state: 'provider_off' };
-  const provider = deps.providers[adapter] as EInvoiceProvider;
   const record = (step: 'issue' | 'ask' | 'poll', result: Result) => deps.runtime.execute<Recorded>('finance.einvoice.job_record', { draftId, step, result }, options);
+  // The adapter switched off on this deployment: nothing is sent. A send that was never made goes back to a draft with the code on screen; a question about an invoice the provider
+  // has or may have is held and asked again later (never ended).
+  if (!Object.hasOwn(deps.providers, adapter)) {
+    if (action !== 'files') await record(action, { outcome: 'failed', code: 'PROVIDER_UNAVAILABLE' });
+    return { action, state: 'provider_off' };
+  }
+  const provider = deps.providers[adapter] as EInvoiceProvider;
 
   // The credential: the offline provider has none; a real one is opened here from the sealed copy, and refused once the member who connected it may no longer use it.
   let secret: string;

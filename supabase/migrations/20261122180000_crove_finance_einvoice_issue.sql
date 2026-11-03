@@ -57,19 +57,20 @@ CREATE INDEX IF NOT EXISTS einvoice_draft_check_idx ON crove_finance.einvoice_dr
 -- 2. The content an invoice is issued from, as one hash
 -- ---------------------------------------------------------------------------
 -- Runs as the caller, so it reads the draft and its lines through the caller's own policies; null when the draft is not visible. Every figure is read as text from its
--- column, whose scale is fixed, so the same rows always give the same text.
+-- column, whose scale is fixed, so the same rows always give the same text. The fields are the items of a JSON array (a string is quoted and escaped there), so no text, a
+-- control character in it included, can move a boundary from one field to the next without changing the hash.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_content_hash(p_org uuid, p_draft uuid) RETURNS text
 LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
   SELECT pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
-    pg_catalog.concat_ws(E'\x1f',
+    pg_catalog.jsonb_build_array(
       d.legal_entity_id::text, COALESCE(d.series_id::text, ''), d.invoice_date::text, d.currency, d.buyer_kind,
       COALESCE(d.buyer_tax_code, ''), COALESCE(d.buyer_name, ''), COALESCE(d.buyer_address, ''), COALESCE(d.buyer_email, ''),
       d.subtotal::text, d.vat_amount::text, d.total::text,
       COALESCE((
-        SELECT pg_catalog.string_agg(
-          pg_catalog.concat_ws(E'\x1f', l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text),
-          E'\x1e' ORDER BY l.line_no)
-        FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '')),
+        SELECT pg_catalog.jsonb_agg(
+          pg_catalog.jsonb_build_array(l.line_no::text, l.description, COALESCE(l.unit, ''), l.quantity::text, l.unit_price::text, l.amount::text, l.vat_rate, l.vat_amount::text)
+          ORDER BY l.line_no)
+        FROM crove_finance.einvoice_draft_line l WHERE l.org_id = d.org_id AND l.draft_id = d.id), '[]'::pg_catalog.jsonb))::text,
     'UTF8')), 'hex')
   FROM crove_finance.einvoice_draft d
   WHERE d.org_id = p_org AND d.id = p_draft
@@ -113,6 +114,14 @@ DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'crove_definer_einvoice') THEN
     CREATE ROLE crove_definer_einvoice NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  END IF;
+  -- Drift guard (as crove_definer_tenant has): the guard trusts the identity of this role, so a role of the name that was made another way is refused, not adopted.
+  IF EXISTS (
+    SELECT 1 FROM pg_catalog.pg_roles
+    WHERE rolname = 'crove_definer_einvoice'
+      AND (rolsuper OR rolbypassrls OR rolcanlogin OR rolcreaterole OR rolcreatedb OR NOT rolinherit)
+  ) THEN
+    RAISE EXCEPTION 'role crove_definer_einvoice must be NOLOGIN INHERIT NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE';
   END IF;
 END $$;
 GRANT crove_tenant TO crove_definer_einvoice;
@@ -174,7 +183,8 @@ REVOKE CREATE ON SCHEMA crove_finance FROM crove_definer_einvoice;
 --   empty), the error code (cleared) and the time touched, and nothing else.
 --   The system context (the issue job) moves a draft along these transitions and no others, each raising EINVOICE_STATE otherwise:
 --     draft -> submitting (not by the system: the person's approved issue above); submitting -> pending, issued, rejected or failed; pending -> issued, rejected or failed;
---     failed -> submitting (the same key, the job's retry once it has asked the provider); rejected -> draft (a new key, no provider reference, no submit time, a clean slate).
+--     rejected -> draft (a new key, no provider reference, no submit time, a clean slate); failed -> draft only for a code that says nothing was sent (a tax code, a
+--     connection, a credential refused before the send), the same clean slate and a new key. A failed invoice whose fate is not known (STATUS_UNKNOWN) stays failed.
 --   `issued` is terminal (only its two file links and an error code are added after it). Once a draft has left `draft` its content (series, date, buyer, amounts) is frozen for the system context too. A transition changes the state, the
 --   provider's reference, the number, the time issued, the authority code and the two files (each set once, from empty), the error code, the next check time, the attempts
 --   count, and on rejected -> draft the key.
@@ -282,7 +292,11 @@ BEGIN
   v_move := OLD.state || '>' || NEW.state;
   -- draft -> submitting is the person's approved issue, never the system's.
   IF v_move NOT IN ('submitting>pending', 'submitting>issued', 'submitting>rejected', 'submitting>failed', 'pending>issued', 'pending>rejected', 'pending>failed',
-                    'failed>submitting', 'rejected>draft') THEN
+                    'failed>draft', 'rejected>draft') THEN
+    RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+  END IF;
+  -- A failed draft goes back only when nothing was sent: the codes of what stopped it before the send.
+  IF v_move = 'failed>draft' AND (OLD.error_code IS NULL OR OLD.error_code <> ALL (ARRAY['PROVIDER_NOT_READY', 'TAX_CODE_NEEDED', 'SELLER_TAX_CODE_CHANGED', 'DRAFT_MISMATCH', 'CREDENTIALS', 'PROVIDER_UNAVAILABLE'])) THEN
     RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
   END IF;
   -- The content stays as it was.
@@ -296,11 +310,11 @@ BEGIN
      OR (OLD.authority_code IS NOT NULL AND NEW.authority_code IS DISTINCT FROM OLD.authority_code)
      OR (OLD.signed_file_id IS NOT NULL AND NEW.signed_file_id IS DISTINCT FROM OLD.signed_file_id)
      OR (OLD.pdf_file_id IS NOT NULL AND NEW.pdf_file_id IS DISTINCT FROM OLD.pdf_file_id) THEN
-    IF v_move <> 'rejected>draft' THEN
+    IF v_move NOT IN ('rejected>draft', 'failed>draft') THEN
       RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
     END IF;
   END IF;
-  IF v_move = 'rejected>draft' THEN
+  IF v_move IN ('rejected>draft', 'failed>draft') THEN
     -- A fresh key and a clean slate: no reference, number, time, authority code, file, submit time, next check or attempt of the rejected try (the error code stays, so
     -- the person sees why it was rejected until the next issue clears it).
     IF NEW.idempotency_key = OLD.idempotency_key OR NEW.provider_ref IS NOT NULL OR NEW.issued_number IS NOT NULL OR NEW.issued_at IS NOT NULL OR NEW.authority_code IS NOT NULL

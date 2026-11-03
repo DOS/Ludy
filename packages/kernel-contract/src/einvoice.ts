@@ -138,6 +138,8 @@ export const zEInvoiceDraftSummary = z.object({
   errorCode: z.string().nullable(),
   // The signed XML is stored with the draft (an issued invoice's original).
   evidenceStored: z.boolean(),
+  // When it last changed: a request made for an earlier state is not the one to approve.
+  updatedAt: z.string(),
 });
 export type EInvoiceDraftSummary = z.infer<typeof zEInvoiceDraftSummary>;
 

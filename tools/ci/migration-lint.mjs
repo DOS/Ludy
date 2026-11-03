@@ -31,7 +31,7 @@
 //                         writes of a WITH count too, in a data-modifying CTE, after the CTE list (past SEARCH and
 //                         CYCLE) and in CREATE TABLE ... AS WITH (#1225);
 //   owner-to              hand a function, procedure or aggregate (ALTER ... OWNER TO) only to the NOLOGIN roles
-//                         definer functions run as, crove_definer_tenant and crove_auth_reader, and nothing else to
+//                         definer functions run as, crove_definer_tenant, crove_auth_reader and crove_definer_einvoice, and nothing else to
 //                         any role but the runner (CURRENT_USER); never REASSIGN OWNED, SET ROLE, SET SESSION
 //                         AUTHORIZATION or set_config('role'): login roles own nothing, and a table's owner bypasses
 //                         its RLS (#1225);
@@ -590,10 +590,10 @@ function withWrites(tokens, objects, schemas) {
 }
 
 // The roles a migration may hand an object to (#1225). A function, procedure, routine or aggregate may go to the NOLOGIN
-// roles definer functions run as (crove_definer_tenant, crove_auth_reader); any object may stay the runner's own
+// roles definer functions run as (crove_definer_tenant, crove_auth_reader, crove_definer_einvoice); any object may stay the runner's own
 // (CURRENT_USER, CURRENT_ROLE, SESSION_USER, as keywords). No table, schema or other object goes to another role: its
 // owner bypasses the table's RLS and its grants. Login roles own nothing (AGENTS.md, "Tenancy").
-const DEFINER_OWNER_ROLES = new Set(['crove_definer_tenant', 'crove_auth_reader']);
+const DEFINER_OWNER_ROLES = new Set(['crove_definer_tenant', 'crove_auth_reader', 'crove_definer_einvoice']);
 const RUNNER_KEYWORDS = new Set(['current_user', 'current_role', 'session_user']);
 const ROUTINE_KINDS = new Set(['function', 'procedure', 'routine', 'aggregate']);
 

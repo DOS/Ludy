@@ -15,6 +15,9 @@ export function nextCheckDelaySeconds(attempts: number): number {
 // After a call whose answer was lost the next try waits a minute, then asks the provider by the key before anything is sent again.
 export const AMBIGUOUS_RETRY_SECONDS = 60;
 
+// A call started this long ago may still be in flight (the provider's timeout and a margin) or be retried after a crash: it is not asked about before it is older.
+export const IN_FLIGHT_SECONDS = 150;
+
 // Whether the day for a submitted invoice is over.
 export function statusDeadlinePassed(submittedAt: Date, now: Date): boolean {
   return now.getTime() - submittedAt.getTime() >= STATUS_DEADLINE_HOURS * 3_600_000;

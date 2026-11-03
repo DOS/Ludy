@@ -265,6 +265,28 @@ suite('issuing a sales e-invoice (#2502)', () => {
     await expect(rt.query('finance.einvoice.issue_request', { proposalId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
   });
 
+  it('hashes the content so that no text moves a boundary between two fields without changing the hash', async () => {
+    const o = await org({ team: true });
+    const series = await sync(o);
+    const draft = await save(o, series);
+    const hashWith = async (name: string, address: string) => {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query('UPDATE crove_finance.einvoice_draft SET buyer_name = $3, buyer_address = $4 WHERE org_id = $1 AND id = $2', [o.orgId, draft.id, name, address]);
+        await c.query('COMMIT');
+      });
+      return String((await rows<{ h: string }>('SELECT crove_finance.einvoice_content_hash($1, $2) AS h', [o.orgId, draft.id]))[0]?.h);
+    };
+    // The old separator inside a field, and the same characters split across the two fields, are two contents.
+    const joined = await hashWith('Công ty A\u001fPhố B', 'Hà Nội');
+    const split = await hashWith('Công ty A', 'Phố B\u001fHà Nội');
+    expect(joined).toMatch(/^[0-9a-f]{64}$/);
+    expect(joined).not.toBe(split);
+    // And the same content is the same hash.
+    expect(await hashWith('Công ty A', 'Phố B\u001fHà Nội')).toBe(split);
+  });
+
   it('keeps the definer and the guard shut to everything but the approved execution', async () => {
     const o = await org({ team: true });
     const series = await sync(o);
