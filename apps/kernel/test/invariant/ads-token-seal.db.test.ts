@@ -39,6 +39,8 @@ const WORKER_ONLY = [
   'crove_ads.token_revoke_settle(uuid,uuid,uuid,text,timestamp with time zone,text,text,text,text)',
   'crove_ads.token_revoke_expire()',
   'crove_ads.write_orphans(uuid,uuid,integer)',
+  // The platform's data deletion request forgets the obligations and copies of the person it names.
+  'crove_ads.deletion_request_forget(text)',
   // The kernel's check, in the org's system context, that the connector of an active connection is gone (the system command that closes it asks it).
   'crove_kernel.channel_connector_gone(uuid)',
 ];
@@ -780,6 +782,36 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     await connection(theirOrg, { provider: 'metawrite_ads', external: 'act_601' });
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, randomUUID()]))[0]?.shared).toBe(false);
+  });
+
+  it('forgets the obligations and copies of the person a platform data deletion request names, in every org, and leaves the others', async () => {
+    const hash = '7'.repeat(64);
+    const other = '8'.repeat(64);
+    const a = await makeOrg();
+    const b = await makeOrg();
+    // Two closed connections the person granted (one per org), one another person granted, one with no grantor recorded.
+    const mineA = await connection(a, { provider: 'meta_ads', scopes: ['ads_read', 'ads_management'], external: 'act_71' });
+    await account(a, mineA.id, 'meta_ads', 'act_71', hash);
+    const mineB = await connection(b, { provider: 'meta_ads', scopes: ['ads_read', 'ads_management'], external: 'act_72' });
+    await account(b, mineB.id, 'meta_ads', 'act_72', hash);
+    const theirs = await connection(a, { provider: 'meta_ads', scopes: ['ads_read', 'ads_management'], external: 'act_73' });
+    await account(a, theirs.id, 'meta_ads', 'act_73', other);
+    const unknown = await connection(a, { provider: 'metawrite_ads', external: 'act_74' });
+    for (const [org, conn] of [[a, mineA], [b, mineB], [a, theirs], [a, unknown]] as const) await close(org, conn.id);
+    const code = randomUUID().replaceAll('-', '');
+    await owner('SELECT crove_ads.deletion_request_enqueue($1, $2)', [code, hash]);
+    // Only the worker login runs it; the API login does not.
+    await expect(withClient(appUrl, (c) => c.query('SELECT crove_ads.deletion_request_forget($1)', [code]))).rejects.toThrow(/permission denied for function deletion_request_forget/);
+    const forgotten = await workerSql<{ n: number }>('SELECT crove_ads.deletion_request_forget($1) AS n', [code]);
+    expect(forgotten[0]?.n).toBe(2);
+    expect(await obligations(a.orgId, mineA.id)).toEqual([]);
+    expect(await obligations(b.orgId, mineB.id)).toEqual([]);
+    expect(await rows('SELECT 1 FROM crove_ads.ad_token_seal s JOIN crove_ads.ad_token_revoke r ON r.org_id = s.org_id AND r.id = s.revoke_id WHERE r.grantor_hash = $1', [hash])).toEqual([]);
+    // The others stay, with their copies; a second run, and an unknown code, delete nothing.
+    expect((await obligations(a.orgId, theirs.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+    expect((await obligations(a.orgId, unknown.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+    expect((await workerSql<{ n: number }>('SELECT crove_ads.deletion_request_forget($1) AS n', [code]))[0]?.n).toBe(0);
+    expect((await workerSql<{ n: number }>('SELECT crove_ads.deletion_request_forget($1) AS n', ['0'.repeat(32)]))[0]?.n).toBe(0);
   });
 
   it('wipes the copy and the state at once when the org is purged, and the purge holds nothing new', async () => {

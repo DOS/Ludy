@@ -1291,13 +1291,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await aiBudgetSweep();
     // The sealed copies of closed ads connections' tokens past their seven days or their ten tries (#2296, W2-1): wiped here too, by a sweep with no
     // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
-    if (deps.runtime.installed('ads')) {
-      const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
-        console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
-        return { rows: [] as Array<{ n: number }> };
-      });
-      if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
-    }
+    // Whether or not the ads module is installed: the hold is a trigger of the database, so a copy can be made with the module switched off, and it must not
+    // outlive its seven days for that reason.
+    const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+      console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
+      return { rows: [] as Array<{ n: number }> };
+    });
+    if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 

@@ -54,6 +54,8 @@
 --                         refused (ADS_REVOKE_STALE), so it cannot record over the newer run; and sweeps what is past its age or its tries.
 --   token_revoke_expire   settles the obligations past seven days or ten tries and wipes their copies (also run by a sweep that has no egress, so the age
 --                         limit does not depend on the revoke job).
+--   deletion_request_forget  deletes the obligations (and their copies) of the person a platform's data deletion request names, by the request's keyed
+--                         hash, in every org: the person removed the app, so nothing is left to revoke, and their token should not be kept.
 --   write_orphans         lists the active write connections whose connector is no longer an owner or admin (a removed member's), to be closed so the
 --                         revoke runs and the copy is wiped; the sweep closes them with the kernel's system command (20261122070000 adds the check that
 --                         command asks the database under the row's lock).
@@ -479,12 +481,34 @@ BEGIN
   LIMIT LEAST(GREATEST(p_limit, 1), 500);
 END $$;
 
+-- The platform's data deletion request (worker login only): the obligations and sealed copies of the closed connections the request's person granted are
+-- deleted, in every org, by the request's keyed hash (a held obligation keeps that hash and a sealed token of the person, which the request asks to be
+-- deleted; the person removed the app, so nothing is left to revoke). Others' obligations stay. Idempotent; answers how many obligations it deleted.
+CREATE OR REPLACE FUNCTION crove_ads.deletion_request_forget(p_code text) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_hash text;
+  v_n integer;
+BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  SELECT r.user_hash INTO v_hash FROM crove_ads.deletion_request r WHERE r.code = p_code;
+  IF NOT FOUND THEN
+    RETURN 0;
+  END IF;
+  -- The copy goes with its obligation (the foreign key's cascade).
+  DELETE FROM crove_ads.ad_token_revoke r WHERE r.grantor_hash = v_hash;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END $$;
+
 REVOKE ALL ON FUNCTION crove_ads.token_revoke_due(integer), crove_ads.token_grant_shared(uuid, uuid), crove_ads.token_seal_get(uuid, uuid, uuid),
   crove_ads.token_revoke_settle(uuid, uuid, uuid, text, timestamptz, text, text, text, text), crove_ads.token_revoke_expire(),
-  crove_ads.write_orphans(uuid, uuid, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+  crove_ads.write_orphans(uuid, uuid, integer), crove_ads.deletion_request_forget(text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_ads.token_revoke_due(integer), crove_ads.token_grant_shared(uuid, uuid), crove_ads.token_seal_get(uuid, uuid, uuid),
   crove_ads.token_revoke_settle(uuid, uuid, uuid, text, timestamptz, text, text, text, text), crove_ads.token_revoke_expire(),
-  crove_ads.write_orphans(uuid, uuid, integer) TO crove_worker;
+  crove_ads.write_orphans(uuid, uuid, integer), crove_ads.deletion_request_forget(text) TO crove_worker;
 
 -- The job's queue: no data at all (a sweep on a schedule, retried by the policy and never by the queue).
 SELECT crove_jobs.create_queue('ads-revoke', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
