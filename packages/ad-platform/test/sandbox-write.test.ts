@@ -87,7 +87,7 @@ describe('the sandbox ad writer', () => {
   });
 
   it('is not an ad platform of the readers\' registry', () => {
-    expect(AD_PLATFORM_PROVIDERS).toEqual(['sandbox_ads', 'meta_ads']);
+    expect(AD_PLATFORM_PROVIDERS).toEqual(['sandbox_ads', 'meta_ads', 'google_ads']);
     expect(isAdPlatformProvider('sandboxwrite_ads')).toBe(false);
     expect(Object.keys(adPlatforms({ sandbox: true }))).toEqual(['sandbox_ads']);
   });

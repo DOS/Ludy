@@ -8,9 +8,11 @@
 // @crove/channel, which this package does not copy.
 import { createHash, randomBytes } from 'node:crypto';
 
+import { GoogleAdsPlatform } from './google.ts';
 import { MetaAdsPlatform } from './meta.ts';
 
 export * from './meta.ts';
+export * from './google.ts';
 // Running ads (ADR-0043, W0b): the write connection's login and the writer. Their provider ids (`metawrite_ads`,
 // `sandboxwrite_ads`) are not ad platforms of the readers' registry below: AD_PLATFORM_PROVIDERS, isAdPlatformProvider and
 // adPlatforms() never see them.
@@ -20,7 +22,7 @@ export * from './writer.ts';
 
 // The provider ids a channel connection of an ad account names. `sandbox_ads` is the offline sandbox, `meta_ads` is Meta
 // (plan slice A2); `google_ads` and `tiktok_ads` join when their adapters do (slices B and C).
-export const AD_PLATFORM_PROVIDERS = ['sandbox_ads', 'meta_ads'] as const;
+export const AD_PLATFORM_PROVIDERS = ['sandbox_ads', 'meta_ads', 'google_ads'] as const;
 export type AdPlatformId = (typeof AD_PLATFORM_PROVIDERS)[number];
 
 export function isAdPlatformProvider(value: string): value is AdPlatformId {
@@ -100,10 +102,11 @@ export interface AdPlatform {
 
 // The adapters this deployment offers, by provider id: the sandbox when it is on (ADS_SANDBOX), Meta when the deployment
 // has its app (CHANNEL_META_ADS_APP_ID and _SECRET). A real adapter is built here with its own fetch bound to its hosts.
-export function adPlatforms(options: { sandbox: boolean; now?: () => Date; meta?: { appSecret: string; graphVersion?: string } }): Readonly<Record<string, AdPlatform>> {
+export function adPlatforms(options: { sandbox: boolean; now?: () => Date; meta?: { appSecret: string; graphVersion?: string }; google?: { clientId: string; clientSecret: string } }): Readonly<Record<string, AdPlatform>> {
   const out: Record<string, AdPlatform> = {};
   if (options.sandbox) out.sandbox_ads = sandboxAdPlatform(options.now);
   if (options.meta) out.meta_ads = new MetaAdsPlatform({ ...options.meta, ...(options.now ? { now: options.now } : {}) });
+  if (options.google) out.google_ads = new GoogleAdsPlatform({ ...options.google, ...(options.now ? { now: options.now } : {}) });
   return out;
 }
 
