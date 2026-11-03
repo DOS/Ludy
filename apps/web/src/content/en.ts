@@ -264,7 +264,7 @@ export const en: Dictionary = {
       social: {
         kicker: 'AI coworker',
         title: `${N.marketing}`,
-        sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, publishes once approved.',
+        sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, and every post waits for a person. Publishing to channels: built, not yet tried with a real account.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Anh Minh', note: '' },
         ],

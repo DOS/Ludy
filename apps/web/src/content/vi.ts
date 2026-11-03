@@ -264,7 +264,7 @@ export const vi = {
       social: {
         kicker: 'Đồng nghiệp AI',
         title: `${N.marketing}`,
-        sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, đăng khi có người duyệt.',
+        sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, mọi bài chờ người duyệt. Đăng lên kênh: đã làm xong, chưa thử với tài khoản thật.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ Anh Minh duyệt', note: '' },
         ],
