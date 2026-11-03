@@ -434,15 +434,22 @@ suite('ads on PostgreSQL (#2217)', () => {
   const daysCount = async (adAccountId: string, day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
 
   // The instants the platform's day and the account's day can disagree around (#2548): inside the window the flake was seen in (14:04 to 14:13 UTC, 21:04 to
-  // 21:13 in Ho Chi Minh City), the second before and after that zone's midnight (17:00 UTC), and the UTC midnight. Dated two days back from the real clock's UTC
+  // 21:13 in Ho Chi Minh City), the second before and after that zone's midnight (17:00 UTC), and the turn of the UTC date. Dated two days back from the real clock's UTC
   // date: the account's history (13 months back from the real clock) reaches them, and none is ahead of the real day, which the API's own record command
   // refuses (it judges a window against the runtime's clock, which a test cannot move).
   const pinDay = addDays(new Date().toISOString().slice(0, 10), -2);
-  const PINS = [`${pinDay}T14:05:00Z`, `${pinDay}T16:59:59Z`, `${pinDay}T17:00:00Z`, `${pinDay}T17:00:01Z`, `${pinDay}T23:59:59Z`, `${addDays(pinDay, 1)}T00:00:00Z`];
+  const PINS: Array<[string, string]> = [
+    ['14:05Z', `${pinDay}T14:05:00Z`],
+    ['16:59:59Z, a second before 17:00 UTC', `${pinDay}T16:59:59Z`],
+    ['17:00:00Z, the zone midnight', `${pinDay}T17:00:00Z`],
+    ['17:00:01Z', `${pinDay}T17:00:01Z`],
+    ['23:59:59Z', `${pinDay}T23:59:59Z`],
+    ['00:00:00Z, the next UTC date', `${addDays(pinDay, 1)}T00:00:00Z`],
+  ];
 
-  it.each(PINS)('removes a day of the window the platform no longer reports, and keeps a final one, with the clock at %s', async (at) => {
+  it.each(PINS)('removes a day of the window the platform no longer reports, and keeps a final one, with the clock at %s', async (label, at) => {
     freeze(new Date(at));
-    const { connectionId, adAccountId } = await connect(`Bớt ngày ${at}`);
+    const { connectionId, adAccountId } = await connect(`Bớt ngày ${label}`);
     await sync(connectionId);
     const today = todayIn('Asia/Ho_Chi_Minh', clock());
     // The days that are not final are today (in the account's zone) and the three before it, as many of them as the platform reported a campaign on. The sandbox's day
