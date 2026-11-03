@@ -7086,6 +7086,8 @@ export const en = {
       PORTAL_STEP_TIMEOUT: 'The tax portal is answering slowly, so the fetch paused. Click Fetch again to continue.',
       CONTACT_EMAIL_REQUIRED: 'The company has no contact email yet. An owner or admin can set it in Settings; then try again.',
       NOTHING_MISSING: 'No invoices are missing for this period, so there is nothing to ask for.',
+      PAUSE_DATE_INVALID: 'The pause date is not valid.',
+      PAUSE_TOO_LONG: 'A pause can run two years from today at most.',
       REQUEST_TOO_SOON: 'A request for this period went out less than an hour ago. Wait a little, then send it again.',
       NOT_FLAGGED: 'This invoice does not need its non-cash payment checked',
       VOUCHER_NOT_BANK: 'Only a bank payment voucher of the organization can be linked, and only to an invoice paid by bank',

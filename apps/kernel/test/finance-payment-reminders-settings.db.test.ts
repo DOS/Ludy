@@ -12,6 +12,7 @@ import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
 import { Runtime } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -122,7 +123,7 @@ suite('payment reminder settings (#2488)', () => {
   it('refuses terms outside 1 to 365 days, and keeps the previous settings', async () => {
     const o = await org();
     await execute(o, 'finance.collection_setting.set', { termsDays: 20, weeklyItem: false });
-    for (const termsDays of [0, 366, 1.5, -3]) await expect(execute(o, 'finance.collection_setting.set', { termsDays, weeklyItem: false })).rejects.toBeTruthy();
+    for (const termsDays of [0, 366, 1.5, -3]) await expect(execute(o, 'finance.collection_setting.set', { termsDays, weeklyItem: false })).rejects.toMatchObject({ code: 'VALIDATION' });
     expect((await query<Setting>(o, 'finance.collection_setting.get', {})).termsDays).toBe(20);
   });
 
@@ -160,12 +161,14 @@ suite('payment reminder settings (#2488)', () => {
   it('refuses a pause that is not a date or runs past two years, and terms outside the range', async () => {
     const o = await org();
     const p = await customer(o, 'Công ty Khách Hàng Ba');
-    for (const pausedUntil of ['2026-02-30', '2026-13-01', 'tomorrow', '0000-01-01', '1999-12-31']) {
-      await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil })).rejects.toBeTruthy();
+    // A string that is no date at all is the contract's; a well-formed one that is no day (or too early for the database) is the command's.
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: 'tomorrow' })).rejects.toMatchObject({ code: 'VALIDATION' });
+    for (const pausedUntil of ['2026-02-30', '2026-13-01', '0000-01-01', '1999-12-31']) {
+      await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil }), pausedUntil).rejects.toMatchObject({ code: 'PAUSE_DATE_INVALID' });
     }
     await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: null, pausedUntil: daysFromNow(800) })).rejects.toMatchObject({ code: 'PAUSE_TOO_LONG' });
-    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 0, pausedUntil: null })).rejects.toBeTruthy();
-    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 400, pausedUntil: null })).rejects.toBeTruthy();
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 0, pausedUntil: null })).rejects.toMatchObject({ code: 'VALIDATION' });
+    await expect(execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 400, pausedUntil: null })).rejects.toMatchObject({ code: 'VALIDATION' });
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
   });
 
@@ -178,6 +181,54 @@ suite('payment reminder settings (#2488)', () => {
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: dup })).toMatchObject({ partyId: kept, termsDays: 21 });
     expect(await admin(async (c) => (await c.query('SELECT party_id FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rows)).toEqual([{ party_id: kept }]);
+  });
+
+  // The runtime refuses a role before the database is asked; these go straight to SQL as crove_app, in the context of each role's user, so the row policies and the
+  // column grants of the migration are what answers.
+  it('holds the row policies and the grants in SQL: a member and a viewer write nothing of the org\'s, a viewer nothing of a customer\'s, nobody deletes, no key changes', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Chính Sách');
+    const other = await customer(o, 'Công ty Chính Sách Hai');
+    await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: false });
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 20, pausedUntil: null });
+    async function inContext<T>(who: string, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, who, o.orgId);
+        return await fn(c);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        c.release();
+      }
+    }
+    // A refused statement aborts its transaction: each one has a context of its own.
+    const refused = (who: string, sqlText: string, params: unknown[], message: string) => inContext(who, (c) => expect(c.query(sqlText, params)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining(message) }));
+    const changed = (who: string, sqlText: string, params: unknown[]) => inContext(who, async (c) => (await c.query(sqlText, params)).rowCount);
+
+    // The org's settings: an owner and an admin update the one row, a member and a viewer change none and insert none.
+    for (const who of [o.owner, o.admin]) expect(await changed(who, 'UPDATE crove_finance.collection_setting SET terms_days = 31 WHERE org_id = $1', [o.orgId]), who).toBe(1);
+    for (const who of [o.member, o.viewer]) {
+      expect(await changed(who, 'UPDATE crove_finance.collection_setting SET terms_days = 9 WHERE org_id = $1', [o.orgId]), who).toBe(0);
+      await refused(who, 'INSERT INTO crove_finance.collection_setting (org_id) VALUES ($1)', [o.orgId], 'row-level security');
+    }
+    // A customer's: a member and an owner insert and update, a viewer does neither.
+    expect(await changed(o.member, 'UPDATE crove_finance.customer_collection SET terms_days = 21 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(1);
+    expect(await changed(o.member, 'INSERT INTO crove_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 45)', [o.orgId, other])).toBe(1);
+    expect(await changed(o.viewer, 'UPDATE crove_finance.customer_collection SET terms_days = 9 WHERE org_id = $1 AND party_id = $2', [o.orgId, p])).toBe(0);
+    await refused(o.viewer, 'INSERT INTO crove_finance.customer_collection (org_id, party_id, terms_days) VALUES ($1, $2, 9)', [o.orgId, other], 'row-level security');
+    // Nobody deletes, whatever the role: there is no DELETE grant.
+    for (const who of [o.owner, o.admin, o.member, o.viewer]) {
+      await refused(who, 'DELETE FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId], 'permission denied');
+      await refused(who, 'DELETE FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId], 'permission denied');
+    }
+    // No key changes: only the value columns, who set them and when are granted.
+    await refused(o.owner, 'UPDATE crove_finance.customer_collection SET party_id = $2 WHERE org_id = $1 AND party_id = $3', [o.orgId, other, p], 'permission denied');
+    await refused(o.owner, 'UPDATE crove_finance.customer_collection SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
+    await refused(o.owner, 'UPDATE crove_finance.collection_setting SET org_id = org_id WHERE org_id = $1', [o.orgId], 'permission denied');
+    // Another org's owner cannot even enter this org's context, so none of it is reached.
+    const b = await org();
+    await expect(inContext(b.owner, async (c) => c.query('SELECT 1 FROM crove_finance.collection_setting'))).rejects.toMatchObject({ message: 'NOT_A_MEMBER' });
   });
 
   it('does not find another org\'s party, and keeps each org\'s settings apart', async () => {

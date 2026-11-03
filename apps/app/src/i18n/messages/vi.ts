@@ -7083,6 +7083,8 @@ export const vi = {
       PORTAL_STEP_TIMEOUT: 'Cổng thuế trả lời chậm nên lượt lấy dữ liệu đã tạm dừng; hãy bấm Lấy lại để tiếp tục.',
       CONTACT_EMAIL_REQUIRED: 'Công ty chưa có email liên hệ. Chủ sở hữu hoặc quản trị viên nhập email này trong Cài đặt rồi thử lại.',
       NOTHING_MISSING: 'Kỳ này không còn hóa đơn nào thiếu nên không cần gửi đề nghị.',
+      PAUSE_DATE_INVALID: 'Ngày tạm dừng không hợp lệ.',
+      PAUSE_TOO_LONG: 'Chỉ tạm dừng nhắc tối đa hai năm kể từ hôm nay.',
       REQUEST_TOO_SOON: 'Vừa gửi đề nghị cho kỳ này trong vòng một giờ qua. Hãy đợi thêm rồi gửi lại.',
       NOT_FLAGGED: 'Hóa đơn này không cần kiểm tra chứng từ thanh toán không dùng tiền mặt',
       VOUCHER_NOT_BANK: 'Chỉ gắn được giấy báo Nợ của tổ chức, và chỉ khi hóa đơn đã thanh toán qua ngân hàng',
