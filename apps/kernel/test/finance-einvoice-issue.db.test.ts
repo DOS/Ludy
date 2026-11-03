@@ -220,6 +220,20 @@ suite('issuing a sales e-invoice (#2502)', () => {
     expect(await approve(o, again.proposalId)).toMatchObject({ state: 'submitting' });
   });
 
+  it('shows the Inbox card the draft as it stands, and says when it is no longer the one asked for', async () => {
+    const o = await org({ team: true });
+    const series = await sync(o);
+    const draft = await save(o, series);
+    const { proposalId } = await request(o, draft.id, o.member);
+    const view = (user: string) => rt.query<Record<string, unknown>>('finance.einvoice.issue_request', { proposalId }, { actor: asUser(user), orgId: o.orgId });
+    expect(await view(o.admin ?? '')).toMatchObject({ draftId: draft.id, state: 'draft', total: '274000', currency: 'VND', lineCount: 2, buyerKind: 'business', buyerName: 'Công ty Mua Thử', current: true });
+    // Edited after the request: the card says the request is stale; an approval would be refused the same way.
+    await save(o, series, { draftId: draft.id, lines: [{ description: 'Hàng A', unit: 'cái', quantity: '3', unitPrice: '100000', vatRate: '10%' }] });
+    expect(await view(o.admin ?? '')).toMatchObject({ total: '330000', lineCount: 1, current: false });
+    await expect(view(o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(rt.query('finance.einvoice.issue_request', { proposalId: randomUUID() }, { actor: asUser(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'EINVOICE_DRAFT_NOT_FOUND' });
+  });
+
   it('keeps the definer and the guard shut to everything but the approved execution', async () => {
     const o = await org({ team: true });
     const series = await sync(o);

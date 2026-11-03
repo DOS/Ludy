@@ -35,7 +35,7 @@ import { collectionSettingCommands, collectionSettingQueries } from './collectio
 import { paymentReminderCommands, paymentReminderQueries } from './payment-reminders.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
-import { einvoiceIssueCommands } from './einvoice-issue.ts';
+import { einvoiceIssueCommands, einvoiceIssueQueries } from './einvoice-issue.ts';
 import { einvoiceJobCommands } from './einvoice-job.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
@@ -198,6 +198,7 @@ export const financeQueries = [
   ...paymentReminderQueries,
   ...einvoiceQueries,
   ...einvoiceConnectionQueries,
+  ...einvoiceIssueQueries,
   financeToday,
   searchQuery,
   ...yearArchiveQueries,

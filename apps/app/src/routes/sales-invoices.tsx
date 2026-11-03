@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useDeferredValue, useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm } from '@crove/kernel-contract';
+import { BUYER_KINDS, EINVOICE_DRAFT_MAX_LINES, vietnamToday, type BuyerKind, type DraftIssueCode, type EInvoiceDraft, type EInvoiceDraftForm, type EInvoiceDraftSummary } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -18,7 +18,8 @@ import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { StepUpPrompt } from '../components/two-factor.tsx';
+import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const VAT_RATES = ['0%', '5%', '8%', '10%', 'KCT', 'KKKNT'] as const;
@@ -239,6 +240,81 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
   );
 }
 
+// The codes the draft's `errorCode` can hold, in words (never a provider's own text).
+const DRAFT_ERRORS = [
+  'PROVIDER_NOT_READY',
+  'SELLER_TAX_CODE_CHANGED',
+  'DRAFT_MISMATCH',
+  'CREDENTIALS',
+  'PROVIDER_UNAVAILABLE',
+  'STATUS_UNKNOWN',
+  'REJECTED_INVALID_DATA',
+  'REJECTED_SERIES_UNKNOWN',
+  'REJECTED_BY_TAX_AUTHORITY',
+  'REJECTED_BY_PROVIDER',
+  'FILES_UNAVAILABLE',
+] as const;
+type DraftErrorCode = (typeof DRAFT_ERRORS)[number];
+const isDraftError = (code: string): code is DraftErrorCode => (DRAFT_ERRORS as readonly string[]).includes(code);
+
+// Asking to issue a draft (ADR-0044 point 3): the request is made here and the approval is an owner's or an admin's, who may be the one asking when nobody else can
+// approve (the one-person path). The approval needs a fresh second factor; where another person must approve, the request waits in the Inbox.
+function IssueAction({ draft, canApprove }: { draft: EInvoiceDraftSummary; canApprove: boolean }) {
+  const t = useTranslations('salesInvoices');
+  const f = useFormat();
+  const [requestKey] = useState(() => crypto.randomUUID());
+  const [approveKey] = useState(() => crypto.randomUUID());
+  const [proposalId, setProposalId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<'awaiting' | 'sent' | null>(null);
+  const approve = useMutation({
+    mutationFn: (id: string) => client.inbox.approve({ id, revision: 1, idempotencyKey: approveKey }),
+    onSuccess: async () => {
+      setNotice('sent');
+      await refresh();
+    },
+    onError: (error) => {
+      // Someone else has to approve (four-eyes, or not an approver): the request stays in the Inbox for them.
+      const code = (error as { code?: string } | null)?.code;
+      if (code === 'FOUR_EYES_REQUIRED' || code === 'NOT_ELIGIBLE') setNotice('awaiting');
+    },
+  });
+  const request = useMutation({
+    mutationFn: () => client.inbox.request({ command: 'finance.einvoice.issue', input: { draftId: draft.id }, idempotencyKey: requestKey }),
+    onSuccess: (result) => {
+      setProposalId(result.proposalId);
+      if (canApprove) approve.mutate(result.proposalId);
+      else setNotice('awaiting');
+    },
+  });
+  const stepUp = approve.error !== null && isStepUpRequired(approve.error) && proposalId !== null;
+  const busy = request.isPending || approve.isPending;
+  return (
+    <div className="mt-2" data-testid="invoice-issue">
+      {notice === null && !stepUp && (
+        <Button size="sm" loading={busy} disabled={busy} onClick={() => (proposalId !== null && canApprove ? approve.mutate(proposalId) : request.mutate())} data-testid="invoice-issue-button" title={t('issueHint')}>
+          {t('issue')}
+        </Button>
+      )}
+      {stepUp && proposalId !== null && <StepUpPrompt action={t('issueStepUp', { total: f.money(draft.total, 'VND') })} onVerified={() => approve.mutate(proposalId)} onCancel={() => approve.reset()} />}
+      {notice === 'awaiting' && <p className="text-xs text-subtle-foreground" data-testid="invoice-issue-awaiting">{t('issueAwaiting')}</p>}
+      {notice === 'sent' && <p className="text-xs text-subtle-foreground" data-testid="invoice-issue-sent">{t('issueSent')}</p>}
+      {request.error && <ErrorText>{errorMessage(request.error)}</ErrorText>}
+      {approve.error && !stepUp && notice === null && <ErrorText>{errorMessage(approve.error)}</ErrorText>}
+    </div>
+  );
+}
+
+// The words of what stopped a draft, or null.
+function DraftNote({ draft }: { draft: EInvoiceDraftSummary }) {
+  const t = useTranslations('salesInvoices');
+  if (draft.errorCode === null) return null;
+  return (
+    <p className="mt-1 text-xs text-warning" data-testid="invoice-error">
+      {isDraftError(draft.errorCode) ? t(`draftErrors.${draft.errorCode}`) : draft.errorCode}
+    </p>
+  );
+}
+
 export function SalesInvoicesPage() {
   const t = useTranslations('salesInvoices');
   const f = useFormat();
@@ -246,6 +322,8 @@ export function SalesInvoicesPage() {
   const org = useQuery(orpc.org.get.queryOptions());
   const canWrite = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
   const canSync = org.data?.role === 'owner' || org.data?.role === 'admin';
+  // Owners and admins approve an issue (the one who asked too, when nobody else can); a member asks and an approver decides in the Inbox.
+  const canApprove = canSync;
   const status = useQuery(orpc.einvoice.status.queryOptions());
   const seriesQuery = useQuery(orpc.einvoice.series.list.queryOptions());
   const drafts = useQuery({ ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
@@ -304,7 +382,11 @@ export function SalesInvoicesPage() {
               <TableCell className={NUM}>{f.money(d.total, 'VND')}</TableCell>
               <TableCell className="px-4 py-3">
                 <Badge variant="secondary">{t(STATE_KEY[d.state as keyof typeof STATE_KEY] ?? 'states.failed')}</Badge>
+                {d.issuedNumber !== null && <span className="ml-2 text-xs text-subtle-foreground">{t('issuedNumber', { number: d.issuedNumber })}</span>}
+                {d.state === 'issued' && !d.evidenceStored && <span className="ml-2 text-xs text-subtle-foreground">{t('evidencePending')}</span>}
                 {d.issueCount > 0 && <span className="ml-2 text-xs text-subtle-foreground">{t('issueCount', { count: String(d.issueCount) })}</span>}
+                <DraftNote draft={d} />
+                {canWrite && d.state === 'draft' && d.issueCount === 0 && <IssueAction draft={d} canApprove={canApprove} />}
               </TableCell>
               <TableCell className="px-4 py-3 text-right">
                 {canWrite && d.state === 'draft' && (

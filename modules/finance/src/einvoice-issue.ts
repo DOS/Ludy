@@ -10,9 +10,9 @@
 // Agents never run either: neither declares an agent surface.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, zEInvoiceIssuePayload, zId } from '@crove/kernel-contract';
+import { EINVOICE_ISSUE_COMMAND, EINVOICE_ISSUE_KIND, zEInvoiceIssuePayload, zId, type EInvoiceIssueView } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
-import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
+import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { loadDraft } from './einvoice-drafts.ts';
@@ -125,4 +125,42 @@ export const einvoiceIssue = defineCommand({
   },
 });
 
+// The request to issue a draft as the Inbox card shows it: the draft as it stands now and whether it is still the one the request was made for. Reads the proposal's payload and the
+// draft under the caller's own policies, so a member who cannot see either sees nothing.
+export const einvoiceIssueRequest = defineQuery({
+  name: 'finance.einvoice.issue_request',
+  input: z.strictObject({ proposalId: zId }),
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx, input): Promise<EInvoiceIssueView> => {
+    const proposal = await ctx.trx
+      .selectFrom('crove_kernel.proposal')
+      .select('payload')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.proposalId.toLowerCase())
+      .where('command', '=', EINVOICE_ISSUE_COMMAND)
+      .executeTakeFirst();
+    const payload = proposal ? zEInvoiceIssuePayload.safeParse(proposal.payload) : null;
+    if (!payload?.success) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
+    const draftId = payload.data.draftId.toLowerCase();
+    const draft = await loadDraft(ctx, draftId, await databaseToday(ctx.trx));
+    const series = draft.seriesId
+      ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.seriesId).executeTakeFirst()
+      : undefined;
+    const hash = (await sql<{ hash: string | null }>`SELECT crove_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
+    return {
+      draftId,
+      state: draft.state,
+      date: draft.date,
+      currency: draft.currency,
+      total: draft.total,
+      lineCount: draft.lines.length,
+      buyerKind: draft.buyer.kind,
+      buyerName: draft.buyer.name,
+      series: series ? `${series.template_no}/${series.symbol}` : null,
+      current: draft.state === 'draft' && hash === payload.data.contentHash,
+    };
+  },
+});
+
 export const einvoiceIssueCommands = [einvoicePrepareIssue, einvoiceIssue];
+export const einvoiceIssueQueries = [einvoiceIssueRequest];

@@ -13,6 +13,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { AdsProposalCard } from '../components/ads-proposal-card.tsx';
+import { EInvoiceIssueCard } from '../components/einvoice-issue-card.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { useLegalEntity } from '../components/entity-switcher.tsx';
@@ -35,7 +36,7 @@ import { SM_UP, SPLIT_UP, useMediaQuery } from '../lib/media.ts';
 import { toast } from '../lib/toast.ts';
 import { previewVoucherJournal, voucherProblem } from '../lib/vouchers.ts';
 import { partySearch } from '../lib/parties.ts';
-import { checksByConcern, isAdsProposalKind, nextAfterDecision, nextPendingId, previousPendingId, proposalName } from '../lib/review.ts';
+import { checksByConcern, isAdsProposalKind, isEInvoiceIssueKind, nextAfterDecision, nextPendingId, previousPendingId, proposalName } from '../lib/review.ts';
 import { useReviewShortcuts, type ReviewHandlers } from '../lib/review-shortcuts.ts';
 import { useScrollRoom } from '../lib/scroll-room.ts';
 import { pollEvery, useStreamLive } from '../lib/stream-hook.ts';
@@ -408,6 +409,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): it posts nothing, so it has no invoice, no
   // checks and no entry. It is approved as shown, like a voucher, and its card says what changes.
   const ads = detail.data ? isAdsProposalKind(detail.data.kind) : false;
+  // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
+  const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
   const lines = useMemo(
     () => (payload?.lines ?? []).map((l) => ({ ...l, debitAccount: lineAccounts[l.lineNo] ?? l.debitAccount })),
     [payload, lineAccounts],
@@ -464,9 +467,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   };
   const partyName = () => (sale ? payload?.buyer.name : payload?.seller.name) || detail.data?.title || '';
   // An ads request posts nothing, and its title is the server's Vietnamese: its toasts name no one and no entry.
-  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(ads ? t('approvedAdsToast') : t('approvedToast', { name: partyName() })) }));
+  const approve = useMutation(orpc.inbox.approve.mutationOptions({ onSuccess: () => done(ads ? t('approvedAdsToast') : issue ? t('approvedIssueToast') : t('approvedToast', { name: partyName() })) }));
   const stepUp = isStepUpRequired(approve.error);
-  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads ? t('rejectedAdsToast') : t('rejectedToast', { name: partyName() })) }));
+  const reject = useMutation(orpc.inbox.reject.mutationOptions({ onSuccess: () => done(ads || issue ? t(ads ? 'rejectedAdsToast' : 'rejectedIssueToast') : t('rejectedToast', { name: partyName() })) }));
   // Saving an edit creates a new revision authored by this user; the page then reloads the server's decision.
   const edit = useMutation(
     orpc.inbox.edit.mutationOptions({
@@ -508,7 +511,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   // A general journal voucher (NVK, #888) is approved as shown too.
   const journalVoucher = item?.journalVoucher ?? null;
   const journalVoucherCode = (journalVoucher && item?.status === 'executed' && item.result?.voucherCode) || null;
-  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads;
+  const plain = reversal !== null || voucher !== null || journalVoucher !== null || ads || issue;
   const failed = payload?.checks.filter((c) => c.status === 'fail').length ?? 0;
   const blocked = payload?.checks.some((c) => c.status === 'fail' && BLOCKING_CHECK_IDS.includes(c.id)) ?? false;
   // As the kernel decides (kernel.proposal.approve): an XML invoice whose signature is not verified, including one read
@@ -688,6 +691,11 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
             {t('approveAds')}
           </Button>
         )}
+        {item.canApprove && issue && (
+          <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
+            {t('approveIssue')}
+          </Button>
+        )}
         {item.canApprove && !plain && (
           <Button loading={approve.isPending} size="lg" disabled={!approveReady} onClick={submitApproval}>
             {t('approve')}
@@ -756,7 +764,9 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
                       : t('journalVoucherSubtitle', { date: f.date(journalVoucher.date) })
                     : ads
                       ? t('adsSubtitle')
-                      : undefined
+                      : issue
+                        ? t('issueSubtitle')
+                        : undefined
           }
           actions={wide || !pending ? headerActions : undefined}
         />
@@ -764,7 +774,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
       {stepUp && (
         <div className="mb-4">
           <StepUpPrompt
-            action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : t('stepUpApprove')}
+            action={reversal ? t('stepUpApproveReversal') : voucher ? t('stepUpApproveVoucher') : journalVoucher ? t('stepUpApproveJournalVoucher') : ads ? t('stepUpApproveAds') : issue ? t('stepUpApproveIssue') : t('stepUpApprove')}
             onVerified={retryApproval}
             onCancel={() => approve.reset()}
           />
@@ -845,6 +855,13 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('adsFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('adsNotEligible')}</p>}
           <AdsProposalCard id={item.id} title={item.title} slug={slug} />
+        </div>
+      )}
+      {issue && (
+        <div className="mb-6">
+          {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('issueFourEyes')}</p>}
+          {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('issueNotEligible')}</p>}
+          <EInvoiceIssueCard id={item.id} title={item.title} slug={slug} />
         </div>
       )}
       {reading && (

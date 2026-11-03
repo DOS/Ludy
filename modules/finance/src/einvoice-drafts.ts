@@ -146,6 +146,8 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     issues: checkDraft(input, computed, today),
+    issuedNumber: row.issued_number,
+    errorCode: row.error_code,
   };
 }
 
@@ -169,7 +171,17 @@ export const einvoiceDraftList = defineQuery({
     const lines = rows.length === 0 ? [] : await selectLines(ctx).where('draft_id', 'in', rows.map((r) => r.id)).execute();
     return rows.map((row) => {
       const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today);
-      return { id: row.id, state: row.state, date: row.invoice_date, buyerName: row.buyer_name, total: plain(row.total), issueCount: draft.issues.length };
+      return {
+        id: row.id,
+        state: row.state,
+        date: row.invoice_date,
+        buyerName: row.buyer_name,
+        total: plain(row.total),
+        issueCount: draft.issues.length,
+        issuedNumber: row.issued_number,
+        errorCode: row.error_code,
+        evidenceStored: row.signed_file_id !== null,
+      };
     });
   },
 });

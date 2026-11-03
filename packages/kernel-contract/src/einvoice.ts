@@ -121,6 +121,9 @@ export const zEInvoiceDraft = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   issues: z.array(zDraftIssue),
+  // After it was sent (#2502): the number the provider gave, and the code of what stopped it (a rejection that sent it back to a draft, a failure), never a provider's text.
+  issuedNumber: z.string().nullable(),
+  errorCode: z.string().nullable(),
 });
 export type EInvoiceDraft = z.infer<typeof zEInvoiceDraft>;
 
@@ -131,6 +134,10 @@ export const zEInvoiceDraftSummary = z.object({
   buyerName: z.string().nullable(),
   total: z.string(),
   issueCount: z.number().int(),
+  issuedNumber: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  // The signed XML is stored with the draft (an issued invoice's original).
+  evidenceStored: z.boolean(),
 });
 export type EInvoiceDraftSummary = z.infer<typeof zEInvoiceDraftSummary>;
 
@@ -224,3 +231,19 @@ export const zEInvoiceIssuePayload = z.strictObject({
   lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
 });
 export type EInvoiceIssuePayload = z.infer<typeof zEInvoiceIssuePayload>;
+
+// What the Inbox card of a request to issue shows: the draft as it stands now, and whether it is still the one the request was made for (its content hash is the same).
+export const zEInvoiceIssueView = z.object({
+  draftId: zId,
+  state: z.string(),
+  date: z.string(),
+  currency: z.string(),
+  total: z.string(),
+  lineCount: z.number().int(),
+  buyerKind: z.string(),
+  buyerName: z.string().nullable(),
+  series: z.string().nullable(),
+  // False once the draft was edited after the request, or has left `draft`: an approval then fails with EINVOICE_DRAFT_CHANGED.
+  current: z.boolean(),
+});
+export type EInvoiceIssueView = z.infer<typeof zEInvoiceIssueView>;

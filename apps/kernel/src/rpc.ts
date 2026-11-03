@@ -2247,6 +2247,7 @@ export function createRpcHandler(
         check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
         save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
+        issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
       },
     },
     accountRules: {
