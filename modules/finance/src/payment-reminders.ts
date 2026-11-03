@@ -34,6 +34,7 @@ import { RECEIVABLE_ACCOUNT } from '@crove/l10n-vn';
 import { chartAccounts } from './accounts.ts';
 import {
   REMINDER_REPEAT_DAYS,
+  addDays,
   allocateReceivable,
   noticeLevel,
   overdueOf,
@@ -46,6 +47,7 @@ import {
 } from './domain/payment-reminder.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
+import { readCollectionSetting } from './collection-settings.ts';
 import { oneLine } from './missing-invoices.ts';
 import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, zPaymentReminderMail, type PaymentReminderMail } from './payment-reminder-mail.ts';
 
@@ -70,6 +72,13 @@ interface Customer {
   email: string | null;
   receivable: Receivable;
   overdue: OpenInvoice[];
+  // The payment terms that dated its invoices: its own when it has set them, else the org's.
+  termsDays: number;
+  // Its own terms when it set them (null: the org's), and the last day with no reminder when it is paused.
+  ownTermsDays: number | null;
+  pausedUntil: string | null;
+  // No reminder is drafted or sent for it today.
+  paused: boolean;
 }
 
 // The customers of one legal entity with a positive balance on 131, their sales invoices laid under it (domain/payment-reminder.ts),
@@ -107,15 +116,24 @@ async function loadCustomers(ctx: QueryContext, entity: string, today: string, o
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
     .execute();
   const byParty = new Map(parties.map((p) => [p.id, p]));
+  // What the org and each customer set (#2488, slice 3): the terms date the invoices, a pause keeps the customer out of the list, the draft and the send.
+  const org = await readCollectionSetting(ctx);
+  const own = new Map(
+    (await ctx.trx.selectFrom('crove_finance.customer_collection').select(['party_id', 'terms_days', 'paused_until']).where('org_id', '=', ctx.orgId).where('party_id', 'in', ids).execute()).map((r) => [r.party_id, r]),
+  );
   return owed.flatMap((o) => {
     const party = byParty.get(o.party_id);
     if (!party) return [];
+    const set = own.get(o.party_id);
+    const termsDays = set?.terms_days ?? org.termsDays;
     const receivable = allocateReceivable(
       invoices.filter((i) => i.party_id === o.party_id).map((i) => ({ id: i.id, series: i.invoice_series, number: i.invoice_number, date: i.invoice_date, total: i.total, currency: i.currency })),
       o.balance,
       today,
+      termsDays,
     );
-    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable) }];
+    const pausedUntil = set?.paused_until ?? null;
+    return [{ partyId: party.id, name: party.name, email: party.email, receivable, overdue: overdueOf(receivable), termsDays, ownTermsDays: set?.terms_days ?? null, pausedUntil, paused: pausedUntil !== null && pausedUntil >= today }];
   });
 }
 
@@ -168,7 +186,10 @@ export const paymentRemindersList = defineQuery({
   access: ALL,
   handler: async (ctx, input): Promise<PaymentReminderList> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    const customers = (await loadCustomers(ctx, entity, await databaseToday(ctx.trx))).filter((c) => c.overdue.length > 0);
+    const everyone = (await loadCustomers(ctx, entity, await databaseToday(ctx.trx))).filter((c) => c.overdue.length > 0);
+    // A paused customer is not in the list to remind; it is listed apart, with the day its pause ends, so a person can lift it.
+    const customers = everyone.filter((c) => !c.paused);
+    const paused = everyone.filter((c) => c.paused);
     customers.sort((a, b) => Math.max(...b.overdue.map((i) => i.daysOverdue)) - Math.max(...a.overdue.map((i) => i.daysOverdue)) || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId));
     const shown = customers.slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX);
     const last = await lastReminders(ctx, shown.map((c) => c.partyId));
@@ -176,6 +197,11 @@ export const paymentRemindersList = defineQuery({
       currency: await bookCurrency(ctx),
       customers: shown.map((c) => summary(c, last.get(c.partyId))),
       more: customers.length > shown.length,
+      termsDays: (await readCollectionSetting(ctx)).termsDays,
+      paused: paused
+        .sort((a, b) => (a.pausedUntil ?? '').localeCompare(b.pausedUntil ?? '') || a.name.localeCompare(b.name, 'vi') || a.partyId.localeCompare(b.partyId))
+        .slice(0, PAYMENT_REMINDER_CUSTOMERS_MAX)
+        .map((c) => ({ partyId: c.partyId, name: c.name, pausedUntil: c.pausedUntil as string, ownTermsDays: c.ownTermsDays, invoiceCount: c.overdue.length, total: totalOf(c.overdue) })),
     });
   },
 });
@@ -207,6 +233,7 @@ async function orgName(ctx: QueryContext, entity: string): Promise<string> {
 // One plain address: no space, comma, semicolon or angle bracket, so a party's email can never name a second recipient.
 const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
 
+const customerPaused = () => new DomainError('CUSTOMER_PAUSED', 409, 'Đang tạm dừng nhắc khách hàng này; bỏ tạm dừng rồi gửi lại');
 const nothingOverdue = () => new DomainError('NOTHING_OVERDUE', 409, 'Khách hàng này không còn hóa đơn nào quá hạn');
 
 export const paymentReminderDraft = defineQuery({
@@ -217,12 +244,14 @@ export const paymentReminderDraft = defineQuery({
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
+    if (customer.paused) throw customerPaused();
     const row = summary(customer, (await lastReminders(ctx, [customer.partyId])).get(customer.partyId));
     return zPaymentReminderDraft.parse({
       partyId: customer.partyId,
       name: customer.name,
       email: customer.email,
       currency: await bookCurrency(ctx),
+      termsDays: customer.termsDays,
       level: row.level,
       lang: row.lang,
       invoices: customer.overdue.map((i) => ({ id: i.id, series: i.series, number: i.number, date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue })),
@@ -248,6 +277,7 @@ export const paymentReminderSend = defineCommand({
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.payment_reminder:${ctx.orgId}:${input.partyId}`}, 0))`.execute(ctx.trx);
     const [customer] = await loadCustomers(ctx, entity, await databaseToday(ctx.trx), input.partyId);
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
+    if (customer.paused) throw customerPaused();
     const level = noticeLevel(customer.overdue) as NoticeLevel;
     const total = totalOf(customer.overdue);
     // What the person reviewed: the notice level, the total and the very invoices (a payment on one and a due date reached on another can leave the total as it was).
@@ -319,6 +349,17 @@ export const paymentReminderSend = defineCommand({
     return { messageId: mail.id, status, level };
   },
 });
+
+// The Monday of the week `today` (a YYYY-MM-DD date in Vietnam) falls in, and how many customers of the entity that are overdue and not paused were sent no reminder
+// since then: what the weekly "Hôm nay cần bạn" item counts (#2488, slice 3). Nothing is drafted or sent by counting.
+export async function remindersToSendThisWeek(ctx: QueryContext, entity: string, today: string): Promise<{ monday: string; count: number }> {
+  const day = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const monday = addDays(today, -((day + 6) % 7));
+  const since = new Date(`${monday}T00:00:00+07:00`).toISOString();
+  const due = (await loadCustomers(ctx, entity, today)).filter((c) => c.overdue.length > 0 && !c.paused);
+  const last = await lastReminders(ctx, due.map((c) => c.partyId));
+  return { monday, count: due.filter((c) => (last.get(c.partyId)?.at ?? '') < since).length };
+}
 
 export const paymentReminderQueries = [paymentRemindersList, paymentReminderDraft];
 export const paymentReminderCommands = [paymentReminderSend];

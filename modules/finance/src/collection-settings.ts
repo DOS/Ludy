@@ -10,7 +10,7 @@
 // never a name.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { zId, zTermsDays } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 
@@ -18,7 +18,6 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 
-export const zTermsDays = z.number().int().min(1).max(365);
 // The terms the reminders have always assumed, until the org sets another.
 const DEFAULT_TERMS_DAYS = 30;
 // A pause runs to a date in the next two years: far enough for a customer in a long dispute, near enough that it cannot be forgotten for good.

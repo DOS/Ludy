@@ -2118,6 +2118,14 @@ export function createRpcHandler(
       send: os.paymentReminders.send.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.execute('finance.payment_reminder.send', input, { actor, orgId })),
       ),
+      settings: {
+        get: os.paymentReminders.settings.get.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.collection_setting.get', {}, { actor, orgId }))),
+        set: os.paymentReminders.settings.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.collection_setting.set', input, { actor, orgId }))),
+      },
+      customer: {
+        get: os.paymentReminders.customer.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.customer_collection.get', input, { actor, orgId }))),
+        set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
+      },
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>

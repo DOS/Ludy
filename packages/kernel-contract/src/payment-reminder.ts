@@ -34,11 +34,25 @@ export const zPaymentReminderCustomer = z.object({
 });
 export type PaymentReminderCustomer = z.infer<typeof zPaymentReminderCustomer>;
 
+// A customer whose reminders are paused: when its pause ends (the last day with no reminder), the terms it set for itself (null: the org's), and what it owes.
+export const zPausedCustomer = z.object({
+  partyId: zId,
+  name: z.string(),
+  pausedUntil: z.string(),
+  ownTermsDays: z.number().int().nullable(),
+  invoiceCount: z.number().int(),
+  total: z.string(),
+});
+
 export const zPaymentReminderList = z.object({
   currency: z.string(),
   customers: z.array(zPaymentReminderCustomer),
   // The list stopped at PAYMENT_REMINDER_CUSTOMERS_MAX.
   more: z.boolean(),
+  // The org's payment terms in days (what the due dates of customers with no terms of their own use).
+  termsDays: z.number().int(),
+  // Customers with an overdue invoice whose reminders are paused: not in `customers`, no draft, no send.
+  paused: z.array(zPausedCustomer),
 });
 export type PaymentReminderList = z.infer<typeof zPaymentReminderList>;
 
@@ -67,6 +81,9 @@ export const zPaymentReminderDraft = z.object({
   name: z.string(),
   email: z.string().nullable(),
   currency: z.string(),
+  // The payment terms that dated its invoices, and the terms it set for itself (null: the org's).
+  termsDays: z.number().int(),
+  ownTermsDays: z.number().int().nullable(),
   level: zNoticeLevel,
   lang: zReminderLang,
   invoices: z.array(zReminderInvoiceView),
@@ -102,3 +119,16 @@ export type PaymentReminderSend = z.infer<typeof zPaymentReminderSend>;
 
 export const zPaymentReminderSent = z.object({ messageId: zId, status: z.enum(['queued', 'suppressed']), level: zNoticeLevel });
 export type PaymentReminderSent = z.infer<typeof zPaymentReminderSent>;
+
+// The org's settings for its reminders and a customer's own (#2488, slice 3). Terms are whole days, 1 to 365; a pause is the last day with no reminder.
+export const zTermsDays = z.number().int().min(1).max(365);
+export const zCollectionSetting = z.object({ termsDays: zTermsDays, weeklyItem: z.boolean() });
+export type CollectionSetting = z.infer<typeof zCollectionSetting>;
+export const zCustomerCollection = z.object({
+  partyId: zId,
+  termsDays: zTermsDays.nullable(),
+  effectiveTermsDays: zTermsDays,
+  pausedUntil: z.string().nullable(),
+});
+export type CustomerCollection = z.infer<typeof zCustomerCollection>;
+export const zCustomerCollectionSet = z.object({ partyId: zId, termsDays: zTermsDays.nullable(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() });
