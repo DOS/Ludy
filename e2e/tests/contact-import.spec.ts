@@ -26,8 +26,8 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
   exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Khách Có Sẵn', 'person', 'co@khach.test' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
   const stored = () => sql<{ name: string; kind: string; source_trust: string }>(`SELECT p.name, p.kind, p.source_trust FROM crove_kernel.party p JOIN crove_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug' ORDER BY p.name`, { slug });
 
-  await page.getByRole('navigation').getByRole('link', { name: 'CRM', exact: true }).click();
-  await page.getByRole('navigation').getByRole('link', { name: 'Liên hệ' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Người liên hệ' }).click();
   await page.getByRole('link', { name: 'Nhập từ tệp' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/contacts/import$`));
 

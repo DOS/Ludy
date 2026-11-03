@@ -30,6 +30,7 @@ test('splits a 1,200-character text into a thread and posts it on the sandbox (#
   const channel = 'Trang Chuỗi Bài';
 
   await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill(channel);
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

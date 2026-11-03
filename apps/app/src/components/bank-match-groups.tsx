@@ -112,7 +112,8 @@ export function BankMatchGroups({ slug, bankAccount, month, canApprove }: { slug
                             {t('proposal')}
                           </Link>
                           {': '}
-                          {errorMessage({ code: r.code, data: r.rule ? { rule: r.rule } : undefined })}
+                          {/* A voucher with a warning of its own is never approved in a batch (#2419). */}
+                          {r.code === 'BULK_NOT_ALLOWED' ? t('aloneOnly') : errorMessage({ code: r.code, data: r.rule ? { rule: r.rule } : undefined })}
                         </li>
                       ))}
                     </ul>

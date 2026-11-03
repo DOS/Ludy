@@ -182,10 +182,10 @@ describe('brand name (#1040)', () => {
 
   // #1683: the products are named after the brand, so a deployment's own name carries over.
   it('names the apps after the brand', () => {
-    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', crm: 'Ludy CRM' });
-    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', crm: 'Ludy CRM' });
+    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', social: 'Ludy Engage' });
+    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', social: 'Ludy Engage' });
     setBrandName('Tên Mới');
-    expect(catalog('vi').nav.appNames.crm).toBe('Tên Mới CRM');
+    expect(catalog('vi').nav.appNames.social).toBe('Tên Mới Engage');
   });
 
   it('keeps an apostrophe literal inside ICU messages', () => {
