@@ -9,6 +9,7 @@ import { outsideInstalled, screenInstalled } from './lib/modules.ts';
 import { pendingInvite, rememberInvite, takeTokenFromHash } from './lib/invite.ts';
 import { signOut } from './lib/session-actions.ts';
 import { AdsPage } from './routes/ads.tsx';
+import { AdsCampaignsPage } from './routes/ads-campaigns.tsx';
 import { AgentsPage } from './routes/agents.tsx';
 import { AuditPage } from './routes/audit.tsx';
 import { PersonalDataPage } from './routes/personal-data.tsx';
@@ -53,6 +54,7 @@ import { parseJournalSearch, parseTextSearch } from './lib/search.ts';
 import { parseTasksSearch } from './lib/agents.ts';
 import { parseNotesSearch } from './lib/notes.ts';
 import { parseAdsSearch } from './lib/ads.ts';
+import { parseCampaignsSearch } from './lib/ads-campaigns.ts';
 import { parseReportsSearch } from './lib/reports.ts';
 import { parseLedgerSearch } from './lib/ledger.ts';
 import { parseInboxSearch } from './lib/review.ts';
@@ -482,6 +484,8 @@ const myWorkRoute = createRoute({ getParentRoute: () => orgRoute, path: 'my-work
 // The ad accounts' spend and results, read only, with the ads module (ADR-0040, #2217): ?account= the account shown and
 // ?range= the period. A group of the Social app on the rail.
 const adsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads', validateSearch: parseAdsSearch, component: AdsPage });
+// The campaign builder of the ads module (W1c, #2295): ?draft= is the draft open in the builder. An item of the Marketing group, after the figures.
+const adsCampaignsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'ads/campaigns', validateSearch: parseCampaignsSearch, component: AdsCampaignsPage });
 // The reports of the Engage app (#2435), the last item of its menu: ?area= is the tab shown (the conversations, the sales, the posts or the ads).
 const reportsRoute = createRoute({ getParentRoute: () => orgRoute, path: 'reports', validateSearch: parseReportsSearch, component: ReportsPage });
 const taskDetailRoute = createRoute({ getParentRoute: () => orgRoute, path: 'tasks/$id', component: TaskDetailPage });
@@ -518,7 +522,7 @@ const routeTree = rootRoute.addChildren([
   clientsRoute,
   oauthCallbackRoute,
   calendarOAuthCallbackRoute,
-  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
+  orgRoute.addChildren([orgIndexRoute, overviewRoute, inboxRoute, inboxDetailRoute, documentsRoute, customersRoute, vendorsRoute, journalRoute, vouchersRoute, fixedAssetsRoute, vatRoute, portalListRoute, ledgerRoute, bankRoute, bankMatchedRoute, openingBalanceRoute, socialRoute.addChildren([socialIndexRoute, socialNewRoute, socialChannelsRoute, socialImportRoute, socialSnippetsRoute, socialLabelsRoute, socialIdeasRoute, socialFeedsRoute, socialBioRoute, socialNotificationsRoute, socialInboxRoute, socialCommentsRoute, socialPostRoute]), notificationsRoute, agentsRoute, tasksRoute, taskDetailRoute, bookingsRoute, dealsRoute, contactsRoute, contactImportRoute, crmRoute, crmBookingsRoute, crmDealsRoute, crmContactsRoute, crmContactImportRoute, notesRoute, myWorkRoute, adsRoute, adsCampaignsRoute, reportsRoute, settingsRoute, auditRoute, personalDataRoute, guideRoute]),
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
