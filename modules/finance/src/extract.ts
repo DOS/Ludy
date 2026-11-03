@@ -13,7 +13,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 
 // A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
-import { loadOwnTaxCodes, ownSeller } from './own-tax-code.ts';
+import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -45,13 +45,13 @@ export const fileForExtraction = defineQuery({
   handler: async (ctx, input) => {
     const file = await ctx.trx
       .selectFrom('crove_kernel.file')
-      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256'])
+      .select(['id', 'filename', 'content_type', 'storage_key', 'generation', 'sha256', 'upload_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.fileId)
       .executeTakeFirst();
     let query = ctx.trx
       .selectFrom('crove_kernel.extraction')
-      .select('status')
+      .select(['status', 'legal_entity_id'])
       .where('org_id', '=', ctx.orgId)
       .where('file_id', '=', input.fileId);
     if (input.version !== undefined) query = query.where('version', '=', input.version);
@@ -81,12 +81,15 @@ export const fileForExtraction = defineQuery({
       .where(sql<boolean>`retry_at > pg_catalog.now()`)
       .limit(1)
       .executeTakeFirst();
-    return file ? { ...file, hasExtraction: Boolean(extraction), due, aiStopped: Boolean(stopped) || global[0]?.on === true, waitingAiBudget: Boolean(waiting) } : null;
+    // The legal entity the reading is made in (#2502): the one a re-reading was asked for, else the one the upload named; none, the org's default.
+    const { upload_entity_id: uploadEntity, ...fileRow } = file ?? { upload_entity_id: null };
+    return file ? { ...fileRow, legalEntityId: extraction?.legal_entity_id ?? uploadEntity ?? null, hasExtraction: Boolean(extraction), due, aiStopped: Boolean(stopped) || global[0]?.on === true, waitingAiBudget: Boolean(waiting) } : null;
   },
 });
 
 export interface InvoiceLookup {
-  // 'sale' when the seller's tax code is the org's own or one of its branches (crove_kernel.tenant.tax_code, #313, #686), or the code of any of its legal entities (#2502).
+  // 'sale' when the seller is the legal entity the invoice is read in or one of its branches (its tax code, which is crove_kernel.tenant.tax_code for the default entity,
+  // #313, #686), or another entity of the org that the buyer is not (#2502: a sale that is booked in the issuing entity's books, refused in this one).
   direction: DocumentDirection;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
@@ -174,8 +177,10 @@ export const purchaseLookup = defineQuery({
     number: z.string(),
     // The invoice a replacement or an adjustment names (#916).
     related: z.object({ series: z.string(), number: z.string() }).nullable().default(null),
-    // The legal entity whose learned rules apply (#1280); omitted, the org's default entity.
+    // The legal entity the invoice is read in (#1280, #2502): its learned rules apply, and the invoice is a sale or a purchase of its books; omitted, the org's default entity.
     legalEntityId: zId.optional(),
+    // The buyer's tax code, to tell a purchase from another entity of the org (an invoice between two entities is a purchase in the buyer's books).
+    buyerTaxCode: z.string().nullable().default(null),
     // The amounts of the reading being recorded (an original, #2320), to tell whether they are the posted document's: in
     // the invoice's own currency when it is not VND (each side converts at its own rate, so the dong amounts may differ
     // while the invoice is the same), else the amounts booked.
@@ -184,11 +189,12 @@ export const purchaseLookup = defineQuery({
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
     // A sale (issue #313): the org issued the invoice and numbers its own invoices, so a duplicate is the same series
-    // and number whoever the customer is, and no account is remembered per customer. The seller is the org's own when its
-    // code is the org's or any legal entity's (#2502): an invoice issued as another entity of the org is that entity's sale,
-    // never a purchase from a supplier.
-    const seller = ownSeller(input.sellerTaxCode, await loadOwnTaxCodes(ctx));
-    const sale = seller.own;
+    // and number whoever the customer is, and no account is remembered per customer. It is a sale of the legal entity it is
+    // read in when the seller is that entity (#2502); issued as another entity of the org it is never a purchase from a
+    // supplier: a sale of that entity (refused where it would be booked), or a purchase when this entity is its buyer.
+    const entityId = await resolveLegalEntity(ctx, input.legalEntityId);
+    const reading = readSeller({ seller: input.sellerTaxCode, buyer: input.buyerTaxCode, entityId }, await loadOwnTaxCodes(ctx));
+    const sale = reading !== 'purchase';
     const party =
       !sale && input.sellerTaxCode
         ? await ctx.trx
@@ -217,7 +223,7 @@ export const purchaseLookup = defineQuery({
         .where('d.invoice_series', '=', series)
         .where('d.invoice_number', '=', number)
         // A sale is unique per issuing entity (#2502): two entities of the org may use the same series and number.
-        .$if(sale && seller.legalEntityId !== null, (q) => q.where('d.legal_entity_id', '=', seller.legalEntityId as string))
+        .$if(sale, (q) => q.where('d.legal_entity_id', '=', entityId))
         .where(({ not, exists, selectFrom }) =>
           not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         );
@@ -232,8 +238,8 @@ export const purchaseLookup = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
       .where('status', 'in', ['pending', 'executed'])
-      // The proposals of the issuing entity's own books (#2502), for a sale of an entity of the org.
-      .$if(sale && seller.legalEntityId !== null, (q) => q.where('legal_entity_id', '=', seller.legalEntityId as string))
+      // The proposals of this entity's own books (#2502), for a sale.
+      .$if(sale, (q) => q.where('legal_entity_id', '=', entityId))
       .where((eb) => eb.or([eb('source_file_id', 'is', null), eb('source_file_id', '!=', input.fileId)]))
       // Nor is a proposal revised from this file's reading (the original of a PDF's invoice, #2269).
       .where(({ not, exists, selectFrom }) =>
@@ -285,7 +291,7 @@ export const purchaseLookup = defineQuery({
     return {
       direction: sale ? 'sale' : 'purchase',
       vendorDefault: rule?.debit_account ?? null,
-      learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, await resolveLegalEntity(ctx, input.legalEntityId)),
+      learnedRules: sale ? [] : await rulesForSuggestion(ctx, ruleParty?.id ?? null, entityId),
       duplicateDocumentId: document?.id ?? null,
       duplicateProposalId: duplicate?.id ?? null,
       // Only when the pending PDF or photo reading is the one match: another proposal of the same invoice (a second one, in
@@ -639,6 +645,8 @@ export async function extractAndPropose(
     series: invoice.series,
     number: invoice.number,
     related: invoice.related ? { series: invoice.related.series, number: invoice.related.number } : null,
+    buyerTaxCode: invoice.buyer.taxCode ? (parseTaxCode(invoice.buyer.taxCode)?.normalized ?? invoice.buyer.taxCode) : null,
+    ...(file.legalEntityId ? { legalEntityId: file.legalEntityId } : {}),
   };
   const lookup = await deps.runtime.query<InvoiceLookup>('finance.extraction.lookup', { fileId, ...lookupInput }, { actor, orgId });
 

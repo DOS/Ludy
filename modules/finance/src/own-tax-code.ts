@@ -13,34 +13,40 @@ export function isOwnTaxCode(code: string | null | undefined, orgTaxCode: string
   return org.kind === 'enterprise' && party.kind === 'branch' && party.normalized.startsWith(`${org.normalized}-`);
 }
 
-// The org's own tax codes: the org's (crove_kernel.tenant.tax_code) and each legal entity's (#1278: a company with several entities issues invoices as each of them, and
-// the default entity's code is the org's). An invoice whose seller is any of them is the org's own sale, filed under the entity whose code it is.
+// The org's own tax codes: the org's (crove_kernel.tenant.tax_code, which is the default entity's) and each legal entity's (#1278: a company with several entities
+// issues invoices as each of them).
 export interface OwnTaxCodes {
   tenant: string | null;
-  entities: ReadonlyArray<{ id: string; taxCode: string | null; isDefault: boolean }>;
+  entities: ReadonlyArray<{ id: string; taxCode: string | null }>;
 }
 
-export interface OwnSeller {
-  own: boolean;
-  // The entity whose sale it is: the one with exactly this code, else the one whose branch this is; null when only the org's own code matched (an org with no entity row).
-  legalEntityId: string | null;
-  // That entity is the org's default one: a sale of it needs no entity named on the proposal.
-  isDefault: boolean;
+// What an invoice is to the books of one legal entity, the one it is read in or booked in (#2502): 'sale' when the seller is that entity (its code, or a branch of it),
+// 'purchase' when the seller is not the org's own taxpayer at all or is another entity of the org that sells to this one (an invoice between two entities of the org is
+// a sale in the seller's books and a purchase in the buyer's), and 'sale_other_entity' when the seller is another entity of the org and the buyer is not this entity:
+// a sale that is not this entity's, so it is booked in the books of the entity that issued it, never as a purchase from a supplier and never here.
+export type SellerReading = 'sale' | 'purchase' | 'sale_other_entity';
+
+export function readSeller(invoice: { seller: string | null | undefined; buyer: string | null | undefined; entityId: string }, own: OwnTaxCodes): SellerReading {
+  const entity = own.entities.find((e) => e.id === invoice.entityId);
+  // An entity the writer cannot see reads as the org (the single-entity way, as before).
+  const entityCode = entity ? entity.taxCode : own.tenant;
+  if (isOwnTaxCode(invoice.seller, entityCode)) return 'sale';
+  // The org's own code counts even when the entity that holds it (the default one) is out of the writer's scope, so a scoped member cannot book it as a stranger's.
+  const another = isOwnTaxCode(invoice.seller, own.tenant) || own.entities.some((e) => e.id !== invoice.entityId && isOwnTaxCode(invoice.seller, e.taxCode));
+  if (!another) return 'purchase';
+  return isOwnTaxCode(invoice.buyer, entityCode) ? 'purchase' : 'sale_other_entity';
 }
 
-export function ownSeller(code: string | null | undefined, own: OwnTaxCodes): OwnSeller {
-  const party = parseTaxCode(code);
-  const exact = party ? own.entities.find((e) => parseTaxCode(e.taxCode)?.normalized === party.normalized) : undefined;
-  const entity = exact ?? own.entities.find((e) => isOwnTaxCode(code, e.taxCode));
-  if (entity) return { own: true, legalEntityId: entity.id, isDefault: entity.isDefault };
-  return { own: isOwnTaxCode(code, own.tenant), legalEntityId: null, isDefault: false };
-}
-
-// The codes as the writer's own policies show them: a scoped member sees the entities of their scope, so a seller that is another entity's code reads as not own to them.
+// The codes as the writer's own policies show them: a scoped member sees the entities of their scope. With `lockTenant` the org's row and the entity rows are read FOR
+// SHARE until commit, in the order kernel.org.set_tax_code and kernel.legal_entity.update take them, so a concurrent change of a code waits for the posting.
 export async function loadOwnTaxCodes(ctx: Pick<QueryContext, 'trx' | 'orgId'>, options: { lockTenant?: boolean } = {}): Promise<OwnTaxCodes> {
   let tenant = ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId);
-  if (options.lockTenant) tenant = tenant.forShare();
+  let entities = ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'tax_code']).where('org_id', '=', ctx.orgId);
+  if (options.lockTenant) {
+    tenant = tenant.forShare();
+    entities = entities.forShare();
+  }
   const org = await tenant.executeTakeFirst();
-  const entities = await ctx.trx.selectFrom('crove_kernel.legal_entity').select(['id', 'tax_code', 'is_default']).where('org_id', '=', ctx.orgId).execute();
-  return { tenant: org?.tax_code ?? null, entities: entities.map((e) => ({ id: e.id, taxCode: e.tax_code, isDefault: e.is_default })) };
+  const rows = await entities.execute();
+  return { tenant: org?.tax_code ?? null, entities: rows.map((e) => ({ id: e.id, taxCode: e.tax_code })) };
 }

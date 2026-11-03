@@ -33,7 +33,7 @@ import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
 import { invoiceLabel, journalMemo } from './memo.ts';
-import { loadOwnTaxCodes, ownSeller, type OwnSeller } from './own-tax-code.ts';
+import { loadOwnTaxCodes, readSeller } from './own-tax-code.ts';
 import { databaseToday, dateLabel, liveOpeningDate } from './period-lock.ts';
 import { BOOK_CURRENCY, checkRate, convertInvoice, foreignNote, toDong } from './domain/foreign-currency.ts';
 
@@ -194,18 +194,19 @@ async function documentEntry(ctx: CommandContext, documentId: string) {
 // A sale must be the org's own invoice, and a purchase must not be: the org's tax code (kernel.org.set_tax_code) is
 // read again here, so a proposal raised before it was set or changed cannot book an invoice on the wrong side. The
 // tenant row is read FOR SHARE until commit, so a concurrent kernel.org.set_tax_code waits for this posting.
-async function assertDirection(ctx: CommandContext, payload: PurchaseProposal): Promise<OwnSeller> {
-  // The org's branches (#686) issue its own invoices too, and so does each of its legal entities (#2502): the seller is the org's own when its code is the org's or
-  // any entity's that the writer sees.
-  const seller = ownSeller(payload.seller.taxCode, await loadOwnTaxCodes(ctx, { lockTenant: true }));
-  const ownInvoice = seller.own;
-  if (directionOf(payload) === 'sale' && !ownInvoice) {
+async function assertDirection(ctx: CommandContext, payload: PurchaseProposal, legalEntityId: string): Promise<void> {
+  // What the invoice is to the books of the entity it is booked in (#2502, #686): that entity's sale (its code or a branch of it), a purchase (a stranger's, or another
+  // entity's of the org when this one is its buyer), or another entity's sale. The org's code and the entities' are read FOR SHARE, so a change of one waits for this posting.
+  const reading = readSeller({ seller: payload.seller.taxCode, buyer: payload.buyer.taxCode, entityId: legalEntityId }, await loadOwnTaxCodes(ctx, { lockTenant: true }));
+  if (directionOf(payload) === 'sale' && reading === 'sale_other_entity') {
+    throw new DomainError('SALE_OTHER_ENTITY', 422, 'Hóa đơn này do một pháp nhân khác của tổ chức phát hành nên không ghi vào sổ của pháp nhân đang chọn được; hãy từ chối đề xuất này rồi tải lại tệp vào đúng pháp nhân');
+  }
+  if (directionOf(payload) === 'sale' && reading === 'purchase') {
     throw new DomainError('NOT_OWN_SALE', 422, 'Mã số thuế người bán không phải mã số thuế của tổ chức nên không ghi sổ như hóa đơn bán ra được; hãy kiểm tra mã số thuế trong Cài đặt rồi đọc lại tệp');
   }
-  if (directionOf(payload) === 'purchase' && ownInvoice) {
+  if (directionOf(payload) === 'purchase' && reading !== 'purchase') {
     throw new DomainError('OWN_INVOICE', 422, 'Người bán là chính tổ chức nên đây là hóa đơn bán ra; hãy đọc lại tệp để ghi sổ như hóa đơn bán ra');
   }
-  return seller;
 }
 
 // A posting date other than the invoice date (#478), checked before anything is written: only for a purchase, never
@@ -441,7 +442,6 @@ export const recordPurchase = defineCommand({
     // A line no rule matched has no account until a reviewer picks one (#2091). The warning check does not decide this:
     // the lines do, so a proposal whose check was edited away is held here too.
     assertClassified(payload.lines);
-    const ownerOfSale = await assertDirection(ctx, payload);
     // Line accounts come from the approved revision; changing them is an edit (kernel.proposal.edit). A sub-account
     // deactivated since the proposal was made is refused here, with its code.
     const { lines } = payload;
@@ -470,11 +470,7 @@ export const recordPurchase = defineCommand({
           ?.legal_entity_id
       : undefined;
     const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId ?? stamped);
-    // A sale is the books of the entity whose invoice it is (#2502): one issued as another legal entity of the org is not booked in this one's. The upload names the entity
-    // its document is booked in, so the file is read again there.
-    if (sale && ownerOfSale.legalEntityId !== null && ownerOfSale.legalEntityId !== legalEntityId) {
-      throw new DomainError('SALE_OTHER_ENTITY', 422, 'Hóa đơn này do một pháp nhân khác của tổ chức phát hành nên không ghi vào sổ của pháp nhân đang chọn được; hãy tải lại tệp vào đúng pháp nhân');
-    }
+    await assertDirection(ctx, payload, legalEntityId);
     const partyId = await upsertParty(ctx, sale ? payload.buyer : payload.seller, direction);
     // The invoice recorded again after its document was voided by a reversal (#165): the new document names the
     // voided one it replaces. Any other document of the same invoice still in force makes this a duplicate, refused
