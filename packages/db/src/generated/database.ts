@@ -1245,6 +1245,7 @@ export interface KernelConversationMessageTable {
   platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   author_identity_id: ColumnType<string | null, string | null, NotGranted>;
+  email_refs: ColumnType<string[], string[] | undefined, NotGranted>;
 }
 
 /** crove_kernel.conversation_note */
@@ -1303,6 +1304,7 @@ export interface KernelConversationTable {
   intent: string | null;
   intent_set_by: string | null;
   intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  subject: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_kernel.currency */

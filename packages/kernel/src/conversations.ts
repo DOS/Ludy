@@ -21,6 +21,8 @@ import { sql } from 'kysely';
 import {
   CONVERSATION_CALL_STALE_MS,
   CONVERSATION_PREVIEW_CHARS,
+  EMAIL_PROVIDER,
+  EMAIL_REFS_MAX,
   conversationRules,
   zConversationAssign,
   zConversationAutoDraftSet,
@@ -42,6 +44,7 @@ import {
   zConversationHistoryRecord,
   zConversationHide,
   zConversationId,
+  zConversationEmailIngest,
   zConversationIngest,
   zConversationLinkContact,
   zConversationList,
@@ -96,6 +99,7 @@ import { z } from 'zod';
 import { zId, zTodayItems, type TodayItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, conversationKey, defineCommand, defineQuery, newConversationBlobId, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { createMailMessage } from './mail.ts';
 import { notifyMembers, ownersAndAdmins } from './notifications.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -230,26 +234,70 @@ export const conversationIngest = defineCommand({
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
-    const connection = await connectionOf(ctx, input.connectionId);
-    const rules = connection && connection.status === 'active' ? conversationRules(connection.provider) : null;
-    if (!connection || !rules) {
-      out.ignored = input.events.length;
-      ctx.audit({ connection_id: input.connectionId, ...out });
-      return out;
-    }
-    // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
-    const events = input.events.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
-    for (const { event } of events) {
-      if (!rules.kinds.includes(event.kind)) {
-        out.ignored++;
-        continue;
-      }
-      const result = await ingestEvent(ctx, input.connectionId, connection.provider, rules.windowHours, event);
-      out[result]++;
-    }
-    ctx.audit({ connection_id: input.connectionId, ...out });
+    return ingestEvents(ctx, input.connectionId, input.events);
+  },
+});
+
+async function ingestEvents(ctx: CommandContext, connectionId: string, inputEvents: readonly ConversationEvent[]): Promise<ConversationIngested> {
+  const out: ConversationIngested = { stored: 0, duplicates: 0, ignored: 0 };
+  const connection = await connectionOf(ctx, connectionId);
+  const rules = connection && connection.status === 'active' ? conversationRules(connection.provider) : null;
+  if (!connection || !rules) {
+    out.ignored = inputEvents.length;
+    ctx.audit({ connection_id: connectionId, ...out });
     return out;
+  }
+  // Oldest first, so a thread's messages take their seq in the order the platform dated them within one notice.
+  const events = inputEvents.map((event, i) => ({ event, i })).sort((a, b) => Date.parse(a.event.at) - Date.parse(b.event.at) || a.i - b.i);
+  for (const { event } of events) {
+    if (!rules.kinds.includes(event.kind)) {
+      out.ignored++;
+      continue;
+    }
+    const result = await ingestEvent(ctx, connectionId, connection.provider, rules.windowHours, event);
+    out[result]++;
+  }
+  ctx.audit({ connection_id: connectionId, ...out });
+  return out;
+}
+
+// The org's email connection (#2439): one, made when the first customer mail arrives, so an org that never gets mail has none. It has no
+// account behind it, so it carries no credential; the member named is the org's creator, as the connection needs one.
+async function emailConnectionId(ctx: CommandContext): Promise<string> {
+  const find = () =>
+    ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('provider', '=', EMAIL_PROVIDER)
+      .where('status', '<>', 'revoked')
+      .orderBy('connected_at')
+      .limit(1)
+      .executeTakeFirst();
+  const existing = await find();
+  if (existing) return existing.id;
+  const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('created_by').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+  await ctx.trx
+    .insertInto('crove_kernel.channel_connection')
+    .values({ org_id: ctx.orgId, provider: EMAIL_PROVIDER, external_account_id: 'inbox', display_name: 'Email', status: 'active', connected_by: org.created_by, connected_at: ctx.now, updated_at: ctx.now })
+    .onConflict((oc) => oc.columns(['org_id', 'provider', 'external_account_id']).where('status', '<>', 'revoked').doNothing())
+    .execute();
+  const made = await find();
+  if (!made) throw new DomainError('EMAIL_CONNECTION', 409, 'Không mở được kênh email');
+  return made.id;
+}
+
+// A customer mail the worker parsed (#2439): the same intake as a platform's notice, for the org's email connection, which is made if it is the
+// first mail. The org is the worker's, found from the stored address. Idempotent: a redelivered Message-ID changes nothing.
+export const conversationEmailIngest = defineCommand({
+  name: 'kernel.conversation.email_ingest',
+  input: zConversationEmailIngest,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  handler: async (ctx, input): Promise<ConversationIngested> => {
+    requireSystem(ctx);
+    return ingestEvents(ctx, await emailConnectionId(ctx), input.events);
   },
 });
 
@@ -287,7 +335,28 @@ async function addAttachments(ctx: CommandContext, messageId: string, connection
 const customerLock = (ctx: CommandContext, provider: string, externalUserId: string) =>
   sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.conversation.customer:${ctx.orgId}:${provider}:${externalUserId}`}, 0))`.execute(ctx.trx);
 
-async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, event: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
+// The thread an email joins (#2439): the one that holds a Message-ID the mail names in In-Reply-To or References, within this org and this
+// channel only, so an id that points at another org's conversation finds nothing and opens a thread of its own. A mail that names none opens a
+// thread whose id is its own Message-ID. The subject never joins threads: a wrong merge would show one customer another's mail.
+async function emailThreadId(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<string> {
+  const refs = [...new Set(event.refs ?? [])];
+  if (refs.length === 0) return event.messageId;
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message as m')
+    .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .select('c.external_thread_id')
+    .where('m.org_id', '=', ctx.orgId)
+    .where('m.channel_connection_id', '=', connectionId)
+    .where('c.kind', '=', 'email')
+    .where('m.external_message_id', 'in', refs)
+    .orderBy('m.sent_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  return row?.external_thread_id ?? event.messageId;
+}
+
+async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, original: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
+  const event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
     .select(['id', 'conversation_id', 'body', 'direction', 'platform_removed_at'])
@@ -433,6 +502,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       external_post_id: event.postId ?? null,
       identity_id: identity.id,
       party_id: linked?.party_id ?? null,
+      subject: event.kind === 'email' ? (event.subject ?? null) : null,
       status: 'new',
       opened_at: ctx.now,
       created_at: ctx.now,
@@ -518,6 +588,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       send_state: event.direction === 'in' ? null : 'sent',
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
+      email_refs: event.kind === 'email' ? [...new Set(event.refs ?? [])] : [],
     })
     .returning('id')
     .executeTakeFirstOrThrow();
@@ -589,6 +660,8 @@ interface SummaryRow {
   composing: string[] | null;
   // The intent a person applied (CV3, #2306), or null.
   intent: string | null;
+  // An email thread's subject (#2439), or null.
+  subject: string | null;
 }
 
 // The summary columns of a thread with its channel, customer, party, last message and the viewer's read mark. Row-level
@@ -596,7 +669,7 @@ interface SummaryRow {
 const summarySelect = (orgId: string, viewer: string | null) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          c.identity_id, i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
-         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent,
+         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent, c.subject,
          (SELECT m.body FROM crove_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id ORDER BY m.seq DESC LIMIT 1) AS preview,
          r.last_read_seq AS read_seq,
@@ -629,6 +702,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
     unread: row.last_seq > (row.read_seq ?? 0),
     composing: row.composing ?? [],
     intent: row.intent as ConversationIntent | null,
+    subject: row.subject,
   };
 }
 
@@ -952,11 +1026,60 @@ export const conversationReply = defineCommand({
     if (input.savedReplyId) {
       await ctx.trx.updateTable('crove_kernel.saved_reply').set({ use_count: sql<number>`use_count + 1` }).where('org_id', '=', ctx.orgId).where('id', '=', input.savedReplyId).execute();
     }
-    await ctx.emit(REPLY_QUEUED, { conversationId: conversation.id, messageId: message.id, connectionId: conversation.channel_connection_id });
+    if (conversation.kind === 'email') await queueEmailReply(ctx, conversation, message.id, input.body);
+    else await ctx.emit(REPLY_QUEUED, { conversationId: conversation.id, messageId: message.id, connectionId: conversation.channel_connection_id });
     ctx.audit({ conversation_id: conversation.id, message_id: message.id, length: input.body.length, ...(usedDraft ? { draft_id: input.draftId } : {}) });
     return { messageId: message.id, seq };
   },
 });
+
+// An email reply (#2439) is a mail of the kernel pipeline (ADR-0034), queued in the transaction that wrote the message: the mail queue renders
+// it from the template, sends it once, and records the outcome, which settles the message (settleEmailReply in mail.ts). The mail's own
+// Message-ID becomes the message's external id, so the customer's next reply, which names it, finds this thread. In-Reply-To names the customer's
+// last mail and References the chain it carried, so the customer's client threads the answer.
+export const EMAIL_REPLY_SOURCE = 'kernel.conversation.reply';
+export const EMAIL_REPLY_TEMPLATE = 'kernel.conversation_reply';
+async function queueEmailReply(ctx: CommandContext, conversation: ConversationRow, messageId: string, body: string): Promise<void> {
+  const to = conversation.identity_id
+    ? await ctx.trx.selectFrom('crove_kernel.conversation_identity').select('external_user_id').where('org_id', '=', ctx.orgId).where('id', '=', conversation.identity_id).executeTakeFirst()
+    : undefined;
+  if (!to) throw new DomainError('NO_RECIPIENT', 409, 'Hội thoại này chưa có địa chỉ người nhận');
+  const last = await ctx.trx
+    .selectFrom('crove_kernel.conversation_message')
+    .select(['external_message_id', 'email_refs'])
+    .where('org_id', '=', ctx.orgId)
+    .where('conversation_id', '=', conversation.id)
+    .where('direction', '=', 'in')
+    .where('external_message_id', 'is not', null)
+    .orderBy('seq', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  const refs = last?.external_message_id ? [...new Set([...last.email_refs, last.external_message_id])].slice(-EMAIL_REFS_MAX) : [];
+  const meta = await ctx.trx
+    .selectFrom('crove_kernel.conversation')
+    .innerJoin('crove_kernel.tenant', 'crove_kernel.tenant.org_id', 'crove_kernel.conversation.org_id')
+    .select(['crove_kernel.conversation.subject as subject', 'crove_kernel.tenant.name as org_name'])
+    .where('crove_kernel.conversation.org_id', '=', ctx.orgId)
+    .where('crove_kernel.conversation.id', '=', conversation.id)
+    .executeTakeFirstOrThrow();
+  const subject = meta.subject ? (/^\s*re:/i.test(meta.subject) ? meta.subject : `Re: ${meta.subject}`) : `Trả lời từ ${meta.org_name}`;
+  const mail = await createMailMessage(ctx, {
+    stream: 'transactional',
+    source: EMAIL_REPLY_SOURCE,
+    sourceId: messageId,
+    templateKey: EMAIL_REPLY_TEMPLATE,
+    to: to.external_user_id,
+    subject: subject.slice(0, 300),
+    payload: { org: meta.org_name, text: body, inReplyTo: last?.external_message_id ?? null, references: refs },
+    status: 'queued',
+  });
+  await ctx.trx
+    .updateTable('crove_kernel.conversation_message')
+    .set({ external_message_id: mail.messageIdHeader, ...(mail.status === 'suppressed' ? { send_state: 'failed', send_error_code: 'SUPPRESSED' } : {}) })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', messageId)
+    .execute();
+}
 
 export interface ReplyWork {
   action: 'none' | 'call';
@@ -966,7 +1089,7 @@ export interface ReplyWork {
   provider?: string;
   connectionId?: string;
   connectionVersion?: string;
-  kind?: 'comment_thread' | 'direct';
+  kind?: Exclude<ConversationKind, 'email'>;
   threadId?: string;
   postId?: string | null;
   contactId?: string;
@@ -1000,6 +1123,8 @@ export const conversationReplyBegin = defineCommand({
     requireSystem(ctx);
     const message = await lockMessage(ctx, input.messageId);
     if (message.direction !== 'out') return { action: 'none', reason: 'settled' };
+    // An email reply goes through the mail queue, which sends it and settles the message (settleEmailReply): there is no platform call here.
+    if (message.kind === 'email') return { action: 'none', reason: 'settled' };
     if (message.send_state === 'sending') {
       if (await staleCall(ctx, replyCallKey(message.id, message.send_attempt))) {
         await ctx.trx.updateTable('crove_kernel.conversation_message').set({ send_state: 'unknown', send_error_code: 'WORKER_LOST' }).where('org_id', '=', ctx.orgId).where('id', '=', message.id).execute();
@@ -1532,6 +1657,8 @@ export const conversationIntentSource = defineQuery({
 export interface ContactCandidates {
   // The name the platform gave the customer (tainted), when it gave one.
   customerName: string | null;
+  // Contacts of the org whose email is the address an email customer writes from (deterministic: the address, folded to lower case).
+  email: Array<{ partyId: string; name: string }>;
   // Contacts of the org that carry a phone number the customer wrote in this thread (deterministic: the phone key).
   phone: Array<{ partyId: string; name: string }>;
   // Contacts whose name resembles the customer's (the words they share, ignoring case and Vietnamese marks), the likeliest first.
@@ -1546,15 +1673,25 @@ export const conversationContactCandidates = defineQuery({
   input: zConversationContactMatches,
   access: WRITERS,
   handler: async (ctx, input): Promise<ContactCandidates> => {
-    const { rows } = await sql<{ party_id: string | null; identity_name: string | null }>`
-      SELECT c.party_id, i.display_name AS identity_name
+    const { rows } = await sql<{ party_id: string | null; identity_name: string | null; address: string | null }>`
+      SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' THEN i.external_user_id END AS address
       FROM crove_kernel.conversation c
       LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
     const thread = rows[0];
     if (!thread) throw notFound();
-    const none: ContactCandidates = { customerName: thread.identity_name, phone: [], names: [] };
+    const none: ContactCandidates = { customerName: thread.identity_name, email: [], phone: [], names: [] };
     if (thread.party_id !== null) return none;
+    // An email customer's address is the deterministic key: a contact that carries it (ignoring case) is the first candidate.
+    const byEmail =
+      thread.address === null
+        ? []
+        : (
+            await sql<{ id: string; name: string }>`
+              SELECT p.id, p.name FROM crove_kernel.party p
+              WHERE p.org_id = ${ctx.orgId}::uuid AND p.duplicate_of IS NULL AND p.email IS NOT NULL AND pg_catalog.lower(pg_catalog.btrim(p.email)) = ${thread.address}
+              ORDER BY p.name, p.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX}`.execute(ctx.trx)
+          ).rows;
     // The numbers the customer wrote in this thread, most recent messages first.
     const written = await sql<{ body: string }>`
       SELECT pg_catalog.left(m.body, 2000) AS body FROM crove_kernel.conversation_message m
@@ -1591,11 +1728,12 @@ export const conversationContactCandidates = defineQuery({
               GROUP BY near.id, near.name HAVING pg_catalog.count(*) >= (SELECT n FROM need) AND (SELECT n FROM need) > 0
               ORDER BY pg_catalog.count(*) DESC, near.name, near.id LIMIT ${CONVERSATION_CONTACT_MATCHES_MAX + 3}`.execute(ctx.trx)
           ).rows;
-    const phoneIds = new Set(phone.map((r) => r.id));
+    const known = new Set([...byEmail, ...phone].map((r) => r.id));
     return {
       customerName: thread.identity_name,
-      phone: phone.map((r) => ({ partyId: r.id, name: r.name })),
-      names: names.filter((r) => !phoneIds.has(r.id)).map((r) => ({ partyId: r.id, name: r.name })),
+      email: byEmail.map((r) => ({ partyId: r.id, name: r.name })),
+      phone: phone.filter((r) => !byEmail.some((e) => e.id === r.id)).map((r) => ({ partyId: r.id, name: r.name })),
+      names: names.filter((r) => !known.has(r.id)).map((r) => ({ partyId: r.id, name: r.name })),
     };
   },
 });
@@ -2646,6 +2784,7 @@ export const conversationDraftDiscard = defineCommand({
 
 
 export const conversationCommands = [
+  conversationEmailIngest,
   conversationIngest,
   conversationReply,
   conversationReplyBegin,

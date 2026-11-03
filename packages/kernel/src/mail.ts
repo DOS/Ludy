@@ -354,6 +354,8 @@ export const recordMailEvent = defineCommand({
         .execute();
       status = next;
     }
+    // A hard bounce (the address does not take mail) fails the reply it answered, though the mailer had accepted it.
+    if (input.kind === 'bounce_hard') await settleConversationReply(ctx, mail.id, 'failed', 'BOUNCED');
     const suppression =
       input.kind === 'bounce_hard' ? { scope: 'all' as const, reason: 'hard_bounce' as const } : input.kind === 'complaint' ? { scope: 'marketing' as const, reason: 'complaint' as const } : null;
     let suppressed: MailScope | null = null;
@@ -401,6 +403,29 @@ export type QueuedMailBegin =
       inboundToken: string;
     };
 
+// A reply to an email conversation (#2439) is a mail of this queue, and its outcome is the outcome of the conversation message it carries: the mail's
+// source names the command that queued it and its source id the message. What the mail's state says about the message: sent (the mailer took it),
+// failed (refused, stopped by the suppression list, or bounced for good), unknown (the mailer may have taken it; never sent again blindly). The
+// message only moves on from the states a mail outcome can follow, so a late event never undoes a settled one.
+type SendState = 'queued' | 'sending' | 'sent' | 'failed' | 'unknown';
+const REPLY_FROM: Readonly<Record<'sent' | 'failed' | 'unknown', readonly SendState[]>> = {
+  sent: ['queued', 'sending', 'unknown'],
+  failed: ['queued', 'sending', 'unknown', 'sent'],
+  unknown: ['queued', 'sending'],
+};
+async function settleConversationReply(ctx: CommandContext, mailId: string, state: 'sent' | 'failed' | 'unknown', code: string | null): Promise<void> {
+  const mail = await ctx.trx.selectFrom('crove_kernel.mail_message').select(['source', 'source_id']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
+  if (mail?.source !== 'kernel.conversation.reply' || !mail.source_id) return;
+  await ctx.trx
+    .updateTable('crove_kernel.conversation_message')
+    .set({ send_state: state, send_error_code: state === 'sent' ? null : (code ?? (state === 'failed' ? 'SEND_FAILED' : 'OUTCOME_UNKNOWN')) })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', mail.source_id)
+    .where('direction', '=', 'out')
+    .where('send_state', 'in', [...REPLY_FROM[state]])
+    .execute();
+}
+
 // A mail that cannot be sent leaves the queue as 'failed' with the reason, so no later pass picks it up again.
 async function stop(ctx: CommandContext, messageId: string, again: boolean, reason: string): Promise<QueuedMailBegin> {
   if (!again) {
@@ -410,6 +435,7 @@ async function stop(ctx: CommandContext, messageId: string, again: boolean, reas
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', messageId)
       .execute();
+    await settleConversationReply(ctx, messageId, 'failed', reason);
   }
   return { action: 'none', reason };
 }
@@ -450,6 +476,7 @@ export const beginQueuedMail = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', mail.id)
         .execute();
+      await settleConversationReply(ctx, mail.id, 'failed', 'SUPPRESSED');
       ctx.audit({ message_id: mail.id, outcome: 'suppressed' });
       return { action: 'suppressed' };
     }
@@ -567,6 +594,7 @@ export const recordQueuedMail = defineCommand({
         .onConflict((oc) => oc.columns(['org_id', 'to_hash', 'scope']).where('lifted_at', 'is', null).doNothing())
         .execute();
     }
+    await settleConversationReply(ctx, mail.id, input.outcome === 'ambiguous' ? 'unknown' : input.outcome, input.errorCode ?? null);
     ctx.audit({ message_id: mail.id, attempt: input.attempt, outcome: input.outcome, ...(stop ? { suppressed: stop } : {}) });
     return { recorded: true };
   },

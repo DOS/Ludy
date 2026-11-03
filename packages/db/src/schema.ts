@@ -750,7 +750,7 @@ export type CrmImportRowTable = Refine<
 >;
 // The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
-export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
+export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 // The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
 export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;

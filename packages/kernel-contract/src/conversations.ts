@@ -8,7 +8,7 @@
 import { z } from 'zod';
 import { zId } from './schemas.ts';
 
-export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
+export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
@@ -56,7 +56,17 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
+  email: { kinds: ['email'], replyMax: 20_000, canHide: false, windowHours: null },
 };
+// Customer email (#2439, plan section 6.7): a conversation channel with no platform behind it, so no reply window and nothing to hide; a
+// reply goes out through the kernel mail pipeline, not an adapter. The connection is made when the first mail arrives.
+export const EMAIL_PROVIDER = 'email';
+// The tag of the org's conversation address: `<token>+hopthu@<inbound domain>`. The org is found from the token like the document address, and
+// the tag sends the mail to the Inbox instead of the invoice reader.
+export const EMAIL_ADDRESS_TAG = 'hopthu';
+// A customer's reply names earlier Message-IDs; at most this many are kept and looked up.
+export const EMAIL_REFS_MAX = 50;
+export const EMAIL_SUBJECT_MAX = 300;
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
 
@@ -93,6 +103,9 @@ export const zConversationEvent = z.strictObject({
   removed: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
+  // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
+  subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
+  refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
 });
 export type ConversationEvent = z.infer<typeof zConversationEvent>;
 
@@ -101,6 +114,12 @@ export const zConversationIngest = z.strictObject({
   events: z.array(zConversationEvent).min(1).max(CONVERSATION_EVENTS_MAX),
 });
 export type ConversationIngestInput = z.infer<typeof zConversationIngest>;
+// What the mail worker hands the core for one customer mail (#2439): the org is the worker's (found from the stored address), the events are
+// email events only (the core finds or makes the org's email connection). Everything else of the notice stays with the worker.
+export const zConversationEmailIngest = z.strictObject({
+  events: z.array(zConversationEvent.refine((event) => event.kind === 'email', 'email events only')).min(1).max(CONVERSATION_EVENTS_MAX),
+});
+export type ConversationEmailIngestInput = z.infer<typeof zConversationEmailIngest>;
 export const zConversationIngested = z.strictObject({ stored: z.number().int().min(0), duplicates: z.number().int().min(0), ignored: z.number().int().min(0) });
 export type ConversationIngested = z.infer<typeof zConversationIngested>;
 
@@ -132,6 +151,8 @@ export const zConversationSummary = z.strictObject({
   composing: z.array(zId),
   // The intent a person applied (CV3, #2306), or null. Never what the AI coworker suggests: that is read apart and shown as a suggestion.
   intent: zConversationIntent.nullable(),
+  // An email thread's subject line (#2439): the sender's own words, shown in the thread header; null for every other kind.
+  subject: z.string().nullable().optional(),
 });
 export type ConversationSummary = z.infer<typeof zConversationSummary>;
 
