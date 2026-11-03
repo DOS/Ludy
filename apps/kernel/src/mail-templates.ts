@@ -7,6 +7,7 @@ import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-
 import { notificationMailTemplate } from './notification-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
+import { todayMailTemplate } from './today-mail.ts';
 import { usageDeferredMailTemplate } from './usage-deferred-mail.ts';
 
 export const MAIL_TEMPLATES: MailTemplates = {
@@ -22,6 +23,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   [MISSING_INVOICE_TEMPLATE]: missingInvoiceMailTemplate,
   // An org over a daily abuse limit (#675).
   'kernel.usage.deferred': usageDeferredMailTemplate,
+  // The daily "Hôm nay cần bạn" mail of a member who opted in, counts and links only (#2406).
+  'kernel.today_mail': todayMailTemplate,
   // A booking of the public booking page confirmed, moved or cancelled, and its reminders (#1319).
   'crm.booking': bookingMailTemplate,
 };

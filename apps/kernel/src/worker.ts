@@ -6,7 +6,7 @@ import { PgBoss, type Db as BossDb, type SendOptions } from 'pg-boss';
 import type { Database, Db } from '@crove/db';
 import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
-import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, runAgentWake, sweepProposalNudges, type UsageLimits } from '@crove/kernel';
+import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
 import { aiDocumentFailure, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
@@ -1425,6 +1425,24 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   const digestTimer = deps.runtime.installed('social') ? setInterval(() => void digestSweep(), DIGEST_SWEEP_MS) : null;
   if (digestTimer) void digestSweep();
 
+  // The daily "Hôm nay cần bạn" mail (#2406): every ten minutes, the orgs with an opted-in member who has not had today's, from 07:30
+  // in Vietnam; each org is claimed per member and day in its own transaction. Only where the server can send mail. The log names counts.
+  let todayMailing = false;
+  const todayMailSweep = async () => {
+    if (todayMailing) return;
+    todayMailing = true;
+    try {
+      const sent = await sweepTodayMail({ runtime: deps.runtime, workerDb: deps.workerDb });
+      if (sent > 0) console.log(`[today-mail] queued the daily brief of ${sent} org(s)`);
+    } catch (error) {
+      console.error('[today-mail] sweep', error instanceof Error ? error.name : 'error');
+    } finally {
+      todayMailing = false;
+    }
+  };
+  const todayMailTimer = deps.mail?.mailer.enabled ? setInterval(() => void todayMailSweep(), TODAY_MAIL_SWEEP_MS) : null;
+  if (todayMailTimer) void todayMailSweep();
+
   // Proposal reminders and escalation (#676): every half hour, the pending proposals past the days their org set.
   let nudging = false;
   const proposalNudgeSweep = async () => {
@@ -2261,6 +2279,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     if (reminderTimer) clearInterval(reminderTimer);
     if (queueLowTimer) clearInterval(queueLowTimer);
     if (digestTimer) clearInterval(digestTimer);
+    if (todayMailTimer) clearInterval(todayMailTimer);
     if (missingInvoiceTimer) clearInterval(missingInvoiceTimer);
     clearInterval(proposalNudgeTimer);
     clearInterval(securityTimer);
