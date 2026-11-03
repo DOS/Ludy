@@ -7129,6 +7129,7 @@ export const en = {
       FOREIGN_MISMATCH: 'The VND amounts do not match the exchange rate of the invoice; read the document again.',
       RATE_NOT_EDITABLE: 'An exchange rate can only be entered for a foreign-currency invoice that has none.',
       TOTAL_MISMATCH: 'The lines and VAT do not add up to the invoice total.',
+      SALE_OTHER_ENTITY: 'This invoice was issued as another legal entity of your organization, so it cannot be booked in the entity you chose. Upload the file again in the right entity.',
       NOT_OWN_SALE: 'The seller\'s tax code is not your organization\'s, so this cannot be posted as a sale. Check the tax code in Settings, then read the file again.',
       OWN_INVOICE: 'The seller is your own organization, so this is a sales invoice. Read the file again to post it as a sale.',
       NOT_REVENUE_ACCOUNT: 'A sales line goes to a revenue account (511, 515, 711, 3387 or one of their sub-accounts).',

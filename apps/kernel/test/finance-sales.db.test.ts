@@ -562,6 +562,11 @@ suite('sales e-invoices (#313)', () => {
     const misfiled = await ingestIn(fromEntity('6102'), String(defaultEntity?.id));
     expect((await rpc('inbox/get', await tokenFor(owner), { id: misfiled })).body).toMatchObject({ direction: 'sale' });
     await expect(approve(misfiled)).rejects.toMatchObject({ code: 'SALE_OTHER_ENTITY', status: 422 });
+    // Two entities of the org may use the same series and number: the default entity's sale 6101 is no duplicate of the other entity's, and books beside it.
+    const sameNumber = await read(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>6101</SHDon>')));
+    const sameDetail = await rpc('inbox/get', await tokenFor(owner), { id: sameNumber });
+    expect((sameDetail.body.payload.checks as Array<{ id: string }>).map((c) => c.id)).not.toContain('duplicate');
+    await expect(approve(sameNumber)).resolves.toMatchObject({ documentId: expect.any(String) });
     // The org's own default entity is unchanged: its invoices book in it, as before.
     const own = await read(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>6103</SHDon>')));
     await expect(approve(own)).resolves.toMatchObject({ documentId: expect.any(String) });

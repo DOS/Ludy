@@ -7126,6 +7126,7 @@ export const vi = {
       FOREIGN_MISMATCH: 'Số tiền quy đổi sang VND không khớp tỷ giá của hóa đơn; hãy đọc lại chứng từ',
       RATE_NOT_EDITABLE: 'Chỉ nhập tỷ giá cho hóa đơn ngoại tệ chưa có tỷ giá',
       TOTAL_MISMATCH: 'Tổng các dòng và thuế không khớp tổng thanh toán của hóa đơn',
+      SALE_OTHER_ENTITY: 'Hóa đơn này do một pháp nhân khác của tổ chức phát hành nên không ghi vào sổ của pháp nhân đang chọn được; hãy tải lại tệp vào đúng pháp nhân.',
       NOT_OWN_SALE: 'Mã số thuế người bán không phải mã số thuế của tổ chức nên không ghi sổ như hóa đơn bán ra được; hãy kiểm tra mã số thuế trong Cài đặt rồi đọc lại tệp',
       OWN_INVOICE: 'Người bán là chính tổ chức nên đây là hóa đơn bán ra; hãy đọc lại tệp để ghi sổ như hóa đơn bán ra',
       NOT_REVENUE_ACCOUNT: 'Dòng bán ra phải ghi vào tài khoản doanh thu (511, 515, 711, 3387 hoặc tài khoản con của chúng)',

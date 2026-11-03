@@ -216,6 +216,8 @@ export const purchaseLookup = defineQuery({
         .where('d.direction', '=', sale ? 'sale' : 'purchase')
         .where('d.invoice_series', '=', series)
         .where('d.invoice_number', '=', number)
+        // A sale is unique per issuing entity (#2502): two entities of the org may use the same series and number.
+        .$if(sale && seller.legalEntityId !== null, (q) => q.where('d.legal_entity_id', '=', seller.legalEntityId as string))
         .where(({ not, exists, selectFrom }) =>
           not(exists(selectFrom('crove_finance.purchase_document_void as v').select('v.document_id').whereRef('v.org_id', '=', 'd.org_id').whereRef('v.document_id', '=', 'd.id'))),
         );
@@ -230,6 +232,8 @@ export const purchaseLookup = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('kind', '=', 'finance.purchase')
       .where('status', 'in', ['pending', 'executed'])
+      // The proposals of the issuing entity's own books (#2502), for a sale of an entity of the org.
+      .$if(sale && seller.legalEntityId !== null, (q) => q.where('legal_entity_id', '=', seller.legalEntityId as string))
       .where((eb) => eb.or([eb('source_file_id', 'is', null), eb('source_file_id', '!=', input.fileId)]))
       // Nor is a proposal revised from this file's reading (the original of a PDF's invoice, #2269).
       .where(({ not, exists, selectFrom }) =>

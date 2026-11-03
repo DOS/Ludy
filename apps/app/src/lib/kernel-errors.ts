@@ -94,6 +94,7 @@ export const KERNEL_ERROR_CODES = [
   'TOTAL_MISMATCH',
   // Sales invoices and the org's tax code (#313).
   'NOT_OWN_SALE',
+  'SALE_OTHER_ENTITY',
   'OWN_INVOICE',
   'NOT_REVENUE_ACCOUNT',
   'REVENUE_ACCOUNT_ON_PURCHASE',
