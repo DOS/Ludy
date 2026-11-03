@@ -600,8 +600,8 @@ export const recordPurchase = defineCommand({
     // The stock the lines make (#2512): a goods line that matches an item moves it, the others wait in the "Chưa gán hàng" list. The entry above is the same either way.
     const stock = await postDocumentStock(
       ctx,
-      { documentId: document.id, legalEntityId, direction, date: entryDate },
-      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, account: l.debitAccount })),
+      { documentId: document.id, legalEntityId, direction, date: entryDate, adjustment: related?.kind === 'adjustment' },
+      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, amount: l.amount, account: l.debitAccount })),
     );
 
     // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing.

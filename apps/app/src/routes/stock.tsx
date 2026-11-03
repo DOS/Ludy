@@ -98,6 +98,8 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   const f = useFormat();
   const moves = useQuery(orpc.stock.moves.list.queryOptions({ input: { itemId: item.id } }));
   const reverse = useMutation({ mutationFn: (moveId: string) => client.stock.moves.reverse({ moveId }), onSuccess: refresh });
+  // A reversal cannot be taken back, so the button asks once.
+  const [confirming, setConfirming] = useState<string | null>(null);
   return (
     <Card className="mb-6 block p-4" data-testid="stock-moves">
       <div className="flex items-center justify-between gap-2">
@@ -124,11 +126,27 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                   <Badge variant="secondary">{t('reversed')}</Badge>
                 ) : (
                   canWrite &&
-                  m.source !== 'reversal' && (
-                    <Button variant="ghost" size="sm" loading={reverse.isPending && reverse.variables === m.id} onClick={() => reverse.mutate(m.id)} data-testid="stock-move-reverse">
+                  m.source !== 'reversal' &&
+                  (confirming === m.id ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={reverse.isPending && reverse.variables === m.id}
+                        onClick={() => reverse.mutate(m.id, { onSettled: () => setConfirming(null) })}
+                        data-testid="stock-move-reverse-confirm"
+                      >
+                        {t('reverseConfirm')}
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setConfirming(null)}>
+                        {t('cancel')}
+                      </Button>
+                    </span>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => setConfirming(m.id)} data-testid="stock-move-reverse">
                       {t('reverse')}
                     </Button>
-                  )
+                  ))
                 )}
               </TableCell>
             </TableRow>
@@ -141,7 +159,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
 }
 
 // The stock card of an item for a month: its moves in order with the balance after each.
-function CardPanel({ item, month, onClose }: { item: StockItem; month: string; onClose: () => void }) {
+function CardPanel({ item, month, onClose }: { item: { id: string; name: string; unit: string }; month: string; onClose: () => void }) {
   const t = useTranslations('stock');
   const f = useFormat();
   const card = useQuery(orpc.stock.card.queryOptions({ input: { itemId: item.id, month } }));
@@ -184,14 +202,14 @@ function CardPanel({ item, month, onClose }: { item: StockItem; month: string; o
 }
 
 // Nhập xuất tồn for one month (the weighted average way, provisional): what each item opened, took in, sent out and closed with, in quantity and value.
-function ReportSection({ legalEntityId, ready, items }: { legalEntityId: string | undefined; ready: boolean; items: StockItem[] }) {
+function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
   const t = useTranslations('stock');
   const f = useFormat();
   const [month, setMonth] = useState(() => vietnamToday().slice(0, 7));
-  const [cardOf, setCardOf] = useState<string | null>(null);
-  const valid = /^[0-9]{4}-(0[1-9]|1[0-2])$/.test(month);
+  // The item whose card is open, taken from its row of the report: the report lists an item that is no longer in use when it has moves, and the item list above does not.
+  const [cardOf, setCardOf] = useState<{ id: string; name: string; unit: string } | null>(null);
+  const valid = /^20[0-9]{2}-(0[1-9]|1[0-2])$/.test(month);
   const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
-  const cardItem = cardOf === null ? undefined : items.find((i) => i.id === cardOf);
   return (
     <section className="mt-10" aria-label={t('reportTitle')} data-testid="stock-report">
       <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
@@ -206,7 +224,7 @@ function ReportSection({ legalEntityId, ready, items }: { legalEntityId: string 
           <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
         </div>
       </div>
-      {cardItem && valid && <CardPanel key={`${cardItem.id}-${month}`} item={cardItem} month={month} onClose={() => setCardOf(null)} />}
+      {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
         <TableSkeleton columns={8} />
       ) : report.error ? (
@@ -224,9 +242,9 @@ function ReportSection({ legalEntityId, ready, items }: { legalEntityId: string 
               <TableCell className={NUM}>{r.outQuantity}</TableCell>
               <TableCell className={NUM}>{r.closingQuantity}</TableCell>
               <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
-              <TableCell className={NUM}>{r.unitCost === null ? '' : f.money(r.unitCost, 'VND')}</TableCell>
+              <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 4)}</TableCell>
               <TableCell className="px-4 py-3 text-right">
-                <Button variant="ghost" size="sm" onClick={() => setCardOf(r.itemId)} data-testid="stock-report-card">
+                <Button variant="ghost" size="sm" onClick={() => setCardOf({ id: r.itemId, name: r.name, unit: r.unit })} data-testid="stock-report-card">
                   {t('card')}
                 </Button>
               </TableCell>
@@ -411,7 +429,7 @@ export function StockPage() {
         </DataTable>
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
-      <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} items={list} />
+      <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} />
     </>
   );
 }

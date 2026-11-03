@@ -150,13 +150,13 @@ suite('org purge on PostgreSQL (#1024)', () => {
         [org.orgId, einvoiceChannel, 'einvoice_sandbox', `einvoice-${tag}`, 'Hóa đơn thử', owner],
       );
       await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', '0101234564')`, [org.orgId, einvoiceChannel]);
-      // Stock (#2512): an item, the name a source uses for it and two moves (the second a reversal of the first). The moves are append-only: the purge deletes them
-      // under its mark, before the alias and the item they reference.
+      // Stock (#2512): an item, the name a source uses for it and two moves (the second a reversal of the first), the first made by the owner. The moves are append-only and the
+      // purge keeps them with the books: removing the owner's membership must not touch the row that names them.
       const stockItem = (
         await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SP-PURGE', 'Hàng thử', 'cái', '156') RETURNING id`, [org.orgId])
       ).rows[0]?.id;
       await c.query(`INSERT INTO crove_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'hàng thử')`, [org.orgId, stockItem]);
-      const stockIn = (await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date, 5, 'manual') RETURNING id`, [org.orgId, stockItem])).rows[0]?.id;
+      const stockIn = (await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, created_by) VALUES ($1, $2, current_date, 5, 'manual', $3) RETURNING id`, [org.orgId, stockItem, owner])).rows[0]?.id;
       await c.query(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, -5, 'reversal', $3)`, [org.orgId, stockItem, stockIn]);
       // An approved Social post (append-only approval, #1032): its approval, variant, post and channel connection.
       const connection = randomUUID();

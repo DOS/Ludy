@@ -640,7 +640,7 @@ export const vi = {
     empty: 'Chưa có mặt hàng nào',
     emptyHint: 'Thêm mặt hàng để hóa đơn mua và bán tự ghi kho khi tên hàng khớp với mã hoặc với tên đã gán.',
     unassignedTitle: 'Dòng hàng chưa gán',
-    unassignedHint: 'Đây là các dòng hàng hóa của hóa đơn đã ghi sổ mà chưa khớp mặt hàng nào, nên chưa ghi kho. Chọn mặt hàng để gán; lần sau tên này tự khớp.',
+    unassignedHint: 'Đây là các dòng hàng hóa của hóa đơn đã ghi sổ mà chưa khớp mặt hàng nào, nên chưa ghi kho. Chọn mặt hàng để gán; lần sau tên này tự khớp. Dòng bán hàng hạch toán vào 511 mà ghi đúng mã hoặc tên đã gán của một mặt hàng thì vẫn tự ghi kho; muốn dòng hiện ở đây, hãy hạch toán dòng vào 5111.',
     noItemsToAssign: 'Hãy thêm mặt hàng trước khi gán.',
     invoice: 'Hóa đơn',
     date: 'Ngày',
@@ -658,6 +658,7 @@ export const vi = {
     moveQuantity: 'Số lượng',
     moveSource: 'Nguồn',
     reverse: 'Đảo phát sinh',
+    reverseConfirm: 'Xác nhận đảo',
     reversed: 'Đã đảo',
     close: 'Đóng',
     reportTitle: 'Nhập xuất tồn',
@@ -8117,6 +8118,8 @@ export const vi = {
       },
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
+        card: 'Xem thẻ kho của mặt hàng',
+        report: 'Xem báo cáo nhập xuất tồn',
         unassigned: 'Xem các dòng hàng chưa gán',
       },
       stock_alias: {

@@ -1081,6 +1081,7 @@ export interface FinanceStockAliasTable {
   source: ColumnType<string, string | undefined, NotGranted>;
   alias_key: ColumnType<string, string, NotGranted>;
   factor: ColumnType<string, string | undefined, NotGranted>;
+  source_unit: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
@@ -1113,6 +1114,7 @@ export interface FinanceStockMoveTable {
   source_type: ColumnType<string, string, NotGranted>;
   document_id: ColumnType<string | null, string | null, NotGranted>;
   line_no: ColumnType<number | null, number | null, NotGranted>;
+  line_attempt: ColumnType<number | null, number | null, NotGranted>;
   reverses_move_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;

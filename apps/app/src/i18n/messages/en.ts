@@ -642,7 +642,7 @@ export const en = {
     empty: 'No items yet',
     emptyHint: 'Add an item so purchase and sales invoices move stock when a line matches its code or a name you assigned.',
     unassignedTitle: 'Lines not assigned yet',
-    unassignedHint: 'These are goods lines of posted invoices that matched no item, so they moved no stock. Pick an item to assign one; next time the name matches by itself.',
+    unassignedHint: 'These are goods lines of posted invoices that matched no item, so they moved no stock. Pick an item to assign one; next time the name matches by itself. A sale line booked to 511 whose text is the code of an item or a name you taught still moves stock by itself; to have a line listed here, book it to 5111.',
     noItemsToAssign: 'Add an item before assigning lines.',
     invoice: 'Invoice',
     date: 'Date',
@@ -660,6 +660,7 @@ export const en = {
     moveQuantity: 'Quantity',
     moveSource: 'Source',
     reverse: 'Reverse move',
+    reverseConfirm: 'Confirm reverse',
     reversed: 'Reversed',
     close: 'Close',
     reportTitle: 'Stock in, out and on hand',
@@ -8120,6 +8121,8 @@ export const en = {
       },
       stock: {
         assign: 'Assign an invoice line to an item',
+        card: 'View the stock card of an item',
+        report: 'View the stock in and out report',
         unassigned: 'View the goods lines not assigned yet',
       },
       stock_alias: {

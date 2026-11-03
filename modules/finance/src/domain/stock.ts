@@ -24,6 +24,10 @@ export const oppositeQuantity = (value: string): string => plainQuantity(money(v
 // The account a line is booked to when it is goods: 156 on a purchase (a stock-in), 5111 on a sale (a stock-out), or a sub-account of either.
 export const STOCK_GOODS_ACCOUNT = { purchase: '156', sale: '5111' } as const;
 
+// The account a sale line is proposed to when nobody picked a sub-account: its text may still be an item's code or a taught name, but it is not listed as unassigned (most lines
+// there are services).
+export const STOCK_SALE_DEFAULT_ACCOUNT = '511';
+
 // The table holds six decimals and fourteen integer digits.
 const MOVE_LIMIT = money('100000000000000');
 

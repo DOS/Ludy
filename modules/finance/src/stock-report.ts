@@ -10,7 +10,7 @@ import { zStockCardInput, zStockReportInput, type StockCard, type StockReportRow
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
-import { monthlyFigures, nextMonth, type CostMove } from './domain/stock-cost.ts';
+import { monthFigures, nextMonth, type CostMove } from './domain/stock-cost.ts';
 import { plainQuantity } from './domain/stock.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -68,13 +68,17 @@ export const stockReport = defineQuery({
       .execute();
     const moves = await movesUpTo(ctx, input.month, { legalEntityId: input.legalEntityId });
     const byItem = new Map<string, MoveRow[]>();
-    for (const move of moves) byItem.set(move.item_id, [...(byItem.get(move.item_id) ?? []), move]);
+    for (const move of moves) {
+      const bucket = byItem.get(move.item_id);
+      if (bucket) bucket.push(move);
+      else byItem.set(move.item_id, [move]);
+    }
     const rows: StockReportRow[] = [];
     for (const item of items) {
       const own = byItem.get(item.id) ?? [];
       // An item with no move and not in use has nothing to report.
       if (own.length === 0 && !item.active) continue;
-      const figures = monthlyFigures(own.map(costOf), input.month).find((f) => f.month === input.month);
+      const figures = monthFigures(own.map(costOf), input.month);
       const zero = '0';
       rows.push({
         itemId: item.id,
@@ -105,7 +109,7 @@ export const stockCard = defineQuery({
     const item = await ctx.trx.selectFrom('crove_finance.stock_item').select(['id', 'code', 'name', 'unit']).where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).executeTakeFirst();
     if (!item) throw new DomainError('STOCK_ITEM_NOT_FOUND', 404, 'Không tìm thấy mặt hàng này');
     const moves = await movesUpTo(ctx, input.month, { itemId: item.id });
-    const figures = monthlyFigures(moves.map(costOf), input.month).find((f) => f.month === input.month);
+    const figures = monthFigures(moves.map(costOf), input.month);
     const start = `${input.month}-01`;
     const inMonth = moves.filter((m) => m.move_date >= start);
     let balance = money(figures?.openingQuantity ?? '0');

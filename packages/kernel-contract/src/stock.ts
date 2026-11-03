@@ -21,7 +21,7 @@ export const zStockItemInput = z.strictObject({
   name: z.string().trim().min(1).max(300),
   unit: z.string().trim().min(1).max(30),
   // The chart account the item is booked to (156 for goods, or a sub-account of it).
-  stockAccount: z.string().trim().regex(/^[0-9]{3,4}(\.[A-Za-z0-9_-]{1,30})?$/),
+  stockAccount: z.string().trim().regex(/^[0-9]{3,10}(\.[A-Z0-9]{1,20})?$/),
   trade: z.enum(STOCK_TRADES),
 });
 export type StockItemInput = z.infer<typeof zStockItemInput>;
@@ -44,7 +44,10 @@ export const zStockItem = z.object({
 export type StockItem = z.infer<typeof zStockItem>;
 
 // How many of the item's units one of the source's is (a carton of 12), a decimal string above zero.
-export const zStockFactor = z.string().regex(/^(?:0\.[0-9]{0,5}[1-9]|[1-9][0-9]{0,11}(?:\.[0-9]{1,6})?)$/);
+export const zStockFactor = z
+  .string()
+  .regex(/^(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,6})?$/)
+  .refine((value) => /[1-9]/.test(value), 'above zero');
 
 export const zStockAliasTeach = z.strictObject({
   itemId: zId,
@@ -52,6 +55,8 @@ export const zStockAliasTeach = z.strictObject({
   // The name as the source writes it, or the SKU; the server normalizes it.
   key: z.string().trim().min(1).max(300),
   factor: zStockFactor,
+  // The unit of the source the factor was taught in: the name matches a line in that unit only.
+  unit: z.string().trim().min(1).max(40).optional(),
 });
 export type StockAliasTeach = z.infer<typeof zStockAliasTeach>;
 
@@ -97,8 +102,8 @@ export const zStockAssign = z.strictObject({
 });
 export type StockAssign = z.infer<typeof zStockAssign>;
 
-// The month of a report: YYYY-MM.
-export const zStockMonth = z.string().regex(/^[0-9]{4}-(?:0[1-9]|1[0-2])$/);
+// The month of a report: YYYY-MM, 2000 to 2099, so the month after is always a date the database takes.
+export const zStockMonth = z.string().regex(/^20[0-9]{2}-(?:0[1-9]|1[0-2])$/);
 
 export const zStockReportInput = z.strictObject({ month: zStockMonth, legalEntityId: zId.optional() });
 

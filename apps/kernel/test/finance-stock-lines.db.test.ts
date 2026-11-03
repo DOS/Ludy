@@ -275,6 +275,44 @@ suite('stock from document lines (#2512)', () => {
     expect((await unassigned(o)).map((l) => [l.direction, l.lineNo])).toEqual([['sale', 1]]);
   });
 
+  it('moves stock for a sale line left on the default 511 when its text names an item, and does not list the other lines of 511 as unassigned', async () => {
+    const o = await org({ sellerOf: true });
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO);
+    const posted = await post(o, invoice('7017'), '511');
+    expect(await moves(o, item)).toEqual([expect.objectContaining({ quantity: '-2', source: 'document_line', documentId: posted.documentId, lineNo: 2 })]);
+    // Line 1 is on 511 too and matches nothing: most lines there are services, so it is not listed, and the screen says how to have a goods line listed (book it to 5111).
+    expect(await unassigned(o)).toEqual([]);
+  });
+
+  it('applies the factor of a name only to the unit it was taught in', async () => {
+    const o = await org();
+    const item = await makeItem(o, { unit: 'chai' });
+    // "Phí quảng cáo Facebook" is bought in packages (Gói): a carton of twelve in the unit it was taught in, and nothing in another.
+    await execute(o, 'finance.stock_alias.teach', { itemId: item, source: 'text', key: LINE_TWO, factor: '12', unit: 'Thùng' });
+    await post(o, invoice('7018'), '156');
+    expect(await moves(o, item)).toEqual([]);
+    expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1, 2]);
+    // The same name taught in the unit of the line (written another way) matches by itself.
+    const other = await org();
+    const bottle = await makeItem(other, { unit: 'chai' });
+    await execute(other, 'finance.stock_alias.teach', { itemId: bottle, source: 'text', key: LINE_TWO, factor: '12', unit: ' gói ' });
+    await post(other, invoice('7019'), '156');
+    expect((await moves(other, bottle)).map((m) => m.quantity)).toEqual(['24']);
+    // Taught again in another unit: refused, and a name taught with no unit stays as it was.
+    await expect(execute(other, 'finance.stock_alias.teach', { itemId: bottle, source: 'text', key: LINE_TWO, factor: '12', unit: 'Thùng' })).rejects.toMatchObject({ code: 'STOCK_ALIAS_FACTOR' });
+    await expect(execute(other, 'finance.stock_alias.teach', { itemId: bottle, source: 'text', key: LINE_TWO, factor: '12' })).resolves.toMatchObject({ existing: true });
+  });
+
+  it('has no two items whose codes differ only in case, so a line is never left unmatched by an ambiguous code', async () => {
+    const o = await org();
+    await makeItem(o, { code: 'ABC' });
+    await expect(makeItem(o, { code: 'abc', name: 'Hàng khác' })).rejects.toMatchObject({ code: 'STOCK_ITEM_CODE_EXISTS' });
+    // Another entity's org keeps its own codes.
+    const other = await org();
+    await expect(makeItem(other, { code: 'abc' })).resolves.toEqual(expect.any(String));
+  });
+
   it('takes the stock back when the document is voided, once, on the date of the reversal', async () => {
     const o = await org();
     const item = await makeItem(o);
@@ -297,6 +335,47 @@ suite('stock from document lines (#2512)', () => {
     expect(await unassigned(o)).toEqual([]);
     // Its line cannot be assigned any more.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
+  });
+
+  it('lets a line assigned to the wrong item be reversed and assigned again, keeping the history; and a member who made a move can still be removed', async () => {
+    const o = await org();
+    const wrong = await makeItem(o, { code: 'A1', name: 'Nhầm', unit: 'Gói' });
+    const right = await makeItem(o, { code: 'B1', name: 'Đúng', unit: 'Gói' });
+    const posted = await post(o, invoice('7014'), '156');
+    expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1, 2]);
+    // A member assigns line 2 to the wrong item, then it is reversed: the line is unassigned again and nothing is lost from the history.
+    const first = await execute<{ moveId: string }>(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: wrong, teach: false }, o.member);
+    expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1]);
+    await execute(o, 'finance.stock_move.reverse', { moveId: first.moveId });
+    expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1, 2]);
+    expect(await onHand(o, wrong)).toBe('0');
+    // Assigned again, to the right item: its own move, the second try of the line.
+    const second = await execute<{ moveId: string }>(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: right, teach: false });
+    expect(await onHand(o, right)).toBe('2');
+    expect((await unassigned(o)).map((l) => l.lineNo)).toEqual([1]);
+    expect((await rows<{ id: string; line_attempt: number | null }>("SELECT id, line_attempt FROM crove_finance.stock_move WHERE org_id = $1 AND source_type = 'document_line' ORDER BY line_attempt", [o.orgId])).map((r) => [r.id, r.line_attempt])).toEqual([
+      [first.moveId, 1],
+      [second.moveId, 2],
+    ]);
+    // A third assignment while the second stands is refused; the database also refuses a try that skips the reversal of the one before.
+    await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: wrong, teach: false })).rejects.toMatchObject({ code: 'STOCK_LINE_ASSIGNED' });
+    await expect(
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 3)", [o.orgId, right, posted.documentId]),
+    ).rejects.toMatchObject({ message: expect.stringContaining('STOCK_LINE_ATTEMPT') });
+    // The member made a move; removing them does not touch the append-only row it left.
+    await expect(execute(o, 'kernel.member.remove', { userId: o.member })).resolves.toBeDefined();
+    expect((await rows<{ created_by: string | null }>('SELECT created_by FROM crove_finance.stock_move WHERE org_id = $1 AND id = $2', [o.orgId, first.moveId]))[0]?.created_by).toBe(o.member);
+  });
+
+  it('serializes an assignment with the void of its document: a voided document never keeps a move nothing reverses', async () => {
+    const o = await org();
+    const item = await makeItem(o, { unit: 'Gói' });
+    const posted = await post(o, invoice('7015'), '156');
+    // The void is run first and commits; the assignment that comes after sees it and refuses.
+    const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-20', reason: 'Nhập nhầm' } }, o.admin);
+    await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 2, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
+    expect(await moves(o, item)).toEqual([]);
   });
 
   it('reports the month the weighted average way, a stock card with its balances, and the month after from the closing', async () => {

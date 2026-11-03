@@ -14,7 +14,7 @@ import { zId, zStockAliasTeach, zStockItemInput, type StockItem, type StockMove 
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
-import { normalizeAlias, oppositeQuantity, plainQuantity } from './domain/stock.ts';
+import { normalizeAlias, oppositeQuantity, plainQuantity, sameUnit } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -36,6 +36,22 @@ export interface StockMoveWrite {
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
   const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+  // The try of a line: one more than the moves it already made (the database accepts it only when the one before was reversed, and keeps two writers from taking the same).
+  const attempt =
+    move.source.type === 'document_line'
+      ? Number(
+          (
+            await ctx.trx
+              .selectFrom('crove_finance.stock_move')
+              .select(sql<string>`coalesce(max(line_attempt), 0) + 1`.as('n'))
+              .where('org_id', '=', ctx.orgId)
+              .where('document_id', '=', move.source.documentId)
+              .where('line_no', '=', move.source.lineNo)
+              .where('source_type', '=', 'document_line')
+              .executeTakeFirstOrThrow()
+          ).n,
+        )
+      : null;
   const row = await ctx.trx
     .insertInto('crove_finance.stock_move')
     .values({
@@ -46,6 +62,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       source_type: move.source.type,
       document_id: move.source.type === 'document_line' ? move.source.documentId : null,
       line_no: move.source.type === 'document_line' ? move.source.lineNo : null,
+      line_attempt: attempt,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,
     })
@@ -149,7 +166,7 @@ export const stockAliasTeach = defineCommand({
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     const inserted = await ctx.trx
       .insertInto('crove_finance.stock_alias')
-      .values({ org_id: ctx.orgId, item_id: item.id, source: input.source, alias_key: key, factor: input.factor, created_by: userId })
+      .values({ org_id: ctx.orgId, item_id: item.id, source: input.source, alias_key: key, factor: input.factor, source_unit: input.unit ?? null, created_by: userId })
       // The same name taught twice is the same alias; a name another item holds is refused below.
       .onConflict((conflict) => conflict.columns(['org_id', 'legal_entity_id', 'source', 'alias_key']).doNothing())
       .returning('id')
@@ -160,14 +177,16 @@ export const stockAliasTeach = defineCommand({
     }
     const held = await ctx.trx
       .selectFrom('crove_finance.stock_alias')
-      .select(['id', 'item_id', 'factor'])
+      .select(['id', 'item_id', 'factor', 'source_unit'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', item.legal_entity_id)
       .where('source', '=', input.source)
       .where('alias_key', '=', key)
       .executeTakeFirstOrThrow();
     if (held.item_id !== item.id) throw new DomainError('STOCK_ALIAS_TAKEN', 409, 'Tên này đã được gán cho một mặt hàng khác; hãy bỏ gán ở đó trước');
-    if (plainQuantity(held.factor) !== plainQuantity(input.factor)) throw new DomainError('STOCK_ALIAS_FACTOR', 409, 'Tên này đã được gán cho mặt hàng này với một hệ số quy đổi khác; hãy bỏ gán rồi gán lại');
+    // A name taught without a unit stays as it is; one taught in a unit is the same alias only in that unit.
+    const otherUnit = held.source_unit !== null && input.unit !== undefined && !sameUnit(held.source_unit, input.unit);
+    if (plainQuantity(held.factor) !== plainQuantity(input.factor) || otherUnit) throw new DomainError('STOCK_ALIAS_FACTOR', 409, 'Tên này đã được gán cho mặt hàng này với một hệ số hoặc đơn vị quy đổi khác; hãy bỏ gán rồi gán lại');
     return { id: held.id, existing: true };
   },
 });

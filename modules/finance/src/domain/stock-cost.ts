@@ -43,53 +43,65 @@ export function nextMonth(month: string): string {
   return m === 12 ? `${year + 1}-01` : `${year}-${String(m + 1).padStart(2, '0')}`;
 }
 
-// The figures of every month from the first move's month through `upTo` (YYYY-MM), a month with no move carrying the closing of the one before. Empty when there is no move
-// on or before `upTo`.
-export function monthlyFigures(moves: readonly CostMove[], upTo: string): MonthFigures[] {
-  const dated = moves.filter((m) => monthOf(m.date) <= upTo);
-  if (dated.length === 0) return [];
-  const byMonth = new Map<string, CostMove[]>();
-  for (const move of dated) byMonth.set(monthOf(move.date), [...(byMonth.get(monthOf(move.date)) ?? []), move]);
-  const first = [...byMonth.keys()].sort()[0] as string;
-  const out: MonthFigures[] = [];
-  let openingQuantity = money(0);
-  let openingValue = money(0);
-  for (let month = first; month <= upTo; month = nextMonth(month)) {
-    let valuedQuantity = money(0);
-    let valuedValue = money(0);
-    let unvaluedQuantity = money(0);
-    let total = money(0);
-    for (const move of byMonth.get(month) ?? []) {
-      const quantity = money(move.quantity);
-      total = total.plus(quantity);
-      if (move.value === null) {
-        unvaluedQuantity = unvaluedQuantity.plus(quantity);
-      } else {
-        valuedQuantity = valuedQuantity.plus(quantity);
-        valuedValue = valuedValue.plus(money(move.value));
-      }
+type Balance = { quantity: ReturnType<typeof money>; value: ReturnType<typeof money> };
+
+// One month on top of the balance it opens with: its figures and the balance it closes with.
+function foldMonth(opening: Balance, month: string, moves: readonly CostMove[]): { figures: MonthFigures; closing: Balance } {
+  let valuedQuantity = money(0);
+  let valuedValue = money(0);
+  let unvaluedQuantity = money(0);
+  let total = money(0);
+  for (const move of moves) {
+    const quantity = money(move.quantity);
+    total = total.plus(quantity);
+    if (move.value === null) {
+      unvaluedQuantity = unvaluedQuantity.plus(quantity);
+    } else {
+      valuedQuantity = valuedQuantity.plus(quantity);
+      valuedValue = valuedValue.plus(money(move.value));
     }
-    const pool = openingQuantity.plus(valuedQuantity);
-    // The average is exact here and rounded only for display; what leaves is valued at the exact average, to four decimals like every amount.
-    const average = pool.greaterThan(0) ? openingValue.plus(valuedValue).dividedBy(pool) : null;
-    const outQuantity = unvaluedQuantity.negated();
-    const outValue = average === null ? money(0) : outQuantity.times(average).toDecimalPlaces(4);
-    const closingQuantity = openingQuantity.plus(total);
-    const closingValue = openingValue.plus(valuedValue).minus(outValue);
-    out.push({
+  }
+  const pool = opening.quantity.plus(valuedQuantity);
+  // The average is exact here and rounded only for display; what leaves is valued at the exact average, to four decimals like every amount.
+  const average = pool.greaterThan(0) ? opening.value.plus(valuedValue).dividedBy(pool) : null;
+  const outQuantity = unvaluedQuantity.negated();
+  const outValue = average === null ? money(0) : outQuantity.times(average).toDecimalPlaces(4);
+  const closing = { quantity: opening.quantity.plus(total), value: opening.value.plus(valuedValue).minus(outValue) };
+  return {
+    closing,
+    figures: {
       month,
-      openingQuantity: plain(openingQuantity),
-      openingValue: plain(openingValue),
+      openingQuantity: plain(opening.quantity),
+      openingValue: plain(opening.value),
       inQuantity: plain(valuedQuantity),
       inValue: plain(valuedValue),
       outQuantity: plain(outQuantity),
       outValue: plain(outValue),
-      closingQuantity: plain(closingQuantity),
-      closingValue: plain(closingValue),
+      closingQuantity: plain(closing.quantity),
+      closingValue: plain(closing.value),
       unitCost: average === null ? null : plain(average.toDecimalPlaces(6)),
-    });
-    openingQuantity = closingQuantity;
-    openingValue = closingValue;
+    },
+  };
+}
+
+// The figures of `month` (YYYY-MM), carried from the first move's month: a month with no move carries the closing of the one before, so only the months that have moves are
+// folded and the cost is that of the moves, never of the months in between. Null when there is no move on or before `month`.
+export function monthFigures(moves: readonly CostMove[], month: string): MonthFigures | null {
+  const byMonth = new Map<string, CostMove[]>();
+  for (const move of moves) {
+    const key = monthOf(move.date);
+    if (key > month) continue;
+    const bucket = byMonth.get(key);
+    if (bucket) bucket.push(move);
+    else byMonth.set(key, [move]);
   }
-  return out;
+  if (byMonth.size === 0) return null;
+  let balance: Balance = { quantity: money(0), value: money(0) };
+  let last: MonthFigures | null = null;
+  for (const key of [...byMonth.keys()].sort()) {
+    const step = foldMonth(balance, key, byMonth.get(key) as CostMove[]);
+    balance = step.closing;
+    last = step.figures;
+  }
+  return last !== null && last.month === month ? last : foldMonth(balance, month, []).figures;
 }
