@@ -57,8 +57,6 @@ const MACHINERY = new Set([
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_launch',
-  'crove_finance.collection_setting',
-  'crove_finance.customer_collection',
   'crove_notes.link',
   'crove_notes.note',
 ]);
