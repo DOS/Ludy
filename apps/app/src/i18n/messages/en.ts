@@ -940,6 +940,10 @@ export const en = {
       searchPerson: 'Find a person by name or phone',
       unlink: 'Remove the link: {name}',
       peopleLoadMore: 'Show more people ({shown, number} of {total, number})',
+      suggested: '{sales} suggests a company',
+      reason: { tax_code: 'This tax code is in this person\'s conversations', email_domain: 'The same email domain', name: 'The email domain looks like the company name' },
+      linkThis: 'Link to {name}',
+      linkShort: 'Link',
       pick: 'Pick {name}',
       noMatch: 'No result',
       cancel: 'Cancel',
@@ -1201,7 +1205,7 @@ export const en = {
     },
     autoDraft: {
       label: 'Let {sales} read customers’ conversations to draft and suggest',
-      hint: "The customer's messages and contact names go to the system's AI service to draft a reply when a new conversation arrives, to suggest an intent and to suggest a contact. Turn it off if you do not want that; a draft you ask for yourself still works.",
+      hint: "The customer's messages and contact names go to the system's AI service to draft a reply when a new conversation arrives, to suggest an intent, to suggest a contact and to suggest the company a contact works at (the names of your contacts and companies are sent for that). Turn it off if you do not want that; a draft you ask for yourself still works.",
     },
     retention: {
       title: 'How long conversations are kept',
@@ -3977,6 +3981,7 @@ export const en = {
       conversation_draft: 'Drafting replies to customers',
       conversation_intent: 'Reading customers’ words to suggest an intent',
       conversation_contact_rank: 'Ranking the contacts this customer may be',
+      crm_company_rank: 'Ranking the companies a contact may work at',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
@@ -7594,6 +7599,7 @@ export const en = {
         revoke_for_member: 'Revoke the booking feed of a member who lost access',
       },
       contact: {
+        company_candidates: 'Find the companies a contact may work at',
         list: 'View the contact list',
       },
       deal: {

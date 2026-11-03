@@ -135,7 +135,7 @@ describe('brand name (#1040)', () => {
     // (the AI budget); the system coworker is reserved and hidden, with no message.
     const APP_OF: Record<string, RegExp> = {
       finance: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
-      sales: /^(bookings\.|conversations\.|commands\.)/,
+      sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.)/,
       marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
       gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };

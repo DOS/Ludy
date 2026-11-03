@@ -60,3 +60,27 @@ test('a member links a person to a company from either side and sees it on both 
     await expect(page.getByRole('row', { name: /Lan Trần/ }).first()).toContainText('Công ty Acme');
   });
 });
+
+// The sales coworker's suggestion (#2438, PR 3): a person who writes from the domain of a company the org knows is offered that company, and one click links it.
+// The suggestion comes from the org's own rows, so it shows with no model on the stack; the model only orders names when it is on.
+test('a person who writes from a known company’s domain is offered that company, and one click links it', async ({ page }) => {
+  await page.goto('/');
+  await signInNewUser(page, newEmail('company-suggest'));
+  const slug = await createOrg(page, 'Công ty Gợi Ý');
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Nam Trần', 'person', 'nam@acme.test' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Công ty Acme Group', 'organization', 'lienhe@acme.test' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Công ty Khác Hẳn', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  const nav = page.getByRole('navigation');
+  await nav.getByRole('link', { name: 'Engage', exact: true }).click();
+  await nav.getByRole('link', { name: 'Người liên hệ' }).click();
+  await page.getByRole('button', { name: 'Mở Nam Trần' }).click();
+
+  const suggestions = page.getByTestId('company-suggestions');
+  await expect(suggestions).toContainText('Công ty Acme Group');
+  await expect(suggestions).toContainText('Cùng tên miền email');
+  await expect(suggestions).not.toContainText('Công ty Khác Hẳn');
+  await suggestions.getByRole('button', { name: 'Gắn với Công ty Acme Group' }).click();
+  await expect(page.getByTestId('person-company')).toContainText('Công ty Acme Group');
+  // Nothing is offered once the person has a company.
+  await expect(page.getByTestId('company-suggestions')).toHaveCount(0);
+});

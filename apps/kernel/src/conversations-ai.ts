@@ -16,7 +16,7 @@ import { CONVERSATION_CONTACT_MATCHES_MAX } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 // The part of the reader the API uses; tests give a fake.
-export type ConversationReader = Pick<InboxReader, 'intents' | 'rank'>;
+export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'>;
 
 // An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
 // skipped is asked again soon.
