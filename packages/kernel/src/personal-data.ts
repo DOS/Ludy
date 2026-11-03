@@ -104,10 +104,10 @@ export const PERSONAL_DATA_COLUMNS = {
       'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
   },
   'crove_kernel.conversation_message.email_refs': {
-    kind: 'email',
-    handling: 'keep_record',
+    kind: 'other',
+    handling: 'not_personal',
     reason:
-      'The Message-IDs of the mails an email message answers (#2439), kept to join a reply to its thread: a Message-ID carries the sender mail domain at most; the erasure of the contact, the retention purge and the offboarding of the org delete the message with its thread, so the generic erase leaves it alone',
+      'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
   },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
