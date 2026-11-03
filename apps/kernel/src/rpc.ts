@@ -1,10 +1,11 @@
 // oRPC implementation of @crove/kernel-contract. Handlers only call the runtime (execute/query).
 import { implement, ORPCError } from '@orpc/server';
 import { RPCHandler } from '@orpc/server/fetch';
-import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
+import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, TodayList } from '@crove/kernel-contract';
+import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
   ALT_TEXT_IMAGE_MAX_BYTES,
@@ -32,14 +33,17 @@ import {
   type AcceptedInvite,
   type BulkApproveResult,
   type ChannelConnectInput,
+  type ContactCandidates,
   type DirectMail,
+  type IntentSource,
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
+import type { ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
-import { AiBudgetExhaustedError, withAiScope, type AiMeter } from '@crove/agent';
+import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
+import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -105,6 +109,8 @@ export type SocialDrafter = Pick<SocialWriter, 'draft' | 'rewrite'> &
     // A draft written from photos of the library (#1191) too, read from their stored bytes like alt text, when the model
     // takes images; each read stops at the size its file row records.
     draftStored?: (request: Omit<DraftRequest, 'images'>, images: readonly { file: StoredImage; mime: string }[]) => Promise<DraftResult | null>;
+    // Vy's daily brief on Home (#2383), through the same endpoint and the same budget meter.
+    brief?: (facts: BriefFacts) => Promise<BriefResult>;
   };
 
 // A stored file as the vision reads take it: the row's reference, hash and recorded size.
@@ -285,8 +291,15 @@ export function createRpcHandler(
   // The AI budget meter of this request's model calls (#2382) as the member who made it; aiEnabled: the deployment has a model.
   aiMeter?: (actor: UserActor) => AiMeter,
   aiEnabled = false,
+  // The Inbox's AI coworker (CV3, #2306): the suggested intent and the likely contacts. Unset: no suggestion, with the inbox as it is.
+  conversationReader?: ConversationReader,
 ) {
   const os = implement(contract).$context<RpcContext>();
+  // Vy's brief on Home has its own rate limit and one-at-a-time lock, so opening Home never makes a reply or post draft wait.
+  const briefs = new DraftBudget();
+  // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
+  const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
+  const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -398,6 +411,8 @@ export function createRpcHandler(
         };
       case 'launches_unblock':
         return { command: 'ads.launches.unblock', input: {} };
+      case 'campaign_launch':
+        return { command: 'ads.campaign.launch', input: { draftId: change.draftId } };
     }
   };
   const inAds = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
@@ -501,6 +516,15 @@ export function createRpcHandler(
     },
     today: {
       list: os.today.list.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.today', {}, { actor, orgId }))),
+      // Vy's brief (#2383): written from the member's own list only (the same query, in their context), so it can say
+      // nothing they could not see. No model, or the per-member AI rate limit: the plain template. The month's AI budget
+      // spent: no brief, and Home shows the list alone. Nothing is stored.
+      brief: os.today.brief.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const { items } = await runtime.query<TodayList>('kernel.today', {}, { actor, orgId });
+          return briefAnswer(items, input.language, vietnamToday(), socialWriter?.brief, () => briefs.take(orgId, actor.userId));
+        }),
+      ),
     },
     org: {
       create: os.org.create.handler(({ context, input }) =>
@@ -1930,7 +1954,31 @@ export function createRpcHandler(
       reopen: os.conversations.reopen.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reopen', input, { actor, orgId }))),
       note: os.conversations.note.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.note', input, { actor, orgId }))),
       linkContact: os.conversations.linkContact.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.link_contact', input, { actor, orgId }))),
+      setIntent: os.conversations.setIntent.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_intent', input, { actor, orgId }))),
+      // The Inbox's suggestions (CV3, #2306): the thread's text is read in the member's own transaction, then the model is called outside it, through the
+      // AI meter. Nothing is stored; a model that is off, refused or failing leaves no suggestion and no error.
+      // The org's switch for AI on its customers' messages (conversation_setting.auto_draft, ADR-0041 section 8) covers these too: with it off no word of a
+      // customer or name of a contact reaches the model, and the answer is `off`.
+      suggestIntents: os.conversations.suggestIntents.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          if (!autoDraft) return { ai: 'off' as const, suggestions: [] };
+          return suggestIntents(conversationAi, orgId, actor.userId, await runtime.query<IntentSource[]>('kernel.conversation.intent_source', input, { actor, orgId }));
+        }),
+      ),
+      // The contacts by phone come first whatever the switch says (no model reads anything); only the ranking of name matches needs it.
+      contactMatches: os.conversations.contactMatches.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          const found = await runtime.query<ContactCandidates>('kernel.conversation.contact_candidates', input, { actor, orgId });
+          const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+          return matchContacts(autoDraft ? conversationAi : { ...conversationAi, reader: null }, orgId, actor.userId, found);
+        }),
+      ),
       markRead: os.conversations.markRead.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.mark_read', input, { actor, orgId }))),
+      // The inbox (CV3, #2306): the "you are replying" marker and the availability switch.
+      composing: os.conversations.composing.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.composing', input, { actor, orgId }))),
+      availability: os.conversations.availability.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.availability', {}, { actor, orgId }))),
+      setAvailability: os.conversations.setAvailability.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.set_availability', input, { actor, orgId }))),
       // The command checks the connection and the role and returns the event; the body then takes the intake's own way, parked
       // for the worker with no tenant context, as a platform's notice does.
       retention: os.conversations.retention.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.retention', {}, { actor, orgId }))),
@@ -2353,6 +2401,21 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.flag_settings_set', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Campaign drafts (W1, #2295): built and checked here, nothing leaves Ludy; asking for approval is requestChange (campaign_launch).
+      campaignDrafts: os.ads.campaignDrafts.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.drafts', input, { actor, orgId }))),
+      campaignDraft: os.ads.campaignDraft.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.draft', input, { actor, orgId }))),
+      saveCampaignDraft: os.ads.saveCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_save', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      discardCampaignDraft: os.ads.discardCampaignDraft.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.campaign.draft_discard', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       writeState: os.ads.writeState.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.write.state', {}, { actor, orgId }))),

@@ -137,7 +137,7 @@ describe('brand name (#1040)', () => {
       finance: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
       sales: /^(bookings\.|conversations\.|commands\.)/,
       marketing: /^(social\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
-      gm: /^(aiMeter\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
+      gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {
       expect(named('vi', role).length, role).toBeGreaterThan(0);
@@ -182,10 +182,10 @@ describe('brand name (#1040)', () => {
 
   // #1683: the products are named after the brand, so a deployment's own name carries over.
   it('names the apps after the brand', () => {
-    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', crm: 'Ludy CRM' });
-    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', crm: 'Ludy CRM' });
+    expect(catalog('vi').nav.appNames).toMatchObject({ accounting: 'Ludy Kế toán', social: 'Ludy Engage' });
+    expect(catalog('en').nav.appNames).toMatchObject({ accounting: 'Ludy Accounting', social: 'Ludy Engage' });
     setBrandName('Tên Mới');
-    expect(catalog('vi').nav.appNames.crm).toBe('Tên Mới CRM');
+    expect(catalog('vi').nav.appNames.social).toBe('Tên Mới Engage');
   });
 
   it('keeps an apostrophe literal inside ICU messages', () => {

@@ -70,7 +70,7 @@ export const crmToday = defineQuery({
     }
     if (steps.next) {
       const rest = (await countNextSteps(ctx)).mine - steps.items.length;
-      if (rest > 0) items.push({ kind: 'flag', app: 'crm', id: 'next-steps-more', title: { key: 'crm.nextStepsMore' }, count: rest, severity: 'info', href: '/deals?tab=next' });
+      if (rest > 0) items.push({ kind: 'flag', app: 'crm', id: 'next-steps-more', title: { key: 'crm.nextStepsMore', params: { count: rest } }, count: rest, severity: 'info', href: '/deals?tab=next' });
     }
 
     // The member's own open deals that are to close today.

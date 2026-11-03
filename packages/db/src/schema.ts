@@ -738,11 +738,16 @@ export type CrmImportRowTable = Refine<G.CrmImportRowTable, { kind: Generated<(t
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
 export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
+// The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
+export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
 export const MESSAGE_DIRECTIONS = ['in', 'out'] as const;
 export const MESSAGE_AUTHOR_KINDS = ['contact', 'member', 'system'] as const;
 export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
 export const MESSAGE_HIDE_REQUESTS = ['hide', 'unhide'] as const;
-export type ConversationTable = Refine<G.KernelConversationTable, { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]> }>;
+export type ConversationTable = Refine<
+  G.KernelConversationTable,
+  { kind: (typeof CONVERSATION_KINDS)[number]; status: Generated<(typeof CONVERSATION_STATUSES)[number]>; intent: (typeof CONVERSATION_INTENTS)[number] | null }
+>;
 export type ConversationMessageTable = Refine<
   G.KernelConversationMessageTable,
   {
@@ -763,6 +768,10 @@ export type ConversationDraftTable = Refine<
   G.KernelConversationDraftTable,
   { kind: (typeof CONVERSATION_KINDS)[number]; source: (typeof DRAFT_SOURCES)[number]; state: Generated<(typeof DRAFT_STATES)[number]> }
 >;
+// The inbox (#2306): the marker of a member typing a reply to a thread (its kind is the thread's), and a member's availability for new conversations.
+export const MEMBER_AVAILABILITY_STATUSES = ['available', 'away'] as const;
+export type ConversationComposingTable = Refine<G.KernelConversationComposingTable, { kind: (typeof CONVERSATION_KINDS)[number] }>;
+export type MemberAvailabilityTable = Refine<G.KernelMemberAvailabilityTable, { status: Generated<(typeof MEMBER_AVAILABILITY_STATUSES)[number]> }>;
 export type ConversationAttachmentTable = Refine<
   G.KernelConversationAttachmentTable,
   { kind: (typeof CONVERSATION_KINDS)[number]; state: Generated<(typeof ATTACHMENT_STATES)[number]>; content_type: (typeof ATTACHMENT_CONTENT_TYPES)[number] | null }
@@ -821,8 +830,22 @@ export type AdsAdSpendCapTable = Refine<
   }
 >;
 
+// A campaign draft (#2295, W1): its objective, where it stands (a draft, approved by an approved proposal, or discarded) and who wrote it.
+export const AD_OBJECTIVES = ['traffic', 'engagement', 'messenger'] as const;
+export const AD_DRAFT_STATUSES = ['draft', 'approved', 'discarded'] as const;
+export const AD_DRAFT_ORIGINS = ['human', 'ai'] as const;
+export type AdsAdCampaignDraftTable = Refine<
+  G.AdsAdCampaignDraftTable,
+  {
+    objective: (typeof AD_OBJECTIVES)[number];
+    status: Generated<(typeof AD_DRAFT_STATUSES)[number]>;
+    origin: Generated<(typeof AD_DRAFT_ORIGINS)[number]>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
@@ -869,8 +892,10 @@ type Refined = Tables<{
   'crove_kernel.conversation': ConversationTable;
   'crove_kernel.conversation_message': ConversationMessageTable;
   'crove_kernel.conversation_attachment': ConversationAttachmentTable;
+  'crove_kernel.conversation_composing': ConversationComposingTable;
   'crove_kernel.conversation_draft': ConversationDraftTable;
   'crove_kernel.external_call': ExternalCallTable;
+  'crove_kernel.member_availability': MemberAvailabilityTable;
   'crove_kernel.mail_message': MailMessageTable;
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;

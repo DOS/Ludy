@@ -19,6 +19,7 @@ test('filters the drafts by a writer, keeps it in the link, and shares it as a s
   await signInNewUser(page, newEmail('social-views-owner'));
   const slug = await createOrg(page, 'Công ty Bộ Lọc');
   await page.getByRole('navigation').getByRole('link', { name: 'Engage' }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Bài đăng', exact: true }).click();
   await page.getByRole('link', { name: 'Kết nối kênh' }).first().click();
   await page.getByLabel('Tên kênh thử').fill('Kênh Chung');
   await page.getByRole('button', { name: 'Kết nối kênh thử' }).click();

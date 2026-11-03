@@ -112,8 +112,8 @@ export function orgDetailQuery(options: OrgDetailOptions) {
   });
 }
 
-function countChecks(payload: PurchaseProposal | null, status: 'fail' | 'warn'): number {
-  return payload?.checks.filter((c) => c.status === status).length ?? 0;
+function countChecks(checks: ReadonlyArray<{ status: string }>, status: 'fail' | 'warn'): number {
+  return checks.filter((c) => c.status === status).length;
 }
 
 // The lines of an invoice proposal still waiting for an account because no rule matched them (#2091): marked by the
@@ -195,7 +195,10 @@ function toInboxItem(row: {
   legal_entity_id: string;
 }, agentName: string | null) {
   const payload = parsePayload(row.kind, row.payload);
-  const voucher = parseVoucher(row.kind, row.payload) ?? parseJournalVoucher(row.kind, row.payload);
+  const cashVoucher = parseVoucher(row.kind, row.payload);
+  const voucher = cashVoucher ?? parseJournalVoucher(row.kind, row.payload);
+  // An invoice's checks, or the warnings a payment voucher carries (#2419).
+  const checks = payload?.checks ?? cashVoucher?.checks ?? [];
   const direction = payload ? (payload.direction ?? 'purchase') : null;
   return {
     id: row.id,
@@ -209,9 +212,9 @@ function toInboxItem(row: {
     legalEntityId: revisionLegalEntity(row.kind, payloadKey(row.payload, 'legalEntityId'), row.legal_entity_id),
     total: payload?.invoice.total ?? voucher?.total ?? null,
     issueDate: payload?.invoice.issueDate ?? voucher?.date ?? null,
-    failedChecks: countChecks(payload, 'fail'),
-    warnChecks: countChecks(payload, 'warn'),
-    anomalyChecks: payload?.checks.filter((c) => c.id.startsWith(ANOMALY_CHECK_PREFIX)).length ?? 0,
+    failedChecks: countChecks(checks, 'fail'),
+    warnChecks: countChecks(checks, 'warn'),
+    anomalyChecks: checks.filter((c) => c.id.startsWith(ANOMALY_CHECK_PREFIX)).length,
     unclassifiedLines: countUnclassified(payload),
     ...ruleFields(payload),
     // As the approval decides: an invoice read from XML whose signature is not verified is unverified (#674).

@@ -87,6 +87,7 @@ export * from './calendar.ts';
 export * from './crm.ts';
 export * from './notes.ts';
 export * from './ads.ts';
+export * from './ads-campaign.ts';
 export * from './manifest.ts';
 export * from './screens.ts';
 export * from './saved-view.ts';

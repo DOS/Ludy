@@ -39,7 +39,7 @@ test('a member adds deals, moves them between stages and the board keeps its ord
   // A contact to sell to; the contacts screen comes with a later step, so it is made as the stack's database owner.
   exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
 
-  await page.getByRole('navigation').getByRole('link', { name: 'CRM', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/deals$`));
   const board = page.getByTestId('deal-board');

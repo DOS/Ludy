@@ -62,6 +62,10 @@ describe('invoice check wording', () => {
     expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4', difference: '1', line: '3' }), en, format)).toContain('line 3 was adjusted by 1 dong');
     expect(invoiceCheckMessage(check('amount_scale.rounded', { amount: '10.4' }), en, format)).toBe('STORED');
     expect(invoiceCheckMessage(check('related.adjusts_missing'), en, format)).toMatch(/^Adjustment invoice for invoice C26TAB\/1234/);
+    // #2419: the amount flag of a payment voucher says payments, in both directions.
+    expect(invoiceCheckMessage(check('anomaly_amount.unusual', { ...PARAMS, subject: 'payment' }), en, format)).toContain('the payment of <9000000> is 6.0 times what this party is usually paid');
+    expect(invoiceCheckMessage(check('anomaly_amount.unusual', { ...PARAMS, subject: 'payment', direction: 'low' }), vi, format)).toContain('số tiền chi <9000000> chỉ bằng 40% mức thường chi cho đối tượng này');
+    expect(invoiceCheckMessage(check('anomaly_amount.unusual'), vi, format)).toContain('của nhà cung cấp này');
   });
 
   it('keeps the stored sentence without a code, for an unknown code and when a parameter is missing', () => {

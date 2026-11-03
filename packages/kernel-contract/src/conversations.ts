@@ -12,6 +12,10 @@ export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
+// The intent a person applies to a conversation (CV3, #2306): the same five as the database's check and the AI reader's labels (a test compares the
+// three). What the AI coworker suggests is never stored; only a person's decision is.
+export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
+export type ConversationIntent = (typeof CONVERSATION_INTENTS)[number];
 // An outbound message: queued (a member wrote it), sending (the worker is making the call), sent, failed (the platform
 // refused it, nothing went out) or unknown (the call may have gone through; never sent again blindly).
 export const MESSAGE_SEND_STATES = ['queued', 'sending', 'sent', 'failed', 'unknown'] as const;
@@ -25,6 +29,7 @@ export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_NOTE_MAX = 5_000;
 export const CONVERSATION_EVENTS_MAX = 1_000;
 export const CONVERSATION_LIST_MAX = 100;
+export const CONVERSATION_SEARCH_MAX = 100;
 // The posts one list asks about at most (the post page lists the threads of all its channels).
 export const CONVERSATION_POSTS_MAX = 20;
 // A message shown in a list is cut to this many characters.
@@ -61,6 +66,7 @@ const zText = (max: number) => z.string().max(max).refine(noNul, 'NUL character'
 const zThreadId = z.string().min(1).max(300).refine(noNul, 'NUL character');
 export const zConversationKind = z.enum(CONVERSATION_KINDS);
 export const zConversationStatus = z.enum(CONVERSATION_STATUSES);
+export const zConversationIntent = z.enum(CONVERSATION_INTENTS);
 
 // An image the platform says a customer's message carries, by the address it can be fetched from (personal data: kept only until fetched,
 // at most six days, and never in an audit row, an event, a log or a job). https only; the fetch itself is limited to the platform's media hosts.
@@ -122,6 +128,10 @@ export const zConversationSummary = z.strictObject({
   replyWindowUntil: z.iso.datetime({ offset: true }).nullable(),
   preview: z.string(),
   unread: z.boolean(),
+  // The other members who are typing a reply to this thread now (CV3, #2306): their markers have not expired. Never the reader's own.
+  composing: z.array(zId),
+  // The intent a person applied (CV3, #2306), or null. Never what the AI coworker suggests: that is read apart and shown as a suggestion.
+  intent: zConversationIntent.nullable(),
 });
 export type ConversationSummary = z.infer<typeof zConversationSummary>;
 
@@ -183,6 +193,17 @@ export const CONVERSATION_DRAFT_MESSAGES = 12;
 export const zSavedReplyView = z.strictObject({ id: zId, title: z.string(), body: z.string(), keywords: z.array(z.string()), useCount: z.number().int() });
 export type SavedReplyView = z.infer<typeof zSavedReplyView>;
 
+// Another thread of the same customer, as the contact panel lists it: what it is and where it stands, no text.
+export const CONVERSATION_OTHERS_MAX = 10;
+export const zConversationOther = z.strictObject({
+  id: zId,
+  kind: zConversationKind,
+  status: zConversationStatus,
+  channel: z.strictObject({ connectionId: zId, provider: z.string(), displayName: z.string() }),
+  lastMessageAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type ConversationOther = z.infer<typeof zConversationOther>;
+
 export const zConversationDetail = z.strictObject({
   conversation: zConversationSummary,
   messages: z.array(zConversationMessage),
@@ -197,6 +218,8 @@ export const zConversationDetail = z.strictObject({
   // Vy's draft for the last customer message, when one is in play (CV8), and the saved replies that answer its words (at most three, best first).
   draft: zConversationDraftView.nullable(),
   suggestions: z.array(zSavedReplyView),
+  // The customer's other threads that the reader may read (CV3, the contact panel): newest first, at most CONVERSATION_OTHERS_MAX.
+  others: z.array(zConversationOther),
 });
 export type ConversationDetail = z.infer<typeof zConversationDetail>;
 
@@ -207,6 +230,10 @@ export const zConversationList = z.strictObject({
   // The threads under these posts (a post page lists the threads of all its channels).
   posts: z.array(z.strictObject({ connectionId: zId, externalPostId: z.string().min(1).max(300) })).min(1).max(CONVERSATION_POSTS_MAX).optional(),
   assignee: z.enum(['me', 'none']).optional(),
+  // The threads a person labelled with this intent, or those with no label (CV3, #2306).
+  intent: z.union([zConversationIntent, z.literal('none')]).optional(),
+  // A search over the customer's name, the contact's name and the words of the thread, ignoring case, Vietnamese marks and punctuation (CV3).
+  q: z.string().trim().min(1).max(CONVERSATION_SEARCH_MAX).refine(noNul, 'NUL character').optional(),
   limit: z.number().int().min(1).max(CONVERSATION_LIST_MAX).default(50),
   // The last thread of the previous page: lastMessageAt (null for none) and id.
   before: z.strictObject({ at: z.iso.datetime({ offset: true }).nullable(), id: zId }).optional(),
@@ -248,6 +275,34 @@ export const zConversationAssign = z.strictObject({ conversationId: zId, assigne
 export const zConversationId = z.strictObject({ conversationId: zId });
 export const zConversationNoteAdd = z.strictObject({ conversationId: zId, body: z.string().trim().min(1).max(CONVERSATION_NOTE_MAX).refine(noNul, 'NUL character') });
 export const zConversationLinkContact = z.strictObject({ conversationId: zId, partyId: zId.nullable() });
+// A person applies an intent to a thread, changes it, or clears it (null) (CV3, #2306).
+export const zConversationSetIntent = z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() });
+
+// The AI coworker's suggestions, read apart from the thread and never stored (CV3, #2306). A suggestion only shows; a person applies it.
+// ai: used (the answer came from the model or from what it answered a moment ago), off (the deployment has no model), budget (the org's AI budget of the
+// month is spent), busy (too many AI calls just now) or failed (the model gave nothing usable). In every case but used the Inbox works as it did, with
+// no suggestion and no error.
+export const CONVERSATION_AI_STATES = ['used', 'off', 'budget', 'busy', 'failed'] as const;
+// What one suggestion reads of a thread: the customer's last messages, each cut to this many characters (the agent package's bounds, which a test compares).
+export const CONVERSATION_INTENT_BATCH_MAX = 10;
+export const CONVERSATION_INTENT_MESSAGES = 3;
+export const CONVERSATION_INTENT_CHARS = 300;
+export const zConversationIntentSuggest = z.strictObject({ conversationIds: z.array(zId).min(1).max(CONVERSATION_INTENT_BATCH_MAX) });
+export const zConversationIntentSuggested = z.strictObject({
+  ai: z.enum(CONVERSATION_AI_STATES),
+  // One entry for each of the threads the reader may read, in the order asked; the intent is null where the model has no suggestion.
+  suggestions: z.array(z.strictObject({ conversationId: zId, intent: zConversationIntent.nullable() })),
+});
+export type ConversationIntentSuggested = z.infer<typeof zConversationIntentSuggested>;
+// The contacts a thread's customer may be (a person links one): a contact with the phone number the customer wrote first, then the contacts whose name
+// resembles the customer's, ranked by the AI coworker when it is on.
+export const CONVERSATION_CONTACT_MATCHES_MAX = 5;
+export const zConversationContactMatches = z.strictObject({ conversationId: zId });
+export const zConversationContactMatched = z.strictObject({
+  ai: z.enum(CONVERSATION_AI_STATES),
+  candidates: z.array(z.strictObject({ partyId: zId, name: z.string(), reason: z.enum(['phone', 'name']) })).max(CONVERSATION_CONTACT_MATCHES_MAX),
+});
+export type ConversationContactMatched = z.infer<typeof zConversationContactMatched>;
 export const zConversationMarkRead = z.strictObject({ conversationId: zId, seq: z.number().int().min(0) });
 export const zConversationDone = z.strictObject({ conversationId: zId });
 // A demo comment on a post of a sandbox connection (a thread of its own, or a follow-up in one).
@@ -355,3 +410,18 @@ export const zConversationPurgeExpired = z.strictObject({ limit: z.number().int(
 export const zConversationPurged = z.strictObject({ threads: z.number().int(), messages: z.number().int(), identities: z.number().int(), more: z.boolean() });
 export type ConversationPurged = z.infer<typeof zConversationPurged>;
 export const zConversationEraseConnection = z.strictObject({ connectionId: zId });
+
+// The "you are replying" marker (CV3, #2306): a member typing a reply marks the thread for 60 seconds; a mark is written at most once in 20 seconds
+// per thread and member, and the screens read it with their poll. A sweep drops the expired ones.
+export const CONVERSATION_COMPOSING_SECONDS = 60;
+export const CONVERSATION_COMPOSING_EVERY_SECONDS = 20;
+export const zConversationComposing = z.strictObject({ conversationId: zId });
+export const zConversationComposed = z.strictObject({ marked: z.boolean() });
+
+// A member's availability for the inbox: it decides whom a new conversation is told to. No row means available.
+export const MEMBER_AVAILABILITY = ['available', 'away'] as const;
+export const zMemberAvailabilityStatus = z.enum(MEMBER_AVAILABILITY);
+export const zAvailabilitySet = z.strictObject({ status: zMemberAvailabilityStatus, until: z.iso.datetime({ offset: true }).nullable().optional() });
+export const zAvailabilityEntry = z.strictObject({ userId: zId, status: zMemberAvailabilityStatus, until: z.iso.datetime({ offset: true }).nullable() });
+export const zAvailability = z.strictObject({ me: zAvailabilityEntry, members: z.array(zAvailabilityEntry) });
+export type Availability = z.infer<typeof zAvailability>;

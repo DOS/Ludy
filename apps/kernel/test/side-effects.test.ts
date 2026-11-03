@@ -182,6 +182,17 @@ describe('the risk of the commands of running ads (#2294)', () => {
     expect(byName().get('ads.account.forget_write')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
   });
 
+  it('keeps the launch of a drafted campaign (W1, #2295) an R3 financial proposal command asked for through an R1 preparer of owners and admins, and the drafts R1', () => {
+    expect(byName().get('ads.campaign.launch')).toMatchObject({ risk: 'R3', sideEffect: 'financial', access: 'proposal' });
+    expect(byName().get('ads.campaign.prepare_launch')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin'] });
+    for (const name of ['ads.campaign.draft_save', 'ads.campaign.draft_discard']) {
+      expect(byName().get(name), name).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: ['owner', 'admin', 'member'] });
+    }
+    for (const name of ['ads.campaign.launch', 'ads.campaign.prepare_launch', 'ads.campaign.draft_save', 'ads.campaign.draft_discard']) {
+      expect(byName().get(name)?.agent, name).toBeUndefined();
+    }
+  });
+
   it('lets no agent run any of them', () => {
     for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();

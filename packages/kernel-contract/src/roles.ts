@@ -26,7 +26,7 @@ export const ROLE_SCOPE_VALUES = ['org', 'legal_entity'] as const;
 export const zRoleScope = z.enum(ROLE_SCOPE_VALUES);
 
 // Permissions a role grants that something checks today.
-export const ROLE_PERMISSIONS = ['finance.proposal.approve', 'finance.period.unlock', 'finance.vat.file'] as const;
+export const ROLE_PERMISSIONS = ['finance.proposal.approve', 'finance.period.unlock', 'finance.vat.file', 'kernel.conversation.direct.read'] as const;
 export type RolePermission = (typeof ROLE_PERMISSIONS)[number];
 // One constant per permission, for the app's display gates (#1641): typed as a RolePermission, so a key that leaves
 // ROLE_PERMISSIONS (which the manifest check keeps equal to the declared ones a role grants) fails typecheck, and

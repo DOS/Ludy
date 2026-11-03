@@ -603,7 +603,7 @@ suite('stale deals and their next steps on PostgreSQL (#2381)', () => {
       await o.raise();
       const items = await o.query<TodayItem[]>(o.member, 'crm.today', {});
       expect(items.filter((i) => i.id.startsWith('next-step:'))).toHaveLength(20);
-      expect(items.find((i) => i.id === 'next-steps-more')).toMatchObject({ kind: 'flag', count: 3, title: { key: 'crm.nextStepsMore' } });
+      expect(items.find((i) => i.id === 'next-steps-more')).toMatchObject({ kind: 'flag', count: 3, title: { key: 'crm.nextStepsMore', params: { count: 3 } } });
     });
   });
 });

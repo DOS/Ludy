@@ -17,7 +17,7 @@ describe('crmGuide', () => {
 
   it('quotes the buttons and screens by their current Vietnamese labels', () => {
     const text = crmGuide('Ludy').flatMap((s) => s.items).join('\n');
-    for (const label of [vi.nav.apps.crm, vi.nav.contacts, vi.nav.deals, vi.contacts.add, vi.contacts.importFile, vi.savedViews.save, vi.deals.add, vi.deals.view.settings, vi.contactImport.steps.preview]) {
+    for (const label of [vi.nav.apps.social, vi.nav.contacts, vi.nav.deals, vi.contacts.add, vi.contacts.importFile, vi.savedViews.save, vi.deals.add, vi.deals.view.settings, vi.contactImport.steps.preview]) {
       expect(text, label).toContain(`"${label}"`);
     }
   });

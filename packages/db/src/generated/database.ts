@@ -14,6 +14,7 @@ export type NotGranted = undefined;
 
 export interface CroveAdsSchema {
   'crove_ads.ad_account': AdsAdAccountTable;
+  'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
@@ -81,6 +82,7 @@ export interface CroveKernelSchema {
   'crove_kernel.channel_connection': KernelChannelConnectionTable;
   'crove_kernel.conversation': KernelConversationTable;
   'crove_kernel.conversation_attachment': KernelConversationAttachmentTable;
+  'crove_kernel.conversation_composing': KernelConversationComposingTable;
   'crove_kernel.conversation_draft': KernelConversationDraftTable;
   'crove_kernel.conversation_identity': KernelConversationIdentityTable;
   'crove_kernel.conversation_message': KernelConversationMessageTable;
@@ -100,6 +102,7 @@ export interface CroveKernelSchema {
   'crove_kernel.mail_event': KernelMailEventTable;
   'crove_kernel.mail_message': KernelMailMessageTable;
   'crove_kernel.mail_suppression': KernelMailSuppressionTable;
+  'crove_kernel.member_availability': KernelMemberAvailabilityTable;
   'crove_kernel.member_invite': KernelMemberInviteTable;
   'crove_kernel.notification': KernelNotificationTable;
   'crove_kernel.notification_mute': KernelNotificationMuteTable;
@@ -216,6 +219,36 @@ export interface AdsAdAccountTable {
   write_enabled: Generated<boolean>;
   write_connection_id: string | null;
   write_granted_by_hash: string | null;
+}
+
+/** crove_ads.ad_campaign_draft */
+export interface AdsAdCampaignDraftTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  name: string;
+  objective: string;
+  status: Generated<string>;
+  revision: Generated<number>;
+  daily_budget: string | null;
+  start_on: string | null;
+  end_on: string | null;
+  targeting: ColumnType<unknown, string | undefined, string>;
+  link_url: string | null;
+  page_connection_id: string | null;
+  source_post_id: string | null;
+  media_file_id: string | null;
+  variants: ColumnType<unknown, string | undefined, string>;
+  origin: Generated<string>;
+  ai_fields: Generated<string[]>;
+  max_spend: string | null;
+  proposal_id: string | null;
+  approved_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string, string, NotGranted>;
+  updated_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_ads.ad_flag_setting */
@@ -1093,6 +1126,18 @@ export interface KernelConversationAttachmentTable {
   stored_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
+/** crove_kernel.conversation_composing */
+export interface KernelConversationComposingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  conversation_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  kind: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  expires_at: ColumnType<Date, Date | string, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
 /** crove_kernel.conversation_draft */
 export interface KernelConversationDraftTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1211,6 +1256,9 @@ export interface KernelConversationTable {
   resolved_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  intent: string | null;
+  intent_set_by: string | null;
+  intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_kernel.currency */
@@ -1410,6 +1458,16 @@ export interface KernelMailSuppressionTable {
   lifted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   lifted_by: string | null;
   lift_reason: string | null;
+}
+
+/** crove_kernel.member_availability */
+export interface KernelMemberAvailabilityTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  status: Generated<string>;
+  until: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_kernel.member_invite */
