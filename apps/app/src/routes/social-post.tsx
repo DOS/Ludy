@@ -16,6 +16,8 @@ import { cn } from '@crove/ui/lib/utils';
 import { hashtagSuggestions, hashtagsOf, REPOST_HOURS_MAX, REPOST_PROVIDERS, AUTO_REPLY_LIKES_MAX, AUTO_REPLY_RULES, COMMENT_RULES, THREAD_PARTS_MAX, THREAD_RULES, threadPartsOf, COVER_RULES, GBP_CTAS, GBP_LANGUAGES, GBP_TOPICS, gbpOf, POLL_RULES, POST_TYPE_RULES, TOPIC_TAG_RULES, coverKind, coverOf, isProvider, pollDurationOf, pollFlagOf, pollOptionsOf, pollQuestionOf, postTypeOf, REMOVE_READY, sentLink, topicTagOf, utmOf, type Cover, type CoverKind, type Issue, YOUTUBE_CATEGORIES, YOUTUBE_DEFAULT_CATEGORY, YOUTUBE_TAGS_MAX, youtubeTagsLength, YOUTUBE_PLAYLISTS_MAX, youtubePlaylistIdFrom, youtubePlaylistsOf, SENT_TO_APP, TIKTOK_NO_POST_ID, tiktokModeOf, tiktokDisclosureOf, type TikTokDisclosure, TIKTOK_PRIVACY_LEVELS, tiktokCreatorOf, type TikTokInteraction, type TikTokPrivacyLevel, removeAtFit, removeAtOf, WORDPRESS_CATEGORIES_MAX, WORDPRESS_EXCERPT_MAX, WORDPRESS_STATUSES, WORDPRESS_TAGS_MAX, WORDPRESS_DRAFT, WORDPRESS_PENDING, TELEGRAM_PIN_SCOPE, telegramOptionsOf, localTime, REPLY_SETTINGS, replySettingOf, linkedinVisibilities, telegramButtonsOf, TELEGRAM_BUTTON_ROWS_MAX, TELEGRAM_BUTTONS_PER_ROW_MAX, TELEGRAM_BUTTON_TEXT_MAX, isButtonUrl, countText, type TelegramButton, IG_REEL_FEEDS, IG_TRIAL_GRADUATIONS, instagramReelOf, isInstagramReel, variantTexts, wordsForChannel, wordsForChannels, DISCORD_TAGS_MAX, DISCORD_THREAD_NAME_MAX, discordOptionsOf, discordThreadName, isDiscordId, BLUESKY_REPLY_RULES, blueskyQuotesOff, blueskyRepliesOf, type BlueskyReplyRule, DOCUMENT_PROVIDERS, DOCUMENT_TITLE_MAX, documentTitleOf, mediaKindOf, pinterestSectionOf, DUPLICATE_CONTENT, POSSIBLE_DUPLICATE, duplicateText, type DuplicateOf, prefillUtm, signatureText, withChannelSignature, withSignature, editRefusal } from '@crove/mod-social/contract';
 import { LINK_CARD_DESCRIPTION_MAX, LINK_CARD_PROVIDERS, LINK_CARD_THUMB_MAX_BYTES, LINK_CARD_TITLE_MAX, linkCardOf, linkCardSize, type Provider } from '@crove/mod-social/contract';
 import { SOCIAL_RECURRENCE_TIMES_MAX } from '@crove/kernel-contract';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
+import { LeavePageDialog } from '../components/leave-page-dialog.tsx';
 import { DateInput } from '../components/date-input.tsx';
 import { DateTimeInput } from '../components/date-time-input.tsx';
 import { TimeInput } from '../components/time-input.tsx';
@@ -2659,7 +2661,7 @@ export function SocialComposePage() {
     setAiUsed(d.data.aiUsed);
     setRestore(null);
   };
-  useBlocker({ shouldBlockFn: () => touched && !leaving.current && !window.confirm(t('leaveConfirm')), enableBeforeUnload: () => touched && !leaving.current });
+  const leave = useBlocker({ shouldBlockFn: () => touched && !leaving.current, enableBeforeUnload: () => touched && !leaving.current, withResolver: true });
 
   // One key per content: a retry of the same content after a lost answer returns the post the first request created;
   // content edited after a failed attempt is a new request (the server would refuse the old key with other content).
@@ -2794,6 +2796,7 @@ export function SocialComposePage() {
   if (channels.isLoading || signatureRows.isPending) return <Spinner />;
   return (
     <MediaReplace.Provider value={fixEverywhere}>
+    <LeavePageDialog blocker={leave} />
     <div onKeyDown={onKey}>
       <PageHeader
         title={t('composeTitle')}
@@ -3902,7 +3905,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
     const timer = setTimeout(() => (editing && base ? saveDraft<PostDraft>(slug, postId, origin.revision, { base, own }) : clearDraft(slug, postId)), 400);
     return () => clearTimeout(timer);
   }, [base, own, origin, editing, restorePost, slug, postId]);
-  useBlocker({ shouldBlockFn: () => editing && !window.confirm(t('leaveConfirm')), enableBeforeUnload: () => editing });
+  const leave = useBlocker({ shouldBlockFn: () => editing, enableBeforeUnload: () => editing, withResolver: true });
 
   const refresh = () => void queryClient.invalidateQueries();
   // After this page's own save: read the post once and take it as the new starting point here, rather than waiting
@@ -4108,6 +4111,7 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
 
   return (
     <MediaReplace.Provider value={fixEverywhere}>
+    <LeavePageDialog blocker={leave} />
     <div onKeyDown={onKey}>
       <p role="status" className="sr-only" data-testid="review-arrival">
         {arrival}
@@ -4145,18 +4149,18 @@ function PostScreen({ slug, postId }: { slug: string; postId: string }) {
               </Button>
             )}
             {archiver && !archived && (
-              <Button
-                variant="outline"
-                size="lg"
+              <ConfirmDialog
+                render={<Button variant="outline" size="lg" title={dirty ? t('saveFirst') : blocked ? t(`archive.blocked.${blocked}`) : t('archive.hint')} />}
                 disabled={dirty || blocked !== null || archive.isPending}
-                title={dirty ? t('saveFirst') : blocked ? t(`archive.blocked.${blocked}`) : t('archive.hint')}
-                onClick={() => {
-                  if (window.confirm(t('archive.confirm'))) archive.mutate();
-                }}
+                title={t('archive.title')}
+                description={t('archive.confirm')}
+                confirm={t('archive.action')}
+                destructive
+                onConfirm={() => archive.mutate()}
               >
                 {archive.isPending ? <Spinner className="text-current" /> : null}
                 {t('archive.action')}
-              </Button>
+              </ConfirmDialog>
             )}
           </>
         }

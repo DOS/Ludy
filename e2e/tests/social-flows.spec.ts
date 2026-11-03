@@ -68,6 +68,9 @@ function channelCard(page: Page, name: string): Locator {
   return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
 }
 
+// The calendar feed card of the Social calendar tab, by its title.
+const calendarCard = (page: Page) => page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Đăng ký lịch', exact: true }) });
+
 const postIdOf = (page: Page) => new URL(page.url()).pathname.split('/').pop() ?? '';
 
 // Submits the composed post, approves every channel, schedules them an hour from now and checks each card says so.
@@ -238,14 +241,94 @@ test('publishes many failed posts again at once from the attention list (#1456)'
   await page.getByRole('tab', { name: /Cần xử lý/ }).click();
   await page.getByText('Chọn mọi bài đang hiện').click();
   await expect(page.getByText('Đã chọn 2 bài')).toBeVisible();
-  page.once('dialog', (d) => void d.accept());
-  await page.getByRole('button', { name: 'Đăng lại', exact: true }).click();
+  // Publishing again asks first, in the app's dialog; Cancel changes nothing.
+  const retry = page.getByRole('button', { name: 'Đăng lại', exact: true });
+  await retry.click();
+  const retryDialog = page.getByRole('dialog', { name: 'Đăng lại ngay?' });
+  await retryDialog.getByRole('button', { name: 'Hủy', exact: true }).click();
+  await expect(retryDialog).toBeHidden();
+  await expect(page.getByText('Đã chọn 2 bài')).toBeVisible();
+  await retry.click();
+  await retryDialog.getByRole('button', { name: 'Đăng lại 2 bài' }).click();
   await expect(page.getByText('Đăng lại: xong 2, 0 bài không có gì để làm, 0 bài bị từ chối.')).toBeVisible();
 
   // Each is a new attempt due now: the worker's sweep publishes both to the sandbox.
   await expect
     .poll(() => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status), { timeout: 45_000 })
     .toEqual(['published', 'published']);
+});
+
+test('asks in the app\'s dialog before cancelling many posts and before revoking the calendar address (#2117)', async ({ page }) => {
+  await signInNewUser(page, newEmail('social-confirm'));
+  const slug = await createOrg(page, 'Công ty Hỏi Trước');
+  const channel = 'Kênh Hỏi Trước';
+  await connectSandbox(page, channel);
+  const posts: string[] = [];
+  // Two posts waiting in review: the review list is where a post that has not gone out can be cancelled in bulk.
+  for (const body of ['Bài hủy thứ nhất', 'Bài hủy thứ hai']) {
+    await page.goto(`/o/${slug}/social`);
+    await page.getByRole('link', { name: 'Soạn bài' }).click();
+    await page.getByLabel('Nội dung chung').fill(body);
+    await page.getByRole('button', { name: 'Lưu và gửi duyệt' }).click();
+    await expect(page).toHaveURL(/\/social\/[0-9a-f-]{36}$/);
+    posts.push(postIdOf(page));
+  }
+  const statuses = () => sql<{ status: string }>(`SELECT status FROM crove_social.post_variant WHERE post_id IN (:'a', :'b')`, { a: posts[0] ?? '', b: posts[1] ?? '' }).map((r) => r.status);
+
+  // The browser's own dialog must never open: answering it would hide the very thing this test is about.
+  const browserDialogs: string[] = [];
+  page.on('dialog', (dialog) => {
+    browserDialogs.push(`${dialog.type()}: ${dialog.message()}`);
+    void dialog.dismiss();
+  });
+
+  await test.step('cancelling asks first, names the outcome, and "Keep them" changes nothing', async () => {
+    await page.goto(`/o/${slug}/social`);
+    await page.getByRole('tab', { name: /Cần duyệt/ }).click();
+    await page.getByText('Chọn mọi bài đang hiện').click();
+    await expect(page.getByText('Đã chọn 2 bài')).toBeVisible();
+    const trigger = page.getByRole('button', { name: 'Hủy bài', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Hủy các bài chưa đăng?' });
+    await expect(dialog.getByText('Hủy 2 bài trên mọi kênh chưa đăng?')).toBeVisible();
+    await dialog.getByRole('button', { name: 'Giữ nguyên' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+    expect(statuses()).toEqual(['in_review', 'in_review']);
+  });
+
+  await test.step('confirming cancels both posts', async () => {
+    await page.getByRole('button', { name: 'Hủy bài', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Hủy các bài chưa đăng?' });
+    await dialog.getByRole('button', { name: 'Hủy 2 bài' }).click();
+    await expect(page.getByText('Hủy bài: xong 2, 0 bài không có gì để làm, 0 bài bị từ chối.')).toBeVisible();
+    expect(statuses()).toEqual(['cancelled', 'cancelled']);
+  });
+
+  await test.step('revoking the calendar address asks first, and Escape changes nothing', async () => {
+    await page.goto(`/o/${slug}/social?tab=calendar`);
+    // Found by its title: the button it holds changes once an address exists, so a locator built on it would lose the card.
+    const card = calendarCard(page);
+    await card.getByRole('button', { name: 'Tạo địa chỉ đăng ký' }).click();
+    await expect(card.getByText('Đang có một địa chỉ đăng ký lịch', { exact: false })).toBeVisible();
+    await card.getByRole('button', { name: 'Thu hồi' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Thu hồi địa chỉ đăng ký lịch?' });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(card.getByText('Đang có một địa chỉ đăng ký lịch', { exact: false })).toBeVisible();
+  });
+
+  await test.step('confirming the revoke removes the address', async () => {
+    const card = calendarCard(page);
+    await card.getByRole('button', { name: 'Thu hồi' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Thu hồi địa chỉ đăng ký lịch?' });
+    await dialog.getByRole('button', { name: 'Thu hồi' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText('Chưa có địa chỉ đăng ký lịch.')).toBeVisible();
+  });
+
+  expect(browserDialogs).toEqual([]);
 });
 
 test('keeps uploaded images in the library with the posts that use them', async ({ page }) => {

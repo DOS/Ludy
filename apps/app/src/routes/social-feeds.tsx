@@ -9,6 +9,7 @@ import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -63,9 +64,17 @@ function FeedRow({ feed, channels, canManage }: { feed: Feed; channels: readonly
           <Button size="sm" variant="outline" disabled={update.isPending} onClick={() => update.mutate(!feed.paused)}>
             {t(feed.paused ? 'resume' : 'pause')}
           </Button>
-          <Button size="sm" variant="ghost" disabled={remove.isPending} onClick={() => window.confirm(t('removeConfirm')) && remove.mutate()}>
+          <ConfirmDialog
+            render={<Button size="sm" variant="ghost" />}
+            disabled={remove.isPending}
+            title={t('removeTitle')}
+            description={t('removeConfirm')}
+            confirm={t('remove')}
+            destructive
+            onConfirm={() => remove.mutate()}
+          >
             {t('remove')}
-          </Button>
+          </ConfirmDialog>
         </div>
       )}
       {(update.error ?? remove.error) && <ErrorText>{errorMessage(update.error ?? remove.error)}</ErrorText>}
