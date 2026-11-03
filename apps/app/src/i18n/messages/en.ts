@@ -8065,6 +8065,14 @@ export const en = {
         list: 'View the sales invoice drafts',
         save: 'Save a sales invoice draft',
       },
+      einvoice: {
+        issue: 'Issue a sales invoice',
+        issue_request: 'View the request to issue a sales invoice',
+        job_begin: 'Start sending a sales invoice to the provider',
+        job_files: 'Store the original of an issued sales invoice',
+        job_record: 'Record the result of issuing a sales invoice',
+        prepare_issue: 'Ask to issue a sales invoice',
+      },
       einvoice_series: {
         list: 'View the invoice series',
         set_default: 'Choose the default invoice series',

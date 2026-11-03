@@ -8062,6 +8062,14 @@ export const vi = {
         list: 'Xem các bản nháp hóa đơn bán ra',
         save: 'Lưu bản nháp hóa đơn bán ra',
       },
+      einvoice: {
+        issue: 'Phát hành hóa đơn bán ra',
+        issue_request: 'Xem đề nghị phát hành hóa đơn bán ra',
+        job_begin: 'Bắt đầu gửi hóa đơn bán ra tới nhà cung cấp',
+        job_files: 'Lưu bản gốc của hóa đơn bán ra đã phát hành',
+        job_record: 'Ghi kết quả phát hành hóa đơn bán ra',
+        prepare_issue: 'Đề nghị phát hành hóa đơn bán ra',
+      },
       einvoice_series: {
         list: 'Xem ký hiệu hóa đơn',
         set_default: 'Chọn ký hiệu hóa đơn mặc định',

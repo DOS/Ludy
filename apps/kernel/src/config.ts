@@ -309,9 +309,9 @@ const schema = z.object({
   CREDENTIAL_KEY_PREVIOUS: optional,
   // The offline sandbox channel (Social plan §3.5): connect and publish without any platform account.
   CHANNEL_SANDBOX: z.enum(['true', 'false']).default('true'),
-  // The offline sandbox e-invoice provider (ADR-0044, #2500): series and drafts are made without any provider account. On unless asked off: it reaches no host,
-  // and until an invoice can be issued from it (#2502) it writes nothing into the books.
-  EINVOICE_SANDBOX: z.enum(['true', 'false']).default('true'),
+  // The offline sandbox e-invoice provider (ADR-0044, #2500, #2502): series and drafts are made, and invoices issued, without any provider account. Left out, it is on for a
+  // local PUBLIC_URL and off for a public one; set to true on a public deployment that runs the finance module it is refused, since what it issues is read into a sale of the books.
+  EINVOICE_SANDBOX: z.enum(['true', 'false']).optional(),
   // The offline sandbox bank feed (ADR-0039, #2044): off unless asked for, so a deployment shows no bank feed until it
   // has one.
   BANK_FEED_SANDBOX: z.enum(['true', 'false']).default('false'),
@@ -574,9 +574,10 @@ const schema = z.object({
 
 export type SessionCheckMode = 'db' | 'jwt' | 'off';
 
-export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK'> & {
+export type Config = Omit<z.infer<typeof schema>, 'AUTH_ISSUER' | 'AUTH_SESSION_CHECK' | 'EINVOICE_SANDBOX'> & {
   AUTH_ISSUER: string;
   AUTH_SESSION_CHECK: SessionCheckMode;
+  EINVOICE_SANDBOX: 'true' | 'false';
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -593,6 +594,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     ...raw,
     AUTH_ISSUER: raw.AUTH_ISSUER,
     AUTH_SESSION_CHECK: raw.AUTH_SESSION_CHECK ?? (raw.AUTH_UPSTREAM_URL ? 'db' : 'jwt'),
+    EINVOICE_SANDBOX: raw.EINVOICE_SANDBOX ?? (isLocalUrl(raw.PUBLIC_URL) ? 'true' : 'false'),
   };
   if (!config.AUTH_JWT_SECRET && !config.AUTH_JWKS_URL) {
     throw new Error('set AUTH_JWT_SECRET (self-hosted Supabase Auth) or AUTH_JWKS_URL (hosted Supabase Auth)');
@@ -783,6 +785,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
+    // ADR-0044 point 8 (#2502): the offline provider "issues" invoices that the intake reads into sales of the books, so it stays on development deployments. docker compose
+    // falls back to EINVOICE_SANDBOX=true, so a public deployment that runs the finance module must set it to false.
+    if (config.EINVOICE_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('finance')) {
+      throw new Error('EINVOICE_SANDBOX=true issues made-up sales invoices into the books; it is for local development only: set EINVOICE_SANDBOX=false');
     }
     // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
     // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A
