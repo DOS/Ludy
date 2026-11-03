@@ -583,7 +583,8 @@ export type VoucherLine = z.infer<typeof zVoucherLine>;
 
 // Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
 // description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
-export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'name', 'balance'] as const;
+// `learned` (#2402): the line's words point at a party a person matched by hand before.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'learned', 'name', 'balance'] as const;
 export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
 
 // How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
@@ -596,6 +597,19 @@ export const zBankMatchedBy = z.object({
   invoice: z.object({ series: z.string().max(50), number: z.string().max(50) }).optional(),
 });
 export type BankMatchedBy = z.infer<typeof zBankMatchedBy>;
+
+// A learned bank-line rule as Settings lists it (#2402): the party its key points at, who confirmed it (their name while they are a
+// member), when, and the voucher whose approval taught it. The key itself is never returned: only its keyed hash is stored.
+export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
+export const zBankPartyRule = z.object({
+  id: zId,
+  kind: z.enum(BANK_PARTY_RULE_KINDS),
+  party: z.object({ partyId: zId, name: z.string() }),
+  confirmedBy: z.string().nullable(),
+  confirmedAt: z.string(),
+  voucher: z.object({ voucherId: zId, code: z.string() }),
+});
+export type BankPartyRule = z.infer<typeof zBankPartyRule>;
 
 // The payload of a finance.cash_voucher proposal, built by the server from the request (the party as found, the total
 // computed). finance.voucher.record checks it all again when the proposal is approved.

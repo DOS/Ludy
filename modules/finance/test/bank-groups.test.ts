@@ -27,6 +27,8 @@ describe('classifyLine', () => {
 
   it('needs a look when only the name or the open balance points at the party', () => {
     expect(classifyLine(clean({ suggested: { reason: 'name' } }))).toEqual({ group: 'look', why: 'weak' });
+    // What a person taught by hand (#2402) is a hint of the party, never enough for a clean line.
+    expect(classifyLine(clean({ suggested: { reason: 'learned' } }))).toEqual({ group: 'look', why: 'weak' });
     expect(classifyLine(clean({ suggested: { reason: 'balance' } }))).toEqual({ group: 'look', why: 'weak' });
   });
 
