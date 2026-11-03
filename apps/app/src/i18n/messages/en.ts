@@ -7164,6 +7164,9 @@ export const en = {
       PORTAL_STEP_TIMEOUT: 'The tax portal is answering slowly, so the fetch paused. Click Fetch again to continue.',
       CONTACT_EMAIL_REQUIRED: 'The company has no contact email yet. An owner or admin can set it in Settings; then try again.',
       NOTHING_MISSING: 'No invoices are missing for this period, so there is nothing to ask for.',
+      PAUSE_DATE_INVALID: 'The pause date is not valid.',
+      PAUSE_TOO_LONG: 'A pause can run two years from today at most.',
+      PARTY_CHANGING: 'This customer is being merged or split. Try again in a moment.',
       REQUEST_TOO_SOON: 'A request for this period went out less than an hour ago. Wait a little, then send it again.',
       NOTHING_OVERDUE: 'This customer has no overdue invoices left.',
       STALE_REMINDER: 'The books changed since you opened the message (a payment came in, or the reminder moved to another level). Open it again to see the new figures.',
@@ -7795,6 +7798,14 @@ export const en = {
       },
       bank_party_rules: {
         list: 'List bank line rules',
+      },
+      collection_setting: {
+        get: 'View the org\'s payment reminder settings',
+        set: 'Change the org\'s payment reminder settings',
+      },
+      customer_collection: {
+        get: 'View a customer\'s payment reminder settings',
+        set: 'Change a customer\'s payment terms or pause its reminders',
       },
       payment_reminder: {
         draft: 'Draft a payment reminder for a customer',

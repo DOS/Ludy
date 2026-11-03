@@ -370,6 +370,10 @@ export const KERNEL_ERROR_CODES = [
   'PARENT_TAGGED',
   'PARENT_NOT_DEEPEST',
   'PARTY_NOT_FOUND',
+  // The reminders' pause (#2488).
+  'PAUSE_DATE_INVALID',
+  'PAUSE_TOO_LONG',
+  'PARTY_CHANGING',
   // MISA item and warehouse codes of stock accounts (#1398).
   'NOT_STOCK_ACCOUNT',
   'MISA_CODE_CONFLICT',
