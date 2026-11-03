@@ -52,7 +52,14 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     const exec = <T>(user: string, name: string, input: unknown) => rt.execute<T>(name, input, { actor: asUser(user), orgId });
     const query = <T>(user: string, name: string, input: unknown) => rt.query<T>(name, input, { actor: asUser(user), orgId });
     const stage = (user: string, rows: ImportRowInput[], filename = 'lien-he.csv') => exec<ImportPreview>(user, 'crm.import.stage', { filename, rows });
-    const commit = (user: string, batchId: string, onDuplicate: 'skip' | 'fill_empty' = 'skip') => exec<ImportCommitted>(user, 'crm.import.commit', { batchId, onDuplicate });
+    const commit = (user: string, batchId: string, onDuplicate: 'skip' | 'fill_empty' = 'skip', createCompanies = false) => exec<ImportCommitted>(user, 'crm.import.commit', { batchId, onDuplicate, createCompanies });
+    // The person's company by name, for the parties of the org that have one.
+    const companies = () =>
+      admin((c) =>
+        c
+          .query<{ name: string; company: string }>('SELECT p.name, k.name AS company FROM crove_kernel.party p JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.company_id WHERE p.org_id = $1 ORDER BY p.name', [orgId])
+          .then((r) => r.rows),
+      );
     const party = (fields: { name: string; tax_code?: string; email?: string; phone?: string; address?: string; source_trust?: 'external' | 'user' | 'system' }) =>
       admin((c) =>
         c
@@ -61,7 +68,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
       );
     const parties = () => admin((c) => c.query<{ name: string; kind: string; tax_code: string | null; email: string | null; phone: string | null; source_trust: string }>('SELECT name, kind, tax_code, email, phone, source_trust FROM crove_kernel.party WHERE org_id = $1 ORDER BY name', [orgId]).then((r) => r.rows));
     const stagedRows = (batchId: string) => admin((c) => c.query('SELECT 1 FROM crove_crm.import_row WHERE org_id = $1 AND batch_id = $2', [orgId, batchId]).then((r) => r.rowCount ?? 0));
-    return { orgId, owner, lan, huy, viewer, exec, query, stage, commit, party, parties, stagedRows };
+    return { orgId, owner, lan, huy, viewer, exec, query, stage, commit, party, parties, stagedRows, companies };
   }
 
   beforeAll(async () => {
@@ -307,7 +314,7 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
       c.query<{ table_name: string; column_name: string }>("SELECT table_name, column_name FROM information_schema.column_privileges WHERE grantee = 'crove_tenant' AND privilege_type = 'UPDATE' AND table_schema = 'crove_crm' AND table_name IN ('import_batch', 'import_row') ORDER BY 1, 2"),
     );
     expect(grants.rows.filter((g) => g.table_name === 'import_row')).toEqual([]);
-    expect(grants.rows.map((g) => g.column_name)).toEqual(['conflict_rows', 'created_rows', 'decided_at', 'duplicate_rows', 'invalid_rows', 'new_rows', 'on_duplicate', 'status', 'total_rows', 'updated_rows']);
+    expect(grants.rows.map((g) => g.column_name)).toEqual(['conflict_rows', 'created_companies', 'created_rows', 'decided_at', 'duplicate_rows', 'invalid_rows', 'linked_rows', 'new_companies', 'new_rows', 'on_duplicate', 'status', 'total_rows', 'updated_rows']);
     expect(o.orgId).toBeTruthy();
   });
 
@@ -395,6 +402,214 @@ suite('contact import on PostgreSQL (CRM K5, #2229)', () => {
     expect(await o.stagedRows(staged.batch.id)).toBe(1);
     const left = await o.query<ImportPreview>(o.lan, 'crm.import.preview', { batchId: staged.batch.id });
     expect(left.rows.map((r) => r.name)).toEqual(['Giữ Lại']);
+  });
+
+  // The Công ty column (#2438, PR 2): a person's row names the company they work at.
+  describe('the company of a person in the file', () => {
+    const person = (name: string) => row({ name, kind: 'person' });
+
+    it('reads the cell by tax code or folded name, and says what a name the org lacks, an unknown tax code and two alike came to, writing no party', async () => {
+      const o = await org();
+      await o.party({ name: 'Công ty TNHH Á Châu', tax_code: '0123456780' });
+      await o.party({ name: 'Hai Bạn' });
+      await o.party({ name: 'HAI BẠN' });
+      const before = (await o.parties()).length;
+      const staged = await o.stage(o.lan, [
+        { ...person('An'), company: '0123456780' },
+        { ...person('Bình'), company: 'cong ty tnhh a chau' },
+        { ...person('Cường'), company: 'Công ty Mới Toanh' },
+        { ...person('Dũng'), company: '0999999991' },
+        { ...person('Em'), company: 'Hai Bạn' },
+        { ...row({ name: 'Công ty Khác', kind: 'organization' }), company: 'Công ty Mới Toanh' },
+        { ...person('Giang'), company: '   ' },
+        { ...person('Hà'), company: 'Công ty Mới Toanh' },
+        { ...person('Khánh'), company: '***' },
+      ]);
+      const company = (n: number) => staged.rows.find((r) => r.rowNo === n)?.company;
+      expect(company(1)).toMatchObject({ state: 'matched', match: { name: 'Công ty TNHH Á Châu' } });
+      expect(company(2)).toMatchObject({ state: 'matched', match: { name: 'Công ty TNHH Á Châu' } });
+      expect(company(3)).toMatchObject({ state: 'new', match: null });
+      expect(company(4)).toMatchObject({ state: 'unknown_tax_code', match: null });
+      expect(company(5)).toMatchObject({ state: 'ambiguous', match: null });
+      // A company has no company; an empty cell is none; two rows naming one new company count it once.
+      expect(company(6)).toMatchObject({ state: 'none' });
+      expect(company(7)).toBeNull();
+      expect(company(8)).toMatchObject({ state: 'new' });
+      expect(company(9)).toMatchObject({ state: 'none' });
+      expect(staged.batch.newCompanies).toBe(1);
+      expect((await o.parties()).length).toBe(before);
+    });
+
+    it('links the matched company on commit, makes none unless told to, and makes one company for a name two rows share', async () => {
+      const o = await org();
+      await o.party({ name: 'Công ty TNHH Á Châu', tax_code: '0123456780' });
+      const rows = [{ ...person('An'), company: '0123456780' }, { ...person('Cường'), company: 'Công ty Mới Toanh' }, { ...person('Hà'), company: 'công ty mới toanh' }];
+      const plain = await o.stage(o.lan, rows);
+      const withoutOption = await o.commit(o.lan, plain.batch.id);
+      expect(withoutOption.batch).toMatchObject({ createdRows: 3, createdCompanies: 0, linkedRows: 1 });
+      expect(await o.companies()).toEqual([{ name: 'An', company: 'Công ty TNHH Á Châu' }]);
+      expect((await o.parties()).filter((p) => p.kind === 'organization').map((p) => p.name)).toEqual(['Công ty TNHH Á Châu']);
+      // The same file in an org that has the people yet, told to make the companies.
+      const p2 = await org();
+      await p2.party({ name: 'Công ty TNHH Á Châu', tax_code: '0123456780' });
+      const staged = await p2.stage(p2.lan, rows);
+      expect(staged.batch.newCompanies).toBe(1);
+      const done = await p2.commit(p2.lan, staged.batch.id, 'skip', true);
+      expect(done.batch).toMatchObject({ createdRows: 3, createdCompanies: 1, linkedRows: 3 });
+      expect(await p2.companies()).toEqual([
+        { name: 'An', company: 'Công ty TNHH Á Châu' },
+        { name: 'Cường', company: 'Công ty Mới Toanh' },
+        { name: 'Hà', company: 'Công ty Mới Toanh' },
+      ]);
+      expect(await p2.parties()).toContainEqual({ name: 'Công ty Mới Toanh', kind: 'organization', tax_code: null, email: null, phone: null, source_trust: 'external' });
+      // The audit row holds counts and the choice, never a company's name.
+      const audit = await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'crm.import.commit' ORDER BY id", [p2.orgId]));
+      expect(audit.rows[0]?.detail).toMatchObject({ createCompanies: true, createdCompanies: 1, linked: 3 });
+      expect(JSON.stringify(audit.rows[0]?.detail)).not.toContain('Mới Toanh');
+    });
+
+    it('fills the company of a duplicate only when asked, only from an existing company, and never over one it has or onto a company', async () => {
+      const o = await org();
+      await o.party({ name: 'Công ty Acme', tax_code: '0123456780' });
+      const other = await o.party({ name: 'Công ty Khác' });
+      const person = (name: string, email: string, company: string | null = null) =>
+        admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, email, company_id) VALUES ($1, 'person', $2, $3, $4) RETURNING id", [o.orgId, name, email, company]).then((r) => r.rows[0]!.id));
+      await person('Có sẵn trống', 'trong@khach.test');
+      await person('Đã có công ty', 'co@khach.test', other);
+      await person('Cần công ty mới', 'moi@khach.test');
+      await o.party({ name: 'Một công ty', email: 'cty@khach.test' });
+      const rows = [
+        { ...row({ name: 'Có sẵn trống', kind: 'person', email: 'trong@khach.test' }), company: '0123456780' },
+        { ...row({ name: 'Đã có công ty', kind: 'person', email: 'co@khach.test' }), company: '0123456780' },
+        { ...row({ name: 'Cần công ty mới', kind: 'person', email: 'moi@khach.test' }), company: 'Công ty Chưa Có' },
+        { ...row({ name: 'Một công ty', kind: 'person', email: 'cty@khach.test' }), company: '0123456780' },
+      ];
+      const skip = await o.stage(o.lan, rows);
+      expect(skip.batch.duplicateRows).toBe(4);
+      expect((await o.commit(o.lan, skip.batch.id, 'skip', true)).batch).toMatchObject({ linkedRows: 0, createdCompanies: 0 });
+      const fill = await o.stage(o.lan, rows);
+      const done = await o.commit(o.lan, fill.batch.id, 'fill_empty', true);
+      expect(done.batch).toMatchObject({ updatedRows: 1, linkedRows: 1, createdCompanies: 0 });
+      expect(await o.companies()).toEqual([
+        { name: 'Có sẵn trống', company: 'Công ty Acme' },
+        { name: 'Đã có công ty', company: 'Công ty Khác' },
+      ]);
+    });
+
+    it('reads the companies again at commit: one merged since the preview is replaced by the one kept', async () => {
+      const o = await org();
+      const old = await o.party({ name: 'Công ty Cũ', tax_code: '0123456780' });
+      const kept = await o.party({ name: 'Công ty Giữ Lại', tax_code: '0309876543' });
+      const staged = await o.stage(o.lan, [{ ...person('An'), company: '0123456780' }, { ...person('Bình'), company: 'Công ty Cũ' }]);
+      expect(staged.rows.map((r) => r.company?.state)).toEqual(['matched', 'matched']);
+      await o.exec(o.owner, 'kernel.party.mark_duplicate', { partyId: old, keepId: kept });
+      const done = await o.commit(o.lan, staged.batch.id);
+      // The tax code and the name both still name the company, now the one kept.
+      expect(done.batch).toMatchObject({ createdRows: 2, linkedRows: 2 });
+      expect(await o.companies()).toEqual([
+        { name: 'An', company: 'Công ty Giữ Lại' },
+        { name: 'Bình', company: 'Công ty Giữ Lại' },
+      ]);
+    });
+
+    it('links a person to a company the same file makes, wherever its row stands, and makes no second one', async () => {
+      const o = await org();
+      const rows = [
+        { ...person('Sớm'), company: '0123456780' },
+        { ...person('Muộn'), company: 'công ty abc' },
+        row({ name: 'Công ty ABC', kind: 'organization', taxCode: '0123456780' }),
+      ];
+      const staged = await o.stage(o.lan, rows);
+      expect(staged.rows.map((r) => r.company?.state ?? null)).toEqual(['in_file', 'in_file', null]);
+      // The company is the file's own row: it is no company to make, and the box is not offered for it.
+      expect(staged.batch.newCompanies).toBe(0);
+      const done = await o.commit(o.lan, staged.batch.id);
+      expect(done.batch).toMatchObject({ createdRows: 3, createdCompanies: 0, linkedRows: 2 });
+      expect(await o.companies()).toEqual([
+        { name: 'Muộn', company: 'Công ty ABC' },
+        { name: 'Sớm', company: 'Công ty ABC' },
+      ]);
+      expect((await o.parties()).filter((p) => p.kind === 'organization')).toHaveLength(1);
+    });
+
+    it('answers a merged company by the one kept, by name as by tax code, and never a kept party that is no company', async () => {
+      const o = await org();
+      const old = await o.party({ name: 'Công ty ABC' });
+      const kept = await o.party({ name: 'ABC Co., Ltd' });
+      await o.exec(o.owner, 'kernel.party.mark_duplicate', { partyId: old, keepId: kept });
+      const staged = await o.stage(o.lan, [{ ...person('An'), company: 'Công ty ABC' }]);
+      expect(staged.rows[0]?.company).toMatchObject({ state: 'matched', match: { name: 'ABC Co., Ltd' } });
+      expect(staged.batch.newCompanies).toBe(0);
+      // A company with no one working at it may be merged into a person: that person is no company, so the name is not matched to it.
+      const lone = await o.party({ name: 'Công ty Một Mình', tax_code: '0309876543' });
+      const human = await admin((c) => c.query<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name) VALUES ($1, 'person', 'Chủ Công Ty') RETURNING id", [o.orgId]).then((r) => r.rows[0]!.id));
+      await o.exec(o.owner, 'kernel.party.mark_duplicate', { partyId: lone, keepId: human });
+      const second = await o.stage(o.lan, [{ ...person('Bình'), company: '0309876543' }, { ...person('Chi'), company: 'Công ty Một Mình' }]);
+      expect(second.rows.map((r) => r.company?.state)).toEqual(['unknown_tax_code', 'new']);
+    });
+
+    it('never reads a number as a name, a placeholder as a company, or a cell that cannot be stored, and does not fail the whole file for one', async () => {
+      const o = await org();
+      const staged = await o.stage(o.lan, [
+        { ...person('Một'), company: '301234567' },
+        { ...person('Hai'), company: '012345678901' },
+        { ...person('Ba'), company: 'N/A' },
+        { ...person('Bốn'), company: 'Công ty \u0000 hỏng' },
+        { ...person('Năm'), company: `Công ty ${'dài '.repeat(100)}` },
+        { ...person('Sáu'), company: 'Công ty Hợp Lệ' },
+      ]);
+      expect(staged.rows.map((r) => r.company?.state)).toEqual(['unknown_tax_code', 'unknown_tax_code', 'none', 'none', 'none', 'new']);
+      // Only the one usable name counts as a company to make.
+      expect(staged.batch.newCompanies).toBe(1);
+      const done = await o.commit(o.lan, staged.batch.id, 'skip', true);
+      expect(done.batch).toMatchObject({ createdRows: 6, createdCompanies: 1, linkedRows: 1 });
+      expect(await o.companies()).toEqual([{ name: 'Sáu', company: 'Công ty Hợp Lệ' }]);
+    });
+
+    it('stages a company cell on a row of a company or an invalid row without linking it, and keeps one org out of another', async () => {
+      const a = await org();
+      const b = await org();
+      await b.party({ name: 'Công ty Của B', tax_code: '0123456780' });
+      const staged = await a.stage(a.lan, [
+        { ...row({ name: 'Công ty Khách', kind: 'organization' }), company: 'Công ty Của B' },
+        { ...person('An'), company: '0123456780' },
+        { ...row({ name: 'Hỏng', kind: 'person', email: 'khong-phai-email' }), company: 'Công ty Hỏng' },
+      ]);
+      // Org B's company is not seen from org A: the tax code names nothing here.
+      expect(staged.rows.map((r) => [r.outcome, r.company?.state ?? null])).toEqual([['new', 'none'], ['new', 'unknown_tax_code'], ['invalid', 'none']]);
+      const done = await a.commit(a.lan, staged.batch.id, 'skip', true);
+      expect(done.batch).toMatchObject({ createdRows: 2, createdCompanies: 0, linkedRows: 0 });
+      expect(await a.companies()).toEqual([]);
+    });
+
+    it('makes no company for a row whose tax code was taken since the preview', async () => {
+      const o = await org();
+      const staged = await o.stage(o.lan, [{ ...row({ name: 'Cá Nhân Trùng', kind: 'person', taxCode: '0123456780' }), company: 'Công ty Sẽ Không Có' }]);
+      expect(staged.batch.newCompanies).toBe(1);
+      await o.party({ name: 'Vừa Có Mã', tax_code: '0123456780' });
+      const done = await o.commit(o.lan, staged.batch.id, 'skip', true);
+      expect(done.batch).toMatchObject({ createdRows: 0, createdCompanies: 0, linkedRows: 0 });
+      expect((await o.parties()).map((p) => p.name)).toEqual(['Vừa Có Mã']);
+    });
+
+    it('recounts the companies to make when the erasure removes staged rows', async () => {
+      const o = await org();
+      const staged = await o.stage(o.lan, [
+        { ...row({ name: 'Một', kind: 'person', email: 'mot3@khach.test' }), company: 'Công ty Mới A' },
+        { ...row({ name: 'Hai', kind: 'person', email: 'hai3@khach.test' }), company: 'Công ty Mới A' },
+        { ...row({ name: 'Ba', kind: 'person', email: 'ba3@khach.test' }), company: 'Công ty Mới B' },
+      ]);
+      expect(staged.batch.newCompanies).toBe(2);
+      const mfa = { type: 'user' as const, userId: o.owner, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+      const erase = (value: string) => rt.execute('kernel.personal_data.erase', { value }, { actor: mfa, orgId: o.orgId, idempotencyKey: randomUUID() });
+      const left = async () => (await o.query<ImportPreview>(o.owner, 'crm.import.preview', { batchId: staged.batch.id })).batch.newCompanies;
+      await erase('ba3@khach.test');
+      expect(await left()).toBe(1);
+      await erase('mot3@khach.test');
+      expect(await left()).toBe(1);
+      await erase('hai3@khach.test');
+      expect(await left()).toBe(0);
+    });
   });
 
   it('keeps one org out of another', async () => {

@@ -474,6 +474,9 @@ export interface CrmImportBatchTable {
   created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   decided_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  new_companies: Generated<number>;
+  created_companies: Generated<number>;
+  linked_rows: Generated<number>;
 }
 
 /** crove_crm.import_row */
@@ -491,6 +494,9 @@ export interface CrmImportRowTable {
   outcome: ColumnType<string, string, NotGranted>;
   reason: ColumnType<string | null, string | null, NotGranted>;
   match_party_id: ColumnType<string | null, string | null, NotGranted>;
+  company_name: ColumnType<string | null, string | null, NotGranted>;
+  company_state: ColumnType<string, string | undefined, NotGranted>;
+  company_party_id: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_crm.pipeline_stage */

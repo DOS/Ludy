@@ -6,7 +6,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { Link, useParams } from '@tanstack/react-router';
 import { useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { IMPORT_MAX_ROWS, type ImportCommitted, type ImportOnDuplicate, type ImportOutcome, type ImportPreview, type ImportReason } from '@crove/kernel-contract';
+import { IMPORT_MAX_ROWS, type ImportCommitted, type ImportCompanyState, type ImportOnDuplicate, type ImportOutcome, type ImportPreview, type ImportReason } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -31,11 +31,11 @@ function download(name: string, content: BlobPart, type = 'text/csv;charset=utf-
 
 // A sample workbook: the columns the import knows and one made-up row, phone and tax code as text so they keep their zero.
 function templateBook(label: (field: ImportField) => string, example: string): Uint8Array {
-  const sample: Record<ImportField, string> = { name: example, kind: '', taxCode: '', email: 'mau@example.com', phone: '0900 000 000', address: '1 Đường Mẫu, Quận 1' };
+  const sample: Record<ImportField, string> = { name: example, kind: '', taxCode: '', email: 'mau@example.com', phone: '0900 000 000', address: '1 Đường Mẫu, Quận 1', company: '' };
   return writeWorkbook([
     {
       name: 'Liên hệ',
-      widths: [28, 22, 18, 28, 18, 36],
+      widths: [28, 22, 18, 28, 18, 36, 28],
       headerRows: 1,
       textColumns: [IMPORT_FIELDS.indexOf('taxCode'), IMPORT_FIELDS.indexOf('phone')],
       rows: [IMPORT_FIELDS.map(label), IMPORT_FIELDS.map((f) => sample[f])],
@@ -55,8 +55,20 @@ export function ContactImportPage() {
   const [staged, setStaged] = useState<ImportPreview | null>(null);
   const [outcome, setOutcome] = useState<ImportOutcome | 'all'>('all');
   const [onDuplicate, setOnDuplicate] = useState<ImportOnDuplicate>('skip');
+  // Off until the person ticks it: a company the file names and the org does not have is not made by an import that never said so (#2438).
+  const [createCompanies, setCreateCompanies] = useState(false);
   const [done, setDone] = useState<ImportCommitted | null>(null);
   const reasonText = (reason: ImportReason | null) => (reason ? t(`reason.${reason}`) : '');
+  // What the preview promises about a row's company: only a new row is imported by default, a duplicate takes a company only when the person chooses to
+  // fill in what it lacks, and a conflict or an invalid row takes none.
+  const companyText = (r: ImportPreview['rows'][number]): string | null => {
+    const company = r.company;
+    if (!company || r.outcome === 'invalid' || r.outcome === 'conflict') return null;
+    if (r.outcome === 'duplicate') return company.state === 'matched' && company.match ? t('company.duplicateMatched', { name: company.match.name }) : null;
+    if (r.kind === 'organization') return t('company.ofCompany');
+    if (company.state === 'matched') return company.match ? t('company.matched', { name: company.match.name }) : t('company.gone');
+    return t(`company.${company.state as Exclude<ImportCompanyState, 'matched'>}`);
+  };
 
   const stage = useMutation(
     orpc.crm.contactImport.stage.mutationOptions({
@@ -65,6 +77,7 @@ export function ContactImportPage() {
         setMore([]);
         setMoreHas(null);
         setOutcome('all');
+        setCreateCompanies(false);
         setStep('preview');
       },
     }),
@@ -118,6 +131,7 @@ export function ContactImportPage() {
     setMore([]);
     setMoreHas(null);
     setOnDuplicate('skip');
+    setCreateCompanies(false);
     setFilename('');
     setReadError(null);
     if (input.current) input.current.value = '';
@@ -158,6 +172,8 @@ export function ContactImportPage() {
   const rows = outcome === 'all' ? [...(staged?.rows ?? []), ...more] : [...(page.data?.rows ?? []), ...more];
   const hasMore = moreHas ?? (outcome === 'all' ? staged?.more : page.data?.more) ?? false;
   const counts = staged?.batch;
+  // The first few companies the file would make, from the rows on the screen, so the person ticks the box knowing which.
+  const newCompanyNames = [...new Set(rows.flatMap((r) => (r.outcome === 'new' && r.kind === 'person' && r.company?.state === 'new' ? [r.company.name] : [])))].slice(0, 5);
 
   return (
     <>
@@ -248,11 +264,22 @@ export function ContactImportPage() {
               ))}
             </TabsList>
           </Tabs>
-          <DataTable head={[t('preview.row'), t('field.name'), t('field.taxCode'), t('field.email'), t('field.phone'), t('preview.result')]}>
+          <DataTable head={[t('preview.row'), t('field.name'), t('field.company'), t('field.taxCode'), t('field.email'), t('field.phone'), t('preview.result')]}>
             {rows.map((r) => (
               <TableRow key={r.rowNo} data-testid="import-row">
                 <TableCell className="px-4 text-sm tabular-nums">{r.rowNo}</TableCell>
-                <TableCell className="px-4 text-sm">{r.name}</TableCell>
+                <TableCell className="px-4 text-sm">
+                  {r.name}
+                  <p className="text-xs text-muted-foreground">{t(`preview.kindOf.${r.kind}`)}</p>
+                </TableCell>
+                <TableCell className="px-4 text-sm" data-testid="import-company">
+                  {r.company && (
+                    <>
+                      {r.company.name}
+                      {companyText(r) && <p className="text-xs text-muted-foreground">{companyText(r)}</p>}
+                    </>
+                  )}
+                </TableCell>
                 <TableCell className="px-4 text-sm">{r.taxCode}</TableCell>
                 <TableCell className="px-4 text-sm">{r.email}</TableCell>
                 <TableCell className="px-4 text-sm">{r.phone}</TableCell>
@@ -280,9 +307,23 @@ export function ContactImportPage() {
               ))}
             </fieldset>
           )}
+          {counts.newCompanies > 0 && (
+            <label className="flex items-start gap-2 text-sm">
+              <input type="checkbox" className="mt-1" checked={createCompanies} onChange={(e) => setCreateCompanies(e.target.checked)} />
+              <span>
+                {t('preview.createCompanies', { count: String(counts.newCompanies) })}
+                {newCompanyNames.length > 0 && (
+                  <span className="block text-xs text-muted-foreground">
+                    {newCompanyNames.join(', ')}
+                    {counts.newCompanies > newCompanyNames.length ? ', …' : ''}
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
           {(commit.error || cancel.error) && <ErrorText>{errorMessage(commit.error ?? cancel.error)}</ErrorText>}
           <div className="flex gap-2">
-            <Button disabled={counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0)} loading={commit.isPending} onClick={() => commit.mutate({ batchId: counts.id, onDuplicate })}>
+            <Button disabled={counts.newRows === 0 && !(onDuplicate === 'fill_empty' && counts.duplicateRows > 0)} loading={commit.isPending} onClick={() => commit.mutate({ batchId: counts.id, onDuplicate, createCompanies })}>
               {t('preview.import', { count: String(counts.newRows) })}
             </Button>
             <Button variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate({ batchId: counts.id })}>
@@ -298,6 +339,7 @@ export function ContactImportPage() {
             <>
               <p className="text-sm font-medium" role="status">
                 {t('done.result', { created: String(done.batch.createdRows), updated: String(done.batch.updatedRows), skipped: String(done.skipped.length) })}
+                {(done.batch.linkedRows > 0 || done.batch.createdCompanies > 0) && ` ${t('done.companies', { linked: String(done.batch.linkedRows), made: String(done.batch.createdCompanies) })}`}
               </p>
               {done.skipped.length > 0 && (
                 <Button
