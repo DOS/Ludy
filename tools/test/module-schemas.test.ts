@@ -81,6 +81,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
+  'apps/kernel/src/ads-worker.ts': { modules: ['ads'], why: "the AI coworker's campaign draft job and the worker's sweep of requests nobody answered (crove_ads.campaign_request_sweep, the worker login's definer), worked and scheduled only when ads is installed (worker.ts)" },
   'apps/kernel/src/ads-sync.ts': { modules: ['ads'], why: 'the ad account sync, its hourly sweep and the prune of old runs, worked and scheduled only when ads is installed (worker.ts)' },
   'apps/kernel/src/bank-feed-webhook.ts': { modules: ['finance'], why: 'the bank feed notice route queues the account ids through a finance definer, mounted only when finance is installed (http.ts)' },
   'apps/kernel/src/bank-feed-sync.ts': { modules: ['finance'], why: 'the bank feed sync and its daily sweep, worked and scheduled only when finance is installed (worker.ts)' },

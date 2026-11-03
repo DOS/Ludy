@@ -341,6 +341,9 @@ export const KERNEL_ERROR_CODES = [
   'ADS_DRAFT_INVALID',
   'ADS_DRAFT_CHANGED',
   'ADS_DRAFT_STALE',
+  // Asking the AI coworker for a campaign draft (W1b, #2295).
+  'ADS_DRAFT_REQUEST_NOT_FOUND',
+  'ADS_DRAFT_REQUEST_OPEN',
   // The chart of accounts and vendor defaults (#319).
   'ACCOUNT_CODE_TAKEN',
   'ACCOUNT_HAS_SUB_ACCOUNTS',
