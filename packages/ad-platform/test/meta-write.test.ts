@@ -167,6 +167,18 @@ describe('MetaAdWriter.verify', () => {
     expect([error.kind, error.code]).toEqual(['bad_request', 'BAD_ACCOUNT']);
     expect(calls).toHaveLength(0);
   });
+
+  it('refuses an account whose currency is not the one it is asked about: a budget is sent in the minor unit of the account\'s currency, so a stale currency could be a hundred times off', async () => {
+    const granted = permissions(['ads_read', 'granted'], ['ads_management', 'granted']);
+    const { writer: w, calls } = writer([granted, { body: { id: 'act_1001', currency: 'USD' } }]);
+    const error = await rejection(w.verify(SECRET, { externalAccountId: 'act_1001', currency: 'VND' }));
+    expect([error.kind, error.code]).toEqual(['bad_request', 'CURRENCY_MISMATCH']);
+    // The same currency passes, and a caller that names none is not asked.
+    expect(await writer([granted, { body: { id: 'act_1001', currency: 'VND' } }]).writer.verify(SECRET, { externalAccountId: 'act_1001', currency: 'VND' })).toMatchObject({ canRunAds: true });
+    expect(await writer([granted, { body: { id: 'act_1001', currency: 'USD' } }]).writer.verify(SECRET, { externalAccountId: 'act_1001' })).toMatchObject({ canRunAds: true });
+    // The account is read with its currency, a GET and nothing else.
+    expect(calls.map((c) => [c.method, c.url.pathname, c.url.searchParams.get('fields')])).toEqual([['GET', '/v24.0/me/permissions', null], ['GET', '/v24.0/act_1001', 'id,currency']]);
+  });
 });
 
 const ACCOUNT_VND = { externalAccountId: 'act_1001', currency: 'VND' };

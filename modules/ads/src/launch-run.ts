@@ -28,7 +28,10 @@ import {
   LAUNCH_STEP_PAUSED,
   dayAfter,
   launchCallKey,
+  UNCLEAR_GIVE_UP_SECONDS,
+  UNCLEAR_MAX_CALLS,
   launchSteps,
+  nameTail,
   objectName,
   parseLaunchCallKey,
   stepAction,
@@ -71,8 +74,13 @@ export type LaunchBegin =
       step: string;
       level: LaunchLevel;
       tag: string;
-      // The name the object carries: reconcile accepts a found object only when its name is exactly this.
+      // The name the object is created with.
       name: string;
+      // What reconcile matches by, since a platform may trim or re-encode the plan's own text in a name: the tail of the name (the tag and what the object is, in
+      // ASCII), and the tails of the launch's other objects of the same level. Exactly one object with this tail is the one; one with the tag and another tail
+      // that is not a sibling's is not told apart from it, and ends the reconcile as unclear.
+      tail: string;
+      otherTails: string[];
       connectionId: string;
       provider: string;
       account: { externalAccountId: string; currency: string };
@@ -243,7 +251,14 @@ export const adsLaunchBegin = defineCommand({
 
     // The ledger row of the step's call.
     const callKey = launchCallKey(launch.id, launch.attempt, next);
-    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'updated_at']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).forUpdate().executeTakeFirst();
+    const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'updated_at', 'started_at', 'calls', 'error_code']).where('org_id', '=', ctx.orgId).where('key', '=', callKey).forUpdate().executeTakeFirst();
+    // A step that stays unclear is not asked about for ever: an unclear row that has already had an answer that could not be told (a code is recorded), once it has
+    // been called three times or began an hour ago, tells a person (the launch needs attention) and nothing more is asked or made.
+    if (row?.state === 'ambiguous' && row.error_code !== null && (row.calls >= UNCLEAR_MAX_CALLS || (ctx.now.getTime() - row.started_at.getTime()) / 1000 >= UNCLEAR_GIVE_UP_SECONDS)) {
+      await needAttention(ctx, launch.id, 'reconcile_unclear');
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step: next, attempt: launch.attempt, calls: row.calls, stopped: 'reconcile_unclear' });
+      return none('reconcile_unclear');
+    }
     const action = stepAction(row ? { state: row.state, updatedAt: row.updated_at } : null, ctx.now);
     if (action === 'settled') {
       // A call the platform refused ended the launch's run (needs attention); one that succeeded has its object. Nothing to do either way.
@@ -253,8 +268,9 @@ export const adsLaunchBegin = defineCommand({
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
     if (action === 'call') {
       await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: next, retry_safety: 'reconcile_only', started_at: ctx.now }).execute();
-    } else if (row?.state === 'started') {
-      // Begun and never settled, and old enough to be lost: unclear now, reconciled by the job.
+    } else if (row) {
+      // A reconcile: the row is taken by this run. A call begun and never settled, and old enough to be lost, is unclear now, and an unclear one is touched, so a
+      // job that begins at the same moment finds it young and waits: only one job reconciles a step, and only it may make the call again if the object is missing.
       await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
     }
 
@@ -290,6 +306,10 @@ export const adsLaunchBegin = defineCommand({
       level,
       tag,
       name,
+      tail: nameTail(tag, next),
+      otherTails: launchSteps(plan.variants.length)
+        .filter((s) => s !== next && stepLevel(s) === level)
+        .map((s) => nameTail(tag, s)),
       connectionId: connection.id,
       provider: connection.provider,
       account: { externalAccountId: account.external_account_id, currency: launch.currency },
@@ -318,18 +338,27 @@ export const adsLaunchRecord = defineCommand({
     const found = await accountOf(ctx, seen.ad_account_id);
     if (!found) return { recorded: false, reason: 'not_found' };
     const launch = await launchSelect(ctx).where('id', '=', launchId).forUpdate().executeTakeFirst();
-    // A result for a launch that is no longer running, or for an attempt that is over, is stale: nothing is written.
-    if (!launch || launch.state !== 'launching' || launch.attempt !== parsed.attempt) return { recorded: false, reason: 'stale' };
+    const result = input.result;
+    // A result that is dropped writes nothing, but an object the platform made is never dropped without a trace: the audit row has the step and the platform's id, so
+    // whoever stops or pauses the launch later can find it (and its name carries the launch's tag).
+    const dropped = (reason: 'stale' | 'settled'): LaunchRecorded => {
+      if (result.kind === 'accepted' || result.kind === 'found') ctx.audit({ launchId, step: parsed.step, outcome: 'dropped', reason, externalId: result.externalId });
+      return { recorded: false, reason };
+    };
+    // A result for an attempt that is over, or for a launch that is not running, is stale. The one thing recorded for a launch that is no longer running (stopped,
+    // failed, or waiting for a person: a concurrent run stopped it while this call was in flight) is an object the platform made, so it is tracked all the same.
+    const holdsObject = result.kind === 'accepted' || result.kind === 'found';
+    if (!launch || launch.attempt !== parsed.attempt || !(launch.state === 'launching' || (holdsObject && (launch.state === 'needs_attention' || launch.state === 'stopped' || launch.state === 'failed')))) return dropped('stale');
     const drafted = await draftPlanOf(ctx, launch.draft_id);
     const plan = drafted?.plan ?? null;
-    if (!plan) return { recorded: false, reason: 'stale' };
+    if (!plan) return dropped('stale');
     const steps = launchSteps(plan.variants.length);
     const step = parsed.step;
-    if (!steps.includes(step)) return { recorded: false, reason: 'stale' };
+    if (!steps.includes(step)) return dropped('stale');
     const row = await ctx.trx.selectFrom('crove_kernel.external_call').select(['id', 'state', 'calls']).where('org_id', '=', ctx.orgId).where('key', '=', input.callKey).forUpdate().executeTakeFirst();
-    if (!row) return { recorded: false, reason: 'stale' };
-    if (row.state === 'succeeded' || row.state === 'failed') return { recorded: false, reason: 'settled' };
-    const result = input.result;
+    if (!row) return dropped('stale');
+    if (row.state === 'succeeded' || row.state === 'failed') return dropped('settled');
+    const running = launch.state === 'launching';
     interface CallUpdate {
       state: 'started' | 'succeeded' | 'failed' | 'ambiguous';
       calls?: number;
@@ -358,12 +387,16 @@ export const adsLaunchRecord = defineCommand({
         .execute();
       await settle({ state: 'succeeded', external_ref: result.externalId, finished_at: ctx.now });
       const last = steps.at(-1) === step;
-      await setLaunch(ctx, launch.id, { step: last ? LAUNCH_STEP_PAUSED : stepLevel(step) });
-      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: result.kind, externalId: result.externalId, done: last });
+      // A launch that is still running moves to the level reached (or to the end); one that was stopped meanwhile is left as it is and the run ends.
+      if (running) await setLaunch(ctx, launch.id, { step: last ? LAUNCH_STEP_PAUSED : stepLevel(step) });
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: result.kind, externalId: result.externalId, done: last && running });
+      if (!running) return { recorded: true, state: launch.state, step: launch.step, next: 'stop' };
       return { recorded: true, state: 'launching', step: last ? LAUNCH_STEP_PAUSED : stepLevel(step), next: last ? 'stop' : 'continue' };
     }
     if (result.kind === 'missing') {
-      // The platform has no such object: the call may be made again, once, and the row says so (a call counted more).
+      // The platform has no such object: the call may be made again, once, and the row says so (a call counted more). Only from an unclear row, which a reconcile
+      // took: a second `missing` for the same row finds it begun again and is stale, so two jobs never both make the call.
+      if (row.state !== 'ambiguous') return { recorded: false, reason: 'stale' };
       await settle({ state: 'started', calls: row.calls + 1 });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: 'missing' });
       return { recorded: true, state: 'launching', step: launch.step, next: 'call' };
@@ -374,6 +407,12 @@ export const adsLaunchRecord = defineCommand({
       const code = result.code ?? 'UNKNOWN';
       await settle({ state: 'ambiguous', error_kind: result.kind === 'unknown' ? result.error : 'unknown', error_code: code });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: result.kind, code });
+      // More than one object, or one with the tag and a name that is not this step's, cannot be told apart by asking again: a person is told at once, and nothing is
+      // created (the row stays unclear).
+      if (result.kind === 'unknowable' && (code === 'AMBIGUOUS_MATCH' || code === 'NAME_MISMATCH')) {
+        await needAttention(ctx, launch.id, 'reconcile_unclear');
+        return { recorded: true, state: 'needs_attention', step: launch.step, next: 'stop' };
+      }
       return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };
     }
     // The rest ends this run of the launch: the platform refused the call, the token is refused, or the call was not made.

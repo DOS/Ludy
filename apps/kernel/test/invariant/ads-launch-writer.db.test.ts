@@ -156,9 +156,10 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
   // A launch of an account in the zone that is running (made by the system's moves, as the job makes them): launching, needs attention or live, for a flight that
   // started three days ago and has ten days to go in that zone.
   async function started(org: Org, state: 'launching' | 'needs_attention' | 'live', zone: string | null = 'Asia/Ho_Chi_Minh') {
-    const today = await todayIn(zone === 'Mars/Phobos' ? 'UTC' : zone);
-    // A zone the database does not know falls back to the earliest day any zone can be on: yesterday in UTC.
-    const expected = zone === 'Mars/Phobos' ? addDays(today, -1) : today;
+    // No zone recorded, or one the database does not know, falls back to the LATEST day any zone can be on (tomorrow in UTC), so a person can release the least.
+    const unknown = zone === null || zone === 'Mars/Phobos';
+    const today = await todayIn(unknown ? 'UTC' : zone);
+    const expected = unknown ? addDays(today, 1) : today;
     const l = await launch(org, { start: addDays(expected, -3), end: addDays(expected, 10), zone });
     await inContext(
       org,
@@ -276,6 +277,13 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
     expect(made.every((m) => m.legal_entity_id !== null)).toBe(true);
     // A slot twice is refused by the key, and a platform id twice for the account and level too.
     await inContext(org, 'system', (c) => expect(c.query(insert, args(running, 'campaign', 'campaign', `Thử ${tag}`))).rejects.toMatchObject({ code: '23505', constraint: 'ad_object_slot_uq' }));
+    // An object the platform made while a concurrent run stopped the launch is tracked all the same: a launch that is stopped (or failed, or waiting for a person) takes
+    // it, one that was cancelled before it started does not.
+    await inContext(org, 'system', (c) => move(c, org, running.id, `state = 'stopped', commit_until = NULL, stop_reason = 'switch_off'`), true);
+    await inContext(org, 'system', (c) => c.query(insert, args(running, 'creative_1', 'creative', `Thử ${tag} creative 1`)), true);
+    const cancelled = await launch(org, { state: 'cancelled' });
+    await inContext(org, 'system', (c) => refused(c, insert, args(cancelled, 'campaign', 'campaign', `Thử ${tag}`), 'ADS_OBJECT_FORBIDDEN'));
+    await inContext(org, 'system', async (c) => refused(c, insert, args(cancelled, 'campaign', 'campaign', `Thử ${await tagOf(org, cancelled.id)}`), 'ADS_OBJECT_FORBIDDEN'));
     // A context of another org cannot write this org's rows: row security refuses it, the system's included.
     const stranger = await makeOrg();
     await inContext(stranger, 'owner', (c) => refused(c, insert, args(running, 'creative_1', 'creative', `Thử ${tag} creative 1`), 'row-level security'));
@@ -342,7 +350,8 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
 
   it('holds that line in every time zone, and in one the database does not know: the earlier of what it was and the account\'s own today', async () => {
     const org = await makeOrg();
-    // Kiritimati is a day ahead of most of the world, Pago Pago a day behind, and a name the database does not know falls back to the earliest day any zone can be on.
+    // Kiritimati is a day ahead of most of the world, Pago Pago a day behind, and no zone, or a name the database does not know, falls back to the latest day any zone can
+    // be on (tomorrow in UTC): releasing a day that ran in a zone ahead of UTC is what the person must not be able to do.
     for (const zone of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC', 'America/Los_Angeles', null, 'Mars/Phobos']) {
       const l = await started(org, 'launching', zone);
       const stop = (value: string) => `UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = '${value}' WHERE org_id = $1 AND id = $2`;

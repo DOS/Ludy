@@ -128,7 +128,7 @@ export class MetaAdWriter implements AdWriter {
 
   // Whether the token holds the permissions that let it run ads and reaches the account: the permissions it holds now (a person can remove one in
   // Facebook's settings after granting it) and a read of the account itself. Changes nothing.
-  async verify(secret: string, account: { externalAccountId: string }): Promise<AdWriterVerification> {
+  async verify(secret: string, account: { externalAccountId: string; currency?: string }): Promise<AdWriterVerification> {
     const token = tokenOf(secret);
     if (!ACT_ID.test(account.externalAccountId)) throw new AdPlatformError('bad_request', 'BAD_ACCOUNT');
     try {
@@ -136,7 +136,12 @@ export class MetaAdWriter implements AdWriter {
       const scopes = (answer.data ?? []).filter((p) => p.status === 'granted' && typeof p.permission === 'string').map((p) => p.permission as string).sort();
       const canRunAds = META_WRITE_SCOPES.every((scope) => scopes.includes(scope));
       // The account the token reaches: a token that holds the permissions but not this account is refused here, not at the first create.
-      if (canRunAds) await this.graph.call<{ id?: unknown }>('GET', account.externalAccountId, { token, params: { fields: 'id' }, timeoutMs: CALL_TIMEOUT_MS });
+      if (canRunAds) {
+        const read = await this.graph.call<{ id?: unknown; currency?: unknown }>('GET', account.externalAccountId, { token, params: { fields: 'id,currency' }, timeoutMs: CALL_TIMEOUT_MS });
+        // A budget goes to Meta in the minor unit of the account's currency, so an account whose currency is not the one the plan was approved in (it changed since
+        // the last sync) must not be given one: a budget in dong read as dollars would be a hundred times off.
+        if (account.currency !== undefined && typeof read.currency === 'string' && read.currency !== account.currency) throw new AdPlatformError('bad_request', 'CURRENCY_MISMATCH');
+      }
       return { canRunAds, scopes };
     } catch (error) {
       throw metaAdsError(error, this.now);

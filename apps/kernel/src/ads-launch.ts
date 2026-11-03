@@ -133,8 +133,21 @@ async function runStep(deps: AdsLaunchDeps, job: AdsLaunchJob, writer: LaunchWri
     let result: LaunchResult;
     try {
       const found = await timed(() => writer.findByTag(secret, work.account, work.level, work.tag));
-      const exact = found.filter((o) => o.name === work.name);
-      result = exact.length === 1 ? { kind: 'found', externalId: (exact[0] as { id: string }).id } : exact.length === 0 ? { kind: 'missing' } : { kind: 'unknowable', code: 'AMBIGUOUS_MATCH' };
+      // By the tail of the name (the tag and what the object is: ASCII, so nothing a platform does to the plan's own text in a name can change it). Exactly one
+      // object with this step's tail is the one; none at all is missing, and the call may be made again; anything else (two with this tail, or one with the tag and
+      // a tail that is not a sibling's: a name the platform changed) cannot be told apart from it, so nothing is created and a person is told.
+      const tailOf = (name: string): string | null => {
+        const at = name.indexOf(work.tag);
+        return at < 0 ? null : name.slice(at);
+      };
+      const mine = found.filter((o) => tailOf(o.name) === work.tail);
+      const strange = found.filter((o) => {
+        const tail = tailOf(o.name);
+        return tail !== work.tail && (tail === null || !work.otherTails.includes(tail));
+      });
+      if (mine.length === 1 && strange.length === 0) result = { kind: 'found', externalId: (mine[0] as { id: string }).id };
+      else if (mine.length === 0 && strange.length === 0) result = { kind: 'missing' };
+      else result = { kind: 'unknowable', code: mine.length > 1 ? 'AMBIGUOUS_MATCH' : 'NAME_MISMATCH' };
     } catch (error) {
       result = { kind: 'unknowable', code: codeOf(error) };
     }

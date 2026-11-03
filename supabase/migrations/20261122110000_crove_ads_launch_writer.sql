@@ -8,15 +8,17 @@
 --                               ad_1..3), its level, the platform's id and the name sent (which must carry the launch's tag, so reconcile can find it), what Ludy
 --                               set it to (paused, or archived) and what the platform last said about it (W2-4's sync). In the account's legal entity under the
 --                               same RESTRICTIVE le_scope policy as the ledger. Tenant roles read it and update the status columns (a column grant); a row is
---                               inserted by the system's record step of a launch that is running and nothing else (crove_ads.object_guard, fired for every role
---                               in a context of the org): the launch is `launching` and is of that account, the name carries the launch's tag, and the object
+--                               inserted by the system's record step of a launch that was started and nothing else (crove_ads.object_guard, fired for every role
+--                               in a context of the org): the launch is launching, or was stopped, failed or sent to a person while the call was in flight (an
+--                               object the platform made is tracked all the same), it is of that account, the name carries the launch's tag, and the object
 --                               is paused. A row of another org is refused by row security, as the ledger's. Nothing deletes one (the org's purge deletes it
 --                               with the account, ON DELETE CASCADE).
 --
 -- crove_ads.launch_guard        the W2-2 guard, replaced with one addition that is this slice's acceptance line: a person's stop must not release spend that ran
 --                               or is in flight. A launch that is launching, needs attention or live may be stopped by anyone but the system only with its
---                               commitment still held to at least the earlier of what it was and today in the account's time zone, and never cleared: only the
---                               system, which knows what the writer did, clears a commitment of a launch that was started.
+--                               commitment still held to at least the earlier of what it was and today in the account's time zone (tomorrow in UTC, the latest
+--                               day any zone can be on, when no zone is recorded or the database does not know it), and never cleared: only the system, which
+--                               knows what the writer did, clears a commitment of a launch that was started.
 --
 -- crove_ads.launch_requeue      the safety net of the launch job: a queued launch, or one that is launching and stopped half way, whose event or job was lost is
 --                               queued again with the same event (ads.launch.queued) the approval writes; worker only, ids only, called by the agent sweep.
@@ -54,7 +56,8 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_object (
     (level = 'campaign' AND slot = 'campaign') OR (level = 'ad_set' AND slot = 'ad_set') OR (level = 'creative' AND slot ~ '^creative_[1-3]$') OR (level = 'ad' AND slot ~ '^ad_[1-3]$')
   )
 );
--- The launch's own objects are covered by the unique slot key; the account's by the external key.
+-- The launch's own objects are covered by the unique slot key; the account's foreign key (with its legal entity) by the first index below.
+CREATE INDEX IF NOT EXISTS ad_object_account_idx ON crove_ads.ad_object (org_id, ad_account_id, legal_entity_id);
 
 SELECT crove_kernel.apply_tenant_rls('crove_ads.ad_object');
 -- Tenant roles read and update the status columns; they never delete an object (the purge does, with the account) and the identity columns are never granted.
@@ -85,9 +88,10 @@ BEGIN
     IF v_actor IS DISTINCT FROM 'system' THEN
       RAISE EXCEPTION 'ADS_OBJECT_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
-    -- Only for a launch that is running, of this account, and an object whose name carries that launch's tag and that is paused: the record step of the job.
+    -- Only for a launch that was started, of this account, and an object whose name carries that launch's tag and that is paused: the record step of the job. A
+    -- launch that is stopped, failed or waiting for a person since the call began is included on purpose: an object the platform made is tracked all the same.
     SELECT l.state, l.ad_account_id, l.tag INTO v_launch FROM crove_ads.ad_launch l WHERE l.org_id = NEW.org_id AND l.id = NEW.launch_id;
-    IF NOT FOUND OR v_launch.state <> 'launching' OR v_launch.ad_account_id <> NEW.ad_account_id OR pg_catalog.strpos(NEW.name, v_launch.tag) = 0 THEN
+    IF NOT FOUND OR v_launch.state NOT IN ('launching', 'needs_attention', 'stopped', 'failed') OR v_launch.ad_account_id <> NEW.ad_account_id OR pg_catalog.strpos(NEW.name, v_launch.tag) = 0 THEN
       RAISE EXCEPTION 'ADS_OBJECT_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
     IF NEW.configured_status <> 'paused' OR NEW.effective_status IS NOT NULL OR NEW.review_reason IS NOT NULL OR NEW.last_seen_at IS NOT NULL THEN
@@ -246,12 +250,16 @@ BEGIN
     -- started nothing, so cancelling it releases its commitment entirely.)
     IF v_move IN ('launching>stopped', 'needs_attention>stopped', 'live>stopped') AND v_actor IS DISTINCT FROM 'system' THEN
       SELECT a.time_zone INTO v_zone FROM crove_ads.ad_account a WHERE a.org_id = OLD.org_id AND a.id = OLD.ad_account_id;
-      BEGIN
-        v_today := (pg_catalog.now() AT TIME ZONE COALESCE(v_zone, 'UTC'))::date;
-      EXCEPTION WHEN OTHERS THEN
-        -- A time zone name this database does not know: the earliest day any zone can be on right now.
-        v_today := (pg_catalog.now() AT TIME ZONE 'UTC')::date - 1;
-      END;
+      -- No zone recorded, or one this database does not know: the LATEST day any zone can be on right now (tomorrow in UTC), so a person can release the least. (The
+      -- earliest would let a person release a day that ran in a zone ahead of UTC.)
+      v_today := (pg_catalog.now() AT TIME ZONE 'UTC')::date + 1;
+      IF v_zone IS NOT NULL THEN
+        BEGIN
+          v_today := (pg_catalog.now() AT TIME ZONE v_zone)::date;
+        EXCEPTION WHEN OTHERS THEN
+          v_today := (pg_catalog.now() AT TIME ZONE 'UTC')::date + 1;
+        END;
+      END IF;
       IF NEW.commit_until IS NULL OR NEW.commit_until < LEAST(OLD.commit_until, v_today) THEN
         RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
       END IF;

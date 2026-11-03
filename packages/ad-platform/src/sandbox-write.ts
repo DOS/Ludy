@@ -122,6 +122,9 @@ export class SandboxAdWriter implements AdWriter {
   readonly received: AdObjectLevel[] = [];
   private readonly faults: SandboxWriterFault[] = [];
   private readonly unknown: ReadonlySet<string>;
+  // An id is unique across restarts of the process: the objects are in memory and are lost with it, but their ids stay recorded in the database, and a new
+  // process must never hand one out again.
+  private readonly instance = randomBytes(4).toString('hex');
   private counter = 0;
 
   constructor(options: SandboxAdWriterOptions = {}) {
@@ -172,7 +175,7 @@ export class SandboxAdWriter implements AdWriter {
     if (before) throw before.error ?? new AdPlatformError('transient', 'NETWORK');
     if (name.trim() === '') throw new AdPlatformError('bad_request', 'NAME_REQUIRED');
     this.counter += 1;
-    const id = `sbx-${level.replace('_', '')}-${this.counter}`;
+    const id = `sbx${this.instance}-${level.replace('_', '')}-${this.counter}`;
     this.objects.set(id, { id, level, name, accountId, status: 'paused', parentId });
     const after = this.due(level, 'after');
     if (after) throw after.error ?? new AdPlatformError('transient', 'NETWORK');

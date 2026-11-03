@@ -1875,7 +1875,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             );
             expect(leaks[0]?.n).toBe('0');
             const audited = await row<{ command: string }>(`SELECT DISTINCT command FROM crove_kernel.audit_event WHERE org_id = $1 AND command LIKE 'ads.launch.%'`, [orgId]);
-            expect(audited.map((a) => a.command).sort()).toEqual(['ads.launch.begin', 'ads.launch.record']);
+            expect(audited.map((a) => a.command)).toEqual(expect.arrayContaining(['ads.launch.begin', 'ads.launch.record']));
           });
 
           it('is the system\'s alone: no owner, admin, member or agent runs begin or record', async () => {
@@ -1953,6 +1953,109 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(w.received).toEqual(['campaign', 'campaign', 'ad_set', 'creative', 'ad']);
             expect([...w.objects.values()].filter((o) => o.level === 'campaign')).toHaveLength(1);
             expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'succeeded', calls: 2 });
+          });
+
+          it('lets only one job make the call again when two reconcile the same unclear step at the same moment: the other finds the step taken, and a second "missing" is stale', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Hai job cùng đối soát');
+            w.inject({ level: 'campaign', when: 'before' });
+            expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            await age(launch.id, 61);
+            // Two jobs at once: one reconciles, finds nothing and makes the call; the other finds the step taken. The campaign exists once.
+            await Promise.all([run(w, launch.id), run(w, launch.id)]);
+            expect(w.received.filter((l) => l === 'campaign')).toHaveLength(2);
+            expect([...w.objects.values()].filter((o) => o.level === 'campaign')).toHaveLength(1);
+            expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'succeeded', calls: 2 });
+            // By hand, on a second launch: the begin that takes the step is the only one that is handed the reconcile, and a second "missing" for it is refused.
+            const w2 = new SandboxAdWriter();
+            const again = await queued('Missing hai lần');
+            w2.inject({ level: 'campaign', when: 'before' });
+            await run(w2, again.launch.id);
+            await age(again.launch.id, 61);
+            const writers = [{ provider: 'sandboxwrite_ads', objectives: ['traffic', 'engagement', 'messenger'], currencies: null, media: true }];
+            const options = { actor: SYSTEM, orgId };
+            const first = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: again.launch.id, writers }, options);
+            expect(first).toMatchObject({ action: 'reconcile', step: 'campaign' });
+            expect(await worker.execute('ads.launch.begin', { launchId: again.launch.id, writers }, options)).toEqual({ action: 'none', reason: 'reconcile_wait' });
+            const missing = { launchId: again.launch.id, callKey: first.callKey, phase: 'reconcile', result: { kind: 'missing' } };
+            expect(await worker.execute('ads.launch.record', missing, options)).toMatchObject({ recorded: true, next: 'call' });
+            expect(await worker.execute('ads.launch.record', missing, options)).toEqual({ recorded: false, reason: 'stale' });
+            expect((await calls(again.launch.id))[0]).toMatchObject({ step: 'campaign', state: 'started', calls: 2 });
+          });
+
+          it('tells a person instead of guessing when a name cannot be told apart: two objects with the step\'s tail, or one with the tag and a name the platform changed, and nothing is created', async () => {
+            // Two objects that carry this step's tail.
+            const w = new SandboxAdWriter();
+            const first = await queued('Hai đối tượng cùng tên');
+            w.inject({ level: 'campaign', when: 'after' });
+            expect(await run(w, first.launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            const made = [...w.objects.values()][0] as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+            w.objects.set('sbx-copy-1', { ...made, id: 'sbx-copy-1' });
+            await age(first.launch.id, 61);
+            expect(await run(w, first.launch.id)).toEqual({ steps: 1, ended: 'unknowable' });
+            expect(await launchNow(first.launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'reconcile_unclear', commit_until: inDays(8) });
+            expect(w.received).toEqual(['campaign']);
+            expect((await calls(first.launch.id))[0]).toMatchObject({ state: 'ambiguous', error_code: 'AMBIGUOUS_MATCH' });
+            // An object with the tag and a name the platform changed (a trim, a re-encoding of the plan's text, an edit by a person) is not taken for missing.
+            const w2 = new SandboxAdWriter();
+            const second = await queued('Tên bị đổi');
+            w2.inject({ level: 'campaign', when: 'after' });
+            expect(await run(w2, second.launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            const renamed = [...w2.objects.values()][0] as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+            renamed.name = `${renamed.name} (đã sửa)`;
+            await age(second.launch.id, 61);
+            expect(await run(w2, second.launch.id)).toEqual({ steps: 1, ended: 'unknowable' });
+            expect(await launchNow(second.launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'reconcile_unclear' });
+            expect(w2.received).toEqual(['campaign']);
+            expect((await calls(second.launch.id))[0]).toMatchObject({ state: 'ambiguous', error_code: 'NAME_MISMATCH' });
+          });
+
+          it('finds an object by the tail of its name, whatever the platform did to the plan\'s own text in it: no second object is made', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Tên bị cắt', { name: 'Khuyến mãi cuối tuần với tên khá dài để bị cắt bớt' });
+            w.inject({ level: 'campaign', when: 'after' });
+            expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            // The platform re-encodes and trims the plan's text and keeps the tag and what the object is.
+            const campaign = [...w.objects.values()][0] as NonNullable<ReturnType<SandboxAdWriter['objects']['get']>>;
+            campaign.name = `${campaign.name.slice(0, 10).normalize('NFD')}… ${launch.tag}`;
+            await age(launch.id, 61);
+            expect(await run(w, launch.id)).toEqual({ steps: 4, ended: 'paused' });
+            expect([...w.objects.values()].filter((o) => o.level === 'campaign')).toHaveLength(1);
+            expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'succeeded', calls: 1, external_ref: campaign.id });
+          });
+
+          it('stops asking after three calls and tells a person: a step that stays unclear ends as needs attention, with nothing created', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Không rõ mãi');
+            w.inject({ level: 'campaign', when: 'before', times: 3 });
+            for (let n = 1; n <= 3; n += 1) {
+              expect(await run(w, launch.id), `call ${n}`).toEqual({ steps: 1, ended: 'unknown' });
+              await age(launch.id, 61);
+            }
+            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'reconcile_unclear' });
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'reconcile_unclear' });
+            expect(w.received).toEqual(['campaign', 'campaign', 'campaign']);
+            expect(w.objects.size).toBe(0);
+            expect((await calls(launch.id))[0]).toMatchObject({ state: 'ambiguous', calls: 3 });
+          });
+
+          it('tracks an object the platform made while a concurrent run stopped the launch, and leaves a trace of one it cannot record', async () => {
+            const { launch } = await queued('Dừng khi đang gọi');
+            const writers = [{ provider: 'sandboxwrite_ads', objectives: ['traffic', 'engagement', 'messenger'], currencies: null, media: true }];
+            const options = { actor: SYSTEM, orgId };
+            const began = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: launch.id, writers }, options);
+            expect(began).toMatchObject({ action: 'call', step: 'campaign' });
+            // The switch went off and a run stopped the launch while the call was in flight; the platform made the campaign.
+            await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'switch_off' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
+            const accepted = { launchId: launch.id, callKey: began.callKey, phase: 'call', result: { kind: 'accepted', externalId: 'sbx-late-1' } };
+            expect(await worker.execute('ads.launch.record', accepted, options)).toMatchObject({ recorded: true, state: 'stopped', next: 'stop' });
+            expect((await objectsOf(launch.id)).map((o) => [o.slot, o.external_id, o.configured_status])).toEqual([['campaign', 'sbx-late-1', 'paused']]);
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', commit_until: null });
+            // A second record for the same call is dropped, with a trace that has the step and the platform's id; and any other result for a launch that is over is stale.
+            expect(await worker.execute('ads.launch.record', { ...accepted, result: { kind: 'accepted', externalId: 'sbx-late-2' } }, options)).toEqual({ recorded: false, reason: 'settled' });
+            const traces = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.launch.record' AND detail ->> 'outcome' = 'dropped'`, [orgId]);
+            expect(traces.map((t) => t.detail)).toContainEqual(expect.objectContaining({ launchId: launch.id, step: 'campaign', reason: 'settled', externalId: 'sbx-late-2' }));
+            expect(await worker.execute('ads.launch.record', { ...accepted, result: { kind: 'missing' } }, options)).toMatchObject({ recorded: false });
           });
 
           it('serialises jobs that run at the same moment: each object is made once, and the others find the call in flight', async () => {

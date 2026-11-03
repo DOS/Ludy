@@ -169,6 +169,15 @@ describe('the sandbox writer', () => {
     expect(w.objects.size).toBe(0);
   });
 
+  it('never hands out an id another process handed out: the objects are lost with a restart, their ids stay recorded', async () => {
+    const before = new SandboxAdWriter();
+    const after = new SandboxAdWriter();
+    const a = await before.createCampaign(SECRET, ACCOUNT, { name: `C ${TAG}`, objective: 'traffic' });
+    const b = await after.createCampaign(SECRET, ACCOUNT, { name: `C ${TAG}`, objective: 'traffic' });
+    expect(a.id).not.toBe(b.id);
+    expect(a.id).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+  });
+
   it('is the process\'s one offline writer in the shared export, with its own state apart from the tests\' instances', () => {
     expect(sandboxAdWriter).toBeInstanceOf(SandboxAdWriter);
     expect(new SandboxAdWriter().objects).not.toBe(sandboxAdWriter.objects);

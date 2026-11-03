@@ -4,7 +4,7 @@
 // split for the platform. Nothing here touches a database or a platform.
 import { describe, expect, it } from 'vitest';
 import type { AdsCampaignPlan } from '@crove/kernel-contract';
-import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, objectName, parseLaunchCallKey, stepAction, stepLevel, stepVariant, targetingNames, zonedMidnight } from '../src/launch-steps.ts';
+import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, stepAction, stepLevel, stepVariant, targetingNames, zonedMidnight } from '../src/launch-steps.ts';
 
 const TAG = 'ludy:0123456789';
 const LAUNCH = '0198f3c2-7b1e-7000-8000-0123456789ab';
@@ -40,12 +40,21 @@ describe('the steps of a launch', () => {
     expect(names[0]).toBe(`Khuyến mãi cuối tuần ${TAG}`);
     expect(names[1]).toBe(`Khuyến mãi cuối tuần ${TAG} set`);
     expect(names[2]).toBe(`Khuyến mãi cuối tuần ${TAG} creative 1`);
-    // A long name is cut, the tag never is.
+    // A long name is cut to 100 characters (a creative's limit is not known to be more), the tag and what the object is never are.
     for (const s of launchSteps(3)) {
       const long = objectName('x'.repeat(500), TAG, s);
-      expect(long.length).toBeLessThanOrEqual(400);
-      expect(long).toContain(TAG);
+      expect(long.length).toBeLessThanOrEqual(100);
+      expect(long.endsWith(` ${nameTail(TAG, s)}`), s).toBe(true);
     }
+  });
+
+  it('end every name with a tail in ASCII that is different for each step of the launch, which reconcile matches by', () => {
+    const tails = launchSteps(3).map((s) => nameTail(TAG, s));
+    expect(new Set(tails).size).toBe(tails.length);
+    expect(tails).toEqual([TAG, `${TAG} set`, `${TAG} creative 1`, `${TAG} ad 1`, `${TAG} creative 2`, `${TAG} ad 2`, `${TAG} creative 3`, `${TAG} ad 3`]);
+    expect(tails.every((t) => /^[\x20-\x7e]+$/.test(t))).toBe(true);
+    // A platform that re-encodes the plan's text leaves the tail as it was.
+    for (const s of launchSteps(3)) expect(objectName('Khuyến mãi'.normalize('NFD'), TAG, s).endsWith(` ${nameTail(TAG, s)}`)).toBe(true);
   });
 });
 
@@ -62,6 +71,22 @@ describe('the flight in the account\'s own time zone', () => {
     expect(zonedMidnight('2026-07-15', 'America/Los_Angeles')).toBe('2026-07-15T00:00:00-0700');
     // A zone this runtime does not know is UTC, never a throw.
     expect(zonedMidnight('2026-11-05', 'Mars/Phobos')).toBe('2026-11-05T00:00:00+0000');
+  });
+
+  it('takes the offset that holds at the zone\'s own midnight on a day its offset changes, not the one at another hour of the day', () => {
+    // Los Angeles springs forward at 02:00 on 2026-03-08: its midnight is still on standard time. It falls back at 02:00 on 2026-11-01: its midnight is still on daylight time.
+    expect(zonedMidnight('2026-03-08', 'America/Los_Angeles')).toBe('2026-03-08T00:00:00-0800');
+    expect(zonedMidnight('2026-03-09', 'America/Los_Angeles')).toBe('2026-03-09T00:00:00-0700');
+    expect(zonedMidnight('2026-11-01', 'America/Los_Angeles')).toBe('2026-11-01T00:00:00-0700');
+    expect(zonedMidnight('2026-11-02', 'America/Los_Angeles')).toBe('2026-11-02T00:00:00-0800');
+    // The southern hemisphere, east of UTC: Sydney springs forward on 2026-10-04 and falls back on 2026-04-05, both at 02:00 or 03:00 local.
+    expect(zonedMidnight('2026-10-04', 'Australia/Sydney')).toBe('2026-10-04T00:00:00+1000');
+    expect(zonedMidnight('2026-10-05', 'Australia/Sydney')).toBe('2026-10-05T00:00:00+1100');
+    expect(zonedMidnight('2026-04-05', 'Australia/Sydney')).toBe('2026-04-05T00:00:00+1100');
+    expect(zonedMidnight('2026-04-06', 'Australia/Sydney')).toBe('2026-04-06T00:00:00+1000');
+    // Berlin springs forward at 02:00 on 2026-03-29.
+    expect(zonedMidnight('2026-03-29', 'Europe/Berlin')).toBe('2026-03-29T00:00:00+0100');
+    expect(zonedMidnight('2026-03-30', 'Europe/Berlin')).toBe('2026-03-30T00:00:00+0200');
   });
 
   it('ends at the first moment of the day after the last day', () => {

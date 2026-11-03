@@ -52,28 +52,50 @@ export function parseLaunchCallKey(key: string): { launchId: string; attempt: nu
   return match ? { launchId: match[1] as string, attempt: Number(match[2]), step: match[3] as string } : null;
 }
 
-// The name of an object: the plan's name, the launch's tag and what it is. The tag is in every name (`ludy:` and ten characters), which is how reconcile
-// finds an object that was created and never recorded. At most 400 characters (the platform's limit): the plan's name is cut to leave room.
-export function objectName(planName: string, tag: string, step: string): string {
+// The tail of an object's name: the launch's tag and what the object is (ASCII, so nothing a platform does to the plan's own text can change it). Reconcile
+// matches an object by this tail: two steps of one launch never have the same.
+export function nameTail(tag: string, step: string): string {
   const level = stepLevel(step);
-  const suffix = level === 'campaign' ? '' : level === 'ad_set' ? ' set' : ` ${level} ${stepVariant(step)}`;
-  const tail = ` ${tag}${suffix}`;
-  return `${planName.slice(0, 400 - tail.length)}${tail}`;
+  return `${tag}${level === 'campaign' ? '' : level === 'ad_set' ? ' set' : ` ${level} ${stepVariant(step)}`}`;
 }
+
+// The longest an object's name is made (the platform's limit for a creative's is not known to be more [U]): the plan's name is cut to leave room for the tail.
+export const OBJECT_NAME_MAX = 100;
+
+// The name of an object: the plan's name, the launch's tag and what it is. The tag is in every name (`ludy:` and ten characters), which is how reconcile
+// finds an object that was created and never recorded.
+export function objectName(planName: string, tag: string, step: string): string {
+  const tail = ` ${nameTail(tag, step)}`;
+  return `${planName.slice(0, OBJECT_NAME_MAX - tail.length)}${tail}`;
+}
+
+// A step the job could not settle (an answer it cannot tell, a platform that could not be asked, a name that matches more than one object) is looked at again by the
+// sweep; after this many calls, or this long since its first call, a person is told (the launch needs attention) instead of the same question being asked for ever.
+export const UNCLEAR_MAX_CALLS = 3;
+export const UNCLEAR_GIVE_UP_SECONDS = 3600;
 
 // The first moment of a day in the account's own time zone as ISO 8601 with its offset (`2026-11-05T00:00:00+0700`), for the start and the end of a flight (the
 // end is the first moment of the day after the last day). A zone this runtime does not know is UTC.
 export function zonedMidnight(day: string, zone: string | null): string {
-  const noon = new Date(`${day}T12:00:00Z`);
-  let offset = '+0000';
-  try {
-    const part = new Intl.DateTimeFormat('en-US', { timeZone: zone ?? 'UTC', timeZoneName: 'longOffset' }).formatToParts(noon).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
-    const match = /^GMT([+-])(\d{2}):?(\d{2})?$/.exec(part);
-    if (match) offset = `${match[1]}${match[2]}${match[3] ?? '00'}`;
-  } catch {
-    offset = '+0000';
-  }
-  return `${day}T00:00:00${offset}`;
+  // The zone's offset at an instant, in minutes east of UTC (0 for a zone this runtime does not know).
+  const offsetAt = (instant: number): number => {
+    try {
+      const part = new Intl.DateTimeFormat('en-US', { timeZone: zone ?? 'UTC', timeZoneName: 'longOffset' }).formatToParts(new Date(instant)).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
+      const match = /^GMT([+-])(\d{2}):?(\d{2})?$/.exec(part);
+      return match ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? '0')) : 0;
+    } catch {
+      return 0;
+    }
+  };
+  // The offset that holds at the zone's own midnight, not at some other hour of that day: a zone that changes its offset on that day (daylight saving) has two.
+  // First the offset at the UTC midnight of the day, which puts the guess of the instant near the local midnight; if the zone's offset there is another one, that
+  // is the one at local midnight (the change happened between the two instants).
+  const base = Date.parse(`${day}T00:00:00Z`);
+  const guess = offsetAt(base);
+  const offset = offsetAt(base - guess * 60_000);
+  const sign = offset < 0 ? '-' : '+';
+  const abs = Math.abs(offset);
+  return `${day}T00:00:00${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(2, '0')}`;
 }
 
 export const dayAfter = (day: string): string => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);

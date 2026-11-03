@@ -118,7 +118,7 @@ export interface AdWriter {
   // Whether the sealed token (`secret`, opened by the caller, never stored or logged here) could run ads on the account, checked
   // without changing anything. A failure is an `AdPlatformError` as for the readers (a refused token, a missing permission, an
   // account the token does not reach).
-  verify(secret: string, account: { externalAccountId: string }): Promise<AdWriterVerification>;
+  verify(secret: string, account: { externalAccountId: string; currency?: string }): Promise<AdWriterVerification>;
   // Removes at the platform the permissions the token's person gave the app, so no token of that grant can change a campaign any more
   // (ADR-0043 point 4). Called by the worker from the queue, after the closing of the connection committed, never inside a command. A
   // failure is an `AdPlatformError` (`rate_limited` carries the time to wait; `transient` is worth another try).
