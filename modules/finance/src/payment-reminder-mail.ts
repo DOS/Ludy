@@ -43,7 +43,6 @@ export const zPaymentReminderMail = z.object({
 });
 export type PaymentReminderMail = z.infer<typeof zPaymentReminderMail>;
 export type PaymentReminderInvoice = z.infer<typeof zPaymentReminderInvoice>;
-export type PaymentReminderPayTo = z.infer<typeof zPaymentReminderPayTo>;
 
 const LABELS = {
   vi: {
