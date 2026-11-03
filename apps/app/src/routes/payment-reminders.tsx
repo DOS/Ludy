@@ -3,10 +3,10 @@
 // edits and sends. Nothing here sends by itself: every mail goes out on a click of Gửi, one customer or several at once, each through
 // finance.payment_reminder.send, which rebuilds the invoices, amounts and bank account from the books at that moment. The screen shows those facts as
 // the mail will carry them and lets a person edit only the words around them.
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { PaymentReminderCustomer, PaymentReminderDraft } from '@crove/kernel-contract';
+import { vietnamToday, type PausedCustomer, type PaymentReminderCustomer, type PaymentReminderDraft } from '@crove/kernel-contract';
 import { PAYMENT_REMINDER_SUBJECT_MAX, PAYMENT_REMINDER_TEXT_MAX } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
@@ -18,6 +18,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Textarea } from '@crove/ui/components/textarea';
+import { DateInput } from '../components/date-input.tsx';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -91,6 +92,8 @@ function DraftCard({
           <AlertDescription>{t('noEmailHint')}</AlertDescription>
         </Alert>
       )}
+
+      {!sent && <CustomerSettings draft={draft} />}
 
       <fieldset className="mt-3 space-y-3" disabled={busy || sent}>
         <legend className="sr-only">{t('wordsLegend')}</legend>
@@ -325,6 +328,139 @@ function Row({ customer, checked, onCheck, onOpen, currency }: { customer: Payme
   );
 }
 
+// What the org and a customer set for the reminders (#2488, slice 3). Saving refreshes the list and every open draft: the terms change the due dates, the levels and the
+// totals, a pause takes the customer out of the list.
+const refreshReminders = () => {
+  void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.list.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.draft.key() });
+};
+
+function SettingsCard({ canManage }: { canManage: boolean }) {
+  const t = useTranslations('paymentReminders');
+  const settings = useQuery(orpc.paymentReminders.settings.get.queryOptions());
+  const [terms, setTerms] = useState<string | null>(null);
+  const [weekly, setWeekly] = useState<boolean | null>(null);
+  const save = useMutation(
+    orpc.paymentReminders.settings.set.mutationOptions({
+      onSuccess: () => {
+        setTerms(null);
+        setWeekly(null);
+        void queryClient.invalidateQueries({ queryKey: orpc.paymentReminders.settings.get.key() });
+        refreshReminders();
+      },
+    }),
+  );
+  if (settings.isPending) return null;
+  if (settings.error) return <ErrorText>{errorMessage(settings.error)}</ErrorText>;
+  const current = settings.data;
+  const typed = terms ?? String(current.termsDays);
+  const days = Number(typed);
+  const valid = Number.isInteger(days) && days >= 1 && days <= 365;
+  const changed = terms !== null || weekly !== null;
+  if (!canManage) {
+    return (
+      <p className="mb-4 text-xs text-subtle-foreground" data-testid="reminder-settings-readonly">
+        {t('settings.readOnly', { days: String(current.termsDays) })}
+      </p>
+    );
+  }
+  return (
+    <Card className="mb-4 block p-4" aria-label={t('settings.title')} data-testid="reminder-settings">
+      <p className="text-sm font-medium text-muted-foreground">{t('settings.title')}</p>
+      <div className="mt-3 flex flex-wrap items-end gap-4">
+        <div className="space-y-1">
+          <Label htmlFor="reminder-terms">{t('settings.terms')}</Label>
+          <Input id="reminder-terms" className="w-28" type="number" inputMode="numeric" min={1} max={365} value={typed} aria-invalid={!valid} onChange={(e) => setTerms(e.target.value)} />
+        </div>
+        <Label className="flex items-center gap-2 text-sm">
+          <Checkbox checked={weekly ?? current.weeklyItem} onCheckedChange={(value) => setWeekly(value === true)} />
+          {t('settings.weekly')}
+        </Label>
+        <Button size="sm" loading={save.isPending} disabled={!changed || !valid} onClick={() => save.mutate({ termsDays: days, weeklyItem: weekly ?? current.weeklyItem })}>
+          {t('settings.save')}
+        </Button>
+      </div>
+      <p className="mt-2 text-xs text-subtle-foreground">{t('settings.weeklyHint')}</p>
+      {!valid && <ErrorText>{t('settings.termsInvalid')}</ErrorText>}
+      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+    </Card>
+  );
+}
+
+// One customer's own terms and its pause, in its draft: members who may send write them, a viewer never sees the draft.
+function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
+  const t = useTranslations('paymentReminders');
+  const [terms, setTerms] = useState(draft.ownTermsDays === null ? '' : String(draft.ownTermsDays));
+  const [until, setUntil] = useState('');
+  const save = useMutation(orpc.paymentReminders.customer.set.mutationOptions({ onSuccess: refreshReminders }));
+  const days = terms.trim() === '' ? null : Number(terms);
+  const valid = days === null || (Number.isInteger(days) && days >= 1 && days <= 365);
+  const id = `reminder-own-${draft.partyId}`;
+  return (
+    <details className="mt-3 rounded-lg border border-dashed p-3 text-sm">
+      <summary className="cursor-pointer text-muted-foreground">{t('customer.title')}</summary>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-terms`}>{t('customer.terms')}</Label>
+          <Input id={`${id}-terms`} type="number" inputMode="numeric" min={1} max={365} placeholder={String(draft.termsDays)} value={terms} aria-invalid={!valid} onChange={(e) => setTerms(e.target.value)} />
+          <p className="text-xs text-subtle-foreground">{t('customer.termsHint')}</p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor={`${id}-pause`}>{t('customer.pauseUntil')}</Label>
+          <DateInput id={`${id}-pause`} value={until} onChange={setUntil} min={vietnamToday()} />
+          <p className="text-xs text-subtle-foreground">{t('customer.pauseHint')}</p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          loading={save.isPending}
+          disabled={!valid}
+          onClick={() => save.mutate({ partyId: draft.partyId, termsDays: days, pausedUntil: until === '' ? null : until })}
+          data-testid="reminder-customer-save"
+        >
+          {t('customer.save')}
+        </Button>
+        {save.isSuccess && (
+          <span className="text-xs text-subtle-foreground" role="status">
+            {t('settings.saved')}
+          </span>
+        )}
+      </div>
+      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+    </details>
+  );
+}
+
+function PausedCustomers({ paused, currency, canEdit }: { paused: PausedCustomer[]; currency: string; canEdit: boolean }) {
+  const t = useTranslations('paymentReminders');
+  const f = useFormat();
+  const resume = useMutation(orpc.paymentReminders.customer.set.mutationOptions({ onSuccess: refreshReminders }));
+  if (paused.length === 0) return null;
+  return (
+    <section className="mt-6" aria-label={t('paused.title', { count: paused.length })} data-testid="reminder-paused">
+      <h2 className="text-sm font-medium text-muted-foreground">{t('paused.title', { count: paused.length })}</h2>
+      <ul className="mt-2 divide-y rounded-xl border bg-card">
+        {paused.map((c) => (
+          <li key={c.partyId} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 text-sm">
+            <div className="min-w-0">
+              <p className="break-words text-foreground">{c.name}</p>
+              <p className="mt-1 text-xs text-subtle-foreground">{t('paused.until', { date: f.date(c.pausedUntil), total: f.money(c.total, currency) })}</p>
+            </div>
+            {canEdit && (
+              <Button variant="outline" size="sm" loading={resume.isPending && resume.variables?.partyId === c.partyId} onClick={() => resume.mutate({ partyId: c.partyId, termsDays: c.ownTermsDays, pausedUntil: null })} aria-label={t('paused.resumeOf', { name: c.name })}>
+                {t('paused.resume')}
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {resume.error && <ErrorText>{errorMessage(resume.error)}</ErrorText>}
+    </section>
+  );
+}
+
 export function PaymentRemindersPage() {
   const t = useTranslations('paymentReminders');
   const entity = useChosenEntity();
@@ -361,12 +497,13 @@ export function PaymentRemindersPage() {
           ) : undefined
         }
       />
+      <SettingsCard canManage={org.data?.role === 'owner' || org.data?.role === 'admin'} />
       {list.isPending ? (
         <TableSkeleton columns={6} />
       ) : list.error ? (
         <ErrorText>{errorMessage(list.error)}</ErrorText>
       ) : customers.length === 0 ? (
-        <Empty title={t('empty')} hint={t('emptyHint')} />
+        <Empty title={t('empty')} hint={t('emptyHint', { days: String(list.data?.termsDays ?? 30) })} />
       ) : (
         <>
           <div className="mb-3 flex items-center gap-2 text-sm">
@@ -384,9 +521,10 @@ export function PaymentRemindersPage() {
             ))}
           </DataTable>
           {list.data?.more && <p className="mt-3 text-xs text-subtle-foreground">{t('more')}</p>}
-          <p className="mt-3 text-xs text-subtle-foreground">{t('termsNote')}</p>
+          <p className="mt-3 text-xs text-subtle-foreground">{t('termsNote', { days: String(list.data?.termsDays ?? 30) })}</p>
         </>
       )}
+      {list.data && <PausedCustomers paused={list.data.paused} currency={currency} canEdit={canSend} />}
       {reviewing && canSend && <Review key={`${reviewing.opened}:${entity.legalEntityId ?? ''}`} ids={reviewing.ids} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
     </>
   );

@@ -130,4 +130,29 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     await expect(page.getByText(/đã được nhắc ở mức này trong 3 ngày qua/)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Gửi lại, tôi xác nhận' })).toBeVisible();
   });
+
+  await test.step('pausing the customer takes it out of the list, lists it apart, and lifting the pause brings it back', async () => {
+    const draft = page.getByTestId('reminder-draft');
+    await draft.getByText('Hạn thanh toán riêng và tạm dừng nhắc khách này').click();
+    // Five days from today in Vietnam, typed as dd/mm/yyyy.
+    const day = new Date(Date.now() + 7 * 3_600_000 + 5 * 86_400_000).toISOString().slice(0, 10).split('-');
+    await draft.getByLabel('Tạm dừng nhắc đến hết ngày').fill(`${day[2]}/${day[1]}/${day[0]}`);
+    await draft.getByTestId('reminder-customer-save').click();
+    const paused = page.getByTestId('reminder-paused');
+    await expect(paused).toContainText(BUYER);
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toHaveCount(0);
+    await paused.getByRole('button', { name: `Bỏ tạm dừng nhắc ${BUYER}` }).click();
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toBeVisible();
+    await expect(page.getByTestId('reminder-paused')).toHaveCount(0);
+  });
+
+  await test.step('the org\'s payment terms move every due date: with long terms nobody is overdue, and the list returns with the terms back', async () => {
+    const settings = page.getByTestId('reminder-settings');
+    await settings.getByLabel('Hạn thanh toán (ngày kể từ ngày hóa đơn)').fill('365');
+    await settings.getByRole('button', { name: 'Lưu' }).click();
+    await expect(page.getByText('Không có khách hàng nào quá hạn thanh toán.')).toBeVisible();
+    await settings.getByLabel('Hạn thanh toán (ngày kể từ ngày hóa đơn)').fill('30');
+    await settings.getByRole('button', { name: 'Lưu' }).click();
+    await expect(page.getByTestId('reminder-row').filter({ hasText: BUYER })).toBeVisible();
+  });
 });

@@ -44,6 +44,8 @@ export const zPausedCustomer = z.object({
   total: z.string(),
 });
 
+export type PausedCustomer = z.infer<typeof zPausedCustomer>;
+
 export const zPaymentReminderList = z.object({
   currency: z.string(),
   customers: z.array(zPaymentReminderCustomer),
