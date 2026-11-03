@@ -789,6 +789,22 @@ export const calendarWriteBackPlan = defineQuery({
       .executeTakeFirst();
     if (!conn || conn.status !== 'active' || !conn.write_back || !conn.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE)) return { actions: [] };
     const since = new Date(Date.now() - WRITE_BACK_BACK_MS);
+    // A host with two Google connections that write back has the event written to both, but only one asks for the Meet (C7, #1375): the one connected first, so a
+    // booking has one join link and the one the booking records is the one its event holds.
+    const meetConnection = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', conn.user_id)
+      .where('provider', '=', 'google')
+      .where('status', '=', 'active')
+      .where('write_back', '=', true)
+      .where(sql<boolean>`scopes @> ARRAY[${GOOGLE_CALENDAR_EVENTS_SCOPE}]::text[]`)
+      .orderBy('connected_at')
+      .orderBy('id')
+      .limit(1)
+      .executeTakeFirst();
+    const asksForMeet = meetConnection?.id === input.connectionId;
     type PlanEvent = { id: string; starts_at: Date | string; ends_at: Date | string; title: string | null; status: string; conference: boolean };
     type PlanLink = { event_id: string; external_id: string; state: string; synced_hash: string; attempts: number };
     const actions: WriteBackAction[] = [];
@@ -825,7 +841,7 @@ export const calendarWriteBackPlan = defineQuery({
         const hash = writeBackHash(new Date(e.starts_at), new Date(e.ends_at), e.title);
         const unchanged = link !== undefined && link.synced_hash === hash;
         if (unchanged && (link.state === 'written' || link.state === 'removed' || link.attempts >= CALENDAR_LINK_MAX_ATTEMPTS)) continue;
-        actions.push({ eventId: e.id, externalId, kind: 'upsert', summary: e.title ?? 'Lịch hẹn', startsAt: new Date(e.starts_at).toISOString(), endsAt: new Date(e.ends_at).toISOString(), conference: e.conference, hash });
+        actions.push({ eventId: e.id, externalId, kind: 'upsert', summary: e.title ?? 'Lịch hẹn', startsAt: new Date(e.starts_at).toISOString(), endsAt: new Date(e.ends_at).toISOString(), conference: e.conference && asksForMeet, hash });
       }
     };
     // The member's booking events of the last day and ahead, in pages by (start, id), until the plan is full: an event that

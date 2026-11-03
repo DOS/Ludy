@@ -24,6 +24,8 @@ type Period = 'upcoming' | 'past';
 type Scope = 'mine' | 'org';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.crm.bookings.list.key() });
+// How often the list is read again while a booking's Google Meet is pending.
+const MEET_POLL_MS = 5_000;
 
 function Actions({ booking, slug, zone }: { booking: BookingItem; slug: string; zone: string }) {
   const t = useTranslations('bookings');
@@ -171,7 +173,12 @@ export function BookingsPage() {
   const [scope, setScope] = useState<Scope>('mine');
   const org = useQuery(orpc.org.get.queryOptions());
   const manager = org.data?.role === 'owner' || org.data?.role === 'admin';
-  const bookings = useQuery({ ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }), enabled: org.data !== undefined });
+  const bookings = useQuery({
+    ...orpc.crm.bookings.list.queryOptions({ input: { scope: manager ? scope : 'mine', period } }),
+    enabled: org.data !== undefined,
+    // A Google Meet that is still being made (C7, #1375) settles within minutes and sends no stream hint: while a listed booking waits for it, the list is read again.
+    refetchInterval: (query) => (query.state.data?.some((b) => b.meeting.state === 'pending') ? MEET_POLL_MS : false),
+  });
   const now = Date.now();
   const names = new Map((org.data?.members ?? []).map((m) => [m.userId, m.displayName ?? m.email]));
   const nameOf = (userId: string) => names.get(userId) ?? null;

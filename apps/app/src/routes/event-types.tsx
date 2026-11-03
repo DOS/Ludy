@@ -66,7 +66,14 @@ function EventTypeForm({
   const meetReady = (connections.data ?? []).some((c) => c.provider === 'google' && c.status === 'active' && c.writeBack);
   const mayPickMeet = meetReady && draft.hostUserId === me && draft.assignment === 'single';
   const locationKinds = EVENT_TYPE_LOCATION_KINDS.filter((k) => k !== 'google_meet' || mayPickMeet || draft.locationKind === 'google_meet');
-  const set = <K extends keyof EventTypeDraft>(key: K, value: EventTypeDraft[K]) => setDraft((d) => ({ ...d, [key]: value }));
+  const set = <K extends keyof EventTypeDraft>(key: K, value: EventTypeDraft[K]) =>
+    setDraft((d) => {
+      const next = { ...d, [key]: value };
+      // A Meet type whose host or assignment is changed away from the rule (the host themselves, alone, with Google connected) falls back to a link before it is
+      // submitted: the server would refuse it with EVENT_TYPE_MEET_UNAVAILABLE.
+      if ((key === 'hostUserId' || key === 'assignment') && next.locationKind === 'google_meet' && !(meetReady && next.hostUserId === me && next.assignment === 'single')) next.locationKind = 'video';
+      return next;
+    });
   // Each number's error sits under it, the co-hosts' under their list, checked on leaving the field and on submit
   // (DESIGN.md §4.2, #2004); the server checks again.
   const ids = useId();

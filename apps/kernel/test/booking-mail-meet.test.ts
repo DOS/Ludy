@@ -96,12 +96,16 @@ describe('the mails of a Google Meet booking', () => {
     for (const kind of ['reminder', 'moved'] as const) expect((await renderBookingMail(input({ ...base, kind }, ready), () => NOW))?.text).toContain(MEET);
     const cancelled = await renderBookingMail(input({ ...base, kind: 'cancelled' }, ready), () => NOW);
     expect(cancelled?.text).not.toContain(MEET);
-    expect(icsOf(cancelled).some((l) => l.includes('meet.google.com'))).toBe(false);
+    // No line of a cancelled booking's .ics carries a Meet address (the pattern names the scheme and the host, not a substring of the text).
+    expect(icsOf(cancelled).some((l) => /https:\/\/meet\.google\.com\//.test(l))).toBe(false);
   });
 
-  it('does not tell a host of a failure for a type that is not a Google Meet one, and treats data without a meeting as none', async () => {
-    const host = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'failed', url: null }), () => NOW);
-    expect(host?.text).not.toContain('Google Meet');
+  it('tells a host of a failure even when the type has been switched away from Meet since, tells no host of one for a booking that never asked, and treats data without a meeting as none', async () => {
+    // `failed` is only ever set for a booking whose type asked for a Meet when it was confirmed: the type's kind now does not matter.
+    const switched = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'failed', url: null }), () => NOW);
+    expect(switched?.text).toContain('Chưa tạo được liên kết Google Meet');
+    const never = await renderBookingMail(input({ ...base, recipient: 'host', locationKind: 'video', location: FIXED }, { state: 'none', url: null }), () => NOW);
+    expect(never?.text).not.toContain('Google Meet');
     // A booking's later mails (a reminder, a move) do not repeat the failure: the host heard it with the new booking.
     for (const kind of ['reminder', 'moved'] as const) {
       const later = await renderBookingMail(input({ ...base, kind, recipient: 'host', location: FIXED }, { state: 'failed', url: null }), () => NOW);

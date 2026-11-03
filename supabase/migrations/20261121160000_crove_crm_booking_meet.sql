@@ -7,7 +7,8 @@
 -- 2. crove_crm.booking.meeting_state and meeting_url: none (the type makes no Meet, or the host cannot), pending (the worker is making it:
 --    the booking's mails wait for the outcome, so the first mail already carries the link), ready (meeting_url is the join link, only ever a
 --    meet.google.com address) or failed (Google did not give one: the booking stands and the fixed link, if any, is used).
--- 3. crove_kernel.calendar_event.conference: the event asks the provider to make a conference for it when the C6 write-back writes it.
+-- 3. (crove_kernel.calendar_event.conference, the flag that asks the provider to make a conference for the event, is in its own crove_kernel migration,
+--    20261121170000.)
 -- 4. The queue crm-booking-meet: the delayed job that settles a booking whose Meet is still pending after a few minutes (a worker that was
 --    down, a Google outage), so no mail waits for ever.
 SET LOCAL lock_timeout = '2s';
@@ -20,8 +21,6 @@ ALTER TABLE crove_crm.booking
   -- The link and the state go together: a ready booking has the link, any other has none.
   ADD COLUMN IF NOT EXISTS meeting_url text CHECK (meeting_url IS NULL OR meeting_url ~ '^https://meet\.google\.com/(lookup/)?[a-z0-9-]{3,64}$')
     CHECK ((meeting_url IS NOT NULL) = (meeting_state = 'ready'));
-
-ALTER TABLE crove_kernel.calendar_event ADD COLUMN IF NOT EXISTS conference boolean NOT NULL DEFAULT false;
 
 SELECT crove_jobs.create_queue('crm-booking-meet', '{"policy":"standard","deadLetter":"kernel-job.dlq"}'::jsonb);
 
@@ -80,9 +79,9 @@ BEGIN
           'endsAt', e.ends_at,
           'revision', e.revision,
           'title', e.title,
-          'locationKind', e.location_kind,
-          -- A Google Meet booking shows the join link once it is made (C7, #1375), else the type's fixed link.
-          'location', CASE WHEN e.location_kind = 'google_meet' AND e.meeting_state = 'ready' THEN e.meeting_url ELSE e.location_value END,
+          -- A booking whose Meet is ready shows its join link (C7, #1375), whatever kind its type has now (the mails say the same), else the type's fixed link.
+          'locationKind', CASE WHEN e.meeting_state = 'ready' THEN 'google_meet' ELSE e.location_kind END,
+          'location', CASE WHEN e.meeting_state = 'ready' THEN e.meeting_url ELSE e.location_value END,
           'visitorName', e.visitor_name
         ) ORDER BY e.starts_at, e.id)
         FROM e

@@ -1615,19 +1615,59 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
     });
   let calendarSyncing = false;
-  // When the last sweep a booking job asked for began (below): at most one a minute, whatever the bookings.
-  let calendarSweepAskedAt = 0;
-  const calendarSweep = async () => {
-    if (calendarSyncing || !channels) return;
+  // 'ran', 'busy' (another worker process holds the sweep) or 'skipped' (this process is sweeping already, or has no calendar adapters).
+  const calendarSweep = async (): Promise<'ran' | 'busy' | 'skipped'> => {
+    if (calendarSyncing || !channels) return 'skipped';
     calendarSyncing = true;
     try {
       const done = await syncCalendars({ runtime: deps.runtime, broker: channels.broker, workerDb: deps.workerDb, adapters: calendars, exclusive: calendarExclusive, lockConnection: calendarConnectionLock });
       if (done.synced + done.expired + done.retry + done.disconnected > 0) console.log(`[calendar-sync] synced ${done.synced}, expired ${done.expired}, to retry ${done.retry}, disconnected ${done.disconnected}`);
+      return done.busy ? 'busy' : 'ran';
     } catch (error) {
       console.error('[calendar-sync] sweep', error instanceof Error ? error.name : typeof error);
+      return 'ran';
     } finally {
       calendarSyncing = false;
     }
+  };
+  // A sweep a booking job asks for (below), at most one a minute from the start of the last one. A request is kept until a sweep has run for it: one made inside the
+  // minute, or while this process (or another worker process) is sweeping, waits for its turn instead of being dropped, and any number of requests while one waits are
+  // one sweep. It gives up after about ten minutes, when the 15 minute sweep has come round anyway.
+  const SWEEP_ASK_MIN_MS = 60_000;
+  const SWEEP_ASK_GIVE_UP_MS = 10 * 60_000;
+  let calendarSweepAskedAt = 0;
+  let calendarSweepWanted = false;
+  let calendarSweepWaiting = false;
+  const askCalendarSweep = () => {
+    calendarSweepWanted = true;
+    if (calendarSweepWaiting) return;
+    calendarSweepWaiting = true;
+    const until = Date.now() + SWEEP_ASK_GIVE_UP_MS;
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    void (async () => {
+      try {
+        while (calendarSweepWanted && Date.now() < until) {
+          const wait = calendarSweepAskedAt + SWEEP_ASK_MIN_MS - Date.now();
+          if (wait > 0) {
+            await pause(wait);
+            continue;
+          }
+          if (calendarSyncing) {
+            await pause(2_000);
+            continue;
+          }
+          calendarSweepWanted = false;
+          calendarSweepAskedAt = Date.now();
+          const result = await calendarSweep();
+          if (result !== 'ran') {
+            calendarSweepWanted = true;
+            await pause(result === 'busy' ? 10_000 : 2_000);
+          }
+        }
+      } finally {
+        calendarSweepWaiting = false;
+      }
+    })();
   };
   // Also with no adapter on: a member's disconnect is finished (the grant revoked, or given up on after three days, and the
   // sealed token removed) whatever the server has configured.
@@ -1647,13 +1687,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         // A connection whose token is about to run out is left to the sweep, which renews it: asked for now instead of within 15 minutes, because the write of a
         // booking's Google Meet (C7, #1375) would otherwise miss the few minutes the booking waits for it. The sweep is the one that renews and writes, so nothing
         // crosses it; a sweep already running is waited for first, since it may have passed the connection.
-        if (done.expiring > 0 && Date.now() - calendarSweepAskedAt > 60_000) {
-          calendarSweepAskedAt = Date.now();
-          void (async () => {
-            for (let waited = 0; calendarSyncing && waited < 30; waited++) await new Promise((resolve) => setTimeout(resolve, 2_000));
-            await calendarSweep();
-          })();
-        }
+        if (done.expiring > 0) askCalendarSweep();
         if (done.busy === 0 || attempt >= CALENDAR_WRITEBACK_BUSY_TRIES) break;
         await new Promise((resolve) => setTimeout(resolve, CALENDAR_WRITEBACK_BUSY_WAIT_MS));
       }

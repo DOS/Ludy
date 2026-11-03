@@ -676,6 +676,9 @@ export const bookingRemind = defineCommand({
       .executeTakeFirst();
     if (!booking || booking.status !== 'confirmed' || new Date(booking.starts_at).getTime() !== Date.parse(input.startsAt)) return { sent: false };
     if (new Date(booking.starts_at).getTime() <= ctx.now.getTime()) return { sent: false };
+    // A booking still waiting for its Google Meet has told the visitor nothing yet: its confirmation (held back, sent when the Meet is settled, within minutes) is the
+    // first mail, and a reminder before it would name no link and could arrive first.
+    if (booking.meeting_state === 'pending') return { sent: false };
     const source = `crm.booking.remind_${input.lead}`;
     const earlier = await ctx.trx
       .selectFrom('crove_kernel.mail_message')

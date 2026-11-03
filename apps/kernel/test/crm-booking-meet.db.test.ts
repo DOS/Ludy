@@ -15,6 +15,7 @@ import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type WriteBac
 import { GOOGLE_CALENDAR_EVENTS_SCOPE, calendarBinding, isVietnamHoliday, zonedDate, zonedInstant, type BookingItem, type EventType } from '@crove/kernel-contract';
 import { CredentialVault, Runtime, parseVaultKey } from '@crove/kernel-runtime';
 import { crmCommands, crmQueries, type BookingMailData } from '@crove/mod-crm';
+import { bookingFeed, type BookingFeed } from '../src/booking-feed.ts';
 import { bookingRequest } from '../src/booking-page.ts';
 import { runCalendarWriteBack } from '../src/calendar-sync.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -285,6 +286,48 @@ suite('a Google Meet per booking on PostgreSQL (C7, #1375)', () => {
       // A move once the Meet is settled is mailed as before.
       await app.execute('crm.booking.move', { bookingId: b.id, startsAt: at(b.day, 660) }, { actor: asUser(o.host), orgId: o.orgId });
       expect((await mailsOf('crm.booking.moved')).map((m) => m.recipient)).toContain('visitor');
+    });
+
+    it('sends no reminder while the Meet is pending (the held confirmation is the first mail), and one once it is settled', async () => {
+      const o = await org();
+      await connect(o);
+      await createType(o, o.host);
+      const b = await book(o);
+      const startsAt = new Date((await rows<{ starts_at: Date }>('SELECT starts_at FROM crove_crm.booking WHERE id = $1', [b.id]))[0]?.starts_at as Date).toISOString();
+      const remind = () => worker.execute<{ sent: boolean }>('crm.booking.remind', { bookingId: b.id, startsAt, lead: '1h' }, { actor: SYSTEM, orgId: o.orgId });
+      expect(await remind()).toEqual({ sent: false });
+      expect(await rows("SELECT 1 FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'crm.booking.remind_1h' AND source_id = $2", [o.orgId, b.id])).toEqual([]);
+      await settle(o, { bookingId: b.id, url: MEET });
+      expect(await remind()).toEqual({ sent: true });
+    });
+
+    it('asks only the first Google connection of the host for the Meet, so a booking has one join link', async () => {
+      const o = await org();
+      const first = await connect(o);
+      const second = await connect(o);
+      await createType(o, o.host);
+      const b = await book(o);
+      const plan = (connectionId: string) => worker.query<{ actions: WriteBackAction[] }>('kernel.calendar.writeback_plan', { connectionId }, { actor: SYSTEM, orgId: o.orgId });
+      const eventId = (await b.state()).calendar_event_id;
+      expect((await plan(first)).actions).toEqual([expect.objectContaining({ eventId, kind: 'upsert', conference: true })]);
+      // The same event is written to the second calendar, without a conference request.
+      expect((await plan(second)).actions).toEqual([expect.objectContaining({ eventId, kind: 'upsert', conference: false })]);
+    });
+
+    it('shows the join link of a ready booking in the booking feed of the host, whatever kind its type has now, and the fixed link before', async () => {
+      const o = await org();
+      await connect(o);
+      const made = await createType(o, o.host);
+      const b = await book(o);
+      const { token } = await app.execute<{ token: string }>('crm.booking_feed.create', {}, { actor: asUser(o.host), orgId: o.orgId });
+      // The feed names its events by their booking's id.
+      const own = async () => ((await bookingFeed(app, token)) as BookingFeed).events.find((e) => e.id === b.id);
+      expect(await own()).toMatchObject({ locationKind: 'google_meet', location: FIXED });
+      await settle(o, { bookingId: b.id, url: MEET });
+      expect(await own()).toMatchObject({ locationKind: 'google_meet', location: MEET });
+      // The host switches the type away from Meet: the booking keeps the link it was given.
+      await app.execute('crm.event_type.update', { eventTypeId: made.id, ...typeInput(o, { locationKind: 'video' }) }, { actor: asUser(o.host), orgId: o.orgId });
+      expect(await own()).toMatchObject({ locationKind: 'google_meet', location: MEET });
     });
 
     it('is confirmed at once, with the fixed link and its mails, when the host cannot make a Meet (the connection is gone, or write-back is off), and for a type that is not a Meet one', async () => {
