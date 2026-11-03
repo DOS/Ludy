@@ -52,6 +52,8 @@ export const EXTRACT_LIMITS = {
   maxPageTextChars: 4000,
   // A mail's text (#779): its text/plain part, or its HTML reduced to text, for an AI draft of a Social post.
   maxMailTextChars: 20_000,
+  // The Message-IDs of a mail's References header that are kept (#2439).
+  maxMailRefs: 50,
   // A blog's feed (#708): at most this many bytes, of which the newest items come back.
   maxFeedBytes: 1024 * 1024,
   maxFeedItems: 50,
@@ -192,6 +194,15 @@ export const zExtractedEmail = z.strictObject({
   deliveredTo: zText.nullable(),
   to: z.array(zText).max(EXTRACT_LIMITS.maxRecipients),
   attachments: z.array(z.strictObject({ filename: zText.nullable(), content: z.base64() })).max(EXTRACT_LIMITS.maxAttachments),
+  // What a customer's mail needs beyond the invoice reader's fields (#2439), all optional so a worker accepts an older sandbox's answer: the sender's
+  // display name, the Date header, the Message-IDs it answers (In-Reply-To) and follows (References, "<id>" each, at most maxMailRefs), and whether
+  // it is automated (Auto-Submitted other than "no", Precedence bulk, junk or list, a List-Id or List-Unsubscribe header, an auto-response
+  // suppression header): such a mail opens no conversation and gets no reply.
+  fromName: zText.nullable().optional(),
+  sentAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  inReplyTo: zText.nullable().optional(),
+  references: z.array(zText).max(EXTRACT_LIMITS.maxMailRefs).optional(),
+  automated: z.boolean().optional(),
 });
 export type ExtractedEmail = z.infer<typeof zExtractedEmail>;
 

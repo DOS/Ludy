@@ -7,8 +7,19 @@
 // message itself: crove-extract does, and its answer is validated and treated as untrusted (gate T12).
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { sql } from 'kysely';
-import { EXTRACT_LIMIT_RETRIES, type ExtractClient } from '@crove/extract-contract';
-import { ACCEPTED_ARCHIVE_TYPES, ACCEPTED_UPLOAD_TYPES, MAX_EMAIL_ARCHIVES, MAX_UPLOAD_BYTES } from '@crove/kernel-contract';
+import { EXTRACT_LIMIT_RETRIES, type ExtractClient, type ExtractedEmail } from '@crove/extract-contract';
+import {
+  ACCEPTED_ARCHIVE_TYPES,
+  ACCEPTED_UPLOAD_TYPES,
+  CONVERSATION_BODY_MAX,
+  EMAIL_ADDRESS_TAG,
+  EMAIL_REFS_MAX,
+  EMAIL_SUBJECT_MAX,
+  MAX_EMAIL_ARCHIVES,
+  MAX_UPLOAD_BYTES,
+  type ConversationEvent,
+  type ConversationIngested,
+} from '@crove/kernel-contract';
 import type { UsageLimits, UsageOver } from '@crove/kernel';
 import { DomainError, fileKey, inboundKey, newInboundBlobId, putFile, sha256Hex, type BlobStore, type Runtime } from '@crove/kernel-runtime';
 import { readLookupHints, type LookupHint } from '@crove/l10n-vn';
@@ -36,6 +47,15 @@ function tokenOf(address: string, domain: string): string | null {
   if (!normalized.endsWith(suffix)) return null;
   const token = normalized.slice(0, -suffix.length).split('+')[0] ?? '';
   return TOKEN.test(token) ? token : null;
+}
+
+// The tag of <token>+<tag>@domain, lower-cased, or null (#2439: the conversation address is `<token>+hopthu@domain`).
+function tagOf(address: string, domain: string): string | null {
+  const suffix = `@${domain.toLowerCase()}`;
+  const normalized = address.toLowerCase().trim();
+  if (!normalized.endsWith(suffix)) return null;
+  const parts = normalized.slice(0, -suffix.length).split('+');
+  return parts.length > 1 ? (parts[1] ?? null) : null;
 }
 
 // The bounce token of bounce+<token>@domain (#539: the Return-Path of a mail Crove sent over SMTP), or null.
@@ -152,6 +172,10 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   const recipients = [job.recipient, email.deliveredTo, ...email.to].filter((r): r is string => typeof r === 'string' && r !== '');
   const token = recipients.map((r) => tokenOf(r, domain)).find((t) => t !== null);
   if (!token) throw unknownRecipient();
+  // The address this delivery was for decides where it goes: the envelope recipient when it is one of ours, else the first of ours in the headers.
+  // The conversation address (`<token>+hopthu@domain`) sends it to the Inbox and never to the invoice reader (#2439).
+  const addressedTo = [job.recipient, ...recipients].find((r): r is string => typeof r === 'string' && tokenOf(r, domain) === token);
+  const toConversation = addressedTo !== undefined && tagOf(addressedTo, domain) === EMAIL_ADDRESS_TAG;
 
   // The org is resolved now, when the message is processed, not when the API accepted it. So mail queued for a token
   // that the org rotated away in between is dropped here like mail to a token that never existed (plan §7.6, #113):
@@ -181,6 +205,8 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
       return { deferred: over.retryAt } satisfies InboundDeferred;
     }
   }
+
+  if (toConversation) return processConversationEmail(deps, orgId, email, rawSha256, domain);
 
   const files = [];
   let archives = 0;
@@ -228,6 +254,62 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
     },
     { actor: { type: 'system', component: 'inbound.email' }, orgId },
   );
+}
+
+const MESSAGE_ID = /^<[^<>\s]{1,300}>$/;
+const NO_TEXT = '[Thư không có nội dung chữ]';
+// A mail dated further ahead than this is dated now: a clock set wrong must not put a thread's newest message in the future.
+const CLOCK_SKEW_MS = 5 * 60_000;
+
+export type ConversationMail = { event: ConversationEvent } | { ignored: 'automated' | 'own_address' | 'no_sender' };
+
+// The event a customer's mail is in the conversation core's words (#2439), or why it opens none. A bulk, list or auto-generated mail opens no
+// conversation, and neither does one sent from this deployment's own mail domain (the system's mail, or the org writing to itself): a
+// conversation never replies by itself, so no loop can start. The thread is not decided here: the core finds it from the Message-IDs named in
+// `refs`, within the org, and never by subject. Text from the mail is tainted external text and stays text: the extract sandbox reduced any HTML to
+// text already, and attachments are only counted in this slice.
+export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date): ConversationMail {
+  if (email.automated === true) return { ignored: 'automated' };
+  const sender = (email.from ?? '').trim().toLowerCase();
+  if (sender === '' || !sender.includes('@') || sender.length > 200) return { ignored: 'no_sender' };
+  if (sender.endsWith(`@${domain.toLowerCase()}`)) return { ignored: 'own_address' };
+  const given = (email.messageId ?? '').trim();
+  const messageId = MESSAGE_ID.test(given) ? given : `<sha256-${rawSha256}@mail.invalid>`;
+  const refs = [...new Set([email.inReplyTo ?? '', ...(email.references ?? [])].map((r) => r.trim()).filter((r) => MESSAGE_ID.test(r) && r !== messageId))].slice(-EMAIL_REFS_MAX);
+  const written = (email.text ?? '').trim();
+  const attachments = email.attachments.length > 0 ? `\n\n[Thư có ${email.attachments.length} tệp đính kèm, chưa hiển thị]` : '';
+  const text = `${written === '' ? NO_TEXT : written.slice(0, CONVERSATION_BODY_MAX - 80)}${attachments}`.slice(0, CONVERSATION_BODY_MAX);
+  const sent = email.sentAt ? Date.parse(email.sentAt) : Number.NaN;
+  const at = new Date(Number.isNaN(sent) || sent > now.getTime() + CLOCK_SKEW_MS ? now.getTime() : sent).toISOString();
+  const subject = (email.subject ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, EMAIL_SUBJECT_MAX);
+  const name = (email.fromName ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
+  return {
+    event: {
+      kind: 'email',
+      threadId: messageId,
+      messageId,
+      direction: 'in',
+      contact: { id: sender, ...(name ? { name } : {}) },
+      text,
+      at,
+      ...(subject ? { subject } : {}),
+      ...(refs.length > 0 ? { refs } : {}),
+    },
+  };
+}
+
+export interface ConversationMailResult {
+  conversation: 'stored' | 'duplicate' | 'ignored';
+  reason?: string;
+}
+
+// A customer's mail to the org's conversation address: the intake of the Inbox, in the org the address names, as the system. Idempotent: a redelivery
+// of the same Message-ID is a duplicate and changes nothing.
+async function processConversationEmail(deps: InboundProcessDeps, orgId: string, email: ExtractedEmail, rawSha256: string, domain: string): Promise<ConversationMailResult> {
+  const made = conversationEventOf(email, rawSha256, domain, new Date());
+  if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
+  const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, { actor: { type: 'system', component: 'inbound.conversation' }, orgId });
+  return { conversation: out.stored > 0 ? 'stored' : out.duplicates > 0 ? 'duplicate' : 'ignored' };
 }
 
 function safeLookupHints(text: string): LookupHint[] {

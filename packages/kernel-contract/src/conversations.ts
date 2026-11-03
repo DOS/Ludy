@@ -321,7 +321,7 @@ export const CONVERSATION_CONTACT_MATCHES_MAX = 5;
 export const zConversationContactMatches = z.strictObject({ conversationId: zId });
 export const zConversationContactMatched = z.strictObject({
   ai: z.enum(CONVERSATION_AI_STATES),
-  candidates: z.array(z.strictObject({ partyId: zId, name: z.string(), reason: z.enum(['phone', 'name']) })).max(CONVERSATION_CONTACT_MATCHES_MAX),
+  candidates: z.array(z.strictObject({ partyId: zId, name: z.string(), reason: z.enum(['email', 'phone', 'name']) })).max(CONVERSATION_CONTACT_MATCHES_MAX),
 });
 export type ConversationContactMatched = z.infer<typeof zConversationContactMatched>;
 export const zConversationMarkRead = z.strictObject({ conversationId: zId, seq: z.number().int().min(0) });

@@ -117,6 +117,14 @@ export function parseResendWebhook(secret: string, request: WebhookRequest, now:
   return [{ providerEventId: eventId, providerMessageId: messageId, kind, occurredAt, detail }];
 }
 
+// "Name <address>" with the org's display name over the configured address (#2439); the name is cleaned as the SMTP provider's is.
+function resendFrom(from: string, name: string): string {
+  const address = /<([^<>\s]+)>/.exec(from)?.[1] ?? from.trim();
+  // oxlint-disable-next-line no-control-regex
+  const clean = name.replace(/[\u0000-\u001f\u007f"<>\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+  return clean ? `${clean} <${address}>` : from;
+}
+
 export function createResendProvider(options: ResendOptions): MailProvider {
   const fetchImpl = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 10_000;
@@ -139,7 +147,7 @@ export function createResendProvider(options: ResendOptions): MailProvider {
             ...(mail.messageId ? { 'idempotency-key': idempotencyKey(mail.messageId) } : {}),
           },
           body: JSON.stringify({
-            from: options.from,
+            from: mail.fromName ? resendFrom(options.from, mail.fromName) : options.from,
             to: [mail.to],
             subject: mail.subject,
             text: mail.text,
@@ -148,7 +156,15 @@ export function createResendProvider(options: ResendOptions): MailProvider {
             ...(mail.attachments?.length
               ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, content_type: a.contentType, content: Buffer.from(a.content, 'utf8').toString('base64') })) }
               : {}),
-            ...(mail.messageId ? { headers: { 'Message-ID': mail.messageId } } : {}),
+            ...(mail.messageId || mail.inReplyTo || mail.references?.length
+              ? {
+                  headers: {
+                    ...(mail.messageId ? { 'Message-ID': mail.messageId } : {}),
+                    ...(mail.inReplyTo ? { 'In-Reply-To': mail.inReplyTo } : {}),
+                    ...(mail.references?.length ? { References: mail.references.join(' ') } : {}),
+                  },
+                }
+              : {}),
           }),
         });
       } catch (error) {

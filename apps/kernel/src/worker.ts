@@ -774,7 +774,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.log(`[inbound] message ${label}: over the org's daily limit, deferred to ${result.deferred}`);
         return;
       }
-      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
+      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : 'conversation' in result ? `conversation mail, ${result.conversation}${result.reason ? ` (${result.reason})` : ''}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
     } catch (error) {
       // A message no org can receive (unknown or closed recipient, invalid content) is dropped, not retried.
       if (!(error instanceof DomainError && error.status !== 409 && error.status < 500)) {

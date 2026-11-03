@@ -36,6 +36,30 @@ function addressOf(address: Address | undefined): string | null {
   return address && typeof address.address === 'string' && address.address !== '' ? address.address : null;
 }
 
+// The Message-IDs a header names, "<id>" each: References holds a list, In-Reply-To one or more. Anything that is not an angle-bracketed id is
+// dropped, so a header cannot smuggle text through; at most maxMailRefs, the last ones (the nearest ancestors) kept.
+function messageIds(value: string | undefined): string[] {
+  if (!value) return [];
+  const found = value.match(/<[^<>\s]{1,300}>/g) ?? [];
+  return [...new Set(found)].slice(-EXTRACT_LIMITS.maxMailRefs);
+}
+
+// A bulk, list or auto-generated mail (RFC 3834 and the usual markers): the Inbox opens no conversation for it and never answers it.
+function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): boolean {
+  const header = (name: string): string | undefined => headers.find((h) => h.key.toLowerCase() === name)?.value.trim().toLowerCase();
+  const autoSubmitted = header('auto-submitted');
+  if (autoSubmitted !== undefined && autoSubmitted !== 'no') return true;
+  const precedence = header('precedence');
+  if (precedence !== undefined && ['bulk', 'junk', 'list', 'auto_reply'].includes(precedence)) return true;
+  return ['list-id', 'list-unsubscribe', 'x-auto-response-suppress', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
+}
+
+function sentAtOf(date: string | undefined): string | null {
+  if (!date) return null;
+  const time = Date.parse(date);
+  return Number.isNaN(time) ? null : new Date(time).toISOString();
+}
+
 function base64Of(content: ArrayBuffer | Uint8Array | string, encoding: string | undefined): string {
   if (typeof content === 'string') return encoding === 'base64' ? content : Buffer.from(content, 'utf8').toString('base64');
   return Buffer.from(content instanceof Uint8Array ? content : new Uint8Array(content)).toString('base64');
@@ -86,6 +110,11 @@ async function mime(bytes: Uint8Array): Promise<ExtractSuccess> {
         filename: cap(a.filename),
         content: base64Of(a.content, a.encoding),
       })),
+      fromName: cap(email.from?.name?.trim() || null),
+      sentAt: sentAtOf(email.date),
+      inReplyTo: cap(messageIds(email.inReplyTo)[0] ?? null),
+      references: messageIds(email.references),
+      automated: isAutomated(email.headers),
     },
   };
 }

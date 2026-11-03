@@ -2,6 +2,7 @@
 // here; a queued mail whose template is missing fails with TEMPLATE_UNKNOWN rather than going out empty.
 import type { MailTemplates } from './mail-queue.ts';
 import { bookingMailTemplate } from './booking-mail.ts';
+import { conversationReplyMailTemplate } from './conversation-reply-mail.ts';
 import { digestMailTemplate } from './digest-mail.ts';
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
@@ -25,6 +26,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'kernel.usage.deferred': usageDeferredMailTemplate,
   // The daily "Hôm nay cần bạn" mail of a member who opted in, counts and links only (#2406).
   'kernel.today_mail': todayMailTemplate,
+  // A member's reply to an email conversation of the Inbox (#2439).
+  'kernel.conversation_reply': conversationReplyMailTemplate,
   // A booking of the public booking page confirmed, moved or cancelled, and its reminders (#1319).
   'crm.booking': bookingMailTemplate,
 };
