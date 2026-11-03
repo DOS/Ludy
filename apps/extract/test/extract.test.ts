@@ -121,6 +121,21 @@ describe('crove-extract HTTP service', () => {
     expect(result.email.references).toEqual(['<r1@mau.test>', '<p1@mau.test>', '<p2@mau.test>']);
   });
 
+  it('reads a commented Precedence value, and sees a From that names more than one mailbox', async () => {
+    const mail = (extra: string[]) => ['To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a4@mau.test>', ...extra, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'].join('\r\n');
+    const read = async (extra: string[]) => {
+      const result = await answer(await post(createExtractApp(), 'mime', encode(mail(extra))));
+      if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+      return result.email;
+    };
+    expect((await read(['From: a@mau.test', 'Precedence: bulk (mailer)'])).automated).toBe(true);
+    expect((await read(['From: a@mau.test', 'Precedence: first-class'])).automated).toBe(false);
+    expect((await read(['From: a@x.test, b@y.test'])).multipleFrom).toBe(true);
+    expect((await read(['From: a@x.test', 'From: b@y.test'])).multipleFrom).toBe(true);
+    expect((await read(['From: "Hoa, Chi" <a@x.test>'])).multipleFrom).toBe(false);
+    expect((await read(['From: Hoa Chi <a@x.test> (a, comment)'])).multipleFrom).toBe(false);
+  });
+
   it('never cuts a long Authentication-Results header: it is kept as its authserv-id and none', async () => {
     const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a2@mau.test>', `Authentication-Results: mx.in.test; spf=pass (${'x'.repeat(1200)}); dkim=pass header.d=victim.test.evil.test`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
     const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));

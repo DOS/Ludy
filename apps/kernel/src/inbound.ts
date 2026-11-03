@@ -279,6 +279,7 @@ export type ConversationMail = { event: ConversationEvent } | { ignored: 'automa
 // text already, and attachments are only counted in this slice.
 export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string): ConversationMail {
   if (email.automated === true) return { ignored: 'automated' };
+  if (email.multipleFrom === true) return { ignored: 'no_sender' };
   const sender = (email.from ?? '').trim().toLowerCase();
   // One mailbox only: a header like "<a@x.test,b@y.test>" is read by the parser as one address and by a mailer as two recipients.
   // The contract of a contact id is 200 characters, so a longer (valid) address is not one this intake can keep.

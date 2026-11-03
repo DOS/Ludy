@@ -42,7 +42,16 @@ export function EmailAddressCard() {
     if (canIssue && isIdle) makeAddress({});
   }, [canIssue, isIdle, makeAddress]);
 
-  if (!address) return issue.error ? <ErrorText>{t('issueFailed')}</ErrorText> : null;
+  if (!address) {
+    return issue.error ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <ErrorText>{t('issueFailed')}</ErrorText>
+        <Button type="button" variant="outline" size="sm" onClick={() => issue.mutate({})}>
+          {t('retry')}
+        </Button>
+      </div>
+    ) : null;
+  }
   const copy = () =>
     void navigator.clipboard.writeText(address).then(
       () => toast(t('copied')),

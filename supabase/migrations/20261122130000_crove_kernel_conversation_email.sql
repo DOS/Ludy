@@ -44,11 +44,13 @@ END $$;
 
 ALTER TABLE crove_kernel.conversation ADD COLUMN IF NOT EXISTS subject text;
 ALTER TABLE crove_kernel.conversation DROP CONSTRAINT IF EXISTS conversation_subject_length;
-ALTER TABLE crove_kernel.conversation ADD CONSTRAINT conversation_subject_length CHECK (subject IS NULL OR pg_catalog.length(subject) BETWEEN 1 AND 300);
+ALTER TABLE crove_kernel.conversation ADD CONSTRAINT conversation_subject_length CHECK (subject IS NULL OR pg_catalog.length(subject) BETWEEN 1 AND 300) NOT VALID;
+ALTER TABLE crove_kernel.conversation VALIDATE CONSTRAINT conversation_subject_length;
 
 ALTER TABLE crove_kernel.conversation_message ADD COLUMN IF NOT EXISTS email_refs text[] NOT NULL DEFAULT '{}';
 ALTER TABLE crove_kernel.conversation_message DROP CONSTRAINT IF EXISTS conversation_message_email_refs_size;
-ALTER TABLE crove_kernel.conversation_message ADD CONSTRAINT conversation_message_email_refs_size CHECK (pg_catalog.cardinality(email_refs) <= 50);
+ALTER TABLE crove_kernel.conversation_message ADD CONSTRAINT conversation_message_email_refs_size CHECK (pg_catalog.cardinality(email_refs) <= 50) NOT VALID;
+ALTER TABLE crove_kernel.conversation_message VALIDATE CONSTRAINT conversation_message_email_refs_size;
 
 CREATE OR REPLACE FUNCTION crove_kernel.conversation_access(p_kind text, p_connection_id uuid, p_write boolean)
 RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
@@ -98,7 +100,8 @@ GRANT UPDATE (sender_unverified) ON crove_kernel.conversation TO crove_tenant;
 -- ---------------------------------------------------------------------------
 ALTER TABLE crove_kernel.inbound_address ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'document';
 ALTER TABLE crove_kernel.inbound_address DROP CONSTRAINT IF EXISTS inbound_address_kind_check;
-ALTER TABLE crove_kernel.inbound_address ADD CONSTRAINT inbound_address_kind_check CHECK (kind IN ('document', 'conversation'));
+ALTER TABLE crove_kernel.inbound_address ADD CONSTRAINT inbound_address_kind_check CHECK (kind IN ('document', 'conversation')) NOT VALID;
+ALTER TABLE crove_kernel.inbound_address VALIDATE CONSTRAINT inbound_address_kind_check;
 -- One active token per org and kind.
 CREATE UNIQUE INDEX IF NOT EXISTS inbound_address_active_kind_uq ON crove_kernel.inbound_address (org_id, kind) WHERE retired_at IS NULL;
 DROP INDEX IF EXISTS crove_kernel.inbound_address_active_uq;
@@ -118,7 +121,8 @@ END $$;
 
 ALTER TABLE crove_kernel.tenant ADD COLUMN IF NOT EXISTS conversation_token text;
 ALTER TABLE crove_kernel.tenant DROP CONSTRAINT IF EXISTS tenant_conversation_token_format;
-ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_conversation_token_format CHECK (conversation_token IS NULL OR conversation_token ~ '^[0-9a-f]{24}$');
+ALTER TABLE crove_kernel.tenant ADD CONSTRAINT tenant_conversation_token_format CHECK (conversation_token IS NULL OR conversation_token ~ '^[0-9a-f]{24}$') NOT VALID;
+ALTER TABLE crove_kernel.tenant VALIDATE CONSTRAINT tenant_conversation_token_format;
 CREATE UNIQUE INDEX IF NOT EXISTS tenant_conversation_token_uq ON crove_kernel.tenant (conversation_token) WHERE conversation_token IS NOT NULL;
 
 -- A tenant's conversation token is its active ledger row of kind conversation, and a tenant with such a row has that token (checked at commit, as the
@@ -404,7 +408,9 @@ GRANT UPDATE (conversation_token) ON crove_kernel.tenant TO crove_definer_tenant
 -- The daily budget of customer mail, apart from the invoice reader's
 -- ---------------------------------------------------------------------------
 ALTER TABLE crove_kernel.org_usage DROP CONSTRAINT IF EXISTS org_usage_metric_check;
-ALTER TABLE crove_kernel.org_usage ADD CONSTRAINT org_usage_metric_check CHECK (metric IN ('inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails'));
+ALTER TABLE crove_kernel.org_usage ADD CONSTRAINT org_usage_metric_check CHECK (metric IN ('inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails')) NOT VALID;
+ALTER TABLE crove_kernel.org_usage VALIDATE CONSTRAINT org_usage_metric_check;
 ALTER TABLE crove_kernel.usage_deferral DROP CONSTRAINT IF EXISTS usage_deferral_metric_check;
 ALTER TABLE crove_kernel.usage_deferral ADD CONSTRAINT usage_deferral_metric_check
-  CHECK (metric IN ('inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'ai_budget', 'conversation_emails'));
+  CHECK (metric IN ('inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'ai_budget', 'conversation_emails')) NOT VALID;
+ALTER TABLE crove_kernel.usage_deferral VALIDATE CONSTRAINT usage_deferral_metric_check;

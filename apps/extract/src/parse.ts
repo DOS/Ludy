@@ -49,8 +49,32 @@ function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): bo
   // Every header of the name counts, not the first only: a mail that starts "Auto-Submitted: no" and later carries "auto-replied" is automated.
   const values = (name: string): string[] => headers.filter((h) => h.key.toLowerCase() === name).map((h) => h.value.trim().toLowerCase());
   if (values('auto-submitted').some((value) => value !== 'no')) return true;
-  if (values('precedence').some((value) => ['bulk', 'junk', 'list', 'auto_reply'].includes(value))) return true;
+  // A value may carry a comment: "bulk (mailer)".
+  if (values('precedence').some((value) => ['bulk', 'junk', 'list', 'auto_reply'].includes(value.replace(/\([^()]*\)/g, '').trim()))) return true;
   return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => values(name).length > 0);
+}
+
+// Whether the From header (or more than one of them) names more than one mailbox: the parser reads the first one, a mailer reads them all, so the Inbox
+// does not take such a mail for one customer's. A comma inside quotes, angle brackets or a comment does not count.
+function multipleFrom(headers: ReadonlyArray<{ key: string; value: string }>): boolean {
+  const from = headers.filter((h) => h.key.toLowerCase() === 'from');
+  if (from.length > 1) return true;
+  const value = from[0]?.value ?? '';
+  let quoted = false;
+  let angle = false;
+  let depth = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i] as string;
+    if (ch === '\\') i++;
+    else if (depth > 0) depth += ch === '(' ? 1 : ch === ')' ? -1 : 0;
+    else if (quoted) quoted = ch !== '"';
+    else if (ch === '"') quoted = true;
+    else if (ch === '(') depth = 1;
+    else if (ch === '<') angle = true;
+    else if (ch === '>') angle = false;
+    else if ((ch === ',' || ch === ';') && !angle) return true;
+  }
+  return false;
 }
 
 // The Authentication-Results headers, topmost first (a receiving server adds its own on top) and unfolded; at most maxAuthResults. A header longer than
@@ -129,6 +153,7 @@ async function mime(bytes: Uint8Array): Promise<ExtractSuccess> {
       // References, then every id In-Reply-To names (the nearest ancestors come last and are the ones kept when the list is cut).
       references: messageIds(`${email.references ?? ''} ${email.inReplyTo ?? ''}`),
       automated: isAutomated(email.headers),
+      multipleFrom: multipleFrom(email.headers),
       authResults: authResultsOf(email.headers),
     },
   };

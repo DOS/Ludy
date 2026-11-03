@@ -130,6 +130,10 @@ describe('conversationEventOf', () => {
     expect(made.event.contact.name).toBe('Chị Hoa');
   });
 
+  it('ignores a mail whose From names more than one mailbox', () => {
+    expect(conversationEventOf({ ...base, multipleFrom: true }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });
+  });
+
   it('ignores a sender that is not one mailbox, and marks a verified one', () => {
     expect(conversationEventOf({ ...base, from: 'a@x.test,b@y.test' }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });
     expect(conversationEventOf({ ...base, from: '"a b"@x.test' }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });

@@ -206,6 +206,8 @@ export const zExtractedEmail = z.strictObject({
   inReplyTo: zText.nullable().optional(),
   references: z.array(zText).max(EXTRACT_LIMITS.maxMailRefs).optional(),
   automated: z.boolean().optional(),
+  // The From header names more than one mailbox (a list, or several From headers): `from` is only the first of them, so the Inbox ignores the mail.
+  multipleFrom: z.boolean().optional(),
   // The Authentication-Results headers of the mail, topmost first, as written (RFC 8601): the receiving server's verdict on SPF, DKIM and DMARC. The
   // sandbox only copies them; the worker believes the topmost one written by its own server (INBOUND_AUTHSERV_ID) and no other.
   authResults: z.array(z.string().max(EXTRACT_LIMITS.maxAuthResultChars)).max(EXTRACT_LIMITS.maxAuthResults).optional(),
