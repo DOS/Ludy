@@ -20,6 +20,7 @@ import type { AdsWriteState } from '@crove/kernel-contract';
 import { CredentialVault, mintContextToken, parseVaultKey, Runtime } from '@crove/kernel-runtime';
 import { adsCommands, adsQueries } from '@crove/mod-ads';
 import { runAdsRevoke, type AdsRevokeResult } from '../src/ads-revoke.ts';
+import { noCredentialBroker } from '../src/credentials.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -331,10 +332,17 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await dueNow();
     await runAdsRevoke({ runtime: worker, workerDb, broker: undefined, revokers: sandboxRevokers });
     expect(await obligation(noBroker)).toMatchObject({ state: 'pending', give_up: null, last_error_kind: null, last_error_code: null, attempts: 0, seals: '1' });
+    // A worker with no credential key is given the broker that refuses everything (the object the kernel passes, not an absent one): the same, and no try is
+    // counted for a copy that "does not open".
+    await dueNow();
+    await runAdsRevoke({ runtime: worker, workerDb, broker: noCredentialBroker, revokers: sandboxRevokers });
+    expect(await obligation(noBroker)).toMatchObject({ state: 'pending', give_up: null, last_error_code: null, attempts: 0, seals: '1' });
     // Many sweeps later it is the same (the claim runs out and is taken again without counting a try).
     for (let i = 0; i < 3; i++) {
       await dueNow();
       await sweep({}, undefined);
+      await dueNow();
+      await runAdsRevoke({ runtime: worker, workerDb, broker: noCredentialBroker, revokers: sandboxRevokers });
     }
     expect(await obligation(noRevoker)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });
     expect(await obligation(noBroker)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });

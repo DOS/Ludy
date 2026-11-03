@@ -36,7 +36,8 @@ export const ADS_ORPHAN_MAX_PAGES = 5;
 export interface AdsRevokeDeps {
   runtime: Runtime;
   workerDb: Db;
-  // Without a broker (no credential key) nothing can be opened: the copies stay pending until it is configured or the seventh day ends them.
+  // Without a broker (no credential key: absent, or the one with id 'none' that refuses everything) nothing can be opened: the copies stay pending until it is
+  // configured or the seventh day ends them.
   broker: CredentialBroker | undefined;
   revokers: Readonly<Record<string, AdRevoker>>;
 }
@@ -96,8 +97,10 @@ async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; pr
   // token: nothing is opened and nothing is recorded, so the copy stays pending, the claim runs out in ten minutes and it is claimed again once the
   // configuration is fixed. If it never is, the seventh day ends it as given up and the person is told to remove the app by hand (the owner's end
   // conditions are success, ten tries, seven days and the purge; a missing secret must not wipe every pending copy within a minute).
+  // The kernel hands a worker with no credential key the broker that refuses everything (id 'none'), not an absent one: it is the same fault, and opening the
+  // copy first would count a try and wipe the copy as one that does not open.
   if (!revoker) return null;
-  if (!deps.broker) return null;
+  if (!deps.broker || deps.broker.id === 'none') return null;
   // The person's permission is the person's across orgs: when another live connection of the same person needs it, no call is made and the copy goes.
   if (await sharedGrant(deps, row)) return { kind: 'done', how: 'shared_grant' };
   // A database failure while opening the copy is thrown: it leaves the claim to run out and the obligation to be claimed again.
