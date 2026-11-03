@@ -58,9 +58,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_object',
   'crove_finance.einvoice_connection',
-  'crove_finance.einvoice_draft',
-  'crove_finance.einvoice_draft_line',
-  'crove_finance.einvoice_series',
   'crove_notes.link',
   'crove_notes.note',
 ]);

@@ -258,7 +258,14 @@ suite('the company of a person and the accounting (#2438)', () => {
 
   it('knows every table that points at a party: each foreign key to party either holds its kind or is listed as not reading it', async () => {
     // A table added later with a foreign key to party fails here until it is put on one side: PARTY_KIND_HOLDERS (the rows that pin a party's kind) or this list.
-    const NOT_READING_THE_KIND = ['crove_notes.link.party_id', 'crove_crm.import_row.match_party_id', 'crove_crm.import_row.company_party_id', 'crove_finance.customer_collection.party_id'];
+    // A sales e-invoice draft keeps its own buyer kind and details (#2500): the party it was picked from is only where the details came from, and a removed one leaves them.
+    const NOT_READING_THE_KIND = [
+      'crove_notes.link.party_id',
+      'crove_crm.import_row.match_party_id',
+      'crove_crm.import_row.company_party_id',
+      'crove_finance.customer_collection.party_id',
+      'crove_finance.einvoice_draft.buyer_party_id',
+    ];
     const { rows } = await admin((c) =>
       c.query<{ ref: string }>(
         `SELECT DISTINCT n.nspname || '.' || c.relname || '.' || a.attname AS ref
