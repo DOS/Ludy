@@ -74,18 +74,29 @@ export function objectName(planName: string, tag: string, step: string): string 
 export const UNCLEAR_MAX_CALLS = 3;
 export const UNCLEAR_GIVE_UP_SECONDS = 3600;
 
+// Whether a time zone name is one this runtime knows. The account's zone is what the platform's sync recorded; the flight cannot be put in one that is missing or
+// that this runtime cannot read.
+export function zoneKnown(zone: string | null): zone is string {
+  if (!zone) return false;
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: zone }).resolvedOptions();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // The first moment of a day in the account's own time zone as ISO 8601 with its offset (`2026-11-05T00:00:00+0700`), for the start and the end of a flight (the
-// end is the first moment of the day after the last day). A zone this runtime does not know is UTC.
+// end is the first moment of the day after the last day). It throws for a zone that is not known (`zoneKnown`).
 export function zonedMidnight(day: string, zone: string | null): string {
-  // The zone's offset at an instant, in minutes east of UTC (0 for a zone this runtime does not know).
+  // A zone this runtime does not know (none recorded, or a name it cannot read) is not guessed as UTC: a flight window put in the wrong zone drifts away from the
+  // days the launch's commitment holds. The launch checks the zone before any call (`zoneKnown`); this throws if it is asked anyway.
+  if (!zoneKnown(zone)) throw new Error('unknown time zone');
+  // The zone's offset at an instant, in minutes east of UTC.
   const offsetAt = (instant: number): number => {
-    try {
-      const part = new Intl.DateTimeFormat('en-US', { timeZone: zone ?? 'UTC', timeZoneName: 'longOffset' }).formatToParts(new Date(instant)).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
-      const match = /^GMT([+-])(\d{2}):?(\d{2})?$/.exec(part);
-      return match ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? '0')) : 0;
-    } catch {
-      return 0;
-    }
+    const part = new Intl.DateTimeFormat('en-US', { timeZone: zone, timeZoneName: 'longOffset' }).formatToParts(new Date(instant)).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT';
+    const match = /^GMT([+-])(\d{2}):?(\d{2})?$/.exec(part);
+    return match ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? '0')) : 0;
   };
   // The offset that holds at the zone's own midnight, not at some other hour of that day: a zone that changes its offset on that day (daylight saving) has two.
   // First the offset at the UTC midnight of the day, which puts the guess of the instant near the local midnight; if the zone's offset there is another one, that

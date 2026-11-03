@@ -58,7 +58,10 @@ describe('what the launch job may reach of the platform\'s writer (#2296, W2-3)'
   it('names the queue in the schema, the worker and the migration only, with the egress of the ad platform and nothing else', () => {
     expect(naming('QUEUES.adsLaunch')).toEqual(['apps/kernel/src/jobs-schema.ts', 'apps/kernel/src/worker.ts']);
     expect(code('apps/kernel/src/jobs-schema.ts')).toMatch(/\[QUEUES\.adsLaunch\]: \['provider:ad_platform'\]/);
-    expect(read('supabase/migrations/20261122110000_crove_ads_launch_writer.sql')).toContain("crove_jobs.create_queue('ads-launch'");
+    // The migration is found by its name, not its version (a version moves when the migration is rebased on main).
+    const migration = readdirSync(join(ROOT, 'supabase/migrations')).find((f) => f.endsWith('_crove_ads_launch_writer.sql'));
+    expect(migration).toBeDefined();
+    expect(read(`supabase/migrations/${migration}`)).toContain("crove_jobs.create_queue('ads-launch'");
     // The job is sent by the relay with ids only (the org and the launch), for the one event the approval writes.
     const worker = code('apps/kernel/src/worker.ts');
     expect(worker).toMatch(/row\.type === 'ads\.launch\.queued'/);

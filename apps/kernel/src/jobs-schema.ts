@@ -82,7 +82,7 @@ export const QUEUES = {
   // Created by the token revoke migration (20261122050000): a sweep on a schedule with no data at all, that removes at the platform the permissions of a
   // closed ads connection's token from its sealed copy, the copy being opened by a worker-only definer (#2296, W2-1).
   adsRevoke: 'ads-revoke',
-  // Created by the launch writer migration (20261122110000): one approved launch, ids only (the org and the launch), run by the relay's event ads.launch.queued and
+  // Created by the launch writer migration (crove_ads_launch_writer): one approved launch, ids only (the org and the launch), run by the relay's event ads.launch.queued and
   // by the sweep's re-queue; it creates the plan's objects at the platform, every one paused (#2296, W2-3).
   adsLaunch: 'ads-launch',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).

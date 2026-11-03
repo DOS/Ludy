@@ -381,6 +381,13 @@ describe('pilot-check settings', () => {
     expect(failing({ ...READY, AUTH_STEP_UP: undefined })).toEqual([]);
   });
 
+  it('refuses ADS_LIVE_LAUNCH=true: the worker creating campaign objects at Meta is for the owner\'s own live check, not for a deployment others reach (#2296)', () => {
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: 'true' })).toEqual([expect.stringContaining('ADS_LIVE_LAUNCH=true')]);
+    // Off, or unset (the default), passes.
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: 'false' })).toEqual([]);
+    expect(failing({ ...READY, ADS_LIVE_LAUNCH: undefined })).toEqual([]);
+  });
+
   it('requires sign-up to be closed', () => {
     expect(failing({ ...READY, AUTH_DISABLE_SIGNUP: 'false' })).toEqual([expect.stringContaining('AUTH_DISABLE_SIGNUP is false')]);
     expect(failing({ ...READY, AUTH_DISABLE_SIGNUP: undefined })).toEqual([expect.stringContaining('AUTH_DISABLE_SIGNUP is unset')]);

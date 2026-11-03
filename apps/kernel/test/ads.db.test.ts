@@ -2122,6 +2122,20 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(await calls(noPage.launch.id)).toEqual([]);
           });
 
+          it('sends a launch to a person before any call when the account has no time zone this runtime knows: the flight is never put in a guessed zone, and its commitment is kept', async () => {
+            const w = new SandboxAdWriter();
+            for (const zone of [null, 'Mars/Phobos']) {
+              const { account, launch } = await queued(`Múi giờ ${zone ?? 'trống'}`);
+              await row(`UPDATE crove_ads.ad_account SET time_zone = $3 WHERE org_id = $1 AND id = $2`, [orgId, account, zone]);
+              expect(await run(w, launch.id), String(zone)).toEqual({ steps: 0, ended: 'zone_unknown' });
+              expect(await launchNow(launch.id), String(zone)).toMatchObject({ state: 'needs_attention', stop_reason: 'zone_unknown', commit_until: inDays(8) });
+              expect(await calls(launch.id)).toEqual([]);
+              // The account is put right again: the reads of the other tests (the spend flags) read every account's zone and refuse one they cannot read.
+              await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, account]);
+            }
+            expect(w.received).toEqual([]);
+          });
+
           it('cancels a queued launch before its first call when a cap was lowered since the approval, and releases its commitment', async () => {
             const w = new SandboxAdWriter();
             const { account, launch } = await queued('Hạ hạn mức trước khi chạy', { dailyBudget: '150000' });

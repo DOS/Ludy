@@ -4,7 +4,7 @@
 // split for the platform. Nothing here touches a database or a platform.
 import { describe, expect, it } from 'vitest';
 import type { AdsCampaignPlan } from '@crove/kernel-contract';
-import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, stepAction, stepLevel, stepVariant, targetingNames, zonedMidnight } from '../src/launch-steps.ts';
+import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, stepAction, stepLevel, stepVariant, targetingNames, zoneKnown, zonedMidnight } from '../src/launch-steps.ts';
 
 const TAG = 'ludy:0123456789';
 const LAUNCH = '0198f3c2-7b1e-7000-8000-0123456789ab';
@@ -62,15 +62,20 @@ describe('the flight in the account\'s own time zone', () => {
   it('starts at the first moment of the day with the zone\'s own offset on that day', () => {
     expect(zonedMidnight('2026-11-05', 'Asia/Ho_Chi_Minh')).toBe('2026-11-05T00:00:00+0700');
     expect(zonedMidnight('2026-11-05', 'UTC')).toBe('2026-11-05T00:00:00+0000');
-    expect(zonedMidnight('2026-11-05', null)).toBe('2026-11-05T00:00:00+0000');
     expect(zonedMidnight('2026-11-05', 'Asia/Kolkata')).toBe('2026-11-05T00:00:00+0530');
     expect(zonedMidnight('2026-11-05', 'Pacific/Kiritimati')).toBe('2026-11-05T00:00:00+1400');
     expect(zonedMidnight('2026-11-05', 'Pacific/Pago_Pago')).toBe('2026-11-05T00:00:00-1100');
     // Daylight saving: the offset of the day, not of the zone's standard time.
     expect(zonedMidnight('2026-01-15', 'America/Los_Angeles')).toBe('2026-01-15T00:00:00-0800');
     expect(zonedMidnight('2026-07-15', 'America/Los_Angeles')).toBe('2026-07-15T00:00:00-0700');
-    // A zone this runtime does not know is UTC, never a throw.
-    expect(zonedMidnight('2026-11-05', 'Mars/Phobos')).toBe('2026-11-05T00:00:00+0000');
+  });
+
+  it('is not guessed: a zone that is missing or that this runtime does not know throws, and the launch checks it before any call', () => {
+    for (const zone of [null, '', 'Mars/Phobos', 'Asia/Ho Chi Minh', 'not a zone']) {
+      expect(zoneKnown(zone), String(zone)).toBe(false);
+      expect(() => zonedMidnight('2026-11-05', zone), String(zone)).toThrow('unknown time zone');
+    }
+    for (const zone of ['UTC', 'Asia/Ho_Chi_Minh', 'America/Los_Angeles', 'Pacific/Kiritimati']) expect(zoneKnown(zone), zone).toBe(true);
   });
 
   it('takes the offset that holds at the zone\'s own midnight on a day its offset changes, not the one at another hour of the day', () => {

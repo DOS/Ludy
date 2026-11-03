@@ -38,6 +38,7 @@ import {
   stepLevel,
   stepVariant,
   targetingNames,
+  zoneKnown,
   zonedMidnight,
   type LaunchLevel,
   type TargetingNames,
@@ -206,6 +207,16 @@ export const adsLaunchBegin = defineCommand({
       return none('plan_changed');
     }
 
+    // The flight is put in the account's own time zone, which the platform's sync recorded. Without a zone this runtime knows (none recorded, or a name it cannot
+    // read) the window would drift away from the days the commitment holds, so nothing is called. It is not a fault of the frozen plan: a later sync can fill the zone
+    // in and a retry can then run, so the launch needs attention and keeps its commitment (a pre-call defect of the plan itself would fail it instead).
+    if (!zoneKnown(account.time_zone)) {
+      if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'launching' });
+      await needAttention(ctx, launch.id, 'zone_unknown');
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, needsAttention: 'zone_unknown' });
+      return none('zone_unknown');
+    }
+
     // Page the ads run as (every ad needs one), as a connection of the org that is active.
     const page = drafted?.pageConnectionId
       ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select(['provider', 'status', 'external_account_id']).where('org_id', '=', ctx.orgId).where('id', '=', drafted.pageConnectionId).executeTakeFirst()
@@ -287,8 +298,8 @@ export const adsLaunchBegin = defineCommand({
         campaignId: idOf.get('campaign') as string,
         objective: plan.objective,
         dailyBudget: launch.daily_budget,
-        startTime: zonedMidnight(launch.start_text, account.time_zone),
-        endTime: zonedMidnight(dayAfter(launch.end_text), account.time_zone),
+        startTime: zonedMidnight(launch.start_text, account.time_zone as string),
+        endTime: zonedMidnight(dayAfter(launch.end_text), account.time_zone as string),
         targeting: targetingNames(plan),
         pageId,
       };
