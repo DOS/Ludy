@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { AdPlatformError, MetaAdsPlatform, adPlatforms, platformUserHash, sandboxWriteLogin, type AdPlatform, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
@@ -117,7 +117,20 @@ suite('ads on PostgreSQL (#2217)', () => {
   let worker: Runtime;
   let workerDb: Db;
   let vault: CredentialVault;
-  const sandbox = adPlatforms({ sandbox: true });
+  // The clock the sandbox platform and the worker's sync read (#2548). A test that compares what a sync stored with a "today" of its own freezes it at one instant
+  // (`freeze`), so the platform, the sync and the test all agree on the day of the account's zone, whatever the hour the suite runs at (a wall clock can roll over
+  // in the zone between the sync and the test's own reading); every other test runs on the wall clock. The API's own commands read the runtime's clock, which
+  // a test cannot move: what they decide from "today" is compared in the same instant by the test that reads it, with no sync between.
+  let frozen: Date | null = null;
+  const clock = (): Date => frozen ?? new Date();
+  const freeze = (at: Date = new Date()): Date => {
+    frozen = at;
+    return at;
+  };
+  afterEach(() => {
+    frozen = null;
+  });
+  const sandbox = adPlatforms({ sandbox: true, now: clock });
   const owner: Account = { subject: randomUUID(), email: 'owner@ads.test', session: randomUUID(), userId: '' };
   const adminAccount: Account = { subject: randomUUID(), email: 'admin@ads.test', session: randomUUID(), userId: '' };
   const member: Account = { subject: randomUUID(), email: 'member@ads.test', session: randomUUID(), userId: '' };
@@ -179,7 +192,7 @@ suite('ads on PostgreSQL (#2217)', () => {
   }
 
   const sync = (connectionId: string, platforms: Readonly<Record<string, AdPlatform>> = sandbox, org = orgId) =>
-    runAdsSync({ runtime: worker, broker: vault, platforms }, { orgId: org, connectionId });
+    runAdsSync({ runtime: worker, broker: vault, platforms, now: clock }, { orgId: org, connectionId });
   // The owner as the API's runtime sees a signed-in person: with the session the token carries.
   const asOwner = () => ({ type: 'user' as const, userId: owner.userId, aal: 'aal1' as const, sessionId: owner.session });
   // The audit rows of ads.account.erase that tests other than the deletion callback's own made (that test counts its own).
@@ -353,13 +366,14 @@ suite('ads on PostgreSQL (#2217)', () => {
   });
 
   it("reads the credential in the worker and stores 13 months of the account's days in its own currency and time zone", async () => {
+    const at = freeze();
     const { connectionId, adAccountId } = await connect('Đồng');
     const done = await sync(connectionId);
     expect(done.rows).toBeGreaterThan(1000);
     expect(done.slices).toBeGreaterThanOrEqual(13);
     const account = await view(owner, adAccountId);
     expect(account).toMatchObject({ currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh', name: 'Đồng', lastErrorKind: null, nextRunAt: null });
-    const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+    const today = todayIn('Asia/Ho_Chi_Minh', at);
     expect(account?.syncedThrough).toBe(today);
     // Days before today less the three-day revision window are final.
     expect(account?.settledThrough).toBe(new Date(Date.parse(today) - 4 * DAY_MS).toISOString().slice(0, 10));
@@ -414,19 +428,55 @@ suite('ads on PostgreSQL (#2217)', () => {
     }
   });
 
-  it('removes a day of the window the platform no longer reports, and keeps a final one', async () => {
-    const { connectionId, adAccountId } = await connect('Bớt ngày');
+  // The days of the account's figures that are not final yet, newest first.
+  const unsettledDays = async (adAccountId: string) =>
+    (await row<{ day: string }>(`SELECT day::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND level = 'account' AND settled_at IS NULL ORDER BY day DESC`, [orgId, adAccountId])).map((r) => r.day);
+  const daysCount = async (adAccountId: string, day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
+
+  // The instants the platform's day and the account's day can disagree around (#2548): inside the window the flake was seen in (14:04 to 14:13 UTC, 21:04 to
+  // 21:13 in Ho Chi Minh City), the second before and after that zone's midnight (17:00 UTC), and the UTC midnight. Dated two days back from the real clock's UTC
+  // date: the account's history (13 months back from the real clock) reaches them, and none is ahead of the real day, which the API's own record command
+  // refuses (it judges a window against the runtime's clock, which a test cannot move).
+  const pinDay = addDays(new Date().toISOString().slice(0, 10), -2);
+  const PINS = [`${pinDay}T14:05:00Z`, `${pinDay}T16:59:59Z`, `${pinDay}T17:00:00Z`, `${pinDay}T17:00:01Z`, `${pinDay}T23:59:59Z`, `${addDays(pinDay, 1)}T00:00:00Z`];
+
+  it.each(PINS)('removes a day of the window the platform no longer reports, and keeps a final one, with the clock at %s', async (at) => {
+    freeze(new Date(at));
+    const { connectionId, adAccountId } = await connect(`Bớt ngày ${at}`);
     await sync(connectionId);
-    const today = todayIn('Asia/Ho_Chi_Minh', new Date());
-    const unsettled = new Date(Date.parse(today) - DAY_MS).toISOString().slice(0, 10);
-    const count = async (day: string) => Number((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND day = $3`, [orgId, adAccountId, day]))[0]?.n);
-    expect(await count(unsettled)).toBeGreaterThan(0);
+    const today = todayIn('Asia/Ho_Chi_Minh', clock());
+    // The days that are not final are today (in the account's zone) and the three before it, as many of them as the platform reported a campaign on. The sandbox's day
+    // is the account's: nothing is stored after it, and the oldest of them is the last day of the revision window.
+    const window = await unsettledDays(adAccountId);
+    expect(window.length).toBeGreaterThan(0);
+    expect(window.every((d) => d <= today && d >= addDays(today, -3)), window.join(',')).toBe(true);
     const silent: Readonly<Record<string, AdPlatform>> = { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => [] } };
     await sync(connectionId, silent);
-    expect(await count(unsettled)).toBe(0);
+    expect(await unsettledDays(adAccountId)).toEqual([]);
+    for (const day of window) expect(await daysCount(adAccountId, day), day).toBe(0);
     // A final day is never in the window, so an empty answer leaves it.
     const final = (await row<{ day: string }>(`SELECT day::text FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2 AND settled_at IS NOT NULL LIMIT 1`, [orgId, adAccountId]))[0]?.day as string;
-    expect(await count(final)).toBeGreaterThan(0);
+    expect(await daysCount(adAccountId, final)).toBeGreaterThan(0);
+  });
+
+  // The sandbox gives each campaign no row on about one day in seven, by a seed of the connection's random token, so now and then a whole day of the window has no
+  // figure at all (the flake of #2548 was a test that expected yesterday to have one). A platform that reported nothing for a day is simulated here: the days
+  // that were reported are the ones removed when the platform goes silent, and none is expected that was not.
+  it('removes the days of the window that were reported when the platform goes silent, though no campaign ran on one of them', async () => {
+    const at = freeze();
+    const { connectionId, adAccountId } = await connect('Một ngày không có số liệu');
+    const today = todayIn('Asia/Ho_Chi_Minh', at);
+    const yesterday = addDays(today, -1);
+    const gap: Readonly<Record<string, AdPlatform>> = {
+      sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async (secret, id, range) => (await (sandbox.sandbox_ads as AdPlatform).readDaily(secret, id, range)).filter((r) => r.day !== yesterday) },
+    };
+    await sync(connectionId, gap);
+    expect(await daysCount(adAccountId, yesterday)).toBe(0);
+    const window = await unsettledDays(adAccountId);
+    expect(window.length).toBeGreaterThan(0);
+    expect(window).not.toContain(yesterday);
+    await sync(connectionId, { sandbox_ads: { ...(sandbox.sandbox_ads as AdPlatform), readDaily: async () => [] } });
+    expect(await unsettledDays(adAccountId)).toEqual([]);
   });
 
   it('adds the days up in decimal, by month and campaign, and works the cost per result from the chosen action', async () => {
@@ -606,9 +656,11 @@ suite('ads on PostgreSQL (#2217)', () => {
   });
 
   it('reads an answer with too many rows in halves of its days', async () => {
+    const at = freeze();
     const { connectionId, adAccountId } = await connect('Rất nhiều chiến dịch');
-    // 40 days of history, so the first read is a 31-day slice and a shorter one.
-    await row(`UPDATE crove_ads.ad_account SET backfill_from = (now() AT TIME ZONE 'UTC')::date - 40 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId]);
+    // 40 days of history, so the first read is a 31-day slice and a shorter one: from the UTC date of the frozen instant, which the expectation below counts from too.
+    const first = addDays(at.toISOString().slice(0, 10), -40);
+    await row(`UPDATE crove_ads.ad_account SET backfill_from = $3 WHERE org_id = $1 AND id = $2`, [orgId, adAccountId, first]);
     const dense: Readonly<Record<string, AdPlatform>> = {
       sandbox_ads: {
         ...(sandbox.sandbox_ads as AdPlatform),
@@ -630,9 +682,8 @@ suite('ads on PostgreSQL (#2217)', () => {
       `SELECT count(DISTINCT day)::text AS days, count(*)::text AS n FROM crove_ads.ad_spend_day WHERE org_id = $1 AND ad_account_id = $2`,
       [orgId, adAccountId],
     );
-    // From the first day of history (40 days back, by the UTC date) to today in the account's zone.
-    const first = new Date(Date.now() - 40 * DAY_MS).toISOString().slice(0, 10);
-    const expectedDays = Math.round((Date.parse(todayIn('Asia/Ho_Chi_Minh', new Date())) - Date.parse(first)) / DAY_MS) + 1;
+    // From the first day of history (40 days back, by the UTC date) to today in the account's zone, on the frozen clock the sync read.
+    const expectedDays = Math.round((Date.parse(todayIn('Asia/Ho_Chi_Minh', at)) - Date.parse(first)) / DAY_MS) + 1;
     expect(Number(stored[0]?.days)).toBe(expectedDays);
     expect(Number(stored[0]?.n)).toBe(expectedDays * 801);
     expect(done.rows).toBe(expectedDays * 801);
@@ -2653,7 +2704,7 @@ suite('ads on PostgreSQL (#2217)', () => {
       }
       return json(200, { data });
     };
-    const read = (mode: 'ok' | 'limited' | 'expired') => ({ meta_ads: new MetaAdsPlatform({ ...meta, fetch: graph(mode) }) }) as Readonly<Record<string, AdPlatform>>;
+    const read = (mode: 'ok' | 'limited' | 'expired') => ({ meta_ads: new MetaAdsPlatform({ ...meta, now: clock, fetch: graph(mode) }) }) as Readonly<Record<string, AdPlatform>>;
     const metaRpc = async (path: string, who: Account, input: unknown) => rpc(path, await tokenFor(who), input);
     const grant = async (who: Account) => {
       const started = await metaRpc('channels/oauthStart', who, { provider: 'meta_ads' });
@@ -2950,6 +3001,7 @@ suite('ads on PostgreSQL (#2217)', () => {
     });
 
     it('reads 13 months in the adapter\'s windows with only GET requests, and stores them in the account\'s currency and time zone', async () => {
+      const at = freeze();
       const listed = (await ok('ads/accounts', owner, undefined)) as AdAccountView[];
       const account = listed.find((a) => a.name === 'Meta act_9001') as AdAccountView;
       const result = await sync(account.connectionId, read('ok'));
@@ -2957,8 +3009,8 @@ suite('ads on PostgreSQL (#2217)', () => {
       const after = ((await ok('ads/accounts', owner, undefined)) as AdAccountView[]).find((a) => a.id === account.id);
       expect(after).toMatchObject({ currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh', lastErrorKind: null });
       // Meta restates its latest 28 days: the newest day is not final, one older than that is.
-      expect(after?.settledThrough).toBe(new Date(Date.parse(todayIn('Asia/Ho_Chi_Minh', new Date())) - 29 * DAY_MS).toISOString().slice(0, 10));
-      const today = todayIn('Asia/Ho_Chi_Minh', new Date());
+      expect(after?.settledThrough).toBe(new Date(Date.parse(todayIn('Asia/Ho_Chi_Minh', at)) - 29 * DAY_MS).toISOString().slice(0, 10));
+      const today = todayIn('Asia/Ho_Chi_Minh', at);
       // The owner picks the action that counts as a result; Meta's omni_purchase is the "purchase" of this adapter.
       await ok('ads/configure', owner, { adAccountId: account.id, resultKind: 'purchase', idempotencyKey: randomUUID() });
       const summary = (await ok('ads/summary', owner, { adAccountId: account.id, from: new Date(Date.parse(today) - 6 * DAY_MS).toISOString().slice(0, 10), to: today })) as AdsSummary;
