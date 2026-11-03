@@ -98,7 +98,7 @@ Decided in [ADR-0044](../adr/0044-einvoice-provider-adapters.md). In short:
 
 ## 7. The Tích hợp page
 
-Where: Kế toán settings, a card "Tích hợp hóa đơn điện tử" (owners and admins write, every member of the entity sees the status).
+Where: Kế toán settings, a section "Tích hợp" (owners and admins write, every member of the entity sees the status). The section is general: a connection has a **kind** (`einvoice` here; `marketplace` for Shopee, TikTok Shop and Lazada in #2499, later others such as a bank feed) and a provider within the kind, and each kind is one card in the section with the same parts as below (list, connect, test, status, disconnect). The section, the sealed credential, the status line and the kill switches are built once in #2501 and know nothing about e-invoices; only the template and series step (item 4) belongs to the `einvoice` kind. A kind is added by registering its adapter list and its card, never by a new settings page.
 
 1. **Providers listed** with a short line each: what it needs from the seller (its own account and API access enabled, a certificate on the provider's HSM), and a link to the provider's page. A provider appears only when its adapter is built and enabled for the deployment.
 2. **Connect:** the fields the adapter names (for MISA: the seller's tax code, user and password, and the app credentials the org created at MISA; for Viettel: user, password and a note to allow Ludy's server IP). Sent once, sealed at the edge (the envelope, never the secret, reaches the command), stored in `crove_kernel.credential`, never shown back. **Disconnect** drops the credential.
