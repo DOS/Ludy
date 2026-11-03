@@ -23,6 +23,7 @@ export function statusDeadlinePassed(submittedAt: Date, now: Date): boolean {
 // The codes a draft's `error_code` carries (never a provider's own text).
 export const EINVOICE_ERROR_CODES = {
   providerNotReady: 'PROVIDER_NOT_READY',
+  taxCodeNeeded: 'TAX_CODE_NEEDED',
   sellerTaxCodeChanged: 'SELLER_TAX_CODE_CHANGED',
   draftMismatch: 'DRAFT_MISMATCH',
   credentials: 'CREDENTIALS',

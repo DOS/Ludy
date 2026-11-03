@@ -689,6 +689,7 @@ export const en = {
     evidencePending: 'Saving the original',
     draftErrors: {
       PROVIDER_NOT_READY: 'There is no working provider connection for this entity. Check Integrations in Settings.',
+      TAX_CODE_NEEDED: 'The entity has no tax code yet, so the invoice was not sent. Enter the tax code of the company in Settings.',
       SELLER_TAX_CODE_CHANGED: 'The entity\'s tax code changed since the provider was connected. Connect again with the new tax code.',
       DRAFT_MISMATCH: 'The amounts of the draft do not match its lines, so it was not sent.',
       CREDENTIALS: 'The provider refused the stored login. Connect again in Settings.',

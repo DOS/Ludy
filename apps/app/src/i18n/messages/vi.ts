@@ -687,6 +687,7 @@ export const vi = {
     evidencePending: 'Đang lưu bản gốc',
     draftErrors: {
       PROVIDER_NOT_READY: 'Chưa có kết nối nhà cung cấp dùng được cho pháp nhân này. Kiểm tra mục Tích hợp trong Cài đặt.',
+      TAX_CODE_NEEDED: 'Pháp nhân chưa có mã số thuế nên chưa gửi hóa đơn đi được. Nhập mã số thuế của công ty trong Cài đặt.',
       SELLER_TAX_CODE_CHANGED: 'Mã số thuế của pháp nhân đã đổi so với kết nối nhà cung cấp. Kết nối lại với mã số thuế mới.',
       DRAFT_MISMATCH: 'Số tiền của bản nháp không khớp với các dòng của nó nên chưa gửi đi.',
       CREDENTIALS: 'Nhà cung cấp từ chối thông tin đăng nhập đã lưu. Hãy kết nối lại trong Cài đặt.',

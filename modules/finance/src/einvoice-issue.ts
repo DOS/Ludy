@@ -16,6 +16,8 @@ import { DomainError, defineCommand, defineQuery, type CommandContext } from '@c
 import { money } from '@crove/l10n-vn';
 import { computeDraft } from './domain/einvoice-draft.ts';
 import { loadDraft } from './einvoice-drafts.ts';
+import { connectionFor } from './einvoice-job.ts';
+import { EINVOICE_ERROR_CODES } from './domain/einvoice-job.ts';
 import { databaseToday } from './period-lock.ts';
 
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -69,6 +71,13 @@ export const einvoicePrepareIssue = defineCommand({
       computed.lines.some((l, i) => !same(l.amount, draft.lines[i]?.amount ?? '0') || !same(l.vatAmount, draft.lines[i]?.vatAmount ?? '0'))
     ) {
       throw new DomainError('EINVOICE_DRAFT_MISMATCH', 409, 'Số tiền của bản nháp không khớp với các dòng của nó; hãy lưu lại bản nháp');
+    }
+    // The entity has a working connection to the series' provider under the tax code it has now, so nothing is asked of an approver that the job could not send.
+    const ready = await connectionFor(ctx, { legal_entity_id: draft.legalEntityId, series_id: draft.seriesId }, true);
+    if ('code' in ready) {
+      if (ready.code === EINVOICE_ERROR_CODES.taxCodeNeeded) throw new DomainError('EINVOICE_TAX_CODE_NEEDED', 422, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi phát hành hóa đơn');
+      if (ready.code === EINVOICE_ERROR_CODES.sellerTaxCodeChanged) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế của công ty đã đổi so với kết nối nhà cung cấp; hãy kết nối lại với mã số thuế mới');
+      throw new DomainError('EINVOICE_PROVIDER_NOT_READY', 409, 'Chưa có kết nối nhà cung cấp hóa đơn điện tử dùng được cho pháp nhân này; hãy kiểm tra mục Tích hợp trong Cài đặt');
     }
     const hash = (await sql<{ hash: string | null }>`SELECT crove_finance.einvoice_content_hash(${ctx.orgId}::uuid, ${draftId}::uuid) AS hash`.execute(ctx.trx)).rows[0]?.hash;
     if (!hash) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');

@@ -100,7 +100,7 @@ async function failDraft(ctx: CommandContext, draft: DraftRow, code: string): Pr
 
 // The connection a draft issues through: the entity's own connection to the series' provider, active, and, for a first send, with the seller's tax code the entity has NOW (the
 // database checked it only when the connection was made).
-async function connectionFor(ctx: CommandContext, draft: DraftRow, first: boolean) {
+export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, 'legal_entity_id' | 'series_id'>, first: boolean) {
   const series = draft.series_id
     ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['provider', 'template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.series_id).executeTakeFirst()
     : undefined;
@@ -117,6 +117,8 @@ async function connectionFor(ctx: CommandContext, draft: DraftRow, first: boolea
     .orderBy('c.seller_tax_code')
     .execute();
   if (!entity || rows.length === 0) return { code: EINVOICE_ERROR_CODES.providerNotReady } as const;
+  // An entity with no tax code of its own issues nothing: the connection's code was typed for the connection alone (the org's tax code is set in Settings).
+  if (first && !entity.tax_code) return { code: EINVOICE_ERROR_CODES.taxCodeNeeded } as const;
   const chosen = first ? rows.find((r) => r.seller_tax_code === entity.tax_code) : (rows.find((r) => r.seller_tax_code === entity.tax_code) ?? rows[0]);
   if (!chosen) return { code: EINVOICE_ERROR_CODES.sellerTaxCodeChanged } as const;
   return {

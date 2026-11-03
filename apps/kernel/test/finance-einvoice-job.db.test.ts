@@ -315,8 +315,10 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(await draftRow(mismatch, mismatchDraft)).toMatchObject({ state: 'failed', error_code: 'DRAFT_MISMATCH' });
     expect(b.control.calls).toEqual([]);
 
-    const bare = await org({ connection: false });
+    // The connection was removed between the approval and the job (the request itself is refused without one).
+    const bare = await org();
     const bareDraft = await submitted(bare);
+    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1', [bare.orgId]);
     const c = createSandboxEInvoiceProvider();
     expect(await run(bare, bareDraft, c.provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
     expect(await draftRow(bare, bareDraft)).toMatchObject({ state: 'failed', error_code: 'PROVIDER_NOT_READY' });

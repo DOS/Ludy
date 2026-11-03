@@ -29,6 +29,8 @@ interface Draft {
   issues: Array<{ field: string; code: string }>;
 }
 
+// The seller's fake tax code (see the MST fixture guard).
+const SELLER_TAX_CODE = '0101234564';
 const PREFIX = '010010910';
 const VALID_TAX_CODE = `${PREFIX}${enterpriseCheckDigit(PREFIX)}`;
 const today = () => new Date(Date.now() + 7 * 3_600_000).toISOString().slice(0, 10);
@@ -67,12 +69,21 @@ suite('issuing a sales e-invoice (#2502)', () => {
   const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@issue.test`, name: null });
   type Org = { orgId: string; owner: string; admin: string | null; member: string; viewer: string };
   // A one-person org has only its owner (the one-person path of the four-eyes rule); the other has an admin too.
-  async function org(options: { team: boolean }): Promise<Org> {
+  async function org(options: { team: boolean; taxCode?: boolean; connection?: boolean }): Promise<Org> {
     const owner = await identity('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Công ty Phát Hành ${randomUUID().slice(0, 6)}`);
     const member = await identity('member');
     const viewer = await identity('viewer');
     await admin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]));
+    // The org's tax code is its default entity's, and the entity has a connection to the offline provider under it: what the issue needs before it asks anyone.
+    if (options.taxCode !== false) await execute({ orgId, owner }, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
+    if (options.connection !== false) {
+      const channel = randomUUID();
+      await admin(async (c) => {
+        await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [orgId, channel, 'einvoice_sandbox', `acct-${channel.slice(0, 8)}`, 'Hóa đơn thử', owner]);
+        await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [orgId, channel, SELLER_TAX_CODE]);
+      });
+    }
     let adminUser: string | null = null;
     if (options.team) {
       adminUser = await identity('admin');
@@ -80,7 +91,7 @@ suite('issuing a sales e-invoice (#2502)', () => {
     }
     return { orgId, owner, admin: adminUser, member, viewer };
   }
-  const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const execute = <T>(o: Pick<Org, 'orgId' | 'owner'>, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
   const sync = async (o: Org) => (await execute<{ series: Series[] }>(o, 'finance.einvoice_series.sync', { legalEntityId: null, provider: 'sandbox' })).series[0]?.id ?? null;
   const save = (o: Org, seriesId: string | null, extra: Record<string, unknown> = {}, user = o.owner) => execute<Draft>(o, 'finance.einvoice_draft.save', form(seriesId, extra), user);
   const request = (o: Org, draftId: string, user = o.owner) => execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.einvoice.issue', input: { draftId } }, user);
@@ -204,6 +215,26 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const ok = await save(o, series);
     const first = await request(o, ok.id);
     await expect(request(o, ok.id)).rejects.toMatchObject({ code: 'EINVOICE_ISSUE_PENDING', details: { proposalId: first.proposalId } });
+  });
+
+  it('refuses to ask before an approver is bothered when the entity has no tax code or no working connection', async () => {
+    const noCode = await org({ team: false, taxCode: false, connection: false });
+    const noCodeSeries = await sync(noCode);
+    const draftA = await save(noCode, noCodeSeries);
+    await expect(request(noCode, draftA.id)).rejects.toMatchObject({ code: 'EINVOICE_PROVIDER_NOT_READY' });
+    const bare = await org({ team: false, connection: false });
+    const bareDraft = await save(bare, await sync(bare));
+    await expect(request(bare, bareDraft.id)).rejects.toMatchObject({ code: 'EINVOICE_PROVIDER_NOT_READY' });
+    // A connection under a tax code the entity has not (a connection made with a typed code before the org had one).
+    const typed = await org({ team: false, taxCode: false });
+    const typedDraft = await save(typed, await sync(typed));
+    await expect(request(typed, typedDraft.id)).rejects.toMatchObject({ code: 'EINVOICE_TAX_CODE_NEEDED' });
+    // The entity's code changed since the connection was made.
+    const changed = await org({ team: false });
+    const changedDraft = await save(changed, await sync(changed));
+    await execute(changed, 'kernel.org.set_tax_code', { taxCode: '0309876546' });
+    await expect(request(changed, changedDraft.id)).rejects.toMatchObject({ code: 'EINVOICE_TAX_CODE_MISMATCH' });
+    expect((await draftRow(changed, changedDraft.id))?.state).toBe('draft');
   });
 
   it('refuses a draft that was changed after the request, and nothing moves', async () => {

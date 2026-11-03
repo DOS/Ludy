@@ -243,6 +243,7 @@ function DraftForm({ initial, series, legalEntityId, onClose }: { initial: FormS
 // The codes the draft's `errorCode` can hold, in words (never a provider's own text).
 const DRAFT_ERRORS = [
   'PROVIDER_NOT_READY',
+  'TAX_CODE_NEEDED',
   'SELLER_TAX_CODE_CHANGED',
   'DRAFT_MISMATCH',
   'CREDENTIALS',
@@ -326,7 +327,12 @@ export function SalesInvoicesPage() {
   const canApprove = canSync;
   const status = useQuery(orpc.einvoice.status.queryOptions());
   const seriesQuery = useQuery(orpc.einvoice.series.list.queryOptions());
-  const drafts = useQuery({ ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
+  // An invoice on its way (being sent, waiting for the tax authority, issued with its original still to store) is looked at again every few seconds, until it settles.
+  const drafts = useQuery({
+    ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }),
+    enabled: entity.ready,
+    refetchInterval: (query) => (query.state.data?.some((d) => d.state === 'submitting' || d.state === 'pending' || (d.state === 'issued' && !d.evidenceStored)) ? 3000 : false),
+  });
   const [editing, setEditing] = useState<FormState | null>(null);
   const sync = useMutation({ mutationFn: () => client.einvoice.series.sync({ legalEntityId: entity.legalEntityId ?? null, provider: 'sandbox' }), onSuccess: refresh });
   const remove = useMutation({ mutationFn: (draftId: string) => client.einvoice.drafts.delete({ draftId }), onSuccess: refresh });
