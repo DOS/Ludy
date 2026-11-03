@@ -144,3 +144,14 @@ describe('launches admitted one after the other by this check', () => {
     }
   });
 });
+
+describe('one cap is enough (ADR-0043 point 2, decided 2026-11-02)', () => {
+  it('judges the plan against the daily cap alone, or the monthly cap alone, whichever exists, and finds nothing to pass when no cap exists (W1 says no_cap)', () => {
+    const others = [live()];
+    expect(committedProblems(plan(), others, [daily('150000')]).map((p) => p.code)).toEqual(['daily_cap_exceeded']);
+    expect(committedProblems(plan(), others, [monthly('1000000')]).map((p) => p.code)).toEqual(['monthly_cap_exceeded']);
+    // A cap that exists and is not passed passes; one that does not exist is not invented.
+    expect(committedProblems(plan(), others, [monthly('1400000')])).toEqual([]);
+    expect(committedProblems(plan(), others, [])).toEqual([]);
+  });
+});

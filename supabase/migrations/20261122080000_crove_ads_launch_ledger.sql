@@ -153,8 +153,8 @@ BEGIN
   END IF;
 
   -- The one change that is not a writer's: the cascade of the account's legal entity (when the account moves to another entity), which alters nothing
-  -- else; tenant roles have no UPDATE grant on the column.
-  IF NEW.legal_entity_id IS DISTINCT FROM OLD.legal_entity_id AND (pg_catalog.to_jsonb(NEW) - 'legal_entity_id') = (pg_catalog.to_jsonb(OLD) - 'legal_entity_id') THEN
+  -- else; tenant roles have no UPDATE grant on the column. (The generated tag is left out of the comparison: a BEFORE trigger sees it before it is computed.)
+  IF NEW.legal_entity_id IS DISTINCT FROM OLD.legal_entity_id AND (pg_catalog.to_jsonb(NEW) - 'legal_entity_id' - 'tag') = (pg_catalog.to_jsonb(OLD) - 'legal_entity_id' - 'tag') THEN
     RETURN NEW;
   END IF;
   -- The plan and who wrote it never change, whoever writes.

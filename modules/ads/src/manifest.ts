@@ -33,6 +33,12 @@ export const adsManifest = defineModule({
       ad_campaign_request: columns(['org_id', 'id', 'ad_account_id', 'legal_entity_id', 'objective', 'brief', 'source_post_id', 'state', 'code', 'draft_id', 'requested_by', 'requested_at', 'settled_at']),
       // The org's thresholds of the spend flags (#2378): org-wide, no legal entity; a NULL threshold is the default.
       ad_flag_setting: columns(['org_id', 'id', 'pace_min_days', 'day_factor', 'cpr_factor', 'cpr_min_results', 'cpr_min_history_days', 'set_by', 'updated_at']),
+      // The launch ledger (W2-2, #2296): an approved plan's commitment against the caps and where its launch stands. Ids, amounts, dates and codes only,
+      // never the plan's text (that stays in the draft and the proposal); in the account's legal entity.
+      ad_launch: columns([
+        'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'draft_id', 'proposal_id', 'plan_hash', 'tag', 'state', 'attempt', 'step', 'currency', 'daily_budget',
+        'start_on', 'end_on', 'amount', 'commit_until', 'stop_reason', 'created_by', 'updated_by', 'created_at', 'updated_at', 'started_at', 'finished_at',
+      ]),
       // The org's switches of running ads (ADR-0043, #2294): org-wide, no legal entity.
       ad_org_setting: columns(['org_id', 'id', 'write_enabled', 'launches_blocked', 'updated_by', 'updated_at']),
       // A spend cap of the org or of one ad account, a row per change (the history).

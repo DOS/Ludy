@@ -97,13 +97,14 @@ export async function queueLaunch(ctx: Db, launch: QueuedLaunch): Promise<{ id: 
 
 // Cancels the launches that have not started (queued), of the org or of one account: they commit nothing any more. A launch the writer has started is the
 // stop's (W2-4), not this. Returns how many. The guard lets an owner, an admin or the system do it.
-export async function cancelQueuedLaunches(ctx: Db, reason: 'cancelled' | 'switch_off' | 'account_off' | 'launches_blocked', adAccountId?: string): Promise<number> {
+export async function cancelQueuedLaunches(ctx: Db, reason: 'cancelled' | 'switch_off' | 'account_off' | 'launches_blocked', adAccountId?: string, launchId?: string): Promise<number> {
   let query = ctx.trx
     .updateTable('crove_ads.ad_launch')
     .set({ state: 'cancelled', stop_reason: reason })
     .where('org_id', '=', ctx.orgId)
     .where('state', '=', 'queued');
   if (adAccountId) query = query.where('ad_account_id', '=', adAccountId);
+  if (launchId) query = query.where('id', '=', launchId);
   const rows = await query.returning('id').execute();
   return rows.length;
 }

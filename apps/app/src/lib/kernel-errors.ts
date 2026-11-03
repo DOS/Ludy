@@ -349,6 +349,10 @@ export const KERNEL_ERROR_CODES = [
   'ADS_DRAFT_INVALID',
   'ADS_DRAFT_CHANGED',
   'ADS_DRAFT_STALE',
+  // The launch ledger (W2-2, #2296): the caps with what is already committed, and cancelling a launch that has not started.
+  'ADS_SPEND_CAP',
+  'ADS_LAUNCH_NOT_FOUND',
+  'ADS_LAUNCH_NOT_QUEUED',
   // Asking the AI coworker for a campaign draft (W1b, #2295).
   'ADS_DRAFT_REQUEST_NOT_FOUND',
   'ADS_DRAFT_REQUEST_OPEN',

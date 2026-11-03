@@ -117,6 +117,7 @@ const draft = (over: Partial<AdsCampaignDraftView> = {}): AdsCampaignDraftView =
   days: 7,
   issues: [],
   pendingProposalId: null,
+  launch: null,
   createdAt: at,
   updatedAt: at,
   ...over,
@@ -264,6 +265,47 @@ describe('a draft that is frozen', () => {
     const html = render(builder({ draft: draft({ status: 'approved' }) }));
     expect(html).toContain('Approved. Nothing is sent to the ad platform yet.');
     expect(html).not.toContain('Save the draft');
+  });
+
+  // The ledger row of an approved plan (W2-2, #2296): its amount is held against the spend caps until it is cancelled.
+  const launch = (over: Partial<NonNullable<AdsCampaignDraftView['launch']>> = {}): NonNullable<AdsCampaignDraftView['launch']> => ({
+    id: 'l1',
+    draftId: ID,
+    adAccountId: 'a1',
+    state: 'queued',
+    step: null,
+    attempt: 1,
+    currency: 'VND',
+    tag: 'ludy:0123456789',
+    dailyBudget: '100000',
+    amount: '700000',
+    startOn: '2026-11-10',
+    endOn: '2026-11-16',
+    commitUntil: '2026-11-16',
+    stopReason: null,
+    createdAt: at,
+    finishedAt: null,
+    ...over,
+  });
+
+  it('an approved plan with a queued launch says its amount is held against the caps and offers owners and admins to cancel it', () => {
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch() }) }));
+    expect(html).toContain('is held against your spend caps');
+    expect(html).toContain('Nothing is sent to the ad platform yet.');
+    expect(html).toContain('Cancel and release the amount');
+    // A member sees the note and no button.
+    const member = render(builder({ draft: draft({ status: 'approved', launch: launch() }), canManage: false }));
+    expect(member).toContain('is held against your spend caps');
+    expect(member).not.toContain('Cancel and release the amount');
+  });
+
+  it('a cancelled launch says its amount is released, and says it in Vietnamese too', () => {
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'cancelled', commitUntil: null }) }) }));
+    expect(html).toContain('This launch was cancelled. The amount held against your spend caps is released.');
+    expect(html).not.toContain('Cancel and release the amount');
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch() }) }), 'vi');
+    expect(vi).toContain('đang được giữ chỗ trong hạn mức chi tiêu');
+    expect(vi).toContain('Hủy và trả lại số tiền');
   });
 });
 
