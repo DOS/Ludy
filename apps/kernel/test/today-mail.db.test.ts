@@ -346,25 +346,31 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     expect(rows).toEqual(['org_id']);
   });
 
-  it('lists an org as due only while a member is owed a day, and pages in org order', async () => {
+  it('lists an org as due only while a member is owed a day, from 07:30 in Vietnam, and pages in org order', async () => {
     const a = await org();
     const b = await org();
     await optIn(a, [a.lan]);
     await optIn(b, [b.lan]);
-    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET last_sent_day = (now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date WHERE org_id = $1", [b.orgId]));
-    // From 07:30 in Vietnam the org with an unsent day is due and the one sent today is not; before it, none is.
-    const local = await admin(async (c) => (await c.query<{ m: number }>("SELECT (extract(hour FROM l) * 60 + extract(minute FROM l))::int AS m FROM (SELECT now() AT TIME ZONE 'Asia/Ho_Chi_Minh' AS l) t")).rows[0]?.m as number);
-    const due = await asLogin(workerUrl, null, null, async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.today_mail_due(NULL, 500)')).rows.map((r) => r.org_id));
-    if (local >= 7 * 60 + 30) {
-      expect(due).toContain(a.orgId);
-      expect(due).not.toContain(b.orgId);
-      const sorted = [...due].sort();
-      expect(due).toEqual(sorted);
-      const paged = await asLogin(workerUrl, null, null, async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.today_mail_due($1::uuid, 500)', [a.orgId])).rows.map((r) => r.org_id));
-      expect(paged).not.toContain(a.orgId);
-    } else {
-      expect(due).toEqual([]);
-    }
+    await admin((c) => c.query("UPDATE crove_kernel.today_mail SET last_sent_day = '2026-11-10' WHERE org_id = $1", [b.orgId]));
+    const due = (at: Date, after: string | null = null) =>
+      asLogin(workerUrl, null, null, async (c) => (await c.query<{ org_id: string }>('SELECT org_id FROM crove_kernel.today_mail_due($1::uuid, 500, $2::timestamptz)', [after, at])).rows.map((r) => r.org_id));
+    // At 10:00 on 2026-11-10 in Vietnam: the org with an unsent day is due and the one already sent today is not.
+    const morning = await due(MORNING);
+    expect(morning).toContain(a.orgId);
+    expect(morning).not.toContain(b.orgId);
+    expect(morning).toEqual([...morning].sort());
+    // After the first org, paging goes on after it and never repeats it.
+    expect(await due(MORNING, a.orgId)).not.toContain(a.orgId);
+    // The next day b is due again; at 06:00 in Vietnam nobody is.
+    expect(await due(NEXT_MORNING)).toContain(b.orgId);
+    expect(await due(EARLY)).toEqual([]);
+    // Opted in today (Vietnam time): not due until tomorrow.
+    const fresh = await org();
+    await set(fresh, fresh.lan, true);
+    const createdDay = await admin(async (c) => (await c.query<{ d: string }>("SELECT to_char(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD') AS d FROM crove_kernel.today_mail WHERE org_id = $1", [fresh.orgId])).rows[0]?.d as string);
+    const sameDay = new Date(`${createdDay}T09:00:00+07:00`);
+    expect(await due(sameDay)).not.toContain(fresh.orgId);
+    expect(await due(new Date(sameDay.getTime() + 24 * 3_600_000))).toContain(fresh.orgId);
   });
 
   // Self-host (AUTH_SESSION_CHECK=db): Supabase Auth keeps its own record of each email, and an address it has not confirmed is never
@@ -405,9 +411,14 @@ suite('the daily brief mail on PostgreSQL (#2406)', () => {
     // A deployment without Supabase Auth's record (an identity provider vouches for the address) mails all three the next day.
     expect(await sendAt(o, NEXT_MORNING, false)).toMatchObject({ state: 'sent', mails: 3 });
 
-    // The confirmation cannot be read (the grant is gone): fail closed, nobody is mailed in db mode.
+    // The confirmation cannot be read (the grant is gone): fail closed, nobody is mailed in db mode and no day is spent, so the next sweep
+    // tries again once the grant is back.
     await admin((c) => c.query('REVOKE SELECT (email_confirmed_at) ON auth.users FROM crove_auth_reader'));
-    expect(await sendAt(o, new Date('2026-11-12T03:00:00Z'), true)).toMatchObject({ state: 'sent', mails: 0 });
+    const later = new Date('2026-11-12T03:00:00Z');
+    await expect(sendAt(o, later, true)).rejects.toThrow();
     expect((await mails(o)).length).toBe(4);
+    expect(await admin(async (c) => (await c.query("SELECT count(*)::int AS n FROM crove_kernel.today_mail WHERE org_id = $1 AND last_sent_day = '2026-11-12'", [o.orgId])).rows[0].n)).toBe(0);
+    await admin((c) => c.query('GRANT SELECT (email_confirmed_at) ON auth.users TO crove_auth_reader'));
+    expect(await sendAt(o, later, true)).toMatchObject({ state: 'sent', mails: 1 });
   });
 });

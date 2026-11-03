@@ -12,7 +12,8 @@
 -- crove_kernel.today_mail_recipients  the address of each given opted-in member of the org in context, for the worker's send command: ids and
 --                                    addresses only. Disabled accounts have none. With p_upstream (AUTH_SESSION_CHECK=db, where Supabase Auth
 --                                    holds its own record) a member's email must also be confirmed there, as for invites (#134): an
---                                    unconfirmed one has no address, and none are returned while the reader cannot see the column.
+--                                    unconfirmed one has no address, and the call fails (55000) while the reader cannot see the column, so
+--                                    the command rolls back and no day is spent.
 --
 -- crove_kernel.today_mail_due  the orgs that have a member to mail today, in org_id order after the given one, so the worker's sweep
 --                              pages through all of them: ids only, nothing of a member. Due: an active org with a member who opted in before
@@ -63,9 +64,10 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'TODAY_MAIL_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  -- Fail closed: the confirmation cannot be read, so nobody is mailed.
+  -- Fail closed, and not as a day spent: the confirmation cannot be read, so the send command rolls back (its claim of the day with it) and the
+  -- next sweep tries again once the grant is back.
   IF p_upstream AND NOT crove_kernel.auth_email_check_ready() THEN
-    RETURN;
+    RAISE EXCEPTION 'TODAY_MAIL_AUTH_NOT_READY' USING ERRCODE = '55000';
   END IF;
   RETURN QUERY
   SELECT u.id, u.email
@@ -81,13 +83,13 @@ END $$;
 REVOKE ALL ON FUNCTION crove_kernel.today_mail_recipients(uuid[], boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.today_mail_recipients(uuid[], boolean) TO crove_worker;
 
--- The orgs whose members are due a brief, paged. Worker only: EXECUTE for crove_worker alone, plus the session_user check the other worker-only
+-- The orgs whose members are due a brief, paged, at p_now (the sweep leaves it out: now). Worker only: EXECUTE for crove_worker alone, plus the session_user check the other worker-only
 -- definers carry, so a definer running as a more privileged owner cannot be used to reach it from the API.
-CREATE OR REPLACE FUNCTION crove_kernel.today_mail_due(p_after_org uuid, p_limit integer)
+CREATE OR REPLACE FUNCTION crove_kernel.today_mail_due(p_after_org uuid, p_limit integer, p_now timestamptz DEFAULT pg_catalog.now())
 RETURNS TABLE (org_id uuid)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
-  v_local timestamp := pg_catalog.timezone('Asia/Ho_Chi_Minh', pg_catalog.now());
+  v_local timestamp := pg_catalog.timezone('Asia/Ho_Chi_Minh', p_now);
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'TODAY_MAIL_WORKER_ONLY' USING ERRCODE = '42501';
@@ -100,7 +102,7 @@ BEGIN
   SELECT t.org_id
   FROM crove_kernel.tenant t
   WHERE t.status = 'active'
-    AND t.org_id > pg_catalog.coalesce(p_after_org, '00000000-0000-0000-0000-000000000000'::uuid)
+    AND t.org_id > COALESCE(p_after_org, '00000000-0000-0000-0000-000000000000'::uuid)
     AND EXISTS (
       SELECT 1 FROM crove_kernel.today_mail m
       WHERE m.org_id = t.org_id AND (m.last_sent_day IS NULL OR m.last_sent_day < v_local::date)
@@ -109,5 +111,5 @@ BEGIN
   ORDER BY t.org_id
   LIMIT LEAST(GREATEST(p_limit, 1), 500);
 END $$;
-REVOKE ALL ON FUNCTION crove_kernel.today_mail_due(uuid, integer) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_kernel.today_mail_due(uuid, integer) TO crove_worker;
+REVOKE ALL ON FUNCTION crove_kernel.today_mail_due(uuid, integer, timestamptz) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_kernel.today_mail_due(uuid, integer, timestamptz) TO crove_worker;
