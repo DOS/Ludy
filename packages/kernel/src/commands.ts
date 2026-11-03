@@ -845,6 +845,7 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   'UNSUPPORTED_CURRENCY',
   // A sale no longer the org's own, or a purchase the org issued (#313): the org tax code changed since.
   'NOT_OWN_SALE',
+  'SALE_OTHER_ENTITY',
   'OWN_INVOICE',
   // A line's account against its direction (#430): revenue on a sale line only.
   'NOT_REVENUE_ACCOUNT',
