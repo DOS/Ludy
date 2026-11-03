@@ -10,7 +10,7 @@ Chủ một công ty một người hoặc một nhóm nhỏ họp hằng tuần
 2. xác nhận mọi người trong cuộc họp đã được báo là đang ghi;
 3. vài phút sau có **bản chép lời** (toàn bộ lời nói thành chữ, tiếng Việt trước, có mốc thời gian, có tách người nói khi nhà cung cấp hỗ trợ), một **tóm tắt** ngắn, các **quyết định** đã chốt và các **việc cần làm** (ai làm, hạn khi nào);
 4. biến việc cần làm thành việc của nhóm bằng một cú bấm mỗi việc, hoặc một cú bấm cho tất cả các việc "sạch" (đã qua kiểm tra tự động);
-5. giữ cả video nếu tích chọn cho cuộc họp đó;
+5. giữ cả video nếu tích ô "Ghi cả video" cho cuộc họp đó (mặc định chỉ ghi âm thanh);
 6. yên tâm là âm thanh tự xóa sau 30 ngày, video (nếu giữ) sau 7 ngày, bản chép lời sau thời hạn tổ chức chọn.
 
 ## Ba cách ghi cuộc họp
@@ -46,7 +46,7 @@ Khung cũng có sẵn một đường chung "gửi trang đang xem vào Ludy": c
 - **Ai đọc được cuộc họp**: người ghi và các thành viên được ghi là người dự họp. Người ghi có thể chia sẻ cho cả tổ chức. Chủ và quản trị viên thấy là có cuộc họp (ngày, độ dài, ai ghi), có quyền xóa, nhưng không đọc nội dung nếu không được chia sẻ. Các AI agent của tổ chức không đọc gì.
 - **Vy của ai thì chỉ thấy cái người đó thấy**, đúng quyết định của JOY ngày 2026-11-03 (#1677).
 - **Âm thanh và video được mã hóa** (biến thành dữ liệu không đọc được nếu không có khóa), mỗi cuộc họp một khóa cho âm thanh và một khóa riêng cho video. **Xóa bằng cách hủy khóa**: khi hết hạn hoặc khi xóa, Ludy hủy khóa, thế là mọi bản sao (cả bản cũ trong kho lưu trữ và bản sao lưu) không ai mở được nữa. Lý do: kho lưu trữ file giữ cả các phiên bản cũ và Ludy không có quyền xóa chúng.
-- **Video chỉ được giữ khi tích chọn**; không tích thì phần hình bị bỏ ngay, không lưu.
+- **Video chỉ được giữ khi tích ô "Ghi cả video"** (có trong tiện ích và trong phần ghi của ứng dụng, chọn cho từng cuộc họp); không tích thì phần hình bị bỏ ngay, không lưu.
 - **File chỉ được mở trong một "hộp cách ly" riêng** (một container mới, không có mạng, không có mật khẩu nào), nơi cũng tách âm thanh ra khỏi video để chép lời.
 - **Nhà cung cấp chép lời** thay được. Người tự cài Ludy có thể dùng mô hình chép lời chạy trên máy của mình (họ mô hình Whisper), để âm thanh không ra khỏi máy.
 
@@ -64,11 +64,12 @@ Luật Bảo vệ dữ liệu cá nhân 91/2025 và Nghị định 356/2025 (tha
 |---|---|---|---|
 | 1 | Khi nào xây lát cắt đầu tiên? | Các bước M1 đến M11 trong mốc M3 (thí điểm có trả phí), độ ưu tiên P2, sau các việc P0 và P1 của M3; phần còn lại để sau (Icebox) | Giữ trong Icebox như mặc định cũ |
 | 2 | Ai đọc được một cuộc họp? | Người ghi và thành viên dự họp; có thể chia sẻ cho cả tổ chức; chủ và quản trị viên được xóa, không được đọc nếu không chia sẻ | Làm theo đề xuất |
-| 3 | Giữ âm thanh và bản chép lời bao lâu mặc định? | Âm thanh 30 ngày sau khi có bản chép lời; bản chép lời và tóm tắt 12 tháng; tổ chức đổi được | Làm theo đề xuất |
+| 3 | Giữ âm thanh, video và bản chép lời bao lâu mặc định? | Âm thanh 30 ngày sau khi có bản chép lời; video (nếu giữ) 7 ngày, hoặc 30 ngày; bản chép lời và tóm tắt 12 tháng; tổ chức đổi được | Làm theo đề xuất |
 | 4 | Bước xác nhận đồng ý chặt đến đâu? | Bắt buộc tích xác nhận, chọn cách đã báo, có câu đọc to; chưa cần từng người ký | Làm theo đề xuất, chờ luật sư |
 | 5 | Trên Ludy Cloud, âm thanh gửi đi chép lời ở đâu? | Một mô hình họ Whisper chạy tại Việt Nam, không lưu lại âm thanh, chọn trong phần riêng của Ludy Cloud; chưa chọn thì tắt tính năng trên Cloud | Người tự cài tự chọn; Cloud để tắt |
 | 6 | Đặt ở đâu trong ứng dụng? | Thẻ "Cuộc họp" trong Ludy Notes, do Vy làm | Làm theo đề xuất |
-| 7 | Có giữ video không, giữ bao lâu? | Mặc định chỉ giữ âm thanh; giữ video cho cuộc họp nào người dùng tích chọn, khóa riêng, giữ 7 ngày (hoặc 30 ngày); chép lời luôn dùng âm thanh. Lý do: video làm tăng nhiều chỗ lưu và rủi ro riêng tư (mặt người, màn hình chia sẻ) mà không giúp gì cho bản chép lời | Chỉ giữ âm thanh, tắt video |
+
+Đã quyết: **video** (JOY, 2026-11-04: "Có option cho cái extension là được mà? mặc định voice only, có thêm nút check record video thôi"): mặc định chỉ ghi âm thanh; có ô "Ghi cả video" trong tiện ích và trong phần ghi của ứng dụng, chọn cho từng cuộc họp; video giữ lại có khóa riêng; chép lời luôn dùng âm thanh.
 
 ## Việc chỉ người làm được
 
