@@ -327,6 +327,30 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect(two.mailId).toBeTruthy();
   });
 
+  it('is deleted like any conversation: when the customer is erased (the reply mail loses its address), by the retention purge, and with the org', async () => {
+    const o = await org();
+    const asMfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) });
+    await deliver(o.address, raw({ to: o.address, messageId: '<e1@mau.test>', from: 'Khách Xoá <xoa@khach.test>' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<e2@mau.test>', from: 'Khách Giữ <giu@khach.test>' }));
+    const [erased, kept] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: erased?.id, lastSeenSeq: 1, body: 'Dạ.' });
+    expect(await rows("SELECT to_address FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: 'xoa@khach.test' }]);
+    await rt.execute('kernel.conversation.erase_contact', { conversationId: erased?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId });
+    expect((await threads(o)).map((t) => t.id)).toEqual([kept?.id]);
+    // The mail the org sent that customer keeps no address; the other customer's thread is untouched.
+    expect(await rows("SELECT to_address FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: null }]);
+    expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.n).toBe('1');
+    // The retention purge deletes an old email thread by its last message.
+    await exec(o, o.owner, 'kernel.conversation.retention_set', { retentionMonths: 6 });
+    await admin((c) => c.query("UPDATE crove_kernel.conversation SET last_message_at = now() - interval '8 months' WHERE org_id = $1", [o.orgId]));
+    const purged = await sys<{ threads: number }>(o, 'kernel.conversation.purge_expired', { limit: 100 });
+    expect(purged.threads).toBe(1);
+    expect(await threads(o)).toEqual([]);
+    // Mail that arrives again for the erased customer within the tombstone's days and dated before the erasure is not stored.
+    expect(await deliver(o.address, raw({ to: o.address, messageId: '<e3@mau.test>', from: 'Khách Xoá <xoa@khach.test>', date: new Date(Date.now() - 3_600_000).toUTCString() }))).toMatchObject({ conversation: 'ignored' });
+    expect(await threads(o)).toEqual([]);
+  });
+
   it('leaves no mail text, subject or address in an audit row or an event', async () => {
     const o = await org();
     await deliver(o.address, raw({ to: o.address, messageId: '<audit@mau.test>', from: 'Bí Mật <bimat@khach.test>', subject: 'Tiêu đề bí mật 123', body: SECRET }));

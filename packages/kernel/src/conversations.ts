@@ -1981,6 +1981,14 @@ export const conversationRetentionSet = defineCommand({
 
 // Deletes threads and what hangs on them (messages, notes and read marks go with a thread by the foreign keys). Returns counts.
 async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>): Promise<{ threads: number; messages: number }> {
+  // The mails the org sent in answer on an email thread (#2439) carry the customer's address: it is dropped with the thread (the keyed hash stays, so
+  // a bounce still suppresses the address). A mail still queued then fails at send time with no address. The subject and the merge data of such a mail
+  // go with the mail retention (13 months and 30 days after its final status), as for every mail.
+  await sql`
+    UPDATE crove_kernel.mail_message mm SET to_address = NULL
+    WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND mm.to_address IS NOT NULL
+      AND mm.source_id IN (SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
+                           WHERE m.org_id = ${ctx.orgId}::uuid AND c.kind = 'email' AND ${filter})`.execute(ctx.trx);
   const { rows } = await sql<{ threads: string; messages: string }>`
     WITH gone AS (DELETE FROM crove_kernel.conversation c WHERE c.org_id = ${ctx.orgId}::uuid AND ${filter} RETURNING c.id)
     SELECT (SELECT count(*) FROM gone)::text AS threads,
