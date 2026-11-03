@@ -58,6 +58,9 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_finance.collection_setting',
   'crove_finance.customer_collection',
+  'crove_finance.einvoice_draft',
+  'crove_finance.einvoice_draft_line',
+  'crove_finance.einvoice_series',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -156,6 +159,9 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
+let einvoiceSeq = 0;
+const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -653,6 +659,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
       };
     },
+  },
+  // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
+  'crove_finance.einvoice_draft': {
+    make: (o) => {
+      const series = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_series', values: { org_id: o.id, id: series, provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }],
+        row: { org_id: o.id, id: randomUUID(), series_id: series, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '0', vat_amount: '0', total: '0' },
+      };
+    },
+  },
+  // #2500: a line of a draft; it takes its draft's entity, and the draft is seeded with it.
+  'crove_finance.einvoice_draft_line': {
+    make: (o) => {
+      const draft = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '100', vat_amount: '10', total: '110' } }],
+        row: { org_id: o.id, id: randomUUID(), draft_id: draft, line_no: 1, description: 'RLS matrix', quantity: '1', unit_price: '100', amount: '100', vat_rate: '10%', vat_amount: '10' },
+      };
+    },
+  },
+  // #2500: a series a provider holds (template number and symbol), linked to one entity of the org (the org's default, by its trigger). Tenant roles
+  // update the description and the default flag (a column grant), so the update probes assign the flag to itself. Symbols are unique per entity.
+  'crove_finance.einvoice_series': {
+    update: { set: 'is_default = is_default' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
