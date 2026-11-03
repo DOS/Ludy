@@ -440,7 +440,7 @@ export const channelsList = defineQuery({
       .where('provider', 'not like', '%\\_ads')
       // Nor an e-invoice provider's (provider einvoice_..., ADR-0044): its external account id holds the seller's tax code and the legal entity, which only the
       // finance module's list shows, to the members of that entity.
-      .where('provider', 'not like', 'einvoice\_%')
+      .where('provider', 'not like', 'einvoice\\_%')
       // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
       // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
       .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
