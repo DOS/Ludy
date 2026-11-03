@@ -2,7 +2,6 @@ import { ArrowRight, Bot, Check, Factory, Warehouse, Wheat } from 'lucide-react'
 import type { ReactNode } from 'react';
 import { appPagePath } from '../../content/site';
 import type { Dictionary } from '../../content/vi';
-import { BookingConfirmed, BookingSlots, CalendarConnection, VySuggestion } from './crm-fragments';
 import { SalesNumberGaps, VatBreakdown } from './finance-fragments';
 import { NotesList, TodoList } from './notes-fragments';
 import { Chip, Section, SectionHead, toneOf } from './ui';
@@ -85,7 +84,7 @@ const ART = { mill: Factory, rice: Wheat, warehouse: Warehouse } as const;
 // and agents who work in it. Finance is the largest because it is what ships first.
 export function Modules({ dict }: { dict: Dictionary }) {
   const { modules } = dict;
-  const { finance, agents, tasks, notes, social, crm } = modules;
+  const { finance, agents, tasks, notes, social } = modules;
   const t = finance.taccount;
   return (
     <Section id="module" labelledBy="modules-title" tinted>
@@ -237,31 +236,16 @@ export function Modules({ dict }: { dict: Dictionary }) {
           </div>
         </Card>
 
-        {/* CRM & Calendar (#1568): the public booking page as the client sees it, and what reaches the host. */}
         <Card className="lg:col-span-2">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
             <CardHead
-              name={crm.name}
-              body={crm.body}
-              points={crm.points}
-              people={crm.people}
+              name={social.name}
+              body={social.body}
+              points={social.points}
+              people={social.people}
               deptLabel={modules.deptLabel}
-              more={{ label: `${modules.pageLink}: ${crm.name}`, href: appPagePath('crm') }}
+              more={{ label: `${modules.pageLink}: ${social.name}`, href: appPagePath('engage') }}
             />
-            <div className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-              <BookingSlots crm={crm} />
-              <div className="flex min-w-0 flex-col gap-3">
-                <BookingConfirmed crm={crm} />
-                <CalendarConnection crm={crm} />
-                <VySuggestion crm={crm} />
-              </div>
-            </div>
-          </div>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <div className="grid gap-5 lg:grid-cols-[minmax(0,20rem)_minmax(0,1fr)] lg:gap-8">
-            <CardHead name={social.name} body={social.body} people={social.people} deptLabel={modules.deptLabel} />
             {/* Scrolls sideways at phone width, so it takes keyboard focus to scroll with the arrow keys (WCAG 2.1.1,
                 #1629). It carries the week's name, which the list inside had. */}
             <div role="group" aria-label={social.weekLabel} tabIndex={0} className="min-w-0 overflow-x-auto">

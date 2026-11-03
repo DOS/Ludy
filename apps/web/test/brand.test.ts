@@ -88,7 +88,7 @@ describe('brand on the landing page (#1683)', () => {
     for (const dict of [vi, en]) {
       expect(dict.agents.team.members.map((m) => m.name), dict.lang).toEqual(team(dict.lang === 'vi' ? 'vi' : 'en').map((m) => m.name));
       expect(dict.agents.team.members[0]?.name, dict.lang).toBe(N.gm);
-      expect(dict.modules.crm.suggest, dict.lang).toContain(N.sales);
+      expect(dict.modules.sales.suggest, dict.lang).toContain(N.sales);
       expect(dict.faq.items.find((i) => /ghi sổ|post/i.test(i.q))?.a, dict.lang).toContain(N.finance);
       expect(dict.trust.title, dict.lang).toMatch(/đồng nghiệp AI|AI coworkers/i);
     }
@@ -133,8 +133,8 @@ describe('brand on the landing page (#1683)', () => {
     expect(en.modules.social.name).toBe('Ludy Engage');
   });
 
-  it('names the products Ludy Accounting and Ludy CRM', () => {
-    expect([vi.modules.finance.name, vi.modules.crm.name]).toEqual(['Ludy Kế toán', 'Ludy CRM']);
-    expect([en.modules.finance.name, en.modules.crm.name]).toEqual(['Ludy Accounting', 'Ludy CRM']);
+  it('names the products Ludy Accounting and Ludy Engage', () => {
+    expect([vi.modules.finance.name, vi.modules.social.name]).toEqual(['Ludy Kế toán', 'Ludy Engage']);
+    expect([en.modules.finance.name, en.modules.social.name]).toEqual(['Ludy Accounting', 'Ludy Engage']);
   });
 });

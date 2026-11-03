@@ -17,7 +17,7 @@ test('the toggle switches the language at the same path and a cookie keeps it ac
   expect(await lang(page)).toBe('en');
   expect((await context.cookies()).find((cookie) => cookie.name === 'ludy-lang')?.value).toBe('en');
 
-  for (const path of ['/', '/crm', '/notes']) {
+  for (const path of ['/', '/engage', '/notes']) {
     await page.goto(path);
     expect(new URL(page.url()).pathname, path).toBe(path);
     expect(await lang(page), path).toBe('en');
@@ -29,8 +29,20 @@ test('the toggle switches the language at the same path and a cookie keeps it ac
   await context.close();
 });
 
+test('the retired /crm redirects for good to /engage, in either language', async ({ browser, request }) => {
+  const response = await request.get('/crm?utm=x', { maxRedirects: 0 });
+  expect(response.status()).toBe(301);
+  expect(new URL(response.headers()['location']!, 'http://x').pathname).toBe('/engage');
+  const context = await browser.newContext({ locale: 'vi-VN' });
+  const page = await context.newPage();
+  await page.goto('/crm');
+  expect(new URL(page.url()).pathname).toBe('/engage');
+  expect(await lang(page)).toBe('vi');
+  await context.close();
+});
+
 test('old /en links redirect to the public address and show English', async ({ browser }) => {
-  for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/crm', '/crm'], ['/en/notes', '/notes']] as const) {
+  for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/crm', '/engage'], ['/en/notes', '/notes']] as const) {
     const context = await browser.newContext({ locale: 'vi-VN' });
     const page = await context.newPage();
     await page.goto(from);
@@ -65,7 +77,7 @@ test('the sitemap lists one address per page and the pages declare no /en altern
   const sitemap = await (await request.get('/sitemap.xml')).text();
   expect(sitemap).not.toMatch(/\/en(\/|<)/);
   expect(sitemap).not.toContain('xhtml:link');
-  for (const path of ['/', '/ke-toan', '/crm', '/notes']) {
+  for (const path of ['/', '/ke-toan', '/engage', '/notes']) {
     await page.goto(path);
     expect(await page.locator('link[rel="alternate"][hreflang]').count(), path).toBe(0);
     expect(await page.locator('link[rel="canonical"]').getAttribute('href'), path).toMatch(new RegExp(`https://ludy\\.vn${path === '/' ? '/?' : path}$`));
