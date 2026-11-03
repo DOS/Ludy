@@ -34,7 +34,7 @@ The pilot deployment runs finance only, so nothing here is customer-visible yet.
 | A second pipeline, weighted forecast, probability per stage | A one-person company starts with one pipeline (study section 7) |
 | Automations, workflow builder, agent templates for deals | The kernel process engine is the place, later |
 | Products or line items on a deal, quotes, invoices from a deal | Accounting line decides the hand-off; a deal links to an invoice later |
-| Person to company link, deal contacts beyond one party | `record_link` is a Phase 3 kernel item; decide with real demand |
+| Deal contacts beyond one party | `record_link` is a Phase 3 kernel item; decide with real demand. (The person to company link is built, section 4.6, without it.) |
 | Record sharing, teams, territories | A one-person company has no sharing need |
 | `/v1`, `/mcp`, outbound webhooks, import from another CRM | Not built; file import is enough |
 | Native mobile app | The web app is phone-friendly (section 5); a native app waits |
@@ -126,6 +126,14 @@ An open deal that nobody changed for N days, or whose expected close has passed,
 ### 4.5 Phone key
 
 Matching on phone needs one form for `0912...`, `+84 912...` and `84912...`. A pure function `phoneKey()` in `@crove/kernel-contract` (strip spaces and punctuation, turn a leading `+84` or `84` into `0`) has an immutable SQL twin `crove_kernel.phone_key(text)` and an expression index `party (org_id, crove_kernel.phone_key(phone))`; a test runs both on one table of cases. Stored `party.phone` is not rewritten.
+
+### 4.6 The company of a person (#2438, CRM-Q5, as built)
+
+A person works at one company: `crove_kernel.party.company_id`, a nullable column of the person that points at a company of the same org (`20261121180000_crove_kernel_party_company_link.sql`). It is a column, not a `record_link` row, because `record_link` is an unbuilt Phase 3 table (a factory test, an `org_purge` carry, a polymorphic row the database cannot check) and `party` already has the convention: `duplicate_of` (#887) is a self-reference led by `org_id`, a CHECK against itself, a partial index and a guard trigger. `company_id` follows it: the foreign key `(org_id, company_id)` names a party of this org only; `party_company_not_self` and `party_company_person` (only a person has a company) are CHECKs; `party_company_guard` refuses a company that is not an organization or is merged into another (`PARTY_COMPANY_INVALID`); `party_company_kind_guard` keeps an organization people point at from becoming a person. No table is added, so no row-level policy, factory or `org_purge` change. A company merged into another later (`kernel.party.mark_duplicate`) keeps its people pointing at it and every read shows them under the company kept; nothing is re-pointed. An erased party (`kernel.personal_data.erase`, a party with no document) loses its link with its name.
+
+`kernel.party.set_company` (R1, internal; owners, admins and members; no agent) takes `{ partyId, companyId | null, version }`: set, change or clear in one action, from the person's page or the company's. It locks the person and the company in id order and refuses, each with its own typed error, an unknown party or one of another org (`PARTY_NOT_FOUND`), a party that is not a person (`PARTY_NOT_PERSON`), a company that is a person (`PARTY_COMPANY_NOT_ORGANIZATION`), a merged company (`PARTY_IS_DUPLICATE`, naming the one kept), itself, and a stale `version` (`PARTY_CHANGED`). The person's `version` rises, the audit row holds the ids only (the party, the new company, the previous one) and the timelines of the person and of both companies get a fixed sentence that names no one. The same link again changes nothing.
+
+`crm.contact.list` adds, to each contact, `company` (the company of a person, read through a merge), `peopleCount` (the people who work at a company, the ones linked to a company merged into it included) and `openDeals`; the `crm.party` filter scope has a `company` field (a company, or none). The screens are two: **Người liên hệ** (`/contacts`, the kind `person`: name, company, phone, email) and **Công ty** (`/companies`, the kind `organization`: name, tax code, people, open deals), the same component with the kind fixed by the screen, so a saved view keeps its filters and never the kind. A row's panel shows the link and changes it (a picker over the same list, by kind): a person's panel the company, a company's panel its people, each removable, with a picker to add one. Kế toán is untouched: its customer and vendor reads select their own columns and its key stays the tax code. Not in this slice, as steps of #2438: the import's company column (matched by tax code, then exact name, an unknown name staged for confirmation) and the company suggestion of the AI coworker (deterministic first, the model only ranks name matches).
 
 ## 5. Commands, queries and risk
 
@@ -225,5 +233,5 @@ Open questions, each with the default the build takes if nobody answers:
 | CRM-Q2 | Does an import need an undo? | PO | No in slice 1; the audit row lists the counts, and wrong rows are edited or marked duplicate. A 24-hour undo needs a rule for parties that gained notes or deals since |
 | CRM-Q3 | Should a won deal offer "create an invoice"? | Accounting line | Not in slice 1; a link between a deal and a sales invoice is its own plan |
 | CRM-Q4 | Is a pipeline of four open stages the right default for Vietnamese SMEs, and do we want a fixed list of lost reasons? | PO | The four stages of 4.1 and a free-text reason |
-| CRM-Q5 | Should a person be linked to the company they work for? | PO | Not in slice 1; deals sit on either kind of party |
+| CRM-Q5 | Should a person be linked to the company they work for? | PO | Answered yes by the design owner's layout of the one app (#2435, #2438): a person works at one company, section 4.6. Not in slice 1 |
 | CRM-Q6 | Should the contact list hide vendors that only exist from purchase invoices? | PO | No: it shows every party; the `has_open_deal` filter and views cover the rest |

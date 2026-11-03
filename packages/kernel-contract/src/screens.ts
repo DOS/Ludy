@@ -124,6 +124,8 @@ const CRM_SCREENS = {
     { path: 'deals' },
     { path: 'contacts' },
     { path: 'contacts/import' },
+    // The companies, apart from the people (#2438): the same parties, the kind `organization`.
+    { path: 'companies' },
     { path: 'crm' },
     { path: 'crm/bookings' },
     { path: 'crm/deals' },
@@ -135,6 +137,8 @@ const CRM_SCREENS = {
   nav: [
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
     { app: 'social', group: 'sales', path: 'contacts', label: 'contacts' },
+    // The companies the people work at (#2438).
+    { app: 'social', group: 'sales', path: 'companies', label: 'companies' },
     // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
     { app: 'social', group: 'sales', path: 'deals', label: 'deals' },
     { app: 'social', group: 'sales', path: 'bookings', label: 'bookings' },
