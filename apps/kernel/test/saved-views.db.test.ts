@@ -539,6 +539,8 @@ suite('saved views on PostgreSQL (CRM K3, #2227)', () => {
         'crm.deal:expected_close:overdue', 'crm.deal:expected_close:within_next_days', 'crm.deal:expected_close:is_empty', 'crm.deal:created:within_last_days',
         'crm.party:search:contains', 'crm.party:kind:is', 'crm.party:has_email:is', 'crm.party:has_phone:is', 'crm.party:has_tax_code:is',
         'crm.party:has_open_deal:is', 'crm.party:created:within_last_days',
+        // The company of a person (#2438) filters through the party's company link, which this fixture has no column for: contacts.db.test.ts runs both.
+        'crm.party:company:is', 'crm.party:company:is_empty',
       ]);
       const registry = Object.entries(SAVED_VIEW_SCOPES).flatMap(([scope, spec]) =>
         Object.entries(spec.fields).flatMap(([field, f]) => Object.keys(f.ops).map((op) => `${scope}:${field}:${op}`)),

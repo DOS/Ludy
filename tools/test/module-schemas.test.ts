@@ -75,6 +75,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['ads', 'crm', 'finance', 'notes', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
   },
+  'packages/kernel/src/parties.ts': {
+    modules: ['crm', 'finance'],
+    why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
+  },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'notes', 'social'],
     why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678)',

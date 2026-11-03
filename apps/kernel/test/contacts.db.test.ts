@@ -410,7 +410,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
 
     it('links a person to a company from either side, shows it on both lists, changes it and clears it, with an audit row of ids only', async () => {
       const lan = await create(o, o.lan, { name: 'Lan Trần', phone: '0912 345 678' });
-      const acme = await company('Công ty Acme', { taxCode: '0102030405' });
+      const acme = await company('Công ty Acme', { taxCode: '0102030406' });
       const beta = await company('Công ty Beta');
       expect(await row(lan.partyId)).toMatchObject({ kind: 'person', company: null, peopleCount: 0 });
       const linked = await link(o.lan, lan.partyId, acme.partyId, lan.version);
@@ -431,7 +431,7 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       // The audit rows hold ids and no name, number or tax code.
       const audit = (await admin((c) => c.query<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.party.set_company' AND outcome = 'ok' ORDER BY id", [o.orgId]))).rows;
       expect(audit.filter((r) => 'partyId' in r.detail).map((r) => Object.keys(r.detail).sort())).toEqual([['companyId', 'partyId', 'previousCompanyId'], ['companyId', 'partyId', 'previousCompanyId'], ['companyId', 'partyId', 'previousCompanyId']]);
-      expect(JSON.stringify(audit)).not.toMatch(/Acme|Beta|Lan Trần|0102030405|0912/);
+      expect(JSON.stringify(audit)).not.toMatch(/Acme|Beta|Lan Trần|0102030406|0912/);
       expect(audit.filter((r) => 'partyId' in r.detail)[2]?.detail).toMatchObject({ partyId: lan.partyId, companyId: null, previousCompanyId: beta.partyId });
       // The link again, with nothing to change, wrote no fact.
       expect(audit.filter((r) => !('partyId' in r.detail))).toHaveLength(1);
