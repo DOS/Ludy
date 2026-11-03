@@ -476,6 +476,24 @@ export type EInvoiceDraftTable = Refine<
   { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// Stock (#2512, ADR-0045 point 1): the kind of an item, the trade it is sold in, and where a move of stock comes from.
+export const STOCK_ITEM_KINDS = ['goods'] as const;
+export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
+export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
+export type StockTrade = (typeof STOCK_TRADES)[number];
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal'] as const;
+export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
+export type StockItemTable = Refine<
+  G.FinanceStockItemTable,
+  { kind: ColumnType<StockItemKind, StockItemKind | undefined, G.NotGranted>; trade: Generated<StockTrade>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+export type StockAliasTable = Refine<G.FinanceStockAliasTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type StockMoveTable = Refine<
+  G.FinanceStockMoveTable,
+  { source_type: ColumnType<StockMoveSource, StockMoveSource, G.NotGranted>; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 // A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
 export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
 export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
@@ -983,6 +1001,9 @@ type Refined = Tables<{
   'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.einvoice_connection': EInvoiceConnectionTable;
+  'crove_finance.stock_item': StockItemTable;
+  'crove_finance.stock_alias': StockAliasTable;
+  'crove_finance.stock_move': StockMoveTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

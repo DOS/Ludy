@@ -43,6 +43,9 @@ export const financeManifest = defineModule({
       purchase_document_void: columns(['org_id', 'document_id', 'reversal_entry_id', 'reason', 'voided_by', 'created_at', 'legal_entity_id']),
       purchase_line: columns(['org_id', 'document_id', 'line_no', 'description', 'unit', 'quantity', 'unit_price', 'amount', 'vat_rate', 'vat_amount', 'debit_account', 'credit_account', 'legal_entity_id']),
       purchase_tax_rate: columns(['org_id', 'document_id', 'row_no', 'vat_rate', 'taxable_amount', 'vat_amount', 'legal_entity_id']),
+      stock_alias: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'source', 'alias_key', 'factor', 'created_by', 'created_at']),
+      stock_item: columns(['org_id', 'id', 'legal_entity_id', 'code', 'name', 'unit', 'kind', 'stock_account', 'trade', 'active', 'created_by', 'created_at', 'updated_at']),
+      stock_move: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'move_date', 'quantity', 'source_type', 'document_id', 'line_no', 'reverses_move_id', 'created_by', 'created_at']),
       vat_return_filed: columns(['org_id', 'id', 'period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'marked_by', 'created_at', 'legal_entity_id']),
       vendor_account_rule: columns(['org_id', 'party_id', 'debit_account', 'confirmed_by', 'updated_at']),
     },
@@ -72,6 +75,9 @@ export const financeManifest = defineModule({
     { type: 'finance.journal_entry', table: 'journal_entry', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.journal_voucher', table: 'journal_voucher', legalEntityScoped: true, numbering: { docType: 'finance.journal_voucher' }, audit: 'append_only' },
     { type: 'finance.purchase_document', table: 'purchase_document', legalEntityScoped: true, audit: 'append_only' },
+    { type: 'finance.stock_item', table: 'stock_item', legalEntityScoped: true, audit: 'command' },
+    // Append-only in the database like the books (no grant, a guard that only the org purge passes); the manifest check knows only the kernel's plain guard, so it is declared a command's.
+    { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'command' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.finance,

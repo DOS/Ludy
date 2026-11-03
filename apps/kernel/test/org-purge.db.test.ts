@@ -150,6 +150,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
         [org.orgId, einvoiceChannel, 'einvoice_sandbox', `einvoice-${tag}`, 'Hóa đơn thử', owner],
       );
       await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', '0101234564')`, [org.orgId, einvoiceChannel]);
+      // Stock (#2512): an item, the name a source uses for it and two moves (the second a reversal of the first). The moves are append-only: the purge deletes them
+      // under its mark, before the alias and the item they reference.
+      const stockItem = (
+        await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_item (org_id, code, name, unit, stock_account) VALUES ($1, 'SP-PURGE', 'Hàng thử', 'cái', '156') RETURNING id`, [org.orgId])
+      ).rows[0]?.id;
+      await c.query(`INSERT INTO crove_finance.stock_alias (org_id, item_id, alias_key) VALUES ($1, $2, 'hàng thử')`, [org.orgId, stockItem]);
+      const stockIn = (await c.query<{ id: string }>(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date, 5, 'manual') RETURNING id`, [org.orgId, stockItem])).rows[0]?.id;
+      await c.query(`INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, current_date, -5, 'reversal', $3)`, [org.orgId, stockItem, stockIn]);
       // An approved Social post (append-only approval, #1032): its approval, variant, post and channel connection.
       const connection = randomUUID();
       await c.query(
@@ -408,7 +416,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     const after = await snapshot(s.org.orgId);
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
     // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500).
-    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection']);
+    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection', 'crove_finance.stock_item', 'crove_finance.stock_alias', 'crove_finance.stock_move']);
     for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && !workingRows.has(t))) {
       expect([table, after[table]]).toEqual([table, before[table]]);
     }
@@ -444,7 +452,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
     // its parent and assignee position, the approved variant, its post and channel connection.
-    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection']) {
+    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection', 'crove_finance.stock_move', 'crove_finance.stock_alias', 'crove_finance.stock_item']) {
       expect([table, before[table]]).not.toEqual([table, 0]);
       expect([table, after[table] ?? 0]).toEqual([table, 0]);
     }
@@ -506,6 +514,9 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_kernel.channel_connection': 3,
             'crove_finance.bank_feed_account': 1,
             'crove_finance.einvoice_connection': 1,
+            'crove_finance.stock_move': 2,
+            'crove_finance.stock_alias': 1,
+            'crove_finance.stock_item': 1,
             'crove_finance.bank_account_number': 1,
             'crove_social.push_subscription': 1,
             'crove_social.saved_view': 1,
@@ -628,7 +639,9 @@ suite('org purge on PostgreSQL (#1024)', () => {
       approvals: await count('crove_social.post_approval', s.org.orgId),
       drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
       draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
+      stockMoves: await count('crove_finance.stock_move', s.org.orgId),
     };
+    expect(before.stockMoves).toBe(2);
     expect(before.comments).toBeGreaterThan(0);
     expect(before.approvals).toBeGreaterThan(0);
     expect(before.drafts).toBe(1);
@@ -645,6 +658,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
         'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1',
         "UPDATE crove_finance.einvoice_draft SET state = 'draft', idempotency_key = gen_random_uuid() WHERE org_id = $1",
         "UPDATE crove_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1",
+        'DELETE FROM crove_finance.stock_move WHERE org_id = $1',
+        'UPDATE crove_finance.stock_move SET quantity = 1 WHERE org_id = $1',
       ]) {
         await client.query('BEGIN');
         try {
@@ -668,6 +683,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
       approvals: await count('crove_social.post_approval', s.org.orgId),
       drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
       draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
+      stockMoves: await count('crove_finance.stock_move', s.org.orgId),
     }).toEqual(before);
     expect(await one('SELECT state, provider_ref FROM crove_finance.einvoice_draft WHERE org_id = $1', [s.org.orgId])).toEqual({ state: 'issued', provider_ref: 'sbx-purge' });
   });
