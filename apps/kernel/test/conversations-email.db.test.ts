@@ -214,6 +214,8 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect(fresh).not.toBe(o.address);
     await expect(deliver(o.address, raw({ to: o.address, messageId: '<rot2@mau.test>' }))).rejects.toMatchObject({ code: 'UNKNOWN_RECIPIENT' });
     expect(await deliver(fresh, raw({ to: fresh, messageId: '<rot3@mau.test>' }))).toMatchObject({ conversation: 'stored' });
+    // The address the delivery was for decides: a retired one is not replaced by a live one named in the headers.
+    await expect(deliver(o.address, raw({ to: fresh, messageId: '<rot4@mau.test>' }))).rejects.toMatchObject({ code: 'UNKNOWN_RECIPIENT' });
     await deliver(o.document, raw({ to: o.document, subject: 'Hoá đơn', body: 'Gửi anh chị hoá đơn.' }));
     expect((await rows('SELECT 1 FROM crove_kernel.inbound_message WHERE org_id = $1', [o.orgId])).length).toBe(1);
     const ledger = await rows<{ kind: string; retired: boolean }>('SELECT kind, retired_at IS NOT NULL AS retired FROM crove_kernel.inbound_address WHERE org_id = $1 ORDER BY kind, created_at', [o.orgId]);

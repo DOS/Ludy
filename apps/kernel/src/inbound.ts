@@ -164,9 +164,9 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   }
   const email = parsed.email;
   const recipients = [job.recipient, email.deliveredTo, ...email.to].filter((r): r is string => typeof r === 'string' && r !== '');
-  // The tokens this delivery was for, the envelope recipient first (it is the address the sender used), then the headers'.
-  const tokens = [...new Set(recipients.map((r) => tokenOf(r, domain)).filter((t): t is string => t !== null))];
-  const token = tokens[0];
+  // The address this delivery was for: the first of ours, the envelope recipient before the headers'. It alone decides the org, so a retired address is
+  // never replaced by another of ours that a header names.
+  const token = recipients.map((r) => tokenOf(r, domain)).find((t) => t !== null);
   if (!token) throw unknownRecipient();
 
   // The org is resolved now, when the message is processed, not when the API accepted it. So mail queued for a token
@@ -175,13 +175,10 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   // is counted for the org that owned a retired token (#139): only the count, nothing about the message.
   // The Inbox's own address (#2439) is a token of its own, so it is tried first and a mail to it never reaches the invoice reader.
   const routed = await deps.runtime.orgless(async (db) => {
-    for (const candidate of tokens) {
-      const inbox = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_conversation_token(${candidate}) AS org_id`.execute(db);
-      if (inbox.rows[0]?.org_id) return { orgId: inbox.rows[0].org_id, toConversation: true };
-      const documents = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${candidate}) AS org_id`.execute(db);
-      if (documents.rows[0]?.org_id) return { orgId: documents.rows[0].org_id, toConversation: false };
-    }
-    return null;
+    const inbox = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_conversation_token(${token}) AS org_id`.execute(db);
+    if (inbox.rows[0]?.org_id) return { orgId: inbox.rows[0].org_id, toConversation: true };
+    const documents = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${token}) AS org_id`.execute(db);
+    return documents.rows[0]?.org_id ? { orgId: documents.rows[0].org_id, toConversation: false } : null;
   });
   if (!routed) {
     await countDrop(deps.runtime, token);
