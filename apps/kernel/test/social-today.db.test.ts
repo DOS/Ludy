@@ -140,12 +140,14 @@ suite('social.today: what needs the member in Social (#2387)', () => {
     expect(draft.postId).toBeTruthy();
   });
 
-  it('warns owners and admins of channels whose sign-in expired or broke, and no one else, leaving out ad accounts', async () => {
+  it('warns owners and admins of channels whose sign-in expired or broke, and no one else, leaving out ad accounts and e-invoice providers', async () => {
     const o = await org();
     const a = await connection(o.orgId, o.owner);
     const b = await connection(o.orgId, o.owner);
     const ads = await connection(o.orgId, o.owner, 'sandbox_ads');
-    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads]]));
+    // An e-invoice provider's connection is the finance module's: its sign-in breaking is not a Social channel to reconnect.
+    const einvoice = await connection(o.orgId, o.owner, 'einvoice_sandbox');
+    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = ANY ($1::uuid[])", [[a, ads, einvoice]]));
     await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'error' WHERE id = $1", [b]));
     const expected = [{ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: 2 } }, count: 2, severity: 'warn', href: '/social/channels' }];
     expect(await today(o, o.owner)).toEqual(expected);

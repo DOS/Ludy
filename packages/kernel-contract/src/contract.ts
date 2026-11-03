@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceSeries, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -1603,6 +1603,22 @@ export const contract = {
       list: oc.output(z.array(zEInvoiceSeries)),
       // EINVOICE_DISABLED (404) when the sandbox is off; LEGAL_ENTITY_NOT_ALLOWED (403) for an entity the caller may not see.
       sync: oc.input(zEInvoiceSeriesSync).output(zEInvoiceSeriesSynced),
+      // The entity's default series: owners and admins; EINVOICE_SERIES_NOT_FOUND (404).
+      setDefault: oc.input(zEInvoiceSeriesSetDefault).output(z.object({ series: z.array(zEInvoiceSeries) })),
+    },
+    // The org's own account at a provider (#2501, ADR-0044 point 2). The credential is sealed in the kernel and never in an answer, a log or an audit row. Every member
+    // reads the connections and their last test; owners and admins connect, test and disconnect.
+    providers: oc.output(z.array(zEInvoiceProviderInfo)),
+    connections: {
+      list: oc.output(z.array(zEInvoiceConnection)),
+      // EINVOICE_DISABLED (404) for a provider this deployment does not offer, EINVOICE_SIGNING_TOKEN (422) for a provider whose signature needs the seller's own token,
+      // EINVOICE_FIELDS (422) when the fields are not the adapter's, EINVOICE_TAX_CODE_NEEDED and EINVOICE_TAX_CODE_MISMATCH (422), EINVOICE_CONNECTION_EXISTS (409),
+      // FORBIDDEN (403) unless owner or admin.
+      connect: oc.input(zEInvoiceConnect).output(z.object({ id: zId })),
+      // Reads the provider's templates and series and records the state; the series it finds are added to the connection's entity. EINVOICE_PROVIDER_NOT_READY (503)
+      // for a provider that is reached through the worker.
+      test: oc.input(z.object({ id: zId })).output(zEInvoiceConnectionTested),
+      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
     },
     drafts: {
       // The drafts of one legal entity, or of every entity the caller may see when none is named.

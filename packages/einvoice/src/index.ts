@@ -129,6 +129,9 @@ export interface EInvoiceProvider {
   readonly id: EInvoiceProviderId;
   // The hosts this adapter's fetch is bound to.
   readonly hosts: readonly string[];
+  // The fields the org types to connect its own account (a user, a password, an app key): their names, in the order the form shows them. They are
+  // sealed together at the edge and reach the adapter only as the opaque secret of a call; the offline sandbox needs none.
+  readonly connectFields: readonly string[];
   readonly capabilities: EInvoiceCapabilities;
   testConnection(secret: string): Promise<ConnectionState>;
   listTemplates(secret: string): Promise<EInvoiceTemplate[]>;
@@ -323,6 +326,7 @@ export function createSandboxEInvoiceProvider(options: SandboxOptions = {}): { p
   const provider: EInvoiceProvider = {
     id: 'sandbox',
     hosts: [],
+    connectFields: [],
     capabilities: {
       cancel: false,
       draftCall: false,

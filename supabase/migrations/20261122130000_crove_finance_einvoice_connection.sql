@@ -1,0 +1,87 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
+-- Crove finance (issue #2501, ADR-0044 point 2, plan einvoice-issue.md section 7): an org's connection to an e-invoice provider. Idempotent; applied files stay
+-- untouched.
+--
+-- einvoice_connection   one row per connected provider account: the channel connection that holds the sealed credential (crove_kernel.channel_connection and
+--                       crove_kernel.credential, ADR-0025: provider `einvoice_<adapter>`, one per org, entity and seller tax code), the seller's tax code, the legal
+--                       entity it issues for, and the result of the last connection test as a state (never the provider's text). The row holds no credential and
+--                       no provider message. Every member of the entity reads it; owners and admins connect, test and disconnect.
+--
+-- A tenant role updates only the last test (two columns); the entity, the channel connection, the provider and the tax code are fixed for the row's life. A
+-- disconnect revokes the channel connection (which drops the credential) and deletes this row; a reconnect is a new channel connection and a new row.
+SET LOCAL lock_timeout = '2s';
+
+CREATE TABLE IF NOT EXISTS crove_finance.einvoice_connection (
+  org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,
+  id uuid NOT NULL DEFAULT crove_kernel.uuid_v7(),
+  legal_entity_id uuid NOT NULL,
+  channel_connection_id uuid NOT NULL,
+  -- The channel layer's provider id: `einvoice_` and the adapter (`einvoice_sandbox`); it equals the channel connection's.
+  provider text NOT NULL CHECK (provider ~ '^einvoice_[a-z][a-z0-9_]{0,21}$'),
+  -- The seller the provider account issues for: a tax code of 10 digits, 10 and a branch suffix, or 12 digits (an individual), as the entity's.
+  seller_tax_code text NOT NULL CHECK (seller_tax_code ~ '^([0-9]{10}(-[0-9]{3})?|[0-9]{12})$'),
+  last_test_state text CHECK (last_test_state IN ('works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person')),
+  last_tested_at timestamptz,
+  created_by uuid,
+  created_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  PRIMARY KEY (org_id, id),
+  CONSTRAINT einvoice_connection_test_ck CHECK ((last_test_state IS NULL) = (last_tested_at IS NULL)),
+  CONSTRAINT einvoice_connection_channel_uq UNIQUE (org_id, channel_connection_id),
+  -- One connection per entity, provider and seller tax code.
+  CONSTRAINT einvoice_connection_account_uq UNIQUE (org_id, legal_entity_id, provider, seller_tax_code),
+  CONSTRAINT einvoice_connection_entity_fk FOREIGN KEY (org_id, legal_entity_id) REFERENCES crove_kernel.legal_entity (org_id, id),
+  CONSTRAINT einvoice_connection_channel_fk FOREIGN KEY (org_id, channel_connection_id) REFERENCES crove_kernel.channel_connection (org_id, id),
+  CONSTRAINT einvoice_connection_member_fk FOREIGN KEY (org_id, created_by) REFERENCES crove_kernel.tenant_member (org_id, user_id) ON DELETE SET NULL (created_by)
+);
+CREATE INDEX IF NOT EXISTS einvoice_connection_entity_idx ON crove_finance.einvoice_connection (legal_entity_id, org_id);
+CREATE INDEX IF NOT EXISTS einvoice_connection_created_by_idx ON crove_finance.einvoice_connection (org_id, created_by) WHERE created_by IS NOT NULL;
+SELECT crove_kernel.apply_tenant_rls('crove_finance.einvoice_connection');
+REVOKE UPDATE ON crove_finance.einvoice_connection FROM crove_tenant;
+GRANT UPDATE (last_test_state, last_tested_at) ON crove_finance.einvoice_connection TO crove_tenant;
+DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.einvoice_connection;
+CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id ON crove_finance.einvoice_connection
+  FOR EACH ROW EXECUTE FUNCTION crove_finance.legal_entity_fill();
+ALTER TABLE crove_finance.einvoice_connection ENABLE ALWAYS TRIGGER b_legal_entity;
+DROP POLICY IF EXISTS le_scope ON crove_finance.einvoice_connection;
+CREATE POLICY le_scope ON crove_finance.einvoice_connection AS RESTRICTIVE FOR ALL TO crove_tenant
+  USING ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]))
+  WITH CHECK ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) OR legal_entity_id::text = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]));
+-- Owners and admins write (the same people who may connect a channel); every member reads. The system context writes too (the matrix's own-org control and a
+-- later job that records a test), never another org's rows.
+DROP POLICY IF EXISTS einvoice_connection_insert ON crove_finance.einvoice_connection;
+CREATE POLICY einvoice_connection_insert ON crove_finance.einvoice_connection AS RESTRICTIVE FOR INSERT TO crove_tenant
+  WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_connection.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
+DROP POLICY IF EXISTS einvoice_connection_update ON crove_finance.einvoice_connection;
+CREATE POLICY einvoice_connection_update ON crove_finance.einvoice_connection AS RESTRICTIVE FOR UPDATE TO crove_tenant
+  USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_connection.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')))
+  WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_connection.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
+DROP POLICY IF EXISTS einvoice_connection_delete ON crove_finance.einvoice_connection;
+CREATE POLICY einvoice_connection_delete ON crove_finance.einvoice_connection AS RESTRICTIVE FOR DELETE TO crove_tenant
+  USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
+    OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_connection.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
+
+-- The row's provider is its channel connection's, and a seller tax code that the entity has is the entity's, and never another entity's: a connection cannot be filed
+-- under another provider than the one that holds the credential, nor issue for a taxpayer other than the entity's. Runs as the writer, which reads the channel connection and the entity
+-- through its own policies: a row it cannot see is left to the foreign keys and the policies.
+CREATE OR REPLACE FUNCTION crove_finance.einvoice_connection_guard() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM crove_kernel.channel_connection c WHERE c.org_id = NEW.org_id AND c.id = NEW.channel_connection_id AND c.provider <> NEW.provider) THEN
+    RAISE EXCEPTION 'EINVOICE_CONNECTION_PROVIDER' USING ERRCODE = '42501';
+  END IF;
+  IF EXISTS (SELECT 1 FROM crove_kernel.legal_entity e WHERE e.org_id = NEW.org_id AND e.id = NEW.legal_entity_id AND e.tax_code IS NOT NULL AND e.tax_code <> NEW.seller_tax_code) THEN
+    RAISE EXCEPTION 'EINVOICE_CONNECTION_TAX_CODE' USING ERRCODE = '42501';
+  END IF;
+  -- An entity with no tax code takes a typed one, never another entity's.
+  IF EXISTS (SELECT 1 FROM crove_kernel.legal_entity o WHERE o.org_id = NEW.org_id AND o.id <> NEW.legal_entity_id AND o.tax_code = NEW.seller_tax_code) THEN
+    RAISE EXCEPTION 'EINVOICE_CONNECTION_TAX_CODE' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.einvoice_connection_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS einvoice_connection_guard ON crove_finance.einvoice_connection;
+CREATE TRIGGER einvoice_connection_guard BEFORE INSERT ON crove_finance.einvoice_connection
+  FOR EACH ROW EXECUTE FUNCTION crove_finance.einvoice_connection_guard();

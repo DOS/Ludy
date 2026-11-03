@@ -476,6 +476,14 @@ export type EInvoiceDraftTable = Refine<
   { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
+export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
+export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
+export type EInvoiceConnectionTable = Refine<
+  G.FinanceEinvoiceConnectionTable,
+  { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
@@ -974,6 +982,7 @@ type Refined = Tables<{
   'crove_finance.fixed_asset': FixedAssetTable;
   'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.einvoice_draft': EInvoiceDraftTable;
+  'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

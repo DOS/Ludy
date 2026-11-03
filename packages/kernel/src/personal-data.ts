@@ -171,6 +171,9 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
   },
   // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
+  // An e-invoice provider connection (#2501): the tax code of the entity it issues for, which is a household's owner's national ID when the entity is a household. The row
+  // is deleted when the connection is closed and with the org's working rows, so there is nothing to keep.
+  'crove_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
   'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
