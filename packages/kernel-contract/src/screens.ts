@@ -46,6 +46,8 @@ const FINANCE_SCREENS = {
     { path: 'bank/matched' },
     { path: 'journal/opening-balances' },
     { path: 'vouchers' },
+    // The drafts of the sales e-invoices a business will issue (#2500).
+    { path: 'sales-invoices' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
@@ -62,6 +64,7 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'books', path: 'documents', label: 'documents' },
     { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
+    { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
     { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
     { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
     { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },

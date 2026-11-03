@@ -15,10 +15,11 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider } from '@crove/einvoice';
-import { zId, zLocalDate } from '@crove/kernel-contract';
+import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId, type EInvoiceDraft, type EInvoiceDraftCheck, type EInvoiceDraftLine, type EInvoiceDraftSummary, type EInvoiceSeries, type EInvoiceSeriesSynced } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { BUYER_KINDS, checkDraft, computeDraft, type ComputedDraft, type DraftInput, type DraftIssue } from './domain/einvoice-draft.ts';
+import { money } from '@crove/l10n-vn';
+import { checkDraft, computeDraft, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 
@@ -26,89 +27,12 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
-// A draft holds at most this many lines (the providers' own limits are 400 or less).
-export const DRAFT_MAX_LINES = 200;
-
-const zText = (max: number) => z.string().trim().max(max);
-const zDecimal = z.string().regex(/^\d{1,12}(\.\d{1,6})?$/);
-
-const zBuyerInput = z.strictObject({
-  kind: z.enum(BUYER_KINDS),
-  partyId: zId.nullable(),
-  taxCode: zText(20).nullable(),
-  name: zText(400).nullable(),
-  address: zText(500).nullable(),
-  email: zText(254).nullable(),
-});
-const zLineInput = z.strictObject({
-  description: zText(500),
-  unit: zText(50).nullable(),
-  quantity: zDecimal,
-  unitPrice: zDecimal,
-  vatRate: zText(20),
-});
-
-export const zEInvoiceDraftSave = z.strictObject({
-  // The draft to replace; absent makes a new one.
-  draftId: zId.nullable(),
-  legalEntityId: zId.nullable(),
-  date: zLocalDate,
-  seriesId: zId.nullable(),
-  buyer: zBuyerInput,
-  lines: z.array(zLineInput).max(DRAFT_MAX_LINES),
-});
-export type EInvoiceDraftSave = z.infer<typeof zEInvoiceDraftSave>;
-
-export interface EInvoiceSeries {
-  id: string;
-  legalEntityId: string;
-  provider: string;
-  templateNo: string;
-  symbol: string;
-  description: string;
-  isDefault: boolean;
-}
-
-export interface EInvoiceDraftLine {
-  lineNo: number;
-  description: string;
-  unit: string | null;
-  quantity: string;
-  unitPrice: string;
-  amount: string;
-  vatRate: string;
-  vatAmount: string;
-}
-
-export interface EInvoiceDraft {
-  id: string;
-  legalEntityId: string;
-  state: string;
-  seriesId: string | null;
-  date: string;
-  currency: string;
-  buyer: { kind: string; partyId: string | null; taxCode: string | null; name: string | null; address: string | null; email: string | null };
-  lines: EInvoiceDraftLine[];
-  subtotal: string;
-  vatAmount: string;
-  total: string;
-  createdAt: string;
-  updatedAt: string;
-  issues: DraftIssue[];
-}
-
-export interface EInvoiceDraftSummary {
-  id: string;
-  state: string;
-  date: string;
-  buyerName: string | null;
-  total: string;
-  issueCount: number;
-}
-
 const pgCode = (error: unknown) => (error as { code?: string } | null)?.code;
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
+
+// A decimal read from the database (numeric keeps its scale: '200000.0000') as the API writes it ('200000').
+const plain = (value: string): string => money(value).toFixed();
 
 async function loadSeries(ctx: Ctx): Promise<EInvoiceSeries[]> {
   const rows = await ctx.trx
@@ -131,12 +55,12 @@ export const einvoiceSeriesList = defineQuery({
 
 export const einvoiceSeriesSync = defineCommand({
   name: 'finance.einvoice_series.sync',
-  input: z.strictObject({ legalEntityId: zId.nullable(), provider: z.literal('sandbox') }),
+  input: zEInvoiceSeriesSync,
   // It adds rows that name a template and a symbol the provider already holds; no invoice, no money.
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
-  handler: async (ctx, input): Promise<{ added: number; series: EInvoiceSeries[] }> => {
+  handler: async (ctx, input): Promise<EInvoiceSeriesSynced> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
     const { provider } = createSandboxEInvoiceProvider();
     const templates = await provider.listTemplates(SANDBOX_EINVOICE_SECRET);
@@ -183,11 +107,11 @@ async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceD
     lineNo: l.line_no,
     description: l.description,
     unit: l.unit,
-    quantity: l.quantity,
-    unitPrice: l.unit_price,
-    amount: l.amount,
+    quantity: plain(l.quantity),
+    unitPrice: plain(l.unit_price),
+    amount: plain(l.amount),
     vatRate: l.vat_rate,
-    vatAmount: l.vat_amount,
+    vatAmount: plain(l.vat_amount),
   }));
   const input: DraftInput = {
     date: row.invoice_date,
@@ -196,7 +120,7 @@ async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceD
     buyer: { kind: row.buyer_kind as DraftInput['buyer']['kind'], taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
-  const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: row.subtotal, vatAmount: row.vat_amount, total: row.total };
+  const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
   return {
     id: row.id,
     legalEntityId: row.legal_entity_id,
@@ -206,9 +130,9 @@ async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceD
     currency: row.currency,
     buyer: { kind: row.buyer_kind, partyId: row.buyer_party_id, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
     lines,
-    subtotal: row.subtotal,
-    vatAmount: row.vat_amount,
-    total: row.total,
+    subtotal: plain(row.subtotal),
+    vatAmount: plain(row.vat_amount),
+    total: plain(row.total),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
     issues: checkDraft(input, computed, today),
@@ -232,7 +156,7 @@ export const einvoiceDraftList = defineQuery({
     const out: EInvoiceDraftSummary[] = [];
     for (const row of rows) {
       const draft = await loadDraft(ctx, row.id, today);
-      out.push({ id: row.id, state: row.state, date: row.invoice_date, buyerName: row.buyer_name, total: row.total, issueCount: draft.issues.length });
+      out.push({ id: row.id, state: row.state, date: row.invoice_date, buyerName: row.buyer_name, total: plain(row.total), issueCount: draft.issues.length });
     }
     return out;
   },
@@ -248,9 +172,9 @@ export const einvoiceDraftGet = defineQuery({
 // The amounts and the issues of what the form holds, without saving it: the form's live check. Nothing is read or written.
 export const einvoiceDraftCheck = defineQuery({
   name: 'finance.einvoice_draft.check',
-  input: zEInvoiceDraftSave.omit({ draftId: true, legalEntityId: true }),
+  input: zEInvoiceDraftCheckInput,
   access: EDITORS,
-  handler: async (ctx, input): Promise<{ lines: EInvoiceDraftLine[]; subtotal: string; vatAmount: string; total: string; issues: DraftIssue[] }> => {
+  handler: async (ctx, input): Promise<EInvoiceDraftCheck> => {
     const today = await databaseToday(ctx.trx);
     const draft = toDraftInput(input);
     const computed = computeDraft(draft.lines);
@@ -264,7 +188,7 @@ export const einvoiceDraftCheck = defineQuery({
   },
 });
 
-function toDraftInput(input: Pick<EInvoiceDraftSave, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
+function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
   const blank = (value: string | null): string | null => (value && value.trim() !== '' ? value.trim() : null);
   return {
     date: input.date,
@@ -282,7 +206,8 @@ export const einvoiceDraftSave = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
-  target: (input) => ({ type: 'finance.einvoice_draft', id: input.draftId ?? 'new' }),
+  // A new draft has no id yet: its audit row carries it in the facts.
+  target: (input) => (input.draftId ? { type: 'finance.einvoice_draft', id: input.draftId } : null),
   handler: async (ctx, input): Promise<EInvoiceDraft> => {
     const today = await databaseToday(ctx.trx);
     const draft = toDraftInput(input);

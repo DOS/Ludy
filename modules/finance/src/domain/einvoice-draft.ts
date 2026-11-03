@@ -2,10 +2,9 @@
 // The deterministic part of a sales e-invoice draft (#2500, plan einvoice-issue.md section 8 step 2): the amounts of a draft from
 // its lines (decimal arithmetic, never a typed total) and the checks Decree 254 Art. 10 and the provider's rules ask of it. Pure:
 // no database, no provider. A failed check is a code on a field; nothing is sent either way.
+import type { BuyerKind, DraftIssue, DraftIssueCode } from '@crove/kernel-contract';
 import { money, parseTaxCode, parseVatRate, toMoney } from '@crove/l10n-vn';
 
-export const BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
-export type BuyerKind = (typeof BUYER_KINDS)[number];
 
 export interface DraftLineInput {
   description: string;
@@ -82,33 +81,6 @@ export function computeDraft(lines: readonly DraftLineInput[]): ComputedDraft {
   const subtotal = computed.reduce((acc, line) => acc.plus(money(line.amount)), money(0));
   const vat = computed.reduce((acc, line) => acc.plus(money(line.vatAmount)), money(0));
   return { lines: computed, subtotal: toMoney(subtotal), vatAmount: toMoney(vat), total: toMoney(subtotal.plus(vat)) };
-}
-
-export const DRAFT_ISSUE_CODES = [
-  'DATE_REQUIRED',
-  'DATE_INVALID',
-  'DATE_FUTURE',
-  'CURRENCY_UNSUPPORTED',
-  'SERIES_REQUIRED',
-  'BUYER_TAX_CODE_REQUIRED',
-  'BUYER_TAX_CODE_INVALID',
-  'BUYER_TAX_CODE_CHECKSUM',
-  'BUYER_NAME_REQUIRED',
-  'BUYER_ADDRESS_REQUIRED',
-  'BUYER_EMAIL_INVALID',
-  'LINES_REQUIRED',
-  'LINE_DESCRIPTION_REQUIRED',
-  'LINE_QUANTITY_INVALID',
-  'LINE_PRICE_INVALID',
-  'LINE_VAT_RATE_INVALID',
-  'TOTAL_TOO_LARGE',
-] as const;
-export type DraftIssueCode = (typeof DRAFT_ISSUE_CODES)[number];
-
-// `field` names the place on the form: 'date', 'series', 'buyer.taxCode', 'lines.2.quantity' (the line's position from 1).
-export interface DraftIssue {
-  field: string;
-  code: DraftIssueCode;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

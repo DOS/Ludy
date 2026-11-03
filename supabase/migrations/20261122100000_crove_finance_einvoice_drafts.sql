@@ -180,7 +180,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.einvoice_draft_line (
   legal_entity_id uuid NOT NULL,
   draft_id uuid NOT NULL,
   line_no int NOT NULL CHECK (line_no > 0),
-  description text NOT NULL CHECK (char_length(description) BETWEEN 1 AND 500),
+  -- May be empty while a draft is being written; the checks say so before it is issued.
+  description text NOT NULL CHECK (char_length(description) <= 500),
   unit text CHECK (unit IS NULL OR char_length(unit) BETWEEN 1 AND 50),
   quantity crove_finance.quantity NOT NULL,
   unit_price crove_finance.unit_amount NOT NULL,

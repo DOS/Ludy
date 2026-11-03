@@ -189,6 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceSeries, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -1574,6 +1575,27 @@ export const contract = {
     // language and the sender's name, never a fact of the books, and its text is refused when it holds a figure or a link. Any refusal leaves words null and the
     // screen on the fixed template words.
     wording: oc.input(zPaymentReminderWordingAsk).output(zPaymentReminderWording),
+  },
+  // Sales e-invoice drafts and the series they are issued from (#2500, ADR-0044). Nothing issues an invoice and no provider is called: a draft is made, checked,
+  // edited and deleted while it is a draft; the amounts are computed by the server from the lines. Every role reads; owners, admins and members write drafts;
+  // owners and admins read a series from the provider (the offline sandbox, when EINVOICE_SANDBOX is on).
+  einvoice: {
+    status: oc.output(zEInvoiceStatus),
+    series: {
+      list: oc.output(z.array(zEInvoiceSeries)),
+      // EINVOICE_DISABLED (404) when the sandbox is off; LEGAL_ENTITY_NOT_ALLOWED (403) for an entity the caller may not see.
+      sync: oc.input(zEInvoiceSeriesSync).output(zEInvoiceSeriesSynced),
+    },
+    drafts: {
+      list: oc.output(z.array(zEInvoiceDraftSummary)),
+      get: oc.input(z.object({ draftId: zId })).output(zEInvoiceDraft),
+      // The live check of the form as it stands: the computed lines, the totals and the issues, nothing stored.
+      check: oc.input(zEInvoiceDraftCheckInput).output(zEInvoiceDraftCheck),
+      // EINVOICE_DRAFT_NOT_FOUND (404), EINVOICE_NOT_DRAFT (409), EINVOICE_SERIES_NOT_FOUND (404), EINVOICE_SERIES_ENTITY (422), EINVOICE_ENTITY_FIXED (422),
+      // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
+      save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
+      delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
+    },
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),

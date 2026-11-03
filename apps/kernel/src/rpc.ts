@@ -223,6 +223,8 @@ export interface RpcChannels {
   sandbox: boolean;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
+  // The offline sandbox e-invoice provider is enabled (EINVOICE_SANDBOX, ADR-0044).
+  einvoiceSandbox?: boolean;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
@@ -2129,6 +2131,25 @@ export function createRpcHandler(
           return wordReminder(reminderAi, orgId, actor.userId, { level: draft.level, lang: draft.lang, org: draft.org }, input.hint);
         }),
       ),
+    },
+    einvoice: {
+      status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(channels?.einvoiceSandbox) })),
+      series: {
+        list: os.einvoice.series.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_series.list', {}, { actor, orgId }))),
+        sync: os.einvoice.series.sync.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            if (!channels?.einvoiceSandbox) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử thử nghiệm chưa được bật');
+            return runtime.execute('finance.einvoice_series.sync', input, { actor, orgId });
+          }),
+        ),
+      },
+      drafts: {
+        list: os.einvoice.drafts.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.list', {}, { actor, orgId }))),
+        get: os.einvoice.drafts.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.get', input, { actor, orgId }))),
+        check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
+        save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
+        delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
+      },
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>

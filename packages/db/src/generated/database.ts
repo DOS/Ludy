@@ -48,6 +48,9 @@ export interface CroveFinanceSchema {
   'crove_finance.chart': FinanceChartTable;
   'crove_finance.chart_account': FinanceChartAccountTable;
   'crove_finance.depreciation_line': FinanceDepreciationLineTable;
+  'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
+  'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
+  'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
   'crove_finance.fixed_asset': FinanceFixedAssetTable;
   'crove_finance.input_vat_check': FinanceInputVatCheckTable;
   'crove_finance.journal_entry': FinanceJournalEntryTable;
@@ -674,6 +677,61 @@ export interface FinanceDepreciationLineTable {
   entry_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+}
+
+/** crove_finance.einvoice_draft_line */
+export interface FinanceEinvoiceDraftLineTable {
+  org_id: string;
+  id: Generated<string>;
+  legal_entity_id: string;
+  draft_id: string;
+  line_no: number;
+  description: string;
+  unit: string | null;
+  quantity: string;
+  unit_price: string;
+  amount: string;
+  vat_rate: string;
+  vat_amount: string;
+}
+
+/** crove_finance.einvoice_draft */
+export interface FinanceEinvoiceDraftTable {
+  org_id: string;
+  id: Generated<string>;
+  legal_entity_id: string;
+  state: Generated<string>;
+  series_id: string | null;
+  invoice_date: string;
+  currency: Generated<string>;
+  buyer_kind: string;
+  buyer_party_id: string | null;
+  buyer_tax_code: string | null;
+  buyer_name: string | null;
+  buyer_address: string | null;
+  buyer_email: string | null;
+  subtotal: string;
+  vat_amount: string;
+  total: string;
+  idempotency_key: Generated<string>;
+  provider_ref: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_finance.einvoice_series */
+export interface FinanceEinvoiceSeriesTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  template_no: ColumnType<string, string, NotGranted>;
+  symbol: ColumnType<string, string, NotGranted>;
+  description: Generated<string>;
+  is_default: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.fixed_asset */
