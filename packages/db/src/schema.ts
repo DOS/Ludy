@@ -98,6 +98,10 @@ export type TaxProfileTable = Refine<
   }
 >;
 // The org-wide records a link to a legal entity can name (#1280 part 3b, crove_kernel.record_le).
+// The language of the daily brief mail (#2406): the member's choice when they opted in; NULL is Vietnamese.
+export const TODAY_MAIL_LANGUAGES = ['vi', 'en'] as const;
+export type TodayMailTable = Refine<G.KernelTodayMailTable, { language: ColumnType<(typeof TODAY_MAIL_LANGUAGES)[number] | null, (typeof TODAY_MAIL_LANGUAGES)[number] | null, never> }>;
+
 export const RECORD_LE_TYPES = ['kernel.party'] as const;
 export type RecordLeTable = Refine<G.KernelRecordLeTable, { record_type: ColumnType<(typeof RECORD_LE_TYPES)[number], (typeof RECORD_LE_TYPES)[number], never> }>;
 
@@ -900,6 +904,7 @@ type Refined = Tables<{
   'crove_kernel.mail_suppression': MailSuppressionTable;
   'crove_kernel.mail_event': MailEventTable;
   'crove_kernel.org_usage': OrgUsageTable;
+  'crove_kernel.today_mail': TodayMailTable;
   'crove_kernel.usage_deferral': UsageDeferralTable;
   'crove_finance.purchase_document': PurchaseDocumentTable;
   'crove_finance.journal_entry': JournalEntryTable;
