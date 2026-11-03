@@ -2108,6 +2108,17 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
       ),
     },
+    paymentReminders: {
+      list: os.paymentReminders.list.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminders.list', input ?? {}, { actor, orgId })),
+      ),
+      draft: os.paymentReminders.draft.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminder.draft', input, { actor, orgId })),
+      ),
+      send: os.paymentReminders.send.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.execute('finance.payment_reminder.send', input, { actor, orgId })),
+      ),
+    },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.categorization_rules.list', input ?? {}, { actor, orgId })),

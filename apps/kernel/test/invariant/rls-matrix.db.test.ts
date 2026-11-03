@@ -56,6 +56,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.collection_setting',
+  'crove_finance.customer_collection',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -620,6 +622,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1399: a learned account rule. An org-wide keyword rule names no vendor and no source document.
   'crove_finance.categorization_rule': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), match_kind: 'keyword', match_text: `rls matrix ${tag()}`, debit_account: '6422' } }),
+  },
+  // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
+  // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
+  'crove_finance.collection_setting': {
+    update: { set: 'terms_days = terms_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // #2488: what the org set for one customer: its own payment terms, and a date until which no reminder is drafted for it. One row per customer (UNIQUE
+  // (org_id, party_id)), so each row seeds a customer of its own. Tenant roles update the two values and who set them (a column grant).
+  'crove_finance.customer_collection': {
+    update: { set: 'paused_until = paused_until' },
+    noInsertControl: 'one row per customer (UNIQUE (org_id, party_id)); the members who may send reminders write it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix customer ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: party, terms_days: 45 },
+      };
+    },
   },
   // Monthly depreciation and allocation of the register (#919): append-only, one row per asset and month, naming the
   // journal entry that posted it. Tenant roles read and insert; nothing updates or deletes a line.
