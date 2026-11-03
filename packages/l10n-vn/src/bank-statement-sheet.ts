@@ -15,7 +15,7 @@ export interface StatementCell {
 // Rows by their 1-based number; cells by 0-based column (A = 0). Missing cells are absent.
 export type StatementGrid = ReadonlyMap<number, ReadonlyMap<number, StatementCell>>;
 
-export const STATEMENT_COLUMNS = ['date', 'description', 'moneyIn', 'moneyOut', 'amount', 'balance', 'reference'] as const;
+export const STATEMENT_COLUMNS = ['date', 'description', 'moneyIn', 'moneyOut', 'amount', 'balance', 'reference', 'counterpartyAccount'] as const;
 export type StatementColumn = (typeof STATEMENT_COLUMNS)[number];
 
 // The 0-based column of each field (null when the file has none) and the header's row number. amount is one signed
@@ -44,11 +44,15 @@ const WORDS: Record<StatementColumn, { contains: string[]; exact?: string[] }> =
   moneyIn: { contains: ['ghi co', 'phat sinh co', 'so tien co', 'tien vao', 'gui vao', 'credit', 'deposit'], exact: ['co'] },
   balance: { contains: ['so du', 'balance'] },
   reference: { contains: ['so tham chieu', 'ma giao dich', 'so giao dich', 'so but toan', 'ma gd', 'so ct', 'transaction id', 'reference', 'ref no'], exact: ['ref'] },
+  // The other side's account number (#2402), where a bank's export prints it.
+  counterpartyAccount: {
+    contains: ['so tai khoan doi ung', 'tai khoan doi ung', 'so tk doi ung', 'stk doi ung', 'so tai khoan doi tac', 'tai khoan doi tac', 'so tai khoan nguoi nhan', 'tai khoan nguoi nhan', 'tai khoan thu huong', 'so tai khoan nguoi gui', 'tai khoan nguoi gui', 'counterparty account', 'beneficiary account', 'beneficiary acc', 'sender account'],
+  },
   description: { contains: ['noi dung', 'dien giai', 'mo ta', 'chi tiet', 'description', 'remark', 'narrative', 'details'] },
   amount: { contains: ['so tien', 'amount'] },
 };
 // Fields claimed in this order, so "so tien ghi no" goes to money out before amount can take it.
-const CLAIM_ORDER: StatementColumn[] = ['date', 'balance', 'moneyOut', 'moneyIn', 'reference', 'description', 'amount'];
+const CLAIM_ORDER: StatementColumn[] = ['date', 'balance', 'moneyOut', 'moneyIn', 'reference', 'counterpartyAccount', 'description', 'amount'];
 
 const cellText = (cell: StatementCell | undefined) => (cell?.value ?? '').trim();
 
@@ -112,6 +116,8 @@ export interface StatementLine {
   date: string;
   description: string;
   reference: string;
+  // The other side's account number as the cell reads, '' when the file has no such column.
+  counterpartyAccount: string;
   moneyIn: StatementCell | undefined;
   moneyOut: StatementCell | undefined;
   balance: StatementCell | undefined;
@@ -138,6 +144,7 @@ export function statementLines(rows: StatementGrid, mapping: StatementMapping, m
       date: date.slice(0, 40),
       description: cellText(cell(row, columns.description)).slice(0, 1000),
       reference: cellText(cell(row, columns.reference)).slice(0, 100),
+      counterpartyAccount: cellText(cell(row, columns.counterpartyAccount)).slice(0, 40),
       moneyIn: cell(row, signed ? columns.amount : columns.moneyIn),
       moneyOut: signed ? undefined : cell(row, columns.moneyOut),
       balance: cell(row, columns.balance),

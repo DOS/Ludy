@@ -18,6 +18,8 @@ export interface StatementLine {
   amount: Money;
   balance: Money | null;
   reference: string | null;
+  // The other side's account number, digits only (6 to 20), when the file has the column and the cell reads as one (#2402).
+  counterpartyAccount?: string | null;
 }
 
 // The date and signed amount of a line the account holds.
@@ -88,7 +90,7 @@ export function parseStatementAmount(raw: string): { ok: true; value: DecimalVal
 
 const canonical = (value: DecimalValue) => value.toFixed();
 
-type Parsed = { ok: true; rowNo: number; date: string; description: string; amount: Money; balance: Money | null; reference: string | null } | { ok: false; rowNo: number; errors: BankRowError[] };
+type Parsed = { ok: true; rowNo: number; date: string; description: string; amount: Money; balance: Money | null; reference: string | null; counterpartyAccount: string | null } | { ok: false; rowNo: number; errors: BankRowError[] };
 
 function parseRow(row: BankStatementImport['rows'][number]): Parsed {
   const errors: BankRowError[] = [];
@@ -111,6 +113,8 @@ function parseRow(row: BankStatementImport['rows'][number]): Parsed {
   if (!balance.ok) errors.push('BALANCE_INVALID');
   if (errors.length > 0 || date === null || amount === null || !balance.ok) return { ok: false, rowNo: row.rowNo, errors };
   const reference = row.reference.trim();
+  // An account number is its digits, banks print them with spaces or dots; anything that is not 6 to 20 digits is no account.
+  const digits = (row.counterpartyAccount ?? '').replace(/\D/g, '');
   return {
     ok: true,
     rowNo: row.rowNo,
@@ -119,6 +123,7 @@ function parseRow(row: BankStatementImport['rows'][number]): Parsed {
     amount: canonical(amount),
     balance: balance.value ? canonical(balance.value) : null,
     reference: reference === '' ? null : reference,
+    counterpartyAccount: /^[0-9]{6,20}$/.test(digits) ? digits : null,
   };
 }
 

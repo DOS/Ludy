@@ -205,6 +205,11 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
   },
+  'crove_finance.bank_line.counterparty_account': {
+    kind: 'other',
+    handling: 'keep_legal',
+    reason: "The other side's account number on an imported bank statement line, as the bank printed it (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). The learned rule that points at a party by it holds only a keyed hash, and goes with the party's erasure",
+  },
   'crove_finance.journal_line.memo': {
     kind: 'free_text',
     handling: 'keep_legal',

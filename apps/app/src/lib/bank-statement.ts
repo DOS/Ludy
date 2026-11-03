@@ -21,6 +21,7 @@ export function statementRows(rows: SheetRows, mapping: StatementMapping): BankS
     moneyOut: statementAmountText(line.moneyOut).slice(0, 50),
     balance: statementAmountText(line.balance).slice(0, 50),
     reference: line.reference,
+    ...(line.counterpartyAccount === '' ? {} : { counterpartyAccount: line.counterpartyAccount }),
   }));
 }
 

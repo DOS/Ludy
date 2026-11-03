@@ -171,6 +171,7 @@ async function storeLines(ctx: CommandContext, legalEntityId: string, bankAccoun
           amount: l.amount,
           running_balance: l.balance,
           bank_ref: l.reference,
+          counterparty_account: l.counterpartyAccount ?? null,
           dedupe_key: l.key,
           ambiguous: l.ambiguous,
           created_by: actor,

@@ -350,6 +350,7 @@ export const zExtractedBankStatement = z.strictObject({
         date: z.string().max(40),
         description: z.string().max(1000),
         reference: z.string().max(100),
+        counterpartyAccount: z.string().max(EXTRACT_LIMITS.maxStatementCellChars).default(''),
         moneyIn: zStatementCell.nullable(),
         moneyOut: zStatementCell.nullable(),
         balance: zStatementCell.nullable(),

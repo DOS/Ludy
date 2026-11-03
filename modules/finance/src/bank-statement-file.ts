@@ -293,7 +293,7 @@ const AMOUNT_TEXT_MAX = 50;
 // The statement's rows as the module takes them: the same amount text the browser import sends. An amount text longer
 // than the module takes (#2191) is refused with its row, never cut: a cut text could read as another, smaller number.
 export function statementFileRows(
-  rows: ReadonlyArray<{ rowNo: number; date: string; description: string; reference: string; moneyIn: { kind: string; value: string } | null; moneyOut: { kind: string; value: string } | null; balance: { kind: string; value: string } | null }>,
+  rows: ReadonlyArray<{ rowNo: number; date: string; description: string; reference: string; counterpartyAccount?: string | undefined; moneyIn: { kind: string; value: string } | null; moneyOut: { kind: string; value: string } | null; balance: { kind: string; value: string } | null }>,
 ): BankStatementRow[] | { tooLongRow: number } {
   const out: BankStatementRow[] = [];
   for (const r of rows) {
@@ -301,7 +301,7 @@ export function statementFileRows(
     const moneyOut = statementAmountText(r.moneyOut ?? undefined);
     const balance = statementAmountText(r.balance ?? undefined);
     if (moneyIn.length > AMOUNT_TEXT_MAX || moneyOut.length > AMOUNT_TEXT_MAX || balance.length > AMOUNT_TEXT_MAX) return { tooLongRow: r.rowNo };
-    out.push({ rowNo: r.rowNo, date: r.date, description: r.description, moneyIn, moneyOut, balance, reference: r.reference });
+    out.push({ rowNo: r.rowNo, date: r.date, description: r.description, moneyIn, moneyOut, balance, reference: r.reference, ...(r.counterpartyAccount ? { counterpartyAccount: r.counterpartyAccount } : {}) });
   }
   return out;
 }

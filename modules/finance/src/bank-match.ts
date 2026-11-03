@@ -57,6 +57,8 @@ export interface StoredBankLine {
   amount: string;
   balance: string | null;
   reference: string | null;
+  // The other side's account number, digits only, when the statement had it (#2402).
+  counterpartyAccount: string | null;
   ambiguous: boolean;
   importId: string;
   // The legal entity whose books the line is in (#1280); a voucher made from it is in the same entity.
@@ -68,7 +70,7 @@ export async function findBankLines(ctx: QueryContext, ids: readonly string[]): 
   if (ids.length === 0) return [];
   const rows = await ctx.trx
     .selectFrom('crove_finance.bank_line')
-    .select(['id', 'bank_account', 'value_date', 'description', 'amount', 'running_balance', 'bank_ref', 'ambiguous', 'import_id', 'legal_entity_id'])
+    .select(['id', 'bank_account', 'value_date', 'description', 'amount', 'running_balance', 'bank_ref', 'counterparty_account', 'ambiguous', 'import_id', 'legal_entity_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', 'in', ids)
     .execute();
@@ -80,6 +82,7 @@ export async function findBankLines(ctx: QueryContext, ids: readonly string[]): 
     amount: new Decimal(row.amount).toFixed(),
     balance: row.running_balance === null ? null : new Decimal(row.running_balance).toFixed(),
     reference: row.bank_ref,
+    counterpartyAccount: row.counterparty_account,
     ambiguous: row.ambiguous,
     importId: row.import_id,
     legalEntityId: row.legal_entity_id,
@@ -233,12 +236,14 @@ export async function lineMatchFor(
         .limit(CANDIDATE_ROWS)
         .execute();
 
+  const learnedHits = await learnedParties(ctx, line);
   const match = matchLine(
     { description: line.description, amount: line.amount },
     parties.map((p) => ({ id: p.id, name: p.name, taxCode: p.tax_code })),
     invoices.map((i) => ({ partyId: i.party_id, series: i.invoice_series, number: i.invoice_number, total: i.total })),
     balances.flatMap((b) => (b.party_id ? [{ partyId: b.party_id, balance: b.balance }] : [])),
-    await learnedParties(ctx, line),
+    learnedHits.text,
+    learnedHits.account,
   );
   const byId = new Map(parties.map((p) => [p.id, p]));
   const view = (c: MatchCandidate): BankLineCandidate[] => {

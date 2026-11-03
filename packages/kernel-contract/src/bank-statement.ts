@@ -20,6 +20,8 @@ export const zBankStatementRow = z.object({
   moneyOut: z.string().max(50),
   balance: z.string().max(50),
   reference: z.string().max(100),
+  // The other side's account number as the file prints it (#2402); absent or '' when the file has no such column.
+  counterpartyAccount: z.string().max(40).optional(),
 });
 export type BankStatementRow = z.infer<typeof zBankStatementRow>;
 
