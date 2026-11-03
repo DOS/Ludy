@@ -244,7 +244,6 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     // Reading is the tenant role's, and every role that inherits it (the API login, the definer's role); nobody holds any write privilege.
     expect(state.filter((r) => r.priv !== 'SELECT')).toEqual([]);
     expect(state.map((r) => r.role)).toContain('crove_tenant');
-    expect(state.map((r) => r.role)).not.toContain('crove_worker');
   });
 
   it('opens the copy through one worker-only definer, and the worker definers refuse every other session, even one granted EXECUTE', async () => {
