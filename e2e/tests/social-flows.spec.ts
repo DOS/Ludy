@@ -68,6 +68,9 @@ function channelCard(page: Page, name: string): Locator {
   return page.locator('[data-slot="card"]').filter({ hasText: name }).filter({ hasText: 'Viết riêng cho kênh này' });
 }
 
+// The calendar feed card of the Social calendar tab, by its title.
+const calendarCard = (page: Page) => page.locator('[data-slot="card"]').filter({ has: page.getByRole('heading', { name: 'Đăng ký lịch', exact: true }) });
+
 const postIdOf = (page: Page) => new URL(page.url()).pathname.split('/').pop() ?? '';
 
 // Submits the composed post, approves every channel, schedules them an hour from now and checks each card says so.
@@ -304,7 +307,8 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
 
   await test.step('revoking the calendar address asks first, and Escape changes nothing', async () => {
     await page.goto(`/o/${slug}/social?tab=calendar`);
-    const card = page.locator('[data-slot="card"]').filter({ hasText: 'Đăng ký lịch' }).filter({ has: page.getByRole('button', { name: 'Tạo địa chỉ đăng ký' }) });
+    // Found by its title: the button it holds changes once an address exists, so a locator built on it would lose the card.
+    const card = calendarCard(page);
     await card.getByRole('button', { name: 'Tạo địa chỉ đăng ký' }).click();
     await expect(card.getByText('Đang có một địa chỉ đăng ký lịch', { exact: false })).toBeVisible();
     await card.getByRole('button', { name: 'Thu hồi' }).click();
@@ -316,7 +320,7 @@ test('asks in the app\'s dialog before cancelling many posts and before revoking
   });
 
   await test.step('confirming the revoke removes the address', async () => {
-    const card = page.locator('[data-slot="card"]').filter({ hasText: 'Đăng ký lịch' }).filter({ has: page.getByRole('button', { name: 'Thu hồi' }) });
+    const card = calendarCard(page);
     await card.getByRole('button', { name: 'Thu hồi' }).click();
     const dialog = page.getByRole('dialog', { name: 'Thu hồi địa chỉ đăng ký lịch?' });
     await dialog.getByRole('button', { name: 'Thu hồi' }).click();
