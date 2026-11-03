@@ -38,6 +38,17 @@ async function resolveSeller(ctx: Ctx, requestedEntity: string | null, requested
   const sellerTaxCode = requestedTaxCode ?? entity.tax_code;
   if (!sellerTaxCode) throw new DomainError('EINVOICE_TAX_CODE_NEEDED', 422, 'Hãy nhập mã số thuế cho pháp nhân này trước khi kết nối nhà cung cấp hóa đơn điện tử');
   if (entity.tax_code && entity.tax_code !== sellerTaxCode) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế người bán phải là mã số thuế của pháp nhân đã chọn');
+  // An entity with no tax code of its own takes the one typed, but never another entity's: invoices of one taxpayer are not issued under another's.
+  if (!entity.tax_code) {
+    const other = await ctx.trx
+      .selectFrom('crove_kernel.legal_entity')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('tax_code', '=', sellerTaxCode)
+      .where('id', '<>', legalEntityId)
+      .executeTakeFirst();
+    if (other) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế này là của một pháp nhân khác; hãy chọn đúng pháp nhân hoặc nhập mã số thuế của pháp nhân này');
+  }
   return { legalEntityId, sellerTaxCode };
 }
 
@@ -61,19 +72,25 @@ export const einvoiceConnectionLink = defineCommand({
       .select(['provider', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
+      // Held until this transaction ends, so a disconnect cannot revoke the connection between this check and the row that files it.
+      .forShare()
       .executeTakeFirst();
     if (!channel) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kết nối này');
     if (!adapterOf(channel.provider)) throw new DomainError('EINVOICE_PROVIDER_UNKNOWN', 422, 'Kết nối này không phải của một nhà cung cấp hóa đơn điện tử');
     if (channel.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
-    // A connect that reaches the same account again (a retry whose answer was lost) is the same row.
+    const { legalEntityId: entityId, sellerTaxCode } = await resolveSeller(ctx, input.legalEntityId, input.sellerTaxCode);
+    // A connect that reaches the same account again (a retry whose answer was lost) is the same row; the same connection under another tax code is not: the seller of an
+    // account does not change, so it is disconnected and connected again.
     const same = await ctx.trx
       .selectFrom('crove_finance.einvoice_connection')
-      .select('id')
+      .select(['id', 'legal_entity_id', 'seller_tax_code'])
       .where('org_id', '=', ctx.orgId)
       .where('channel_connection_id', '=', input.connectionId)
       .executeTakeFirst();
-    if (same) return { id: same.id, existing: true };
-    const { legalEntityId: entityId, sellerTaxCode } = await resolveSeller(ctx, input.legalEntityId, input.sellerTaxCode);
+    if (same) {
+      if (same.legal_entity_id !== entityId || same.seller_tax_code !== sellerTaxCode) throw new DomainError('EINVOICE_CONNECTION_EXISTS', 409, 'Kết nối này đã có cho một mã số thuế khác; hãy ngắt kết nối rồi kết nối lại');
+      return { id: same.id, existing: true };
+    }
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     try {
       const row = await ctx.trx
@@ -144,6 +161,16 @@ export const einvoiceConnectionUnlink = defineCommand({
   access: MANAGERS,
   target: (input) => ({ type: 'finance.einvoice_connection', id: input.id }),
   handler: async (ctx, input): Promise<{ removed: boolean }> => {
+    // Only a connection that is no longer live: the credential goes first (the API revokes the channel connection before this), so no live credential is left without its row.
+    const live = await ctx.trx
+      .selectFrom('crove_finance.einvoice_connection as c')
+      .innerJoin('crove_kernel.channel_connection as ch', (join) => join.onRef('ch.org_id', '=', 'c.org_id').onRef('ch.id', '=', 'c.channel_connection_id'))
+      .select('c.id')
+      .where('c.org_id', '=', ctx.orgId)
+      .where('c.id', '=', input.id)
+      .where('ch.status', '<>', 'revoked')
+      .executeTakeFirst();
+    if (live) throw new DomainError('EINVOICE_CONNECTION_LIVE', 409, 'Hãy ngắt kết nối với nhà cung cấp trước khi xóa dòng này');
     const gone = await ctx.trx.deleteFrom('crove_finance.einvoice_connection').where('org_id', '=', ctx.orgId).where('id', '=', input.id).executeTakeFirst();
     const removed = Number(gone.numDeletedRows) > 0;
     ctx.audit({ removed });

@@ -18,6 +18,7 @@ import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp } from '../src/http.ts';
 import { createSessionStatusSource } from '../src/sessions.ts';
+import { enterUser } from './context-token.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -215,7 +216,7 @@ suite('e-invoice provider connections (#2501)', () => {
     expect((await call('connections/connect', owner, connectInput())).body).toEqual({ id });
     const list = (await call('connections/list', viewer)).body;
     expect(list).toEqual([
-      { id, connectionId: expect.any(String), legalEntityId: entity, provider: 'sandbox', sellerTaxCode: TAX_CODE, displayName: expect.stringContaining(TAX_CODE), status: 'active', lastTestState: null, lastTestedAt: null },
+      { id, connectionId: expect.any(String), legalEntityId: entity, provider: 'sandbox', sellerTaxCode: TAX_CODE, displayName: 'Nhà cung cấp hóa đơn thử nghiệm', status: 'active', lastTestState: null, lastTestedAt: null },
     ]);
     // Another org sees nothing of it.
     expect((await rpc('einvoice/connections/list', await tokenFor(outsider), undefined, otherSlug)).body).toEqual([]);
@@ -282,7 +283,7 @@ suite('e-invoice provider connections (#2501)', () => {
     const mine = (await call('connections/list', owner)).body.filter((c: { legalEntityId: string }) => c.legalEntityId === branch);
     expect(mine).toHaveLength(1);
     expect(mine[0]).toMatchObject({ status: 'active' });
-    expect(await rows("SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2", [orgId, `${TAX_CODE}-002@${branch}`])).toEqual([{ status: 'active' }]);
+    expect(await rows("SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2", [orgId, branch])).toEqual([{ status: 'active' }]);
     expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, mine[0]?.connectionId]))[0]?.n)).toBe(1);
     // Closed again, so the tests after this one see the connections they made.
     expect((await call('connections/disconnect', owner, { id: both[0]?.body.id })).body).toEqual({ removed: true });
@@ -320,17 +321,28 @@ suite('e-invoice provider connections (#2501)', () => {
       outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),
       idempotency: await rows('SELECT * FROM crove_kernel.idempotency_key WHERE org_id = $1', [orgId]),
       channel: await rows('SELECT * FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId]),
+      activity: await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [orgId]),
       connection: await rows('SELECT * FROM crove_finance.einvoice_connection WHERE org_id = $1', [orgId]),
     });
     expect(dump).not.toContain(PLANTED);
     expect(dump).not.toContain('ketoan@ludy.test');
+    // The seller's tax code is in the finance row and nowhere that outlives it: not in the channel row (which stays as history after a disconnect), not in an audit row, a queued
+    // event, a stored answer or the activity feed.
+    const elsewhere = JSON.stringify({
+      audit: await rows('SELECT * FROM crove_kernel.audit_event WHERE org_id = $1', [orgId]),
+      outbox: await rows('SELECT * FROM crove_kernel.outbox_event WHERE org_id = $1', [orgId]),
+      idempotency: await rows('SELECT * FROM crove_kernel.idempotency_key WHERE org_id = $1', [orgId]),
+      channel: await rows('SELECT * FROM crove_kernel.channel_connection WHERE org_id = $1', [orgId]),
+      activity: await rows('SELECT * FROM crove_kernel.activity WHERE org_id = $1', [orgId]),
+    });
+    expect(elsewhere).not.toContain(TAX_CODE);
     // The sealed envelope holds it, and the vault opens it for the binding it was sealed under, and for no other.
     const [credential] = await rows<{ key_id: string; envelope: Buffer }>(
       'SELECT c.key_id, c.envelope FROM crove_kernel.credential c WHERE c.org_id = $1 AND c.connection_id = (SELECT channel_connection_id FROM crove_finance.einvoice_connection WHERE org_id = $1 AND legal_entity_id = $2)',
       [orgId, branch],
     );
     expect(credential?.envelope.includes(Buffer.from(PLANTED))).toBe(false);
-    const binding = { orgId, provider: 'einvoice_sandbox', externalAccountId: `${TAX_CODE}-001@${branch}` };
+    const binding = { orgId, provider: 'einvoice_sandbox', externalAccountId: branch };
     const sealed = { keyId: String(credential?.key_id), envelope: credential?.envelope as Buffer };
     expect(JSON.parse(vault.open(sealed, binding))).toEqual({ user: 'ketoan@ludy.test', password: PLANTED });
     expect(() => vault.open(sealed, { ...binding, orgId: randomUUID() })).toThrow();
@@ -358,6 +370,83 @@ suite('e-invoice provider connections (#2501)', () => {
     await rows("UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
     await expect(open()).rejects.toMatchObject({ message: expect.stringContaining('CHANNEL_OWNER_LEFT') });
     await rows("UPDATE crove_kernel.tenant_member SET role = 'admin' WHERE org_id = $1 AND user_id = $2", [orgId, adminUser.userId]);
+  });
+
+  it('does not issue an entity\'s invoices under another entity\'s tax code, nor change the seller of a connected account', async () => {
+    const entityA = await defaultEntity();
+    const bare = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh chưa có mã', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    // The other entity's code is refused for an entity without one, by the command and by the database.
+    expect((await call('connections/connect', owner, connectInput({ legalEntityId: bare, sellerTaxCode: TAX_CODE }))).body).toMatchObject({ code: 'EINVOICE_TAX_CODE_MISMATCH' });
+    expect(await rows('SELECT 1 FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, bare])).toEqual([]);
+    const channelId = randomUUID();
+    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Thử', $4)`, [orgId, channelId, `sql-${randomUUID()}`, owner.userId]);
+    await expect(rows('INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5)', [orgId, bare, channelId, 'einvoice_sandbox', TAX_CODE])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('EINVOICE_CONNECTION_TAX_CODE') });
+    expect(entityA).not.toBe(bare);
+    // A code of its own is taken, and the same account under another code is refused, leaving the connection as it was.
+    const first = await call('connections/connect', owner, connectInput({ legalEntityId: bare, sellerTaxCode: '0123456789' }));
+    expect(first.status).toBe(200);
+    const again = await call('connections/connect', owner, connectInput({ legalEntityId: bare, sellerTaxCode: '0123456780' }));
+    expect(again).toMatchObject({ status: 409, body: { code: 'EINVOICE_CONNECTION_EXISTS' } });
+    expect((await call('connections/list', owner)).body.filter((c: { legalEntityId: string }) => c.legalEntityId === bare)).toMatchObject([{ id: first.body.id, sellerTaxCode: '0123456789', status: 'active' }]);
+    expect((await call('connections/disconnect', owner, { id: first.body.id })).body).toEqual({ removed: true });
+  });
+
+  it('closes the new channel connection and its credential when the account turns out to be connected already, and removes a row only once the connection is closed', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh đã nối', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    // The entity already has a connection under this provider and tax code (another channel row), so the new one cannot be filed.
+    const existingChannel = randomUUID();
+    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Có sẵn', $4)`, [orgId, existingChannel, `pre-${randomUUID()}`, owner.userId]);
+    await rows(`INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, 'einvoice_sandbox', '0123456799')`, [orgId, entity, existingChannel]);
+    const refused = await call('connections/connect', owner, connectInput({ legalEntityId: entity, sellerTaxCode: '0123456799' }));
+    expect(refused).toMatchObject({ status: 409, body: { code: 'EINVOICE_CONNECTION_EXISTS' } });
+    // No live connection and no credential is left for the account that was refused.
+    expect(await rows('SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2', [orgId, entity])).toEqual([{ status: 'revoked' }]);
+    expect(await rows('SELECT 1 FROM crove_kernel.credential c JOIN crove_kernel.channel_connection ch ON ch.org_id = c.org_id AND ch.id = c.connection_id WHERE c.org_id = $1 AND ch.external_account_id = $2', [orgId, entity])).toEqual([]);
+    // A row of a live connection is not removed by the command: the credential would be left without its row.
+    const id = String((await rows<{ id: string }>('SELECT id FROM crove_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, existingChannel]))[0]?.id);
+    const actor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    await expect(rt.execute('finance.einvoice_connection.unlink', { id }, { actor, orgId, idempotencyKey: randomUUID() })).rejects.toMatchObject({ code: 'EINVOICE_CONNECTION_LIVE' });
+    await rows("UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = $2", [orgId, existingChannel]);
+    expect(await rt.execute('finance.einvoice_connection.unlink', { id }, { actor, orgId, idempotencyKey: randomUUID() })).toEqual({ removed: true });
+  });
+
+  it('holds the roles in SQL as the runtime\'s own login: owners and admins write a connection, members and viewers read it, and only the last test can change', async () => {
+    const entity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh vai trò', 'branch', $2) RETURNING id`, [orgId, owner.userId]))[0]?.id);
+    const channel = randomUUID();
+    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Vai trò', $4)`, [orgId, channel, `role-${randomUUID()}`, owner.userId]);
+    const insertSql = 'INSERT INTO crove_finance.einvoice_connection (org_id, legal_entity_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, $3, $4, $5) RETURNING id';
+    async function asRole<T>(who: Account, fn: (c: pg.PoolClient) => Promise<T>): Promise<T> {
+      const c = await pool.connect();
+      try {
+        await c.query('BEGIN');
+        await enterUser(c, who.userId, orgId);
+        return await fn(c);
+      } finally {
+        await c.query('ROLLBACK').catch(() => undefined);
+        c.release();
+      }
+    }
+    // A member and a viewer cannot file a connection; an admin can (in a transaction rolled back here).
+    for (const who of [member, viewer]) {
+      await expect(asRole(who, (c) => c.query(insertSql, [orgId, entity, channel, 'einvoice_sandbox', '0123456798']))).rejects.toMatchObject({ code: '42501' });
+    }
+    expect(await asRole(adminUser, async (c) => (await c.query(insertSql, [orgId, entity, channel, 'einvoice_sandbox', '0123456798'])).rowCount)).toBe(1);
+    // A row of the org: everyone reads it, a member or viewer changes and deletes nothing, an admin changes the last test and nothing else, and may delete it.
+    const id = String((await rows<{ id: string }>(insertSql, [orgId, entity, channel, 'einvoice_sandbox', '0123456798']))[0]?.id);
+    for (const who of [member, viewer, adminUser, owner]) expect(await asRole(who, async (c) => (await c.query('SELECT 1 FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
+    const setState = "UPDATE crove_finance.einvoice_connection SET last_test_state = 'works', last_tested_at = now() WHERE org_id = $1 AND id = $2";
+    for (const who of [member, viewer]) {
+      expect(await asRole(who, async (c) => (await c.query(setState, [orgId, id])).rowCount)).toBe(0);
+      expect(await asRole(who, async (c) => (await c.query('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(0);
+    }
+    for (const who of [adminUser, owner]) {
+      expect(await asRole(who, async (c) => (await c.query(setState, [orgId, id])).rowCount)).toBe(1);
+      for (const column of ["seller_tax_code = '0123456797'", "provider = 'einvoice_other'", `legal_entity_id = '${randomUUID()}'`, `channel_connection_id = '${randomUUID()}'`, "created_at = now()"]) {
+        await expect(asRole(who, (c) => c.query(`UPDATE crove_finance.einvoice_connection SET ${column} WHERE org_id = $1 AND id = $2`, [orgId, id]))).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('permission denied') });
+      }
+    }
+    expect(await asRole(adminUser, async (c) => (await c.query('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id])).rowCount)).toBe(1);
+    await rows('DELETE FROM crove_finance.einvoice_connection WHERE org_id = $1 AND id = $2', [orgId, id]);
   });
 
   it('holds the row rules in SQL: the provider is the channel connection\'s, the tax code the entity\'s, and no tenant role changes the rest', async () => {

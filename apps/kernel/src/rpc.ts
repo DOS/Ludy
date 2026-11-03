@@ -2176,15 +2176,17 @@ export function createRpcHandler(
               { actor, orgId },
             );
             const channelProvider = `einvoice_${input.provider}`;
-            // The account is the seller under this entity, so a second connect of it is the same connection.
-            const externalAccountId = `${seller.sellerTaxCode}@${seller.legalEntityId}`;
+            // The account is the entity's under this provider, so a second connect of it is the same connection. The seller's tax code is not in it, nor in the display name:
+            // the channel row stays as history after a disconnect, and a household's tax code is its owner's national ID. Only the finance row holds the code, and it goes with the
+            // disconnect.
+            const externalAccountId = seller.legalEntityId;
             // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
             const secret = provider.hosts.length === 0 ? SANDBOX_EINVOICE_SECRET : JSON.stringify(input.fields);
             const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
             const command: ChannelConnectInput = {
               provider: channelProvider,
               externalAccountId,
-              displayName: provider.hosts.length === 0 ? `Nhà cung cấp hóa đơn thử nghiệm (${seller.sellerTaxCode})` : `${input.provider} (${seller.sellerTaxCode})`,
+              displayName: provider.hosts.length === 0 ? 'Nhà cung cấp hóa đơn thử nghiệm' : input.provider,
               scopes: [],
               expiresAt: null,
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },

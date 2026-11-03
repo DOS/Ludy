@@ -43,6 +43,8 @@ export const attentionInbox = defineQuery({
       .select(['id', 'provider', 'display_name', 'status'])
       .where('org_id', '=', ctx.orgId)
       .where('status', 'in', ATTENTION_CHANNEL_STATUSES)
+      // An e-invoice provider's connection is the finance module's: its account id holds the seller's tax code, and the screen it links to is Social's.
+      .where('provider', 'not like', 'einvoice\\_%')
       .orderBy('updated_at', 'asc')
       .limit(ATTENTION_INBOX_MAX)
       .execute();

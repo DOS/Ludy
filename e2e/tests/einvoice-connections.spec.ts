@@ -26,7 +26,8 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
     await expect(card.getByText('Hãy nhập mã số thuế cho pháp nhân này')).toBeVisible();
     await card.getByLabel('Mã số thuế người bán').fill('0100109106');
     await card.getByRole('button', { name: 'Kết nối', exact: true }).click();
-    await expect(card.getByText('Nhà cung cấp hóa đơn thử nghiệm (0100109106)')).toBeVisible();
+    await expect(card.getByText('Nhà cung cấp hóa đơn thử nghiệm', { exact: true })).toBeVisible();
+    await expect(card.getByText('Mã số thuế người bán 0100109106')).toBeVisible();
     await expect(card.getByText('Đang kết nối')).toBeVisible();
     await expect(card.getByText('Chưa kiểm tra')).toBeVisible();
     await expect(card.getByText('Chưa có ký hiệu nào.')).toBeVisible();
@@ -63,5 +64,9 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
     await card.getByRole('button', { name: 'Ngắt kết nối' }).click();
     await card.getByRole('button', { name: 'Ngắt kết nối' }).last().click();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();
+    // The series are the entity's and stay: the invoice form still offers them.
+    await page.getByRole('navigation').getByRole('link', { name: 'Kế toán', exact: true }).click();
+    await page.getByRole('navigation').getByRole('link', { name: 'Hóa đơn bán ra' }).click();
+    await expect(page.getByTestId('invoice-no-series')).toBeHidden();
   });
 });

@@ -63,8 +63,8 @@ CREATE POLICY einvoice_connection_delete ON crove_finance.einvoice_connection AS
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_connection.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')));
 
--- The row's provider is its channel connection's, and a seller tax code that the entity has is the entity's: a connection cannot be filed under another provider
--- than the one that holds the credential, nor issue for a taxpayer other than the entity's. Runs as the writer, which reads the channel connection and the entity
+-- The row's provider is its channel connection's, and a seller tax code that the entity has is the entity's, and never another entity's: a connection cannot be filed
+-- under another provider than the one that holds the credential, nor issue for a taxpayer other than the entity's. Runs as the writer, which reads the channel connection and the entity
 -- through its own policies: a row it cannot see is left to the foreign keys and the policies.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_connection_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
@@ -73,6 +73,10 @@ BEGIN
     RAISE EXCEPTION 'EINVOICE_CONNECTION_PROVIDER' USING ERRCODE = '42501';
   END IF;
   IF EXISTS (SELECT 1 FROM crove_kernel.legal_entity e WHERE e.org_id = NEW.org_id AND e.id = NEW.legal_entity_id AND e.tax_code IS NOT NULL AND e.tax_code <> NEW.seller_tax_code) THEN
+    RAISE EXCEPTION 'EINVOICE_CONNECTION_TAX_CODE' USING ERRCODE = '42501';
+  END IF;
+  -- An entity with no tax code takes a typed one, never another entity's.
+  IF EXISTS (SELECT 1 FROM crove_kernel.legal_entity o WHERE o.org_id = NEW.org_id AND o.id <> NEW.legal_entity_id AND o.tax_code = NEW.seller_tax_code) THEN
     RAISE EXCEPTION 'EINVOICE_CONNECTION_TAX_CODE' USING ERRCODE = '42501';
   END IF;
   RETURN NEW;

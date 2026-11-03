@@ -67,6 +67,7 @@ function ConnectionItem({ connection, series, entities, canManage }: { connectio
         <span className="text-sm font-medium">{connection.displayName}</span>
         <Badge variant={live ? 'secondary' : 'outline'}>{t(STATUS_KEYS[connection.status])}</Badge>
         {entity && <span className="text-xs text-muted-foreground">{entity.name}</span>}
+        <span className="text-xs text-muted-foreground tabular-nums">{t('sellerTaxCodeIs', { code: connection.sellerTaxCode })}</span>
       </div>
       <p className="mt-1 text-sm text-muted-foreground">
         {connection.lastTestState ? `${t(STATE_KEYS[connection.lastTestState])}${connection.lastTestedAt ? ` · ${t('testedAt', { when: f.dateTime(connection.lastTestedAt) })}` : ''}` : t('neverTested')}

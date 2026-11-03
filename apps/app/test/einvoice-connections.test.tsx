@@ -82,6 +82,8 @@ describe('EInvoiceConnectionsCard', () => {
     expect(html).toContain('Nhà cung cấp hóa đơn thử nghiệm');
     expect(html).toContain(`>${en.einvoiceConnections.status.active}<`);
     expect(html).toContain(en.einvoiceConnections.neverTested);
+    // The seller's tax code is shown from the connection's own row (it is in no channel name).
+    expect(html).toContain('Seller tax code 0100109100');
     expect(html).toContain(`>${en.einvoiceConnections.test}<`);
     expect(html).toContain(`>${en.einvoiceConnections.disconnect}<`);
     expect(html).toContain(`aria-label="${en.einvoiceConnections.connectTitle}"`);
