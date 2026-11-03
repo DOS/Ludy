@@ -13,6 +13,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { PROVIDERS } from '@crove/mod-social/contract';
+import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { Empty, ErrorText, PageHeader, Spinner } from '../components/ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { providerName } from '../lib/social.ts';
@@ -104,16 +105,17 @@ function Row({ s }: { s: Snippet }) {
             <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
               {t('edit')}
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
+            <ConfirmDialog
+              render={<Button size="sm" variant="ghost" />}
               disabled={remove.isPending}
-              onClick={() => {
-                if (window.confirm(t('confirmDelete', { name: s.name }))) remove.mutate();
-              }}
+              title={t('deleteTitle')}
+              description={t('confirmDelete', { name: s.name })}
+              confirm={t('delete')}
+              destructive
+              onConfirm={() => remove.mutate()}
             >
               {t('delete')}
-            </Button>
+            </ConfirmDialog>
           </div>
         )}
       </div>
