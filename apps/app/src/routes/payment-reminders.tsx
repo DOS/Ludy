@@ -24,6 +24,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
+const LEVEL = { 1: 'levels.first', 2: 'levels.second', 3: 'levels.third' } as const;
 
 // What a person changed in a draft; whatever is left out is the server's draft.
 interface Edit {
@@ -74,7 +75,7 @@ function DraftCard({
         <div className="min-w-0">
           <h2 className="break-words text-base font-medium text-foreground">{draft.name}</h2>
           <p className="mt-1 text-xs text-subtle-foreground">
-            {draft.email ?? t('noEmail')} · {t(`levels.${draft.level}`)} · {t(draft.lang === 'en' ? 'langEn' : 'langVi')}
+            {draft.email ?? t('noEmail')} · {t(LEVEL[draft.level])} · {t(draft.lang === 'en' ? 'langEn' : 'langVi')}
           </p>
         </div>
         {!sent && (
@@ -148,7 +149,7 @@ function DraftCard({
       </fieldset>
 
       {draft.lastReminder && !sent && (
-        <p className="mt-3 text-xs text-subtle-foreground">{t('lastReminder', { date: f.date(draft.lastReminder.at), level: t(`levels.${draft.lastReminder.level}`) })}</p>
+        <p className="mt-3 text-xs text-subtle-foreground">{t('lastReminder', { date: f.date(draft.lastReminder.at), level: t(LEVEL[draft.lastReminder.level]) })}</p>
       )}
 
       {outcome?.state === 'sent' && (
@@ -308,11 +309,11 @@ function Row({ customer, checked, onCheck, onOpen, currency }: { customer: Payme
       <TableCell className={NUM}>{customer.invoiceCount}</TableCell>
       <TableCell className={NUM}>{t('days', { count: customer.daysOverdue })}</TableCell>
       <TableCell className="px-4 py-3">
-        <Badge variant={customer.level === 3 ? 'destructive' : 'outline'}>{t(`levels.${customer.level}`)}</Badge>
+        <Badge variant={customer.level === 3 ? 'destructive' : 'outline'}>{t(LEVEL[customer.level])}</Badge>
       </TableCell>
       <TableCell className={NUM}>{f.money(customer.total, currency)}</TableCell>
       <TableCell className="px-4 py-3 text-sm text-muted-foreground">
-        {customer.lastReminder ? t('lastReminder', { date: f.date(customer.lastReminder.at), level: t(`levels.${customer.lastReminder.level}`) }) : t('never')}
+        {customer.lastReminder ? t('lastReminder', { date: f.date(customer.lastReminder.at), level: t(LEVEL[customer.lastReminder.level]) }) : t('never')}
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
         <Button variant="outline" size="sm" onClick={onOpen} aria-label={t('composeFor', { name: customer.name })}>

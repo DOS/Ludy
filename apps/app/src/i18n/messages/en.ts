@@ -615,7 +615,7 @@ export const en = {
     empty: 'No customer is past due.',
     emptyHint: 'Sales invoices fall due 30 days after the invoice date. What a customer has paid is taken off the oldest invoice first.',
     columns: { customer: 'Customer', invoices: 'Overdue invoices', overdue: 'Overdue', level: 'Notice', owed: 'Still owed', last: 'Last reminder' },
-    levels: { 1: 'First notice', 2: 'Second notice', 3: 'Final notice' },
+    levels: { first: 'First notice', second: 'Second notice', third: 'Final notice' },
     never: 'Not reminded',
     lastReminder: '{date}, {level}',
     noEmail: 'No email',
