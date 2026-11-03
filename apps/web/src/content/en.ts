@@ -264,7 +264,7 @@ export const en: Dictionary = {
       social: {
         kicker: 'AI coworker',
         title: `${N.marketing}`,
-        sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, publishes once approved.',
+        sub: 'Reports to Anh Minh (marketing). Drafts and schedules posts, and every post waits for a person. Publishing to channels: built, not yet tried with a real account.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Waiting for Anh Minh', note: '' },
         ],
@@ -452,7 +452,13 @@ export const en: Dictionary = {
     },
     social: {
       name: 'Ludy Engage',
-      body: 'Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more. Each channel has its own approval steps, and photos and videos live in one shared library. For the large platforms, whoever installs Ludy sets up the app of that platform first.',
+      body: 'One app for a shared inbox, customers and sales, bookings, posts and ads, with a report for each part. Each posting channel has its own approval steps, and photos and videos live in one shared library.',
+      points: [
+        "A shared inbox for customers' private messages; the channel you can connect today is Zalo OA (built, not yet tried with a real OA)",
+        'A contact list shared with Ludy Accounting, sales deals on a board by stage, and a public booking page',
+        "Schedule posts for Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA and more (built, not yet tried with a real account); for the large platforms, whoever installs Ludy sets up that platform's app first",
+        'See your Facebook and Instagram ads (built, not yet tried with a real account), and a report for each part',
+      ],
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
         { name: `${N.marketing}`, initials: '', agent: true },
@@ -469,17 +475,8 @@ export const en: Dictionary = {
         { label: 'Thu 22/10', today: false, post: null },
       ],
     },
-    crm: {
-      name: 'Ludy CRM',
-      body: 'A contact list shared with Ludy Accounting, sales deals on a board by stage, and a public booking page for each kind of meeting: clients pick a free time, both sides get a confirmation email with a calendar file, reminders go out on their own, and clients move or cancel with a link that works once.',
-      points: [
-        'Import contacts from an Excel or CSV file after previewing every row, and search without typing diacritics',
-        'Deals on a drag and drop board by stages you set, with a card count and a total in each column',
-        'Team meeting types: round robin to whoever is free, or only the times the whole team is free',
-        'Working hours and days off for each person, with public holidays and Tet already counted up to 2028',
-        'Connect Google Calendar (whoever installs Ludy sets up the Google keys): busy times there block bookings, and new bookings can be written into your calendar',
-      ],
-      people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
+    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the Customers & Sales group).
+    sales: {
       calendar: {
         title: 'External calendar of Chị Hoa',
         provider: 'Google Calendar',
@@ -570,8 +567,8 @@ export const en: Dictionary = {
         a: 'XML e-invoices under Decree 254/2026 and Circular 91/2026 (and those issued under Decree 123/2020 before) are read exactly, without AI. PDFs and photos use an OpenAI-compatible model you configure, including models that run locally such as Ollama or vLLM.',
       },
       {
-        q: 'What do Ludy CRM and Ludy Notes do today?',
-        a: 'Ludy CRM keeps a contact list (the same parties as Ludy Accounting), sales deals on a board by stage, and bookings: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
+        q: 'What do customers and sales in Ludy Engage, and Ludy Notes, do today?',
+        a: 'The Customers & Sales group of Ludy Engage keeps a contact list (the same parties as Ludy Accounting), sales deals on a board by stage, and bookings: a public booking page, team meeting types and Google Calendar once whoever installs Ludy has set up the Google keys. What a client owes you sits in Ludy Accounting. Ludy Notes holds notes attached to a client, a document or a booking, and each person’s own to-do list.',
       },
       {
         q: 'Where is my data?',

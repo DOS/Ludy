@@ -381,6 +381,8 @@ export interface CrmBookingTable {
   manage_outcome: string | null;
   cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   hold_event_ids: Generated<string[]>;
+  meeting_state: Generated<string>;
+  meeting_url: string | null;
 }
 
 /** crove_crm.deal_next_step */
@@ -1106,6 +1108,7 @@ export interface KernelCalendarEventTable {
   cancelled_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   source_id: string | null;
   external_id: string | null;
+  conference: Generated<boolean>;
 }
 
 /** crove_kernel.channel_access */

@@ -16,8 +16,12 @@ export const SITE_URL = 'https://ludy.vn';
 // app page is one entry here, its copy and its two routes.
 export const APP_PAGES = {
   accounting: { path: '/ke-toan', enRoute: '/en/accounting', module: 'finance' },
-  crm: { path: '/crm', enRoute: '/en/crm', module: 'crm' },
+  engage: { path: '/engage', enRoute: '/en/engage', module: 'social' },
   notes: { path: '/notes', enRoute: '/en/notes', module: 'notes' },
 } as const;
 export type AppPageKey = keyof typeof APP_PAGES;
+// Addresses of pages that no longer exist, with the page that took their place. A request for one is a permanent redirect
+// (301), and so is the old /en twin of one (src/proxy.ts), so links, bookmarks and search results keep working. Ludy CRM
+// folded into Ludy Engage on 2026-11-03 (owner decision, #2435, #2440): /crm is now /engage.
+export const RETIRED_PAGES: Readonly<Record<string, string>> = { '/crm': '/engage' };
 export const appPagePath = (key: AppPageKey) => APP_PAGES[key].path;

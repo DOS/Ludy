@@ -2,7 +2,7 @@
 // Which language a request gets (#2360, DESIGN.md 6.4 and 8). Every page has one public address; the language comes
 // from the visitor's choice (a cookie the header toggle sets) or, on a first visit, from the browser's language.
 // The proxy (src/proxy.ts) turns that into a rewrite to the page's English route, which stays under /en inside the app.
-import { APP_PAGES } from '../content/site';
+import { APP_PAGES, RETIRED_PAGES } from '../content/site';
 
 export type Lang = 'vi' | 'en';
 
@@ -46,12 +46,19 @@ for (const page of Object.values(APP_PAGES)) {
   EN_ROUTES[page.path] = page.enRoute;
   PUBLIC_PATHS[page.enRoute] = page.path;
 }
+// The old /en twin of a retired page goes straight to the page that replaced it, in one redirect.
+for (const [from, to] of Object.entries(RETIRED_PAGES)) PUBLIC_PATHS[`/en${from}`] = to;
 
 const stripTrailingSlash = (pathname: string) => (pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname) || '/';
 
 // The English route that serves a public address, or null when the site has no page there.
 export function englishRoute(pathname: string): string | null {
   return EN_ROUTES[stripTrailingSlash(pathname)] ?? null;
+}
+
+// The page that replaced a retired one, or null when the address is not a retired page's.
+export function retiredTarget(pathname: string): string | null {
+  return RETIRED_PAGES[stripTrailingSlash(pathname)] ?? null;
 }
 
 // The public address an old `/en...` link now lives at, or null when the path is not one. An unknown page under /en

@@ -151,6 +151,14 @@ type BookingJob =
   // A member who left the org or whose role changed (#1382): their booking feed may need revoking.
   | { orgId: string; memberEventId: string };
 
+// A booking waiting for its Google Meet (C7, #1375): settled as failed when no outcome came in time.
+interface BookingMeetJob {
+  orgId: string;
+  bookingId: string;
+}
+// How long a booking may wait for its Meet before it goes on without one (the mails wait for the outcome).
+const BOOKING_MEET_WAIT_SECONDS = 180;
+
 interface BookingRemindJob {
   orgId: string;
   bookingId: string;
@@ -1003,6 +1011,12 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (requestId) await deps.runtime.execute('crm.booking.manage', { bookingId, requestId }, { actor, orgId });
       else await deps.runtime.execute('crm.booking.confirm', { bookingId }, { actor, orgId });
     });
+    // A booking's Google Meet that did not come in time (C7, #1375): settled as failed, so the confirmation mails the booking was
+    // holding back go out with the type's fixed link, if it has one. A booking whose Meet was settled meanwhile is left alone.
+    await boss.work<BookingMeetJob>(QUEUES.crmBookingMeet, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      await deps.runtime.execute('crm.booking.meeting_settle', { bookingId: job.data.bookingId, url: null }, { actor: { type: 'system', component: 'crm.booking' }, orgId: job.data.orgId });
+    });
     // Reminders (#1319): a job per booking, time and lead, run when it is due; the command mails only while the booking
     // is confirmed and still starts then.
     await boss.work<BookingRemindJob>(QUEUES.crmBookingRemind, { batchSize: 1 }, async ([job]) => {
@@ -1634,17 +1648,63 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       }
     });
   let calendarSyncing = false;
-  const calendarSweep = async () => {
-    if (calendarSyncing || !channels) return;
+  // 'ran', 'retry' (a connection failed passingly and the next sweep takes it up again), 'busy' (another worker process holds the sweep) or 'skipped' (this process is
+  // sweeping already, or has no calendar adapters).
+  const calendarSweep = async (): Promise<'ran' | 'retry' | 'busy' | 'skipped'> => {
+    if (calendarSyncing || !channels) return 'skipped';
     calendarSyncing = true;
     try {
       const done = await syncCalendars({ runtime: deps.runtime, broker: channels.broker, workerDb: deps.workerDb, adapters: calendars, exclusive: calendarExclusive, lockConnection: calendarConnectionLock });
       if (done.synced + done.expired + done.retry + done.disconnected > 0) console.log(`[calendar-sync] synced ${done.synced}, expired ${done.expired}, to retry ${done.retry}, disconnected ${done.disconnected}`);
+      return done.busy ? 'busy' : done.retry > 0 ? 'retry' : 'ran';
     } catch (error) {
       console.error('[calendar-sync] sweep', error instanceof Error ? error.name : typeof error);
+      // A sweep that threw has served no one: a booking job's request for it is kept and tried again (the periodic timer ignores the answer).
+      return 'retry';
     } finally {
       calendarSyncing = false;
     }
+  };
+  // A sweep a booking job asks for (below), at most one a minute from the start of the last one. A request is kept until a sweep has run for it: one made inside the
+  // minute, or while this process (or another worker process) is sweeping, waits for its turn instead of being dropped, and any number of requests while one waits are
+  // one sweep. It gives up after about ten minutes from the latest request (each request moves the limit, so one made near it is still served), when the 15 minute
+  // sweep has come round anyway.
+  const SWEEP_ASK_MIN_MS = 60_000;
+  const SWEEP_ASK_GIVE_UP_MS = 10 * 60_000;
+  let calendarSweepAskedAt = 0;
+  let calendarSweepWanted = false;
+  let calendarSweepWaiting = false;
+  let calendarSweepUntil = 0;
+  const askCalendarSweep = () => {
+    calendarSweepWanted = true;
+    calendarSweepUntil = Date.now() + SWEEP_ASK_GIVE_UP_MS;
+    if (calendarSweepWaiting) return;
+    calendarSweepWaiting = true;
+    const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    void (async () => {
+      try {
+        while (calendarSweepWanted && Date.now() < calendarSweepUntil) {
+          const wait = calendarSweepAskedAt + SWEEP_ASK_MIN_MS - Date.now();
+          if (wait > 0) {
+            await pause(wait);
+            continue;
+          }
+          if (calendarSyncing) {
+            await pause(2_000);
+            continue;
+          }
+          calendarSweepWanted = false;
+          calendarSweepAskedAt = Date.now();
+          const result = await calendarSweep();
+          if (result !== 'ran') {
+            calendarSweepWanted = true;
+            await pause(result === 'skipped' ? 2_000 : 10_000);
+          }
+        }
+      } finally {
+        calendarSweepWaiting = false;
+      }
+    })();
   };
   // Also with no adapter on: a member's disconnect is finished (the grant revoked, or given up on after three days, and the
   // sealed token removed) whatever the server has configured.
@@ -1661,6 +1721,10 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // plan was read is still written; held longer than that, the sweep that holds it comes back within 15 minutes.
       for (let attempt = 1; ; attempt++) {
         const done = await runCalendarWriteBack({ runtime: deps.runtime, broker: channels.broker, adapters: channels.calendars ?? {}, lockConnection: calendarConnectionLock }, job.data);
+        // A connection whose token is about to run out is left to the sweep, which renews it: asked for now instead of within 15 minutes, because the write of a
+        // booking's Google Meet (C7, #1375) would otherwise miss the few minutes the booking waits for it. The sweep is the one that renews and writes, so nothing
+        // crosses it; a sweep already running is waited for first, since it may have passed the connection.
+        if (done.expiring > 0) askCalendarSweep();
         if (done.busy === 0 || attempt >= CALENDAR_WRITEBACK_BUSY_TRIES) break;
         await new Promise((resolve) => setTimeout(resolve, CALENDAR_WRITEBACK_BUSY_WAIT_MS));
       }
@@ -2024,6 +2088,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   singletonKey: jobKey(row.org_id, QUEUES.crmBookingLive, `${bookingId}:${requestId}`),
                   retryLimit: BOOKING_RETRY_LIMIT,
                   retryDelay: 2,
+                  retryBackoff: true,
+                });
+              }
+              // A booking waiting for its Google Meet (C7, #1375): the job that settles it as failed if the Meet has not come by then.
+              if (crm && row.type === 'crm.booking.meeting_pending') {
+                const bookingId = String(row.payload.booking_id);
+                return boss.send(QUEUES.crmBookingMeet, { orgId: row.org_id, bookingId } satisfies BookingMeetJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.crmBookingMeet, bookingId),
+                  startAfter: BOOKING_MEET_WAIT_SECONDS,
+                  retryLimit: BOOKING_RETRY_LIMIT,
+                  retryDelay: 10,
                   retryBackoff: true,
                 });
               }
