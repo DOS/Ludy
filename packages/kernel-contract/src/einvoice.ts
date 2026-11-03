@@ -151,3 +151,61 @@ export type EInvoiceSeriesSynced = z.infer<typeof zEInvoiceSeriesSynced>;
 
 // What the deployment offers: whether the offline sandbox provider is on (EINVOICE_SANDBOX).
 export const zEInvoiceStatus = z.object({ sandbox: z.boolean() });
+
+// ---------------------------------------------------------------------------
+// The connection to a provider (#2501, ADR-0044 point 2)
+// ---------------------------------------------------------------------------
+
+// What a connection test answers: a state, never the provider's own text. The same list the port (`@crove/einvoice`) and the database's CHECK keep.
+export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
+export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
+
+// A provider this deployment offers (`EINVOICE_SANDBOX` and, later, one entry per real adapter): its id, whether it is the offline one (no host, nothing sent), and the
+// fields its connect form asks for (their names; the offline provider asks for none).
+export const zEInvoiceProviderInfo = z.object({ id: z.string(), offline: z.boolean(), connectFields: z.array(z.string()) });
+export type EInvoiceProviderInfo = z.infer<typeof zEInvoiceProviderInfo>;
+
+// The seller's tax code as the entity keeps it: 10 digits, 10 and a branch suffix, or 12 digits.
+export const zSellerTaxCode = z.string().regex(/^([0-9]{10}(-[0-9]{3})?|[0-9]{12})$/);
+
+export const zEInvoiceConnection = z.object({
+  id: zId,
+  // The channel connection that holds the sealed credential. The credential itself is never in any answer.
+  connectionId: zId,
+  legalEntityId: zId,
+  provider: z.string(),
+  sellerTaxCode: z.string(),
+  displayName: z.string(),
+  status: z.enum(['active', 'expired', 'revoked', 'error']),
+  lastTestState: z.enum(EINVOICE_CONNECTION_STATES).nullable(),
+  lastTestedAt: z.iso.datetime({ offset: true }).nullable(),
+});
+export type EInvoiceConnection = z.infer<typeof zEInvoiceConnection>;
+
+// The names are the adapter's; each value is a secret the org typed once, sealed at the edge and never shown back.
+export const zEInvoiceConnectFields = z.record(z.string().regex(/^[a-z][a-zA-Z0-9]{0,31}$/), z.string().min(1).max(500)).refine((fields) => Object.keys(fields).length <= 10);
+export const zEInvoiceConnect = z.strictObject({
+  provider: z.string().regex(/^[a-z][a-z0-9_]{0,21}$/),
+  legalEntityId: zId.nullable(),
+  // Left out, it is the entity's own tax code; the entity must have one.
+  sellerTaxCode: zSellerTaxCode.nullable(),
+  fields: zEInvoiceConnectFields,
+});
+export type EInvoiceConnect = z.infer<typeof zEInvoiceConnect>;
+
+// Reading the provider's templates and series on a test: the template number and the symbol, as the provider holds them.
+export const zEInvoiceTemplate = z.strictObject({
+  templateNo: z.string().regex(/^[0-9]$/),
+  symbol: z.string().regex(/^[CK][0-9]{2}[A-Z][A-Z0-9]{2}$/),
+  description: z.string().max(200),
+});
+export type EInvoiceSeriesTemplate = z.infer<typeof zEInvoiceTemplate>;
+export const zEInvoiceConnectionRecordTest = z.strictObject({
+  id: zId,
+  state: z.enum(EINVOICE_CONNECTION_STATES),
+  templates: z.array(zEInvoiceTemplate).max(100),
+});
+export const zEInvoiceConnectionTested = z.object({ state: z.enum(EINVOICE_CONNECTION_STATES), added: z.number().int(), series: z.array(zEInvoiceSeries) });
+export type EInvoiceConnectionTested = z.infer<typeof zEInvoiceConnectionTested>;
+
+export const zEInvoiceSeriesSetDefault = z.strictObject({ seriesId: zId });

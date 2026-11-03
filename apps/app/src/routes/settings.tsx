@@ -17,7 +17,7 @@ import { AccountRulesCard } from './account-rules.tsx';
 import { BankPartyRulesCard } from './bank-party-rules.tsx';
 import { ApprovalPresetCard, MEMBERS_CARD_ID } from './approval-preset.tsx';
 import { BankAccountNumbersCard } from './bank-account-numbers.tsx';
-import { BankFeedsCard } from './bank-feeds.tsx';
+import { IntegrationsSection } from './integrations.tsx';
 import { LegalEntitiesCard } from './legal-entities.tsx';
 import { MemberRolesRow } from './member-roles.tsx';
 import { WorkingHoursCard } from './working-hours.tsx';
@@ -26,7 +26,6 @@ import { MemberPrivateNotes, usePrivateNotes } from '../components/notes-panel.t
 import { CardSkeleton, ErrorText, FieldError, fieldControl, fieldHintId, focusFirstInvalid, isEmailAddress, PageHeader, PageSkeleton, RowsSkeleton, Spinner, useFieldErrors } from '../components/ui.tsx';
 import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { getConfig } from '../lib/auth.ts';
-import { showsBankFeeds } from '../lib/bank-feeds.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
 import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../lib/offboarding.ts';
@@ -1165,8 +1164,8 @@ export function SettingsPage() {
         {getConfig().modules.includes('finance') && canManage && <LegalEntitiesCard key={`legal-entities:${org.data?.slug}`} />}
         {/* The numbers of the bank accounts (#2183): how a statement file finds its account without a bank feed; owners and admins. */}
         {getConfig().modules.includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
-        {/* Bank feeds (ADR-0039, #2099): with the finance module, and only where the deployment offers one. */}
-        {showsBankFeeds(getConfig()) && org.data && <BankFeedsCard key={`bank-feeds:${org.data.slug}`} role={org.data.role} />}
+        {/* Tích hợp (Integrations), with the finance module: the bank feed (ADR-0039, #2099) and the e-invoice provider (ADR-0044, #2501), each only where the deployment offers one or the org has one connected. */}
+        {getConfig().modules.includes('finance') && org.data && <IntegrationsSection key={`integrations:${org.data.slug}`} role={org.data.role} orgSlug={org.data.slug} />}
         {/* The chart of accounts belongs to the finance module (#319). */}
         {getConfig().modules.includes('finance') && <ChartOfAccountsCard canManage={canManage} />}
         {/* The MISA codes of stock purchases (#1398), for the goods purchase export. */}

@@ -51,6 +51,7 @@ export interface CroveFinanceSchema {
   'crove_finance.collection_setting': FinanceCollectionSettingTable;
   'crove_finance.customer_collection': FinanceCustomerCollectionTable;
   'crove_finance.depreciation_line': FinanceDepreciationLineTable;
+  'crove_finance.einvoice_connection': FinanceEinvoiceConnectionTable;
   'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
   'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
   'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
@@ -731,6 +732,20 @@ export interface FinanceDepreciationLineTable {
   entry_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+}
+
+/** crove_finance.einvoice_connection */
+export interface FinanceEinvoiceConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  seller_tax_code: ColumnType<string, string, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.einvoice_draft_line */
