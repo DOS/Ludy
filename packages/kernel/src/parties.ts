@@ -8,9 +8,10 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { auditValue, normalizeTaxCode, zId, zPartyCreate } from '@crove/kernel-contract';
+import { auditValue, normalizeTaxCode, zId, zPartyCreate, zPartyKind } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
+import { seesEveryEntity } from './file-status.ts';
 import { normalizeAddress } from './org-address.ts';
 
 const PARTY = kernelManifest.tables.crove_kernel.party;
@@ -86,6 +87,32 @@ export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
   }
 }
 
+// Whether anything points at a party: a document or a voucher or a ledger line of the books, a vendor or categorization rule, a deal, a booking, a person who works at
+// it, a party merged into it, or a contact thread. A note linked to the party and a staged import match do not hold the kind: neither reads it. The database test lists
+// every foreign key to party, so a table added later has to be put on one side or the other.
+// A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one click); one that is pointed at
+// keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
+export const PARTY_KIND_HOLDERS = [
+  ['crove_finance.purchase_document', 'party_id'],
+  ['crove_finance.cash_voucher', 'party_id'],
+  ['crove_finance.journal_line', 'party_id'],
+  ['crove_finance.vendor_account_rule', 'party_id'],
+  ['crove_finance.categorization_rule', 'vendor_party_id'],
+  ['crove_finance.bank_party_rule', 'party_id'],
+  ['crove_crm.deal', 'party_id'],
+  ['crove_crm.booking', 'party_id'],
+  ['crove_kernel.conversation_identity', 'party_id'],
+  ['crove_kernel.conversation', 'party_id'],
+  ['crove_kernel.party', 'company_id'],
+  ['crove_kernel.party', 'duplicate_of'],
+] as const;
+
+async function partyPointedAt(ctx: CommandContext, partyId: string): Promise<boolean> {
+  const holders = PARTY_KIND_HOLDERS.map(([table, column]) => sql`EXISTS (SELECT 1 FROM ${sql.table(table)} x WHERE x.org_id = ${ctx.orgId}::uuid AND x.${sql.id(column)} = ${partyId}::uuid)`);
+  const { rows } = await sql<{ used: boolean }>`SELECT (${sql.join(holders, sql` OR `)}) AS used`.execute(ctx.trx);
+  return rows[0]?.used === true;
+}
+
 export const updateParty = defineCommand({
   name: 'kernel.party.update',
   input: z.object({
@@ -96,6 +123,8 @@ export const updateParty = defineCommand({
     address: zText(2000),
     email: zText(1000),
     phone: zText(100),
+    // The kind, when the editor changes it (#2438): allowed only for a party nothing points at, and a person with a company clears the link first.
+    kind: zPartyKind.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -106,7 +135,7 @@ export const updateParty = defineCommand({
     // Locked: two edits of one party wait for each other, and the second sees the first one's version.
     const before = await ctx.trx
       .selectFrom('crove_kernel.party')
-      .select(['id', 'name', 'tax_code', 'address', 'email', 'phone', 'version'])
+      .select(['id', 'kind', 'name', 'tax_code', 'address', 'email', 'phone', 'version', 'company_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.partyId)
       .forUpdate()
@@ -128,7 +157,21 @@ export const updateParty = defineCommand({
       if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc một đối tác khác; hãy gộp hai đối tác`, { partyId: other.id });
     }
 
-    const next = { name, tax_code: taxCode, address, email, phone };
+    const kind = input.kind ?? before.kind;
+    if (kind !== before.kind) {
+      if (before.company_id !== null) throw new DomainError('PARTY_HAS_COMPANY', 422, 'Hãy bỏ liên kết với công ty của người này trước khi đổi loại');
+      // The check reads the books and the threads as the member. The restrictive entity policies of the books hide the rows of another entity from a member limited
+      // to one, and a private message is read by owners and admins only (a member's channel limit hides more): only an owner or an admin who sees every entity can say
+      // that nothing points at the party.
+      const { rows: scope } = await sql<{ every: boolean }>`SELECT ${seesEveryEntity} AS every`.execute(ctx.trx);
+      if ((ctx.role !== 'owner' && ctx.role !== 'admin') || scope[0]?.every !== true) {
+        throw new DomainError('PARTY_KIND_SCOPE', 403, 'Chỉ chủ doanh nghiệp hoặc quản trị viên, những người xem được mọi sổ sách và hội thoại, mới đổi được loại đối tác');
+      }
+      if (await partyPointedAt(ctx, before.id)) {
+        throw new DomainError('PARTY_KIND_LOCKED', 422, 'Đối tác này đã có chứng từ, quy tắc kế toán, cơ hội, lịch hẹn, hội thoại hay người liên hệ gắn vào nên không đổi loại được');
+      }
+    }
+    const next = { kind, name, tax_code: taxCode, address, email, phone };
     const changed = (Object.keys(next) as Array<keyof typeof next>).filter((key) => before[key] !== next[key]);
     if (changed.length === 0) return { partyId: before.id, version: before.version };
     const updated = await ctx.trx
@@ -230,7 +273,7 @@ export const markDuplicate = defineCommand({
     // Both rows locked, in id order, so two marks of the same pair wait for each other instead of deadlocking.
     const rows = await ctx.trx
       .selectFrom('crove_kernel.party')
-      .select(['id', 'name', 'duplicate_of', 'version'])
+      .select(['id', 'kind', 'name', 'duplicate_of', 'version'])
       .where('org_id', '=', ctx.orgId)
       .where('id', 'in', [partyId, keepId])
       .orderBy('id')
@@ -254,6 +297,18 @@ export const markDuplicate = defineCommand({
       .limit(1)
       .executeTakeFirst();
     if (merged) throw new DomainError('PARTY_HAS_DUPLICATES', 422, `Đã có đối tác gộp vào ${party.name}; hãy gộp ${keep.name} vào ${party.name} thay vì ngược lại`);
+    // The people of a company read their company through duplicate_of (#2438), so a company they work at goes only into another company: into a person it would
+    // leave "the company" a person, or the person their own company.
+    if (party.kind === 'organization' && keep.kind === 'person') {
+      const works = await ctx.trx
+        .selectFrom('crove_kernel.party')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('company_id', '=', partyId)
+        .limit(1)
+        .executeTakeFirst();
+      if (works) throw new DomainError('PARTY_MERGE_KIND', 422, `${party.name} có người liên hệ làm việc; chỉ gộp được vào một công ty khác, không gộp vào một người`);
+    }
     await ctx.trx
       .updateTable('crove_kernel.party')
       .set({ duplicate_of: keepId, version: party.version + 1, updated_at: ctx.now })
@@ -297,6 +352,67 @@ export const unmarkDuplicate = defineCommand({
     ctx.audit({ partyId, keepId: party.duplicate_of, name: auditValue(PARTY, 'name', party.name), keepName: auditValue(PARTY, 'name', keep.name) });
     await ctx.activity('kernel.party', partyId, 'party.unmarked_duplicate', 'Tách khỏi đối tác đã gộp vào');
     return { partyId };
+  },
+});
+
+// The company a person works at (#2438, CRM-Q5): the person's `company_id`, set, changed or cleared by one command, from the person's page or the company's. A
+// person works at one company of the org; the company is an organization that is not merged into another (a merged one is replaced by the party kept). The table
+// holds the same rules for every writer (party_company_person, party_company_guard); the command checks them first under row locks so each refusal says why.
+// The editor sends the person's version, as kernel.party.update: a person saved by someone else meanwhile is refused. Owners, admins and members (R1); no agent.
+// The audit row and the timeline sentences name no one: ids only.
+export const setPartyCompany = defineCommand({
+  name: 'kernel.party.set_company',
+  input: z.object({ partyId: zId, companyId: zId.nullable(), version: z.number().int().min(1) }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx, { partyId, companyId, version }) => {
+    if (companyId === partyId) throw new DomainError('SAME_PARTY', 422, 'Một người liên hệ không thể thuộc về chính mình');
+    // The person and the company, locked in id order, so two links of the same pair wait for each other instead of deadlocking. A company of another org is not
+    // visible to this one (row-level security): it reads as not found.
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.party')
+      .select(['id', 'kind', 'duplicate_of', 'company_id', 'version'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', companyId === null ? [partyId] : [partyId, companyId])
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    const person = rows.find((r) => r.id === partyId);
+    if (!person) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác');
+    if (person.version !== version) {
+      throw new DomainError('PARTY_CHANGED', 409, 'Thông tin này vừa được người khác sửa; hãy mở lại rồi sửa tiếp', { version: person.version });
+    }
+    if (person.kind !== 'person') throw new DomainError('PARTY_NOT_PERSON', 422, 'Chỉ người liên hệ mới thuộc về một công ty');
+    // A person merged into another is hidden from the lists and the counts: a new link would never show. (Clearing a link they already had stays allowed.)
+    if (companyId !== null && person.duplicate_of !== null) {
+      throw new DomainError('PARTY_IS_DUPLICATE', 422, 'Người liên hệ này đã được gộp vào liên hệ khác; hãy chọn liên hệ được giữ lại', { keepId: person.duplicate_of });
+    }
+    if (companyId !== null) {
+      const company = rows.find((r) => r.id === companyId);
+      if (!company) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy công ty');
+      if (company.kind !== 'organization') throw new DomainError('PARTY_COMPANY_NOT_ORGANIZATION', 422, 'Công ty phải là một đối tác loại công ty, không phải một người');
+      if (company.duplicate_of !== null) {
+        throw new DomainError('PARTY_IS_DUPLICATE', 422, 'Công ty này đã được gộp vào công ty khác; hãy chọn công ty được giữ lại', { keepId: company.duplicate_of });
+      }
+    }
+    if (person.company_id === companyId) return { partyId, version: person.version };
+    const updated = await ctx.trx
+      .updateTable('crove_kernel.party')
+      .set({ company_id: companyId, version: person.version + 1, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', partyId)
+      .returning('version')
+      .executeTakeFirstOrThrow();
+    ctx.audit({ partyId, companyId, previousCompanyId: person.company_id });
+    await ctx.activity('kernel.party', partyId, companyId === null ? 'party.company_cleared' : 'party.company_set', companyId === null ? 'Bỏ liên kết với công ty' : 'Gắn với một công ty');
+    if (companyId !== null) await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
+    if (person.company_id !== null) {
+      // The company the person worked at may have been merged since: the departure is on the company kept, where the counts and the lists put the person.
+      const left = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'duplicate_of']).where('org_id', '=', ctx.orgId).where('id', '=', person.company_id).executeTakeFirst();
+      await ctx.activity('kernel.party', left?.duplicate_of ?? person.company_id, 'party.person_unlinked', 'Một người liên hệ không còn làm việc tại đây');
+    }
+    return { partyId, version: updated.version };
   },
 });
 
@@ -523,5 +639,5 @@ export const linkPartyForTaxCode = defineCommand({
   },
 });
 
-export const partyCommands = [createParty, updateParty, markDuplicate, unmarkDuplicate, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
+export const partyCommands = [createParty, updateParty, markDuplicate, unmarkDuplicate, setPartyCompany, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
 export const partyQueries = [duplicateHintsQuery];

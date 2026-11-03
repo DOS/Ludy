@@ -72,7 +72,11 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
 
   await test.step('the contacts list shows the new contacts', async () => {
     await page.getByRole('link', { name: 'Về danh sách liên hệ' }).first().click();
+    // The people list holds the people; the company, with its tax code, is on the Companies screen (#2438).
     await expect(page.getByText('Nguyễn Văn An')).toBeVisible();
+    await expect(page.getByText('Công ty ABC')).toHaveCount(0);
+    await page.getByRole('navigation').getByRole('link', { name: 'Công ty', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/companies$`));
     await expect(page.getByText('Công ty ABC')).toBeVisible();
   });
 });

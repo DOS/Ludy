@@ -1933,6 +1933,7 @@ export function createRpcHandler(
       unmarkDuplicate: os.parties.unmarkDuplicate.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => runtime.execute('kernel.party.unmark_duplicate', input, { actor, orgId })),
       ),
+      setCompany: os.parties.setCompany.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.party.set_company', input, { actor, orgId }))),
       duplicateHints: os.parties.duplicateHints.handler(({ context }) => inOrg(context, (orgId, actor) => runtime.query('kernel.party.duplicate_hints', {}, { actor, orgId }))),
     },
     documents: {

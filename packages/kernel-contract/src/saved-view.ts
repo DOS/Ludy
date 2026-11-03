@@ -54,6 +54,8 @@ const PARTY_FIELDS = {
   has_phone: { label: 'Có số điện thoại', ops: { is: yesNo } },
   has_tax_code: { label: 'Có mã số thuế', ops: { is: yesNo } },
   has_open_deal: { label: 'Có cơ hội đang mở', ops: { is: yesNo } },
+  // The company a person works at (#2438): one company (a merged one reads as the company kept), or none.
+  company: { label: 'Công ty', ops: { is: zId, is_empty: none } },
   created: { label: 'Ngày tạo', ops: { within_last_days: days } },
 } as const satisfies Record<string, FieldSpec>;
 

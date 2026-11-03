@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
+import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import {
@@ -1410,6 +1410,8 @@ export const contract = {
           address: z.string().max(2000).nullable(),
           email: z.string().max(1000).nullable(),
           phone: z.string().max(100).nullable(),
+          // The kind, when it changes (#2438): only for a party nothing points at (PARTY_KIND_LOCKED), and a person with a company clears the link first.
+          kind: zPartyKind.optional(),
         }),
       )
       .output(z.object({ partyId: zId, version: z.number().int() })),
@@ -1417,6 +1419,9 @@ export const contract = {
     // under it; nothing is deleted. unmarkDuplicate undoes it.
     markDuplicate: oc.input(z.object({ partyId: zId, keepId: zId })).output(z.object({ partyId: zId, keepId: zId })),
     unmarkDuplicate: oc.input(z.object({ partyId: zId })).output(z.object({ partyId: zId })),
+    // Owners, admins and members (R1, #2438): the company a person works at, set, changed or cleared (companyId null), from the version the editor read. The company
+    // is an organization of the org that is not merged into another; only a person has one.
+    setCompany: oc.input(z.object({ partyId: zId, companyId: zId.nullable(), version: z.number().int().min(1) })).output(z.object({ partyId: zId, version: z.number().int() })),
     // Every role (K4, #2228): what happened to a contact, oldest first (fixed text, never a name or contact detail).
     timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.
