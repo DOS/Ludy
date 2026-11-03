@@ -8,12 +8,13 @@
 -- stock_alias   a name a source uses for an item (a purchase line's normalized description, a marketplace SKU) and the factor to the item's unit (a carton of 12).
 --               Unique per entity and source. Inserted and deleted by owners, admins and members, never updated.
 -- stock_move    the ledger of stock, treated like the books' own: APPEND-ONLY. A signed quantity, a date and the source (a line of a posted document, a manual entry, or
---               the reversal of an earlier move). No tenant role updates or deletes a row (no grant, and a trigger that refuses every role but the org's purge), a
---               correction is a reversing move of the opposite quantity, and a move is reversed at most once. Written only by commands, through the one write path.
+--               the reversal of an earlier move). No role updates or deletes a row (no grant, and the kernel's append-only trigger), a correction is a reversing move of the
+--               opposite quantity, and a move is reversed at most once. Written only by commands, through the one write path.
 --               On hand is the sum of an item's moves and its cost is recomputed from them: neither is a column.
 --
 -- Quantities are numeric(20, 6) (crove_finance.quantity), never floating point. Every table has org_id, PRIMARY KEY (org_id, id), RLS with a RESTRICTIVE `le_scope`
--- per legal entity, and the legal entity of an alias or a move is its item's. The org purge deletes the three tables (the next migration).
+-- per legal entity, and the legal entity of an alias or a move is its item's. The org purge deletes the aliases and the items no move names, and keeps the moves with the
+-- items they name, as it keeps the ledger (the next migration).
 SET LOCAL lock_timeout = '2s';
 
 -- ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ CREATE TABLE IF NOT EXISTS crove_finance.stock_move (
 );
 -- A line moves stock once, and a move is reversed once.
 CREATE UNIQUE INDEX IF NOT EXISTS stock_move_line_uq ON crove_finance.stock_move (org_id, document_id, line_no) WHERE source_type = 'document_line';
+CREATE INDEX IF NOT EXISTS stock_move_document_idx ON crove_finance.stock_move (org_id, document_id, line_no) WHERE document_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS stock_move_reversal_uq ON crove_finance.stock_move (org_id, reverses_move_id) WHERE reverses_move_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS stock_move_item_idx ON crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date);
 CREATE INDEX IF NOT EXISTS stock_move_entity_idx ON crove_finance.stock_move (legal_entity_id, org_id);
@@ -171,13 +173,9 @@ CREATE POLICY stock_move_insert ON crove_finance.stock_move AS RESTRICTIVE FOR I
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = stock_move.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- Append-only for every role: the shared guard refuses every UPDATE and every DELETE except the org's own purge (crove_kernel.org_purge, the role that owns it, its
--- transaction-local mark, the worker login in the org's system context, the org offboarding). TRUNCATE is refused by the second trigger.
+-- Append-only for every role, like the books: the kernel's guard refuses every UPDATE, DELETE and TRUNCATE. The org purge keeps the moves, as it keeps the ledger (the stock
+-- book is an accounting record), together with the items they name.
 SELECT crove_kernel.make_append_only('crove_finance.stock_move');
-DROP TRIGGER IF EXISTS append_only_row ON crove_finance.stock_move;
--- migration-lint: cross-module the kernel's org purge deletes a closing org's stock moves (#2512): their append-only trigger lets that one definer through.
-CREATE TRIGGER append_only_row BEFORE UPDATE OR DELETE ON crove_finance.stock_move
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.purge_append_only_guard();
 
 -- A reversal is the exact opposite of an earlier move of the same item that is not itself a reversal; the unique index above says it happens once.
 CREATE OR REPLACE FUNCTION crove_finance.stock_move_guard() RETURNS trigger

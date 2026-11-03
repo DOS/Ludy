@@ -32,6 +32,7 @@ import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
 import { learnFromApproval } from './categorization.ts';
 import { postReversal } from './reversal.ts';
+import { postDocumentStock } from './stock-lines.ts';
 import { invoiceLabel, journalMemo } from './memo.ts';
 import { isOwnTaxCode } from './own-tax-code.ts';
 import { databaseToday, dateLabel, liveOpeningDate } from './period-lock.ts';
@@ -596,6 +597,12 @@ export const recordPurchase = defineCommand({
       })),
     });
     const late = lateDate ? await lateReason(ctx, legalEntityId, invoice.issueDate, lateDate) : null;
+    // The stock the lines make (#2512): a goods line that matches an item moves it, the others wait in the "Chưa gán hàng" list. The entry above is the same either way.
+    const stock = await postDocumentStock(
+      ctx,
+      { documentId: document.id, legalEntityId, direction, date: entryDate },
+      lines.map((l) => ({ lineNo: l.lineNo, description: l.description, unit: l.unit, quantity: l.quantity, account: l.debitAccount })),
+    );
 
     // Remember the debit account carrying the largest amount (either sign) for this vendor. Sales remember nothing.
     const main = sale ? undefined : [...lines].sort((a, b) => money(b.amount).abs().comparedTo(money(a.amount).abs()))[0];
@@ -630,6 +637,7 @@ export const recordPurchase = defineCommand({
       direction,
       legal_entity_id: legalEntityId,
       ...(learned.length > 0 ? { learned_rules: learned } : {}),
+      ...(stock.moved > 0 || stock.unassigned > 0 ? { stock_moves: stock.moved, stock_unassigned: stock.unassigned } : {}),
       ...(replaces ? { replaces_document_id: replaces } : {}),
       ...(related ? { correction_kind: related.kind, corrects_document_id: corrected?.id ?? null, voided_document_id: voidedOriginal } : {}),
       ...(lateDate ? { invoice_date: invoice.issueDate, posting_date: lateDate, late_reason: late } : {}),

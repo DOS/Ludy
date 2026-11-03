@@ -7472,6 +7472,12 @@ export const vi = {
       STOCK_ALIAS_FACTOR: 'Tên này đã được gán cho mặt hàng này với một hệ số quy đổi khác; hãy bỏ gán rồi gán lại.',
       STOCK_MOVE_NOT_FOUND: 'Không tìm thấy phát sinh kho này.',
       STOCK_MOVE_IS_REVERSAL: 'Đây đã là một phát sinh đảo, không đảo thêm được.',
+      STOCK_LINE_NOT_FOUND: 'Không tìm thấy dòng hóa đơn này.',
+      STOCK_LINE_VOIDED: 'Hóa đơn này đã bị hủy nên không gán được dòng vào kho.',
+      STOCK_LINE_ASSIGNED: 'Dòng này đã được gán cho một mặt hàng.',
+      STOCK_LINE_NOT_GOODS: 'Chỉ dòng hàng hóa (tài khoản 156 khi mua, 5111 khi bán) mới gán được vào kho.',
+      STOCK_LINE_NO_QUANTITY: 'Dòng này không có số lượng để nhập hoặc xuất kho.',
+      STOCK_ITEM_ENTITY_MISMATCH: 'Mặt hàng và hóa đơn thuộc hai pháp nhân khác nhau.',
       STOCK_MOVE_REVERSED: 'Phát sinh kho này đã được đảo.',
       EINVOICE_PROVIDER_NOT_READY: 'Nhà cung cấp này chưa kiểm tra được từ màn hình; sẽ có khi bộ kết nối của nó hoàn thành.',
       RULE_TEXT_TOO_SHORT: 'Từ khóa cần có ít nhất hai chữ cái hoặc chữ số.',
@@ -8033,6 +8039,10 @@ export const vi = {
         get: 'Xem bản nháp hóa đơn bán ra',
         list: 'Xem các bản nháp hóa đơn bán ra',
         save: 'Lưu bản nháp hóa đơn bán ra',
+      },
+      stock: {
+        assign: 'Gán dòng hóa đơn cho mặt hàng',
+        unassigned: 'Xem các dòng hàng chưa gán',
       },
       stock_alias: {
         forget: 'Bỏ gán tên cho mặt hàng',

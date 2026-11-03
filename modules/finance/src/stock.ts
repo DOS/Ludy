@@ -5,7 +5,7 @@
 // - finance.stock_item.set_active (same roles; R1): deactivates an item or brings it back. An item is never deleted.
 // - finance.stock_alias.teach / forget (same roles; R1): the names a source uses for an item and the factor to its unit.
 // - finance.stock_move.reverse (same roles; R1): the correction of a move, which is a reversing move of the opposite quantity; moves are append-only and written only here
-//   and by the posting of a document's lines (a later build), through writeStockMove.
+//   and by the lines of a posted document (stock-lines.ts: the posting, finance.stock.assign and the void of a document), always through writeStockMove.
 // - finance.stock_item.list / finance.stock_move.list: every member reads. On hand is the sum of an item's moves, computed here, never a column.
 // Quantities are decimal strings (numeric(20,6) in the database) and sums go through decimal.js; audit facts carry ids and counts, never a name.
 import { sql } from 'kysely';
@@ -56,7 +56,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
 
 type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 
-async function loadItem(ctx: Ctx, itemId: string) {
+export async function loadItem(ctx: Ctx, itemId: string) {
   const item = await ctx.trx
     .selectFrom('crove_finance.stock_item')
     .select(['id', 'legal_entity_id', 'code', 'name', 'unit', 'stock_account', 'trade', 'active'])

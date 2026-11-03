@@ -20,3 +20,28 @@ export const plainQuantity = (value: string): string => {
 
 // A reversal of a move is the move with its quantity negated, exactly.
 export const oppositeQuantity = (value: string): string => plainQuantity(money(value).negated().toFixed());
+
+// The account a line is booked to when it is goods: 156 on a purchase (a stock-in), 5111 on a sale (a stock-out), or a sub-account of either.
+export const STOCK_GOODS_ACCOUNT = { purchase: '156', sale: '5111' } as const;
+
+// The table holds six decimals and fourteen integer digits.
+const MOVE_LIMIT = money('100000000000000');
+
+// What a line says it moved, as a positive decimal string, or null when there is nothing to move (no quantity, zero, negative, or not a decimal).
+export function movableQuantity(raw: string | null | undefined): string | null {
+  const text = raw?.trim() ?? '';
+  if (!/^\d+(\.\d+)?$/.test(text)) return null;
+  const quantity = money(text);
+  return quantity.greaterThan(0) ? quantity.toFixed() : null;
+}
+
+// The quantity of the move a line makes: the line's quantity times the factor to the item's unit, to the six decimals the table holds, negative for a sale. Null when it
+// rounds to nothing or is too large to hold, so a posting never fails on a figure the stock cannot take.
+export function moveQuantity(direction: 'purchase' | 'sale', quantity: string, factor: string): string | null {
+  const scaled = money(quantity).times(money(factor)).toDecimalPlaces(6);
+  if (scaled.isZero() || scaled.abs().greaterThanOrEqualTo(MOVE_LIMIT)) return null;
+  return plainQuantity((direction === 'sale' ? scaled.negated() : scaled).toFixed());
+}
+
+// Two spellings of one unit ('Cái' and 'cái ').
+export const sameUnit = (a: string | null | undefined, b: string | null | undefined): boolean => normalizeAlias(a ?? '') === normalizeAlias(b ?? '');

@@ -7474,6 +7474,12 @@ export const en = {
       STOCK_ALIAS_FACTOR: 'This name is already given to this item with another conversion factor; forget it and name it again.',
       STOCK_MOVE_NOT_FOUND: 'This stock move was not found.',
       STOCK_MOVE_IS_REVERSAL: 'This is already a reversing move and cannot be reversed again.',
+      STOCK_LINE_NOT_FOUND: 'This invoice line was not found.',
+      STOCK_LINE_VOIDED: 'This invoice was voided, so its lines cannot be assigned to stock.',
+      STOCK_LINE_ASSIGNED: 'This line is already assigned to an item.',
+      STOCK_LINE_NOT_GOODS: 'Only a goods line (account 156 on a purchase, 5111 on a sale) can be assigned to stock.',
+      STOCK_LINE_NO_QUANTITY: 'This line has no quantity to move in or out of stock.',
+      STOCK_ITEM_ENTITY_MISMATCH: 'The item and the invoice belong to two different legal entities.',
       STOCK_MOVE_REVERSED: 'This stock move has already been reversed.',
       EINVOICE_PROVIDER_NOT_READY: 'This provider cannot be tested from the screen yet; it can once its connector is finished.',
       EINVOICE_TOTAL_TOO_LARGE: 'The amounts of the invoice are too large. Check the quantities and prices.',
@@ -8036,6 +8042,10 @@ export const en = {
         get: 'View a sales invoice draft',
         list: 'View the sales invoice drafts',
         save: 'Save a sales invoice draft',
+      },
+      stock: {
+        assign: 'Assign an invoice line to an item',
+        unassigned: 'View the goods lines not assigned yet',
       },
       stock_alias: {
         forget: 'Forget the name of an item',

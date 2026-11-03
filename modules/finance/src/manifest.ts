@@ -76,8 +76,7 @@ export const financeManifest = defineModule({
     { type: 'finance.journal_voucher', table: 'journal_voucher', legalEntityScoped: true, numbering: { docType: 'finance.journal_voucher' }, audit: 'append_only' },
     { type: 'finance.purchase_document', table: 'purchase_document', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.stock_item', table: 'stock_item', legalEntityScoped: true, audit: 'command' },
-    // Append-only in the database like the books (no grant, a guard that only the org purge passes); the manifest check knows only the kernel's plain guard, so it is declared a command's.
-    { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'command' },
+    { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'append_only' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.finance,

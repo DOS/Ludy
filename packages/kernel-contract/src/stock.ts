@@ -43,13 +43,15 @@ export const zStockItem = z.object({
 });
 export type StockItem = z.infer<typeof zStockItem>;
 
+// How many of the item's units one of the source's is (a carton of 12), a decimal string above zero.
+export const zStockFactor = z.string().regex(/^(?:0\.[0-9]{0,5}[1-9]|[1-9][0-9]{0,11}(?:\.[0-9]{1,6})?)$/);
+
 export const zStockAliasTeach = z.strictObject({
   itemId: zId,
   source: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/),
   // The name as the source writes it, or the SKU; the server normalizes it.
   key: z.string().trim().min(1).max(300),
-  // How many of the item's units one of the source's is (a carton of 12), a decimal string above zero.
-  factor: z.string().regex(/^(?:0\.[0-9]{0,5}[1-9]|[1-9][0-9]{0,11}(?:\.[0-9]{1,6})?)$/),
+  factor: zStockFactor,
 });
 export type StockAliasTeach = z.infer<typeof zStockAliasTeach>;
 
@@ -67,3 +69,30 @@ export const zStockMove = z.object({
   reversed: z.boolean(),
 });
 export type StockMove = z.infer<typeof zStockMove>;
+
+export const zStockUnassignedInput = z.strictObject({ legalEntityId: zId.optional(), limit: z.number().int().min(1).max(500).optional() });
+
+// A goods line of a posted document that moved no stock: it matched no item by code or by a taught name ("Chua gan hang").
+export const zStockUnassignedLine = z.object({
+  documentId: zId,
+  lineNo: z.number().int(),
+  legalEntityId: zId,
+  direction: z.enum(['purchase', 'sale']),
+  invoiceDate: z.string(),
+  invoiceSeries: z.string(),
+  invoiceNumber: z.string(),
+  description: z.string(),
+  unit: z.string().nullable(),
+  quantity: z.string(),
+});
+export type StockUnassignedLine = z.infer<typeof zStockUnassignedLine>;
+
+// Assigns a line to an item: writes its move and, unless told not to, teaches the line's name as an alias of the item with the factor.
+export const zStockAssign = z.strictObject({
+  documentId: zId,
+  lineNo: z.number().int().positive(),
+  itemId: zId,
+  factor: zStockFactor.default('1'),
+  teach: z.boolean().default(true),
+});
+export type StockAssign = z.infer<typeof zStockAssign>;
