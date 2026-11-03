@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { auditValue, normalizeTaxCode, zId, zPartyCreate } from '@crove/kernel-contract';
+import { auditValue, normalizeTaxCode, zId, zPartyCreate, zPartyKind } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 import { kernelManifest } from './manifest.ts';
 import { normalizeAddress } from './org-address.ts';
@@ -86,6 +86,24 @@ export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
   }
 }
 
+// Whether anything points at a party: a document or a voucher or a ledger line of the books, a vendor rule, a deal, a booking, a person who works at it, a party merged
+// into it, or a contact thread. A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one
+// click); one that is pointed at keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
+async function partyPointedAt(ctx: CommandContext, partyId: string): Promise<boolean> {
+  const { rows } = await sql<{ used: boolean }>`
+    SELECT (
+      EXISTS (SELECT 1 FROM crove_finance.purchase_document x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_finance.journal_line x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_finance.vendor_account_rule x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_crm.deal x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_crm.booking x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_kernel.conversation_identity x WHERE x.org_id = ${ctx.orgId}::uuid AND x.party_id = ${partyId}::uuid)
+      OR EXISTS (SELECT 1 FROM crove_kernel.party x WHERE x.org_id = ${ctx.orgId}::uuid AND (x.company_id = ${partyId}::uuid OR x.duplicate_of = ${partyId}::uuid))
+    ) AS used`.execute(ctx.trx);
+  return rows[0]?.used === true;
+}
+
 export const updateParty = defineCommand({
   name: 'kernel.party.update',
   input: z.object({
@@ -96,6 +114,8 @@ export const updateParty = defineCommand({
     address: zText(2000),
     email: zText(1000),
     phone: zText(100),
+    // The kind, when the editor changes it (#2438): allowed only for a party nothing points at, and a person with a company clears the link first.
+    kind: zPartyKind.optional(),
   }),
   risk: 'R1',
   sideEffect: 'internal',
@@ -106,7 +126,7 @@ export const updateParty = defineCommand({
     // Locked: two edits of one party wait for each other, and the second sees the first one's version.
     const before = await ctx.trx
       .selectFrom('crove_kernel.party')
-      .select(['id', 'name', 'tax_code', 'address', 'email', 'phone', 'version'])
+      .select(['id', 'kind', 'name', 'tax_code', 'address', 'email', 'phone', 'version', 'company_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.partyId)
       .forUpdate()
@@ -128,7 +148,14 @@ export const updateParty = defineCommand({
       if (other) throw new DomainError('PARTY_TAX_CODE_TAKEN', 409, `Mã số thuế ${taxCode} đã thuộc một đối tác khác; hãy gộp hai đối tác`, { partyId: other.id });
     }
 
-    const next = { name, tax_code: taxCode, address, email, phone };
+    const kind = input.kind ?? before.kind;
+    if (kind !== before.kind) {
+      if (before.company_id !== null) throw new DomainError('PARTY_HAS_COMPANY', 422, 'Hãy bỏ liên kết với công ty của người này trước khi đổi loại');
+      if (await partyPointedAt(ctx, before.id)) {
+        throw new DomainError('PARTY_KIND_LOCKED', 422, 'Đối tác này đã có chứng từ, cơ hội, lịch hẹn hay người liên hệ gắn vào nên không đổi loại được');
+      }
+    }
+    const next = { kind, name, tax_code: taxCode, address, email, phone };
     const changed = (Object.keys(next) as Array<keyof typeof next>).filter((key) => before[key] !== next[key]);
     if (changed.length === 0) return { partyId: before.id, version: before.version };
     const updated = await ctx.trx

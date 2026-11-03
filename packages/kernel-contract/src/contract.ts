@@ -188,7 +188,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zContactList, zContactPage, zPartyCreate } from './contacts.ts';
+import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import {
@@ -1404,6 +1404,8 @@ export const contract = {
           address: z.string().max(2000).nullable(),
           email: z.string().max(1000).nullable(),
           phone: z.string().max(100).nullable(),
+          // The kind, when it changes (#2438): only for a party nothing points at (PARTY_KIND_LOCKED), and a person with a company clears the link first.
+          kind: zPartyKind.optional(),
         }),
       )
       .output(z.object({ partyId: zId, version: z.number().int() })),

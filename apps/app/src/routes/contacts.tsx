@@ -127,7 +127,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
     <TableRow>
       <TableCell colSpan={columns} className="space-y-4 px-4 py-4">
         {editing ? (
-          <EditParty party={contact} ns="contacts" onDone={() => setEditing(false)} />
+          <EditParty party={contact} ns="contacts" kind={contact.kind} onDone={() => setEditing(false)} />
         ) : (
           <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
             {(['address', 'email', 'phone', 'taxCode'] as const).map((key) => (
