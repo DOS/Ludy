@@ -727,6 +727,34 @@ describe('the words of a request about running ads (#2294)', () => {
     expect(adsChangeText({ change: 'launches_unblock' }, inVi, money).title).toBe('Mở lại việc chạy quảng cáo sau khi bị chặn.');
   });
 
+  it('says on the approval card that the AI coworker wrote the plan, with the fields it drafted that nobody has changed, and says nothing of it for a human plan', () => {
+    const inEn = translatorFor('en');
+    const inVi = translatorFor('vi');
+    const plan = {
+      name: 'Cà phê Mộc',
+      objective: 'traffic' as const,
+      dailyBudget: '100000',
+      startOn: '2027-01-02',
+      endOn: '2027-01-08',
+      targeting: { locations: [{ country: 'VN' }], ageMin: 20, ageMax: 45, gender: 'all' as const, interests: [] },
+      linkUrl: null,
+      pageConnectionId: null,
+      sourcePostId: null,
+      mediaFileId: null,
+      variants: [{ headline: 'Chi nhánh mới', primaryText: 'Ghé quán nhé.', callToAction: 'learn_more' as const }],
+    };
+    const launch = (over: { origin: 'human' | 'ai'; aiFields: string[] }) => ({ change: 'campaign_launch' as const, draftId: 'd1', adAccountId: 'a1', adAccountName: 'Shop', amount: '700000', currency: 'VND', days: 7, plan, ...over });
+    const human = adsChangeText(launch({ origin: 'human', aiFields: [] }), inEn, money).detail;
+    expect(human).not.toContain('AI coworker');
+    const ai = adsChangeText(launch({ origin: 'ai', aiFields: ['name', 'targeting', 'variants'] }), inEn, money).detail;
+    expect(ai).toContain(human);
+    expect(ai).toContain('Drafted by the AI coworker: the name, the audience, the texts.');
+    expect(adsChangeText(launch({ origin: 'ai', aiFields: ['name'] }), inVi, money).detail).toContain('Do đồng nghiệp AI soạn: tên.');
+    // Every field of a draft is changed: it still says it began as the AI coworker's.
+    expect(adsChangeText(launch({ origin: 'ai', aiFields: [] }), inEn, money).detail).toContain('It began as a draft of the AI coworker');
+    expect(adsChangeLine(launch({ origin: 'ai', aiFields: ['name'] }), inEn, money)).toContain('Drafted by the AI coworker');
+  });
+
   it('says a cap with its scope, its period and its amounts from the earlier value to the new one, each in its own currency', () => {
     const inEn = translatorFor('en');
     const inVi = translatorFor('vi');
