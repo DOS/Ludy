@@ -56,6 +56,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.einvoice_draft',
+  'crove_finance.einvoice_draft_line',
+  'crove_finance.einvoice_series',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -154,6 +157,9 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
+let einvoiceSeq = 0;
+const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -372,6 +378,40 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     update: { set: 'pace_min_days = pace_min_days' },
     noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (ads.db.test.ts tests it)',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // The launch ledger (W2-2, #2296): the row an approved plan of an ad account leaves behind, with the commitment it holds against the spend caps. The
+  // entity is the account's (b_legal_entity, the composite foreign key). Tenant roles update its state columns only (a column grant; the guard holds the
+  // moves), so the update probes assign the step to itself. A launch is inserted by the execution of the approved proposal of its plan alone.
+  'crove_ads.ad_launch': {
+    update: { set: 'step = step' },
+    noInsertControl: 'only the execution of an approved ads.campaign.launch proposal inserts a launch, in a context of its org; every other context of the org is refused by its guard (ads-launch-ledger.db.test.ts tests it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix launch', objective: 'traffic', created_by: o.owner } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          ad_account_id: account,
+          draft_id: draft,
+          proposal_id: randomUUID(),
+          plan_hash: `sha256:${hex64()}`,
+          currency: 'VND',
+          daily_budget: '100000',
+          start_on: '2031-01-01',
+          end_on: '2031-01-10',
+          amount: '1000000',
+          commit_until: '2031-01-10',
+          created_by: o.owner,
+        },
+      };
+    },
   },
   // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
   // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
@@ -651,6 +691,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
       };
     },
+  },
+  // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
+  'crove_finance.einvoice_draft': {
+    make: (o) => {
+      const series = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_series', values: { org_id: o.id, id: series, provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }],
+        row: { org_id: o.id, id: randomUUID(), series_id: series, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '0', vat_amount: '0', total: '0' },
+      };
+    },
+  },
+  // #2500: a line of a draft; it takes its draft's entity, and the draft is seeded with it.
+  'crove_finance.einvoice_draft_line': {
+    make: (o) => {
+      const draft = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '100', vat_amount: '10', total: '110' } }],
+        row: { org_id: o.id, id: randomUUID(), draft_id: draft, line_no: 1, description: 'RLS matrix', quantity: '1', unit_price: '100', amount: '100', vat_rate: '10%', vat_amount: '10' },
+      };
+    },
+  },
+  // #2500: a series a provider holds (template number and symbol), linked to one entity of the org (the org's default, by its trigger). Tenant roles
+  // update the description and the default flag (a column grant), so the update probes assign the flag to itself. Symbols are unique per entity.
+  'crove_finance.einvoice_series': {
+    update: { set: 'is_default = is_default' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.

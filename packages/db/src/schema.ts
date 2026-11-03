@@ -870,6 +870,15 @@ export type AdsAdCampaignRequestTable = Refine<
   }
 >;
 
+// The launch ledger (#2296, W2-2): where an approved plan's launch stands (queued until W2-3's writer runs it). The database's guard holds the moves.
+export const AD_LAUNCH_STATES = ['queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
+export type AdsAdLaunchTable = Refine<
+  G.AdsAdLaunchTable,
+  {
+    state: Generated<(typeof AD_LAUNCH_STATES)[number]>;
+  }
+>;
+
 // The revoke at the platform of a closed ads connection's token (#2296, W2-1): which token it was, where the obligation stands, how it ended or why it gave
 // up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
 export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
@@ -892,6 +901,7 @@ type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
+  'crove_ads.ad_launch': AdsAdLaunchTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;

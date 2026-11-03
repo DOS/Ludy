@@ -1295,6 +1295,11 @@ suite('ads on PostgreSQL (#2217)', () => {
         const submit = (who: Account, draftId: string) => ask(who, { change: 'campaign_launch', draftId });
         // The org's switch on, an account that has read its currency, enabled for running ads, with an org daily cap of 200 000 and a monthly one of 5 000 000.
         const ready = async (name: string) => {
+          // An approved plan holds its amount against the caps as a queued launch (W2-2): the ones the tests before left are released, so each test starts from
+          // the caps alone (the ledger's own tests are in invariant/ads-launch-ledger.db.test.ts and below).
+          for (const l of await row<{ id: string }>(`SELECT id FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId])) {
+            expect((await callAs(owner, 'ads/cancelLaunch', { launchId: l.id, idempotencyKey: key() })).status).toBe(200);
+          }
           await open();
           const made = await connect(name);
           await sync(made.connectionId);
@@ -1543,6 +1548,167 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(((await rpc('ads/campaignDrafts', await tokenFor(outsider), {}, otherSlug)).body as unknown[]).length).toBe(0);
           expect((await rpc('ads/saveCampaignDraft', await tokenFor(outsider), { idempotencyKey: key(), adAccountId: account, plan: plan() }, otherSlug)).status).toBe(404);
           expect((await save(owner, randomUUID(), plan())).status).toBe(404);
+        });
+
+        // W2-2 (#2296): the launch ledger. An approved plan leaves a row that holds its amount against the caps; the caps are judged against every launch that still
+        // commits, under the org's lock; a person cancels one that has not started; the stops release them. Nothing launches (no queue, no job, no platform call).
+        const launchOf = async (draftId: string) =>
+          (
+            await row<{ id: string; state: string; step: string | null; attempt: number; currency: string; daily_budget: string; amount: string; start_on: string; end_on: string; commit_until: string | null; tag: string; proposal_id: string; plan_hash: string; created_by: string; stop_reason: string | null; finished_at: Date | null }>(
+              `SELECT id, state, step, attempt, currency, daily_budget::text, amount::text, start_on::text, end_on::text, commit_until::text, tag, proposal_id, plan_hash, created_by, stop_reason, finished_at FROM crove_ads.ad_launch WHERE org_id = $1 AND draft_id = $2`,
+              [orgId, draftId],
+            )
+          )[0];
+        // Saves, submits and approves a plan; answers the draft and the approval's answer.
+        const approvedPlan = async (account: string, body: Record<string, unknown>) => {
+          const draft = await saved(owner, account, plan(body));
+          const id = proposalId(await submit(owner, draft.id));
+          return { draft, id, answer: await approve(adminAccount, id) };
+        };
+
+        it('queues the approved plan as a launch that holds its amount: the window, the tag, the approver, the hash, ids only in the audit, and nothing launched', async () => {
+          const account = await ready('Sổ cái');
+          const { draft, id, answer } = await approvedPlan(account, {});
+          expect(answer.status).toBe(200);
+          const launch = await launchOf(draft.id);
+          expect(launch).toMatchObject({ state: 'queued', step: null, attempt: 1, currency: 'VND', daily_budget: '100000', amount: '700000', start_on: inDays(2), end_on: inDays(8), commit_until: inDays(8), proposal_id: id, created_by: adminAccount.userId, stop_reason: null, finished_at: null });
+          expect(launch?.tag).toMatch(/^ludy:[0-9a-f]{10}$/);
+          expect(launch?.plan_hash).toBe((await row<{ h: string }>(`SELECT payload ->> 'planHash' AS h FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, id]))[0]?.h);
+          // The draft shows it, in the list and alone.
+          expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({ status: 'approved', launch: { id: launch?.id, state: 'queued', amount: '700000', commitUntil: inDays(8), tag: launch?.tag } });
+          expect(((await callAs(owner, 'ads/campaignDrafts', { adAccountId: account })).body as Array<{ id: string; launch: { id: string } | null }>).find((d) => d.id === draft.id)?.launch?.id).toBe(launch?.id);
+          expect((await callAs(owner, 'ads/campaignDraft', { draftId: (await saved(owner, account, plan({ name: 'Chưa duyệt' }))).id })).body).toMatchObject({ launch: null });
+          // The audit row has ids, the amount and the hash, never the creative text, and nothing was sent anywhere.
+          const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.campaign.launch' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+          expect(audit[0]?.detail).toMatchObject({ draftId: draft.id, launchId: launch?.id, maxSpend: '700000' });
+          expect(JSON.stringify(audit[0]?.detail)).not.toContain('Khuyến');
+          expect((await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_kernel.external_call WHERE org_id = $1`, [orgId]))[0]?.n).toBe('0');
+          // The approval ran under the approval rules of version 4, judged on the people of the org now: two eligible people, so the approver is not the author.
+          const approval = (await row<{ detail: { policy_version: number; eligible_approvers: number; self_approved: boolean; policy: Record<string, string> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'kernel.proposal.approve' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]))[0]?.detail;
+          expect(approval).toMatchObject({ policy_version: 4, self_approved: false, policy: { P12: 'pass', P10: 'pass' } });
+          expect(approval?.eligible_approvers).toBeGreaterThanOrEqual(2);
+        });
+
+        it('judges a plan against every launch that still commits, with the numbers: at the request as a warning and at the approval as the check, and a cancel releases it', async () => {
+          // Both accounts first: each `ready` releases what the tests before left queued, which must not reach the launches below.
+          const account = await ready('Hạn mức cộng dồn');
+          const elsewhere = await ready('Tài khoản khác cùng tổ chức');
+          // Each of the two plans fits the org's daily cap of 200 000 alone (150 000 a day); together they do not.
+          const first = await approvedPlan(account, { dailyBudget: '150000' });
+          expect(first.answer.status).toBe(200);
+          const second = await saved(owner, account, plan({ name: 'Chiến dịch thứ hai', dailyBudget: '150000' }));
+          // Early: the request itself says so, and asks the approver for nothing.
+          const early = await submit(owner, second.id);
+          expect(early).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP', data: { problems: [expect.objectContaining({ code: 'daily_cap_exceeded', scope: 'org', cap: '200000', committed: '150000', plan: '150000', day: inDays(2) })] } } });
+          // Authoritative: a request made before the first was approved is refused at its own approval, with the same numbers, and stays waiting.
+          const third = await saved(owner, account, plan({ name: 'Chiến dịch thứ ba', dailyBudget: '150000', startOn: inDays(20), endOn: inDays(26) }));
+          const idThird = proposalId(await submit(owner, third.id));
+          const fourth = await saved(owner, account, plan({ name: 'Chiến dịch thứ tư', dailyBudget: '150000', startOn: inDays(20), endOn: inDays(26) }));
+          const idFourth = proposalId(await submit(owner, fourth.id));
+          expect((await approve(adminAccount, idThird)).status).toBe(200);
+          expect(await approve(adminAccount, idFourth)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+          expect(await draftRow(fourth.id)).toMatchObject({ status: 'draft', proposal_id: null });
+          expect(await launchOf(fourth.id)).toBeUndefined();
+          // A launch of another account counts too (the org's cap counts every account), in the days it covers.
+          const first2 = await approvedPlan(elsewhere, { dailyBudget: '150000', startOn: inDays(40), endOn: inDays(41) });
+          expect(first2.answer.status).toBe(200);
+          const sameDays = await saved(owner, account, plan({ name: 'Trùng ngày với tài khoản khác', dailyBudget: '100000', startOn: inDays(40), endOn: inDays(41) }));
+          expect(await submit(owner, sameDays.id)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+          // Cancelling the first launch releases its amount at once: the refused plan now goes through.
+          const firstLaunch = (await launchOf(first.draft.id))?.id as string;
+          expect(await callAs(owner, 'ads/cancelLaunch', { launchId: firstLaunch, idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchId: firstLaunch, released: '1050000' } });
+          expect(await approve(adminAccount, proposalId(await submit(owner, second.id)))).toMatchObject({ status: 200 });
+          expect(await launchOf(second.id)).toMatchObject({ state: 'queued', amount: '1050000' });
+        });
+
+        it('serialises launches approved at the same moment: the commitments never pass a cap between them', async () => {
+          const account = await ready('Duyệt cùng lúc');
+          // Five plans of 100 000 a day on the same days: any two fit the daily cap of 200 000, no three do. All five are asked for while none is approved.
+          const ids: Array<{ draft: string; proposal: string }> = [];
+          for (let n = 1; n <= 5; n += 1) {
+            const draft = await saved(owner, account, plan({ name: `Song song ${n}` }));
+            ids.push({ draft: draft.id, proposal: proposalId(await submit(owner, draft.id)) });
+          }
+          const answers = await Promise.all(ids.map((i) => approve(adminAccount, i.proposal)));
+          expect(answers.filter((a) => a.status === 200)).toHaveLength(2);
+          expect(answers.filter((a) => a.status === 409).map((a) => a.body.code)).toEqual(['ADS_SPEND_CAP', 'ADS_SPEND_CAP', 'ADS_SPEND_CAP']);
+          const queued = await row<{ n: string }>(`SELECT count(*)::text AS n FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'queued'`, [orgId]);
+          expect(queued[0]?.n).toBe('2');
+          // Whatever the order they ran in, no day of the org commits more than the cap.
+          const over = await row<{ day: string; total: string }>(
+            `SELECT d::date::text AS day, sum(l.daily_budget)::text AS total FROM crove_ads.ad_launch l, generate_series(l.start_on, l.commit_until, interval '1 day') d
+             WHERE l.org_id = $1 AND l.commit_until IS NOT NULL GROUP BY 1 HAVING sum(l.daily_budget) > 200000`,
+            [orgId],
+          );
+          expect(over).toEqual([]);
+          for (const i of ids) {
+            if ((await draftRow(i.draft))?.status !== 'approved') expect((await reject(adminAccount, i.proposal)).status).toBe(200);
+          }
+        });
+
+        it('lets an owner or an admin cancel a launch that has not started, and nobody else; a started one is the stop’s, and the draft stays approved', async () => {
+          const account = await ready('Hủy lần chạy');
+          const { draft } = await approvedPlan(account, {});
+          const launch = (await launchOf(draft.id))?.id as string;
+          for (const who of [member, viewer, accountant, outsider]) expect((await callAs(who, 'ads/cancelLaunch', { launchId: launch, idempotencyKey: key() })).status, who.email).toBe(403);
+          expect((await callAs(owner, 'ads/cancelLaunch', { launchId: randomUUID(), idempotencyKey: key() })).status).toBe(404);
+          // The system does not cancel through the command (an owner's or an admin's).
+          await expect(api.execute('ads.launch.cancel', { launchId: launch }, { actor: SYSTEM, orgId })).rejects.toBeTruthy();
+          // A launch the writer has started (the system's move, W2-3) is not cancelled by this command.
+          await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'launching', step = 'campaign' WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
+          expect(await callAs(adminAccount, 'ads/cancelLaunch', { launchId: launch, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCH_NOT_QUEUED' } });
+          await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL WHERE org_id = $1 AND id = $2`, [orgId, launch]), true);
+          const second = await approvedPlan(account, { name: 'Lần thứ hai' });
+          const secondLaunch = (await launchOf(second.draft.id))?.id as string;
+          expect(await callAs(adminAccount, 'ads/cancelLaunch', { launchId: secondLaunch, idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchId: secondLaunch, released: '700000' } });
+          expect(await launchOf(second.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'cancelled' });
+          expect((await launchOf(second.draft.id))?.finished_at).toBeInstanceOf(Date);
+          expect(await callAs(adminAccount, 'ads/cancelLaunch', { launchId: secondLaunch, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCH_NOT_QUEUED' } });
+          // The plan is over (approved, never edited again), and its draft shows the cancelled launch.
+          expect((await callAs(owner, 'ads/campaignDraft', { draftId: second.draft.id })).body).toMatchObject({ status: 'approved', launch: { state: 'cancelled', commitUntil: null } });
+          const audit = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.launch.cancel' AND outcome = 'ok' ORDER BY id DESC LIMIT 1`, [orgId]);
+          expect(audit[0]?.detail).toMatchObject({ launchId: secondLaunch, amount: '700000', cancelled: true });
+        });
+
+        it('releases the launches that have not started when the stops run: an account’s switch-off its own, the kill switch and the switch-off the org’s', async () => {
+          const a = await ready('Dừng một tài khoản');
+          const b = await ready('Dừng tài khoản kia');
+          const onA = await approvedPlan(a, { name: 'Trên A' });
+          const onB = await approvedPlan(b, { name: 'Trên B' });
+          expect([onA.answer.status, onB.answer.status]).toEqual([200, 200]);
+          // Switching one account off cancels its own queued launches and leaves the other's.
+          expect(await callAs(owner, 'ads/disableAccountWrite', { adAccountId: a, idempotencyKey: key() })).toMatchObject({ status: 200 });
+          expect(await launchOf(onA.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'account_off' });
+          expect(await launchOf(onB.draft.id)).toMatchObject({ state: 'queued', commit_until: inDays(8) });
+          // The kill switch blocks launches and releases what had not started.
+          expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
+          expect(await launchOf(onB.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'launches_blocked' });
+          // Disconnecting an account releases its queued launches too, so a plan approved before cannot start after a reconnect.
+          const d = await ready('Ngắt kết nối');
+          const onD = await approvedPlan(d, { name: 'Trên D' });
+          expect(onD.answer.status).toBe(200);
+          expect(await callAs(adminAccount, 'ads/disconnectAccount', { adAccountId: d, idempotencyKey: key() })).toMatchObject({ status: 200 });
+          expect(await launchOf(onD.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'account_off' });
+          // Switching writing off cancels the queued launches of every account.
+          const c = await ready('Tắt cả tổ chức');
+          const onC = await approvedPlan(c, { name: 'Trên C' });
+          expect(onC.answer.status).toBe(200);
+          expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+          expect(await launchOf(onC.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'switch_off' });
+          const audits = await row<{ detail: { launchesCancelled?: number } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('ads.write.disable', 'ads.pause_all', 'ads.account.disable_write', 'ads.account.disconnect') AND outcome = 'ok' ORDER BY id DESC LIMIT 4`, [orgId]);
+          expect(audits.map((x) => x.detail.launchesCancelled)).toEqual([1, 1, 1, 1]);
+        });
+
+        it('keeps a launch’s commitment when a cap is lowered after the approval, and judges the next plan against the lowered cap and what is committed', async () => {
+          const account = await ready('Hạ hạn mức sau khi duyệt');
+          const { draft } = await approvedPlan(account, { dailyBudget: '150000' });
+          expect((await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'org', period: 'daily', amount: '160000' })).status).toBe(200);
+          // The approved launch keeps its commitment (W2-3 re-reads the caps before its first platform call); a plan of 20 000 a day on the same days passes 160 000.
+          expect((await launchOf(draft.id))?.commit_until).toBe(inDays(8));
+          const small = await saved(owner, account, plan({ name: 'Nhỏ', dailyBudget: '20000' }));
+          expect(await submit(owner, small.id)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+          const fits = await saved(owner, account, plan({ name: 'Vừa đủ', dailyBudget: '10000' }));
+          expect((await submit(owner, fits.id)).status).toBe(200);
         });
       });
     });

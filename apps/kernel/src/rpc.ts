@@ -2144,6 +2144,14 @@ export function createRpcHandler(
           return wordReminder(reminderAi, orgId, actor.userId, { level: draft.level, lang: draft.lang, org: draft.org }, input.hint);
         }),
       ),
+      settings: {
+        get: os.paymentReminders.settings.get.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.collection_setting.get', {}, { actor, orgId }))),
+        set: os.paymentReminders.settings.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.collection_setting.set', input, { actor, orgId }))),
+      },
+      customer: {
+        get: os.paymentReminders.customer.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.customer_collection.get', input, { actor, orgId }))),
+        set: os.paymentReminders.customer.set.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.customer_collection.set', input, { actor, orgId }))),
+      },
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
@@ -2479,6 +2487,13 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.campaign.draft_discard', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Cancelling a launch that has not started (W2-2): owners and admins; the approved plan's commitment against the caps is released.
+      cancelLaunch: os.ads.cancelLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.cancel', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       // Asking the AI coworker for a draft (W1b): rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since
