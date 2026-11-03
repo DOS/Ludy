@@ -41,6 +41,7 @@ const NOT_SHOWN: Record<string, string> = {
   EXTERNAL_POST_NOT_FOUND: 'worker',
   // The revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's system commands alone raise these.
   ADS_REVOKE_NOT_FOUND: 'worker',
+  ADS_REVOKE_STALE: 'worker',
   CHANNEL_NOT_ORPHAN: 'worker',
   // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
   BANK_FEED_INVALID: 'worker',

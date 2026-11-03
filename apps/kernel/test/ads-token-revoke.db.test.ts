@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The revoke at the platform of the token of a closed ads connection, as a flow (ADR-0043 point 4, issue #2296, W2-1; the invariants are in
 // invariant/ads-token-seal.db.test.ts): every way a connection that runs ads is closed leaves a held copy and an obligation; the sweep opens the copy,
-// calls the revoker, records the outcome and wipes the copy; a failure is tried again on the policy's schedule and a platform that never answers ends
-// with the person told to remove the app by hand; the connection of a member who left is closed by the sweep and revoked; and nothing of the token
-// reaches an audit row, an event, an idempotency key or a job. The revoker here is the sandbox's (no network) or a stand-in that fails as a platform does.
+// calls the revoker, records the outcome and wipes the copy; the try is counted as the copy is opened; a failure is tried again on the policy's schedule
+// and a platform that never answers, a token it refuses for another reason or a copy that cannot be opened ends with the person told to remove the app by
+// hand; another live connection of the same person keeps the call from being made; connecting the account again cancels the revoke; the connection of a
+// member who left is closed by the sweep and revoked; and nothing of the token reaches an audit row, an event, an idempotency key or a job. The revoker
+// here is the sandbox's (no network) or a stand-in that fails as a platform does.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AdPlatformError, adRevokers, sandboxWriteLogin, type AdRevoker } from '@crove/ad-platform';
@@ -71,19 +74,25 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
   }
 
   // Another ad account read by a sandbox read connection (a platform account of its own), for a test that disconnects it.
-  async function makeAccount(external: string) {
+  async function makeAccount(external: string, grantedBy: string | null = null) {
     const account = randomUUID();
     const connection = randomUUID();
     await admin(async (c) => {
       await c.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'sandbox_ads', $3, 'Đọc', $4)`, [orgId, connection, external, owner]);
-      await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản khác', '2025-10-01')`, [orgId, account, connection, external]);
+      await c.query(`INSERT INTO crove_ads.ad_account (org_id, id, channel_connection_id, provider, external_account_id, name, backfill_from, granted_by_hash) VALUES ($1, $2, $3, 'sandbox_ads', $4, 'Tài khoản khác', '2025-10-01', $5)`, [
+        orgId,
+        account,
+        connection,
+        external,
+        grantedBy,
+      ]);
     });
     return { adAccountId: account, readConnection: connection };
   }
 
-  // A write connection of an ad account, sealed as the API seals it, attached to the account when there is one (the switch is on). `by` is the
-  // connecting member.
-  async function connectWrite(by = owner, external = ACCOUNT, linked: string | null = external === ACCOUNT ? adAccountId : null) {
+  // A write connection of an ad account, sealed as the API seals it, attached to the account when there is one (the switch is on), with the keyed hash of
+  // the person who granted it when there is one. `by` is the connecting member.
+  async function connectWrite(by = owner, external = ACCOUNT, linked: string | null = external === ACCOUNT ? adAccountId : null, grantedByHash: string | null = null) {
     const login = sandboxWriteLogin({ externalAccountId: external, currency: 'VND' });
     secrets.push(login.secret, (JSON.parse(login.secret) as { accessToken: string }).accessToken);
     const sealed = vault.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
@@ -92,7 +101,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
       { provider: login.provider, externalAccountId: login.externalAccountId, displayName: login.displayName, scopes: [...login.scopes], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
       { actor: asUser(by), orgId },
     );
-    if (linked) await app.execute('ads.account.link_write', { connectionId: done.connectionId }, { actor: asUser(owner), orgId });
+    if (linked) await app.execute('ads.account.link_write', { connectionId: done.connectionId, ...(grantedByHash ? { grantedByHash } : {}) }, { actor: asUser(owner), orgId });
     return done.connectionId;
   }
 
@@ -108,7 +117,10 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     )[0];
   const status = async (connectionId: string) => (await rows<{ status: string; status_reason: string | null }>('SELECT status, status_reason FROM crove_kernel.channel_connection WHERE org_id = $1 AND id = $2', [orgId, connectionId]))[0];
   // Makes every pending obligation due at once (the policy's waits are minutes and hours; the database's clock is not moved).
-  const dueNow = () => admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+  const dueNow = async () => {
+    await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+    await admin((c) => c.query('UPDATE crove_ads.ad_token_seal SET lease_until = NULL, lease_token = NULL'));
+  };
 
   const sandboxRevokers = adRevokers({ sandbox: true });
   const sweep = (revokers: Readonly<Record<string, AdRevoker>> = sandboxRevokers, broker: CredentialVault | undefined = vault): Promise<AdsRevokeResult> => runAdsRevoke({ runtime: worker, workerDb, broker, revokers });
@@ -195,8 +207,6 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
       ['the org switch-off', () => app.execute('ads.write.disable', {}, { actor: asUser(owner), orgId })],
       // The owner withdraws one account's permission: its connection closes.
       ['an account withdrawn', () => app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId })],
-      // A write connection made again replaces the one before it.
-      ['a replaced connection', () => connectWrite()],
     ];
     for (const [name, run] of paths) {
       await switchOn();
@@ -255,7 +265,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     expect(await sweep(down)).toMatchObject({ tried: 0 });
   });
 
-  it('waits the platform’s own time when it is later than the backoff, counts a refused permission and a bad request as tries, and ends at once on a token it no longer accepts', async () => {
+  it('waits the platform’s own time when it is later than the backoff, counts a refused permission and a bad request as tries, and ends at once when nothing can be revoked', async () => {
     await switchOn();
     const limited = await connectWrite();
     await app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId });
@@ -272,30 +282,131 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await dueNow();
     await sweep(failing(() => new AdPlatformError('bad_request', 'BAD')));
     expect(await obligation(limited)).toMatchObject({ state: 'pending', attempts: 3, last_error_kind: 'bad_request', seals: '1' });
-    // A token the platform no longer accepts has nothing left to revoke: done, with how, and the copy wiped.
+    // The person removed the app at the platform (the revoker says so): there is nothing left to revoke, done, and the copy wiped.
     await dueNow();
-    await sweep(failing(() => new AdPlatformError('token_expired', 'EXPIRED')));
+    await sweep({ sandboxwrite_ads: { revokeToken: async () => ({ how: 'already_invalid' as const }) } });
     expect(await obligation(limited)).toMatchObject({ state: 'done', how_done: 'already_invalid', attempts: 4, seals: '0' });
+
+    // A token the platform refuses for another reason (expired, invalidated, password changed) cannot revoke anything and the grant may still stand: the
+    // copy is wiped, the obligation is given up as unrevocable, and it is never shown as revoked.
+    const refused = await connectWrite(owner, 'sbxads-refused');
+    await app.execute('kernel.channel.disconnect', { connectionId: refused }, { actor: asUser(owner), orgId });
+    await dueNow();
+    await sweep(failing(() => new AdPlatformError('token_expired', '190_463')));
+    expect(await obligation(refused)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', attempts: 1, last_error_code: '190_463', how_done: null, seals: '0' });
+    const view = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes.find((r) => r.externalAccountId === 'sbxads-refused');
+    expect(view).toMatchObject({ state: 'gave_up', giveUp: 'unrevocable' });
   });
 
-  it('counts a try that could not even open the copy (no broker, no revoker for the provider) and still ends the copy at the limits', async () => {
+  it('gives up at once, wipes the copy and says to revoke by hand when nothing can be revoked from it: no revoker for the provider, no broker, a copy that does not open', async () => {
     await switchOn();
-    const connectionId = await connectWrite();
-    await app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId });
+    const close = async (external: string) => {
+      const id = await connectWrite(owner, external);
+      await app.execute('kernel.channel.disconnect', { connectionId: id }, { actor: asUser(owner), orgId });
+      return id;
+    };
+    // No revoker for the provider: nothing is opened (no try counted), the copy is wiped.
+    const noRevoker = await close('sbxads-no-revoker');
     await dueNow();
-    await sweep({});
-    expect(await obligation(connectionId)).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'unknown', last_error_code: 'NO_REVOKER', seals: '1' });
+    await sweep({}, vault);
+    expect(await obligation(noRevoker)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', last_error_code: 'NO_REVOKER', attempts: 0, seals: '0' });
+    // A revoker but no broker (no credential key): nothing can be opened.
+    const noBroker = await close('sbxads-no-broker');
     await dueNow();
-    await sweep(sandboxRevokers, undefined);
-    expect(await obligation(connectionId)).toMatchObject({ state: 'pending', attempts: 2, last_error_code: 'NO_BROKER', seals: '1' });
-    // The copy of a deployment whose key changed cannot be opened; that is a try that fails too, and the code says so without a word of the copy.
+    await runAdsRevoke({ runtime: worker, workerDb, broker: undefined, revokers: sandboxRevokers });
+    expect(await obligation(noBroker)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', last_error_code: 'NO_BROKER', attempts: 0, seals: '0' });
+    // The copy of a deployment whose key changed cannot be opened: the try was counted as it opened, the copy is wiped, and the code says so without a word of it.
+    const wrongKey = await close('sbxads-wrong-key');
     const otherKey = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     await dueNow();
     await sweep(sandboxRevokers, otherKey);
-    expect(await obligation(connectionId)).toMatchObject({ state: 'pending', attempts: 3, last_error_code: 'OPEN_FAILED', seals: '1' });
-    // And a working sweep afterwards still revokes it (nothing was wiped by the failures).
+    expect(await obligation(wrongKey)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', attempts: 1, last_error_code: 'OPEN_FAILED', seals: '0' });
+    // And each is shown on the screen as given up, to be revoked by hand.
+    const shown = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes.filter((r) => ['sbxads-no-revoker', 'sbxads-no-broker', 'sbxads-wrong-key'].includes(r.externalAccountId));
+    expect(shown.map((r) => [r.state, r.giveUp])).toEqual([['gave_up', 'unrevocable'], ['gave_up', 'unrevocable'], ['gave_up', 'unrevocable']]);
+  });
+
+  it('counts the try when the copy is opened, so a crash after the open and before the answer still counts, and the claim runs out to be tried again', async () => {
+    await switchOn();
+    const id = await connectWrite(owner, 'sbxads-crash');
+    await app.execute('kernel.channel.disconnect', { connectionId: id }, { actor: asUser(owner), orgId });
+    // The worker dies after the open and before the answer is recorded: the runtime it records through fails.
+    const through = worker.execute.bind(worker) as (...a: unknown[]) => Promise<unknown>;
+    const deaf = { execute: (name: string, ...rest: unknown[]) => (name === 'ads.token_revoke.record' ? Promise.reject(new Error('the process was killed')) : through(name, ...rest)) } as unknown as Runtime;
+    await dueNow();
+    await runAdsRevoke({ runtime: deaf, workerDb, broker: vault, revokers: sandboxRevokers });
+    // The open counted the try, the answer was lost, the copy stays, and the next try is ten minutes away (the open's own lease), not claimed at once.
+    const [after] = await rows<{ attempts: number; minutes: number }>(
+      `SELECT attempts, extract(epoch FROM (next_attempt_at - now())) / 60 AS minutes FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2`,
+      [orgId, id],
+    );
+    expect(after?.attempts).toBe(1);
+    expect(Number(after?.minutes)).toBeGreaterThan(8);
+    expect(await obligation(id)).toMatchObject({ state: 'pending', seals: '1' });
+    expect((await sweep()).tried).toBe(0);
+    // When the ten minutes have passed it is claimed again, tried again, and the second try is the one counted as done.
+    await dueNow();
+    await sweep();
+    expect(await obligation(id)).toMatchObject({ state: 'done', how_done: 'sandbox', attempts: 2, seals: '0' });
+    // An error that is not the platform's (here a revoker that throws) is a failed try too, counted, the copy kept.
+    const other = await connectWrite(owner, 'sbxads-plain-error');
+    await app.execute('kernel.channel.disconnect', { connectionId: other }, { actor: asUser(owner), orgId });
+    await dueNow();
+    await sweep({ sandboxwrite_ads: { revokeToken: async () => Promise.reject(new Error('socket hang up')) } });
+    expect(await obligation(other)).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'unknown', last_error_code: 'ERROR', seals: '1' });
+  });
+
+  it('does not call the platform while another live connection of the same person needs the grant, and calls it once that connection is closed', async () => {
+    await switchOn();
+    // Whatever earlier tests left pending is settled first, so the revoker's calls are this obligation's alone.
     await settleAll();
-    expect(await obligation(connectionId)).toMatchObject({ state: 'done', how_done: 'sandbox', seals: '0' });
+    const HASH = 'c'.repeat(64);
+    // The person granted the write connection of this account and, in the same app, the reading connection of another account.
+    const other = await makeAccount('sbxads-same-person', HASH);
+    const write = await connectWrite(owner, ACCOUNT, adAccountId, HASH);
+    await app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId });
+    expect(await obligation(write)).toMatchObject({ state: 'pending', seals: '1' });
+    expect((await rows<{ grantor_hash: string | null }>('SELECT grantor_hash FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, write]))[0]?.grantor_hash).toBe(HASH);
+    let calls = 0;
+    const counting: Readonly<Record<string, AdRevoker>> = {
+      sandboxwrite_ads: {
+        revokeToken: async () => {
+          calls++;
+          return { how: 'revoked' as const };
+        },
+      },
+    };
+    await dueNow();
+    await sweep(counting);
+    // Revoking would cut the other connection's grant too: no call, done as a shared grant, the copy wiped, no try counted.
+    expect(calls).toBe(0);
+    expect(await obligation(write)).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 0, seals: '0' });
+
+    // The same, with the other connection closed first: the person's grant is not needed by anyone, so the call is made.
+    await app.execute('ads.account.disconnect', { adAccountId: other.adAccountId }, { actor: asUser(owner), orgId });
+    await switchOn();
+    const again = await connectWrite(owner, ACCOUNT, adAccountId, HASH);
+    await app.execute('ads.account.disable_write', { adAccountId }, { actor: asUser(owner), orgId });
+    await dueNow();
+    await sweep(counting);
+    expect(calls).toBe(1);
+    expect(await obligation(again)).toMatchObject({ state: 'done', how_done: 'revoked', attempts: 1, seals: '0' });
+  });
+
+  it('cancels the pending revoke when the account is connected again, in the same transaction, and tries nothing', async () => {
+    await switchOn();
+    const first = await connectWrite(owner, 'sbxads-reconnect');
+    await app.execute('kernel.channel.disconnect', { connectionId: first }, { actor: asUser(owner), orgId });
+    expect(await obligation(first)).toMatchObject({ state: 'pending', seals: '1' });
+    // The person connects the same account again: a new connection, whose sealed credential cancels the revoke the closed one left.
+    const again = await connectWrite(owner, 'sbxads-reconnect');
+    expect(again).not.toBe(first);
+    expect(await obligation(first)).toMatchObject({ state: 'done', how_done: 'reconnected', attempts: 0, seals: '0' });
+    let calls = 0;
+    await dueNow();
+    await sweep({ sandboxwrite_ads: { revokeToken: async () => (calls++, { how: 'revoked' as const }) } });
+    expect(calls).toBe(0);
+    expect(await status(again)).toMatchObject({ status: 'active' });
   });
 
   it('closes the write connection of a member who left, then revokes and wipes it; a member who still manages the org keeps theirs', async () => {
@@ -322,6 +433,38 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await expect(worker.execute('kernel.channel.close_orphan', { connectionId: mine }, { actor: SYSTEM, orgId })).resolves.toEqual({ connectionId: mine, closed: false });
     // And no user closes a connection this way.
     await expect(app.execute('kernel.channel.close_orphan', { connectionId: mine }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it('holds one copy when a link is refused and the connection is closed to roll it back, as the API does, and refuses a late answer from a run that lost its claim', async () => {
+    // The org's switch is off: the owner connects (the credential is sealed), the link is refused, and the API closes the connection it made.
+    await app.execute('ads.write.disable', {}, { actor: asUser(owner), orgId });
+    const login = sandboxWriteLogin({ externalAccountId: ACCOUNT, currency: 'VND' });
+    secrets.push(login.secret);
+    const sealed = vault.seal(login.secret, { orgId, provider: login.provider, externalAccountId: login.externalAccountId });
+    const made = await app.execute<{ connectionId: string }>(
+      'kernel.channel.connect',
+      { provider: login.provider, externalAccountId: login.externalAccountId, displayName: login.displayName, scopes: [...login.scopes], expiresAt: null, credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') } },
+      { actor: asUser(owner), orgId },
+    );
+    await expect(app.execute('ads.account.link_write', { connectionId: made.connectionId }, { actor: asUser(owner), orgId })).rejects.toMatchObject({ code: 'ADS_WRITE_OFF' });
+    await app.execute('kernel.channel.disconnect', { connectionId: made.connectionId }, { actor: asUser(owner), orgId });
+    const held = await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, made.connectionId]);
+    expect(held[0]?.n).toBe('1');
+    expect(await obligation(made.connectionId)).toMatchObject({ state: 'pending', kind: 'write', seals: '1', credentials: '0' });
+
+    // A run that lost its claim cannot record: the command refuses an answer that carries another claim's token, and accepts the claim's own, once.
+    await dueNow();
+    const claimed = (await sql<{ id: string; lease_token: string }>`SELECT id, lease_token FROM crove_ads.token_revoke_due(100)`.execute(workerDb)).rows;
+    const row = await obligation(made.connectionId);
+    const ours = claimed.find((r) => r.id === row?.id);
+    expect(ours).toBeDefined();
+    const outcome = { kind: 'done' as const, how: 'shared_grant' as const };
+    await expect(worker.execute('ads.token_revoke.record', { revokeId: row?.id, leaseToken: randomUUID(), outcome }, { actor: SYSTEM, orgId })).rejects.toMatchObject({ code: 'ADS_REVOKE_STALE' });
+    expect(await obligation(made.connectionId)).toMatchObject({ state: 'pending', seals: '1' });
+    await expect(worker.execute('ads.token_revoke.record', { revokeId: row?.id, leaseToken: ours?.lease_token, outcome }, { actor: SYSTEM, orgId })).resolves.toMatchObject({ state: 'done', recorded: true });
+    expect(await obligation(made.connectionId)).toMatchObject({ state: 'done', how_done: 'shared_grant', seals: '0' });
+    // Answered already: a second answer finds the obligation settled and records nothing.
+    await expect(worker.execute('ads.token_revoke.record', { revokeId: row?.id, leaseToken: ours?.lease_token, outcome }, { actor: SYSTEM, orgId })).resolves.toMatchObject({ recorded: false });
   });
 
   it('shows the screen only to owners and admins, and nothing about a settled obligation that worked', async () => {

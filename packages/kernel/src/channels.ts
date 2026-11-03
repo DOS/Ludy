@@ -226,8 +226,9 @@ export const channelRevokeByPlatform = defineCommand({
 export const channelCloseOrphan = defineCommand({
   name: 'kernel.channel.close_orphan',
   input: z.strictObject({ connectionId: zId }),
-  risk: 'R1',
-  sideEffect: 'internal',
+  // R2 and external like the member's own disconnect: closing it feeds the revoke sweep, which calls the platform.
+  risk: 'R2',
+  sideEffect: 'external',
   access: 'system',
   target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
   handler: async (ctx, input) => {

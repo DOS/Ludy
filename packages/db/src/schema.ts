@@ -874,8 +874,8 @@ export type AdsAdCampaignRequestTable = Refine<
 // up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
 export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
 export const AD_REVOKE_STATES = ['pending', 'done', 'gave_up'] as const;
-export const AD_REVOKE_HOWS = ['revoked', 'already_invalid', 'sandbox'] as const;
-export const AD_REVOKE_GIVE_UPS = ['attempts', 'age'] as const;
+export const AD_REVOKE_HOWS = ['revoked', 'already_invalid', 'sandbox', 'shared_grant', 'reconnected'] as const;
+export const AD_REVOKE_GIVE_UPS = ['attempts', 'age', 'unrevocable'] as const;
 export const AD_REVOKE_ERROR_KINDS = ['rate_limited', 'transient', 'permission', 'bad_request', 'unknown'] as const;
 export type AdsAdTokenRevokeTable = Refine<
   G.AdsAdTokenRevokeTable,

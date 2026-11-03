@@ -355,6 +355,7 @@ export interface AdsAdTokenRevokeTable {
   external_account_id: ColumnType<string, NotGranted, NotGranted>;
   kind: ColumnType<string, NotGranted, NotGranted>;
   reason: ColumnType<string, NotGranted, NotGranted>;
+  grantor_hash: ColumnType<string | null, NotGranted, NotGranted>;
   state: ColumnType<string, NotGranted, NotGranted>;
   how_done: ColumnType<string | null, NotGranted, NotGranted>;
   give_up: ColumnType<string | null, NotGranted, NotGranted>;

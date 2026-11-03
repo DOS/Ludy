@@ -62,10 +62,40 @@ describe('MetaAdWriter.revokeToken', () => {
     expect(call?.url.toString()).not.toContain('write-token');
   });
 
-  it('counts a token Meta no longer accepts as revoked: nothing is left to revoke with it', async () => {
-    for (const body of [metaError(400, 190), metaError(400, 190, 463), metaError(400, 102), metaError(400, 190, 460), metaError(400, 190, 467)]) {
+  it('counts only a person who removed the app (190, subcode 458) as already revoked', async () => {
+    const { writer: w, calls } = writer([metaError(400, 190, 458)]);
+    expect(await w.revokeToken(SECRET)).toEqual({ how: 'already_invalid' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('never counts any other refusal of the token as revoked: the grant may still stand, so it is an error the job ends as "revoke by hand"', async () => {
+    const expected: Array<[ReturnType<typeof metaError>, string]> = [
+      [metaError(400, 190, 463), '190_463'],
+      [metaError(400, 190, 467), '190_467'],
+      [metaError(400, 190, 460), '190_460'],
+      [metaError(400, 190), '190_0'],
+      [metaError(400, 102), '102'],
+    ];
+    for (const [body, code] of expected) {
       const { writer: w } = writer([body]);
-      expect(await w.revokeToken(SECRET)).toEqual({ how: 'already_invalid' });
+      const error = await rejection(w.revokeToken(SECRET));
+      expect([error.kind, error.code], code).toEqual(['token_expired', code]);
+    }
+  });
+
+  it('never reads an error of the deployment as a refused token: a wrong app secret or proof (100, 200) is a bad request or a permission, tried and counted', async () => {
+    for (const [body, kind] of [[metaError(400, 100), 'bad_request'], [metaError(400, 200), 'permission'], [metaError(403, 10), 'permission']] as const) {
+      const error = await rejection(writer([body]).writer.revokeToken(SECRET));
+      expect(error.kind).toBe(kind);
+    }
+  });
+
+  it('sends nothing but a DELETE to /me/permissions whatever Meta answers: no other path, method or parameter', async () => {
+    const answers = [{ body: { success: true } }, metaError(400, 190, 458), metaError(400, 190, 463), metaError(500, 2), metaError(400, 4), metaError(400, 100), { body: {} }, new Error('down')];
+    for (const answer of answers) {
+      const { writer: w, calls } = writer([answer]);
+      await w.revokeToken(SECRET).catch(() => undefined);
+      expect(calls.map((c) => [c.method, c.url.origin, c.url.pathname, [...c.url.searchParams.keys()]])).toEqual([['DELETE', 'https://graph.facebook.com', '/v24.0/me/permissions', ['appsecret_proof']]]);
     }
   });
 

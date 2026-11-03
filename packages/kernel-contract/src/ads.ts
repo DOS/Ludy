@@ -259,7 +259,7 @@ export const zAdsTokenRevokeView = z.object({
   externalAccountId: z.string(),
   kind: z.enum(['write', 'read_spend']),
   state: z.enum(['pending', 'gave_up']),
-  giveUp: z.enum(['attempts', 'age']).nullable(),
+  giveUp: z.enum(['attempts', 'age', 'unrevocable']).nullable(),
   attempts: z.number().int(),
   nextAttemptAt: z.string().nullable(),
   lastErrorKind: z.enum(['rate_limited', 'transient', 'permission', 'bad_request', 'unknown']).nullable(),

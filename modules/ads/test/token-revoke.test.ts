@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The policy of the revoke at the platform (W2-1, #2296): when an obligation is due, what each answer means, and the only ways the sealed copy of a token
-// ends: revoked (or no longer accepted), after ten attempts, or after seven days. Never a copy that lives for ever, never one wiped without a try.
+// ends: revoked (or the person had already removed the app), another live connection of the person needs the grant, the token cannot be revoked, after ten
+// tries, or after seven days. Never a copy that lives for ever, never one wiped without a try (but for the cases that make no call).
 import { describe, expect, it } from 'vitest';
-import { REVOKE_MAX_AGE_MS, REVOKE_MAX_ATTEMPTS, backoffMs, expire, isDue, isTooOld, needsAPerson, settleAttempt, type RevokeOutcome, type RevokeRow } from '../src/token-revoke.ts';
+import { REVOKE_MAX_AGE_MS, REVOKE_MAX_ATTEMPTS, backoffMs, isDue, isTooOld, needsAPerson, settleAttempt, type RevokeOutcome, type RevokeRow } from '../src/token-revoke.ts';
 
 const T0 = new Date('2026-11-03T08:00:00Z');
-const row = (over: Partial<RevokeRow> = {}): RevokeRow => ({ state: 'pending', attempts: 0, createdAt: T0, ...over });
+// The count includes the try being settled: the database counted it when it opened the copy.
+const row = (over: Partial<RevokeRow> = {}): RevokeRow => ({ state: 'pending', attempts: 1, createdAt: T0, ...over });
 const failed = (over: Partial<Extract<RevokeOutcome, { kind: 'failed' }>> = {}): RevokeOutcome => ({ kind: 'failed', error: 'transient', code: 'NETWORK', retryAt: null, ...over });
 const at = (ms: number) => new Date(T0.getTime() + ms);
 
@@ -40,17 +42,26 @@ describe('the wait between tries', () => {
 
 describe('a try that worked', () => {
   it('is done, wipes the copy and says how, for each way it can end', () => {
-    for (const how of ['revoked', 'already_invalid', 'sandbox'] as const) {
-      expect(settleAttempt(row({ attempts: 3 }), { kind: 'done', how }, at(1000))).toEqual({ state: 'done', attempts: 4, nextAttemptAt: null, wipe: true, how, giveUp: null });
+    for (const how of ['revoked', 'already_invalid', 'sandbox', 'shared_grant'] as const) {
+      expect(settleAttempt(row({ attempts: 4 }), { kind: 'done', how }, at(1000))).toEqual({ state: 'done', nextAttemptAt: null, wipe: true, how, giveUp: null });
     }
+  });
+
+  it('is done at once for a grant another live connection of the person needs, with no try made', () => {
+    expect(settleAttempt(row({ attempts: 0 }), { kind: 'done', how: 'shared_grant' }, at(0)).state).toBe('done');
+  });
+});
+
+describe('a token that cannot be revoked', () => {
+  it('wipes the copy and gives up as unrevocable, so the screen says "revoke by hand" and never "revoked"', () => {
+    expect(settleAttempt(row(), { kind: 'unrevocable', code: 'OPEN_FAILED' }, at(0))).toEqual({ state: 'gave_up', nextAttemptAt: null, wipe: true, how: null, giveUp: 'unrevocable' });
   });
 });
 
 describe('a try that failed', () => {
-  it('keeps the copy and asks again after the backoff', () => {
-    const s = settleAttempt(row(), failed(), at(1000));
-    expect(s).toEqual({ state: 'pending', attempts: 1, nextAttemptAt: at(1000 + 60_000), wipe: false, how: null, giveUp: null });
-    expect(settleAttempt(row({ attempts: 3 }), failed(), at(0)).nextAttemptAt).toEqual(at(3_600_000));
+  it('keeps the copy and asks again after the backoff of the try it was', () => {
+    expect(settleAttempt(row(), failed(), at(1000))).toEqual({ state: 'pending', nextAttemptAt: at(1000 + 60_000), wipe: false, how: null, giveUp: null });
+    expect(settleAttempt(row({ attempts: 4 }), failed(), at(0)).nextAttemptAt).toEqual(at(3_600_000));
   });
 
   it('waits for the time the platform names when it is later than the backoff, and for the backoff when it is not', () => {
@@ -59,16 +70,14 @@ describe('a try that failed', () => {
   });
 
   it('wipes the copy after the tenth try and says why, so the screen can say "revoke by hand"', () => {
-    const s = settleAttempt(row({ attempts: REVOKE_MAX_ATTEMPTS - 1 }), failed(), at(1000));
-    expect(s).toEqual({ state: 'gave_up', attempts: REVOKE_MAX_ATTEMPTS, nextAttemptAt: null, wipe: true, how: null, giveUp: 'attempts' });
+    expect(settleAttempt(row({ attempts: REVOKE_MAX_ATTEMPTS }), failed(), at(1000))).toEqual({ state: 'gave_up', nextAttemptAt: null, wipe: true, how: null, giveUp: 'attempts' });
     // The ninth try still keeps it.
-    expect(settleAttempt(row({ attempts: REVOKE_MAX_ATTEMPTS - 2 }), failed(), at(1000)).wipe).toBe(false);
+    expect(settleAttempt(row({ attempts: REVOKE_MAX_ATTEMPTS - 1 }), failed(), at(1000)).wipe).toBe(false);
   });
 
   it('wipes the copy once seven days have passed, whatever the count', () => {
-    const s = settleAttempt(row({ attempts: 2 }), failed(), at(REVOKE_MAX_AGE_MS));
-    expect(s).toEqual({ state: 'gave_up', attempts: 3, nextAttemptAt: null, wipe: true, how: null, giveUp: 'age' });
-    expect(settleAttempt(row({ attempts: 2 }), failed(), at(REVOKE_MAX_AGE_MS - 1)).wipe).toBe(false);
+    expect(settleAttempt(row({ attempts: 3 }), failed(), at(REVOKE_MAX_AGE_MS))).toEqual({ state: 'gave_up', nextAttemptAt: null, wipe: true, how: null, giveUp: 'age' });
+    expect(settleAttempt(row({ attempts: 3 }), failed(), at(REVOKE_MAX_AGE_MS - 1)).wipe).toBe(false);
   });
 
   it('is never a success: only an answer that says so wipes the copy as done', () => {
@@ -76,12 +85,6 @@ describe('a try that failed', () => {
       const s = settleAttempt(row(), failed({ error }), at(0));
       expect([s.state, s.wipe, s.how]).toEqual(['pending', false, null]);
     }
-  });
-});
-
-describe('an obligation the sweep finds past its age', () => {
-  it('is closed without another try, keeps its count, wipes the copy and says it was the age', () => {
-    expect(expire(row({ attempts: 4 }))).toEqual({ state: 'gave_up', attempts: 4, nextAttemptAt: null, wipe: true, how: null, giveUp: 'age' });
   });
 });
 

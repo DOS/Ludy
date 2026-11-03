@@ -103,7 +103,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
-  'apps/kernel/src/worker.ts': { modules: ['social'], why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise)' },
+  'apps/kernel/src/worker.ts': {
+    modules: ['ads', 'social'],
+    why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise); the agent sweep, a schedule with no egress, also wipes the sealed copies of closed ads tokens past their age through a worker-only definer (crove_ads.token_revoke_expire), only when ads is installed (#2296)',
+  },
 };
 
 // A Crove schema named whole, in quotes: withSchema('crove_finance'), a list of schemas, "crove_finance"."x".

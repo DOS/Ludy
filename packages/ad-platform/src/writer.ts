@@ -16,8 +16,9 @@ export interface AdWriterVerification {
 
 // The answer of `revokeToken`, how the platform's copy of the permission ended.
 // - `revoked`: the platform removed every permission the person gave the app (the person's, for the app, across every org that uses the app).
-// - `already_invalid`: the platform no longer accepts the token (it expired, or the person's permissions were removed before, perhaps by
-//   an earlier revoke made with another token of the same person), so no token of that grant can spend any more.
+// - `already_invalid`: the person removed the app at the platform (Meta: error 190, subcode 458), perhaps by an earlier revoke made with another token of the
+//   same person, so no token of that grant can spend any more. A token the platform refuses for another reason (expired, invalidated, password changed)
+//   is not this: the grant may still stand, and the call throws a `token_expired` error instead.
 // - `sandbox`: the offline sandbox has no platform copy.
 export interface AdWriterRevocation {
   how: 'revoked' | 'already_invalid' | 'sandbox';

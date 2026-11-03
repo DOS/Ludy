@@ -2,20 +2,21 @@
 // What the revoke worker is given of an ad platform's writer (ADR-0043 point 4, issue #2296, W2-1): one call, the one that removes the app's permissions
 // for the person at the platform, and nothing else. The worker opens the sealed copy of a closed connection's token for that alone (ADR-0025's amendment of
 // 2026-11-03), so what it holds must not be able to do anything a token can: `verify`, creating or changing an object are not reachable through it, not
-// even by a cast, because the view is a new object that has the one method and calls the writer's through a closure. A test pins both the view and the
-// source of this file (it names `revokeToken` on a writer and no other member).
+// even by a cast, because the view is a new, frozen object that has the one method and calls the writer's through a closure. A test pins both the view and
+// the source of this file (it names `revokeToken` on a writer and no other member).
 import { MetaAdWriter } from './meta-write.ts';
 import { sandboxAdWriter } from './sandbox-write.ts';
 import type { AdWriter, AdWriterRevocation } from './writer.ts';
 
 export interface AdRevoker {
   // Removes at the platform the permissions the token's person gave the app, so no token of that grant can change a campaign any more. An
-  // `AdPlatformError` on failure (`rate_limited` carries the time to wait; `transient` is worth another try).
+  // `AdPlatformError` on failure (`rate_limited` carries the time to wait; `transient` is worth another try; `token_expired` means the token cannot revoke
+  // anything and the grant may still stand).
   revokeToken(secret: string): Promise<AdWriterRevocation>;
 }
 
 export function revokerOf(writer: Pick<AdWriter, 'revokeToken'>): AdRevoker {
-  return { revokeToken: (secret: string) => writer.revokeToken(secret) };
+  return Object.freeze({ revokeToken: (secret: string) => writer.revokeToken(secret) });
 }
 
 export interface AdRevokerOptions {
@@ -31,7 +32,7 @@ export interface AdRevokerOptions {
 }
 
 // The revokers of a deployment, by the provider id of the connection the token belonged to. A provider without one has no entry: a token of it that
-// is held is tried and failed, ten times at most, and then the person is told to remove the app at the platform.
+// is held is tried and failed, ten times at most, and then the person is told to remove the app at the platform. The map is frozen too.
 export function adRevokers(options: AdRevokerOptions): Readonly<Record<string, AdRevoker>> {
   const revokers: Record<string, AdRevoker> = {};
   if (options.sandbox) revokers[sandboxAdWriter.provider] = revokerOf(sandboxAdWriter);
@@ -39,5 +40,5 @@ export function adRevokers(options: AdRevokerOptions): Readonly<Record<string, A
   const meta = (appSecret: string) => revokerOf(new MetaAdWriter({ appSecret, ...(graphVersion ? { graphVersion } : {}) }));
   if (options.meta?.writeAppSecret) revokers.metawrite_ads = meta(options.meta.writeAppSecret);
   if (options.meta?.readAppSecret) revokers.meta_ads = meta(options.meta.readAppSecret);
-  return revokers;
+  return Object.freeze(revokers);
 }

@@ -13,6 +13,12 @@ describe('the revoke view of a writer', () => {
     const view = revokerOf(sandboxAdWriter);
     expect(Object.getOwnPropertyNames(view)).toEqual(['revokeToken']);
     expect(Object.getPrototypeOf(view)).toBe(Object.prototype);
+    // Frozen: nothing can be added to it or replaced on it, and the map of a deployment is frozen too.
+    expect(Object.isFrozen(view)).toBe(true);
+    expect(Object.isFrozen(adRevokers({ sandbox: true }))).toBe(true);
+    expect(() => {
+      (view as unknown as Record<string, unknown>).verify = () => undefined;
+    }).toThrow();
     // Not even by name: the writer's other methods are not on the view.
     for (const name of ['verify', 'provider', 'createCampaign', 'createAdSet', 'createCreative', 'createAd', 'setStatus', 'readObjects', 'findByTag', 'resolveTargeting']) {
       expect(name in view).toBe(false);

@@ -13,9 +13,11 @@
 // What `DELETE /me/permissions` does [C: Graph API, user permissions]: with no permission named it unauthorizes the app for the person, which
 // invalidates every token of that person for the app, in every org that uses the app. That is the point (a Meta permission belongs to the pair of
 // the app and the person, so one call removes the permission from the write token and from any read token of the same grant), and the cost the ADR
-// accepts. A token Meta no longer accepts (error 190, 102, or the subcodes that say the session ended) has nothing left to revoke: `already_invalid`.
+// accepts (the job does not call it while another live connection of the same person needs the grant). A token Meta refuses with error 190 and subcode 458
+// (the person removed the app) has nothing left to revoke: `already_invalid`. Any other refusal of the token (463, 467, 460, 102, a 190 with no subcode) leaves
+// the grant possibly standing, so it is a `token_expired` error and never reported as revoked.
 import type { Fetch } from '@crove/channel';
-import { Graph, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
+import { Graph, GraphError, META_DEFAULT_GRAPH_VERSION } from '@crove/channel';
 import { AdPlatformError } from './index.ts';
 import { ACT_ID, graphHostOnly, metaAdsError } from './meta.ts';
 import { META_WRITE_PROVIDER, META_WRITE_SCOPES } from './meta-write-connector.ts';
@@ -72,8 +74,8 @@ export class MetaAdWriter implements AdWriter {
     }
   }
 
-  // Removes the app's permissions for the person at Meta, so no token of the grant can change a campaign any more. Idempotent at Meta: a second
-  // call with a token it no longer accepts answers 190, which is the outcome wanted.
+  // Removes the app's permissions for the person at Meta, so no token of the grant can change a campaign any more. A second call after the person removed the
+  // app answers 190 with subcode 458, which is the outcome wanted (`already_invalid`); any other refusal of the token is an error (see below).
   async revokeToken(secret: string): Promise<AdWriterRevocation> {
     const token = tokenOf(secret);
     try {
@@ -82,9 +84,13 @@ export class MetaAdWriter implements AdWriter {
       if (answer.success !== true) throw new AdPlatformError('unknown', 'NOT_REVOKED');
       return { how: 'revoked' };
     } catch (error) {
-      const mapped = metaAdsError(error, this.now);
-      if (mapped.kind === 'token_expired') return { how: 'already_invalid' };
-      throw mapped;
+      // Error 190 says Meta does not accept the token, and its subcode says why. Only 458 (the person removed the app) means the permissions are already
+      // gone, so only it is `already_invalid`. The others (463 expired, 467 invalid, 460 password changed, a 190 with no subcode, 102) mean the token cannot
+      // revoke anything while the grant may still stand: a `token_expired` error, which the revoke job ends as "revoke by hand", never as revoked. An error
+      // of the deployment (a wrong app secret or proof: code 100, or 200) is none of these and is never read as a 190.
+      if (error instanceof GraphError && error.code === 190 && error.subcode === 458) return { how: 'already_invalid' };
+      if (error instanceof GraphError && error.code === 190) throw new AdPlatformError('token_expired', `190_${error.subcode ?? 0}`);
+      throw metaAdsError(error, this.now);
     }
   }
 }

@@ -1145,14 +1145,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // The revoke at the platform of a closed ads connection's token (#2296, W2-1): a sweep with no data, every minute, whether or not a platform is
-  // configured: the sealed copies that outlive their seven days are wiped by it even with no revoker, and a copy nobody can revoke is told to the person.
+  // configured: the sealed copies that outlive their seven days are wiped by it even with no revoker, and a copy nobody can revoke is given up at once and told to the person.
   if (ads) {
     await boss.work(QUEUES.adsRevoke, { batchSize: 1 }, async ([job]) => {
       if (!job) return;
       const done = await runAdsRevoke({ runtime: deps.runtime, workerDb: deps.workerDb, broker: deps.channels?.broker, revokers: deps.channels?.adRevokers ?? {} });
       if (done.expired + done.closed + done.tried > 0) console.log(`[ads-revoke] ${done.tried} tried, ${done.done} done, ${done.closed} closed (member left), ${done.expired} past their age`);
     });
-    await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once' });
+    // retryLimit 0: the policy retries (backoff in the database, each try counted when the copy is opened), never the queue.
+    await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsRevoke);
   }
@@ -1288,6 +1289,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
     await aiBudgetSweep();
+    // The sealed copies of closed ads connections' tokens past their seven days or their ten tries (#2296, W2-1): wiped here too, by a sweep with no
+    // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
+    if (deps.runtime.installed('ads')) {
+      const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+        console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
+        return { rows: [] as Array<{ n: number }> };
+      });
+      if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
+    }
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 
