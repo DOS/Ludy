@@ -6,7 +6,7 @@
 //      forty inbound messages of the conversations linked to them, as far as the member may read them (row-level security: a private message is read by owners,
 //      admins and holders of the direct-message permission, a comment thread by the members of its channel);
 //   2. a company that writes from the same email domain (the company's own address on its party, the person's on theirs); a free mail address says nothing;
-//   3. a company whose name carries the word at the heart of the person's email domain ("acme" of nam@acme.com.vn finds "Công ty TNHH Acme Việt Nam").
+//   3. a company whose name carries the word at the heart of the person's email domain ("acme" of an address on acme.com.vn finds "Công ty TNHH Acme Việt Nam").
 // The model only orders the third group when it has two or more names (apps/kernel/src/contact-company-ai.ts); it adds no candidate. Nothing is linked here:
 // the link is a person's click on kernel.party.set_company. A person who already has a company and a company have no candidate; a merged party, or one the member
 // cannot read, is not found (PARTY_NOT_FOUND). Twelve digits is a citizen ID, not a company's tax code, and is never looked for.

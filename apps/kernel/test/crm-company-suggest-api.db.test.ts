@@ -123,11 +123,11 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     expect(created.status).toBe(200);
     org = { slug: String(created.body?.slug), orgId: String(created.body?.orgId) };
     await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'viewer')", [org.orgId, viewer.userId]);
-    await party('organization', 'Công ty Acme Domain', 'lienhe@acme.vn');
+    await party('organization', 'Công ty Acme Domain', 'lienhe@acme.test');
     await party('organization', 'Acme Logistics');
     await party('organization', 'Công ty Acme Foods');
-    await party('organization', 'Công ty Không Liên Quan', 'info@khac.vn');
-    nam = await party('person', 'Nam Trần', 'nam.tran@acme.vn');
+    await party('organization', 'Công ty Không Liên Quan', 'info@khac.test');
+    nam = await party('person', 'Nam Trần', 'nam.tran@acme.test');
   });
 
   afterAll(async () => {
@@ -157,7 +157,7 @@ suite('the company a person may work at, through the API (#2438, PR 3)', () => {
     expect(prompt).toContain('Nam Trần');
     expect(prompt).toContain('acme');
     expect(prompt).toContain('1. Acme Logistics\n2. Công ty Acme Foods');
-    for (const secret of ['Công ty Acme Domain', 'lienhe@acme.vn', 'nam.tran@acme.vn', 'Không Liên Quan', 'Cửa hàng Gợi Ý']) expect(prompt).not.toContain(secret);
+    for (const secret of ['Công ty Acme Domain', 'lienhe@acme.test', 'nam.tran@acme.test', 'Không Liên Quan', 'Cửa hàng Gợi Ý']) expect(prompt).not.toContain(secret);
     // Nothing is stored or linked by asking.
     expect((await rows<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [nam]))[0]?.company_id).toBeNull();
   });

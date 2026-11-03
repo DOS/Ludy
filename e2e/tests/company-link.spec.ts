@@ -67,8 +67,8 @@ test('a person who writes from a known company’s domain is offered that compan
   await page.goto('/');
   await signInNewUser(page, newEmail('company-suggest'));
   const slug = await createOrg(page, 'Công ty Gợi Ý');
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Nam Trần', 'person', 'nam@acme.vn' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
-  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Công ty Acme Group', 'organization', 'lienhe@acme.vn' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Nam Trần', 'person', 'nam@acme.test' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind, email) SELECT org_id, 'Công ty Acme Group', 'organization', 'lienhe@acme.test' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
   exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Công ty Khác Hẳn', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
   const nav = page.getByRole('navigation');
   await nav.getByRole('link', { name: 'Engage', exact: true }).click();

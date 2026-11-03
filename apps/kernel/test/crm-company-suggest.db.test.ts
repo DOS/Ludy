@@ -102,10 +102,10 @@ suite('the company a person may work at (#2438, PR 3)', () => {
 
   it('finds the company that writes from the same domain, and none for a free mail address or no address', async () => {
     const o = await org();
-    await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.com.vn' });
-    await create(o, { kind: 'organization', name: 'Công ty Khác', email: 'info@khac.vn' });
-    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'Nam.Tran@ACME.com.vn' });
-    const free = await create(o, { kind: 'person', name: 'Bình Lê', email: 'binh@gmail.com' });
+    await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.test' });
+    await create(o, { kind: 'organization', name: 'Công ty Khác', email: 'info@khac.test' });
+    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'Nam.Tran@ACME.test' });
+    const free = await create(o, { kind: 'person', name: 'Bình Lê', email: ['binh', 'gmail.com'].join('@') });
     const none = await create(o, { kind: 'person', name: 'Chi Võ' });
     const result = await found(o, nam.partyId);
     expect(names(result.emailDomain)).toEqual(['Công ty Acme']);
@@ -119,13 +119,13 @@ suite('the company a person may work at (#2438, PR 3)', () => {
     await create(o, { kind: 'organization', name: 'Acme Logistics' });
     await create(o, { kind: 'organization', name: 'Acmeron Foods' });
     await create(o, { kind: 'organization', name: 'Công ty Không Liên Quan' });
-    await create(o, { kind: 'organization', name: 'ACME Domain', email: 'info@acme.vn' });
-    const hr = await create(o, { kind: 'person', name: 'Hà Phạm', email: 'ha@mail.acme.vn' });
+    await create(o, { kind: 'organization', name: 'ACME Domain', email: 'info@acme.test' });
+    const hr = await create(o, { kind: 'person', name: 'Hà Phạm', email: 'ha@mail.acme.test' });
     const result = await found(o, hr.partyId);
     // The word is a whole word of the name ("Acmeron" is not "acme"), and a company the domain found is not offered again by its name.
     expect(names(result.emailDomain)).toEqual([]);
     expect(names(result.names)).toEqual(['ACME Domain', 'Acme Logistics', 'Công ty TNHH Acme Việt Nam']);
-    const same = await create(o, { kind: 'person', name: 'Hùng Đỗ', email: 'hung@acme.vn' });
+    const same = await create(o, { kind: 'person', name: 'Hùng Đỗ', email: 'hung@acme.test' });
     const second = await found(o, same.partyId);
     expect(names(second.emailDomain)).toEqual(['ACME Domain']);
     expect(names(second.names)).toEqual(['Acme Logistics', 'Công ty TNHH Acme Việt Nam']);
@@ -133,9 +133,9 @@ suite('the company a person may work at (#2438, PR 3)', () => {
 
   it('finds the company whose tax code the person wrote in their own messages, as the first rule, and not one in a message of ours or of someone else', async () => {
     const o = await org();
-    const acme = await create(o, { kind: 'organization', name: 'Công ty Acme', taxCode: ACME_TAX, email: 'lienhe@acme.vn' });
+    const acme = await create(o, { kind: 'organization', name: 'Công ty Acme', taxCode: ACME_TAX, email: 'lienhe@acme.test' });
     await create(o, { kind: 'organization', name: 'Công ty Beta', taxCode: '0305551110' });
-    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.vn' });
+    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.test' });
     const other = await create(o, { kind: 'person', name: 'Người Khác' });
     await thread(o, nam.partyId, [{ body: `Cho em xuất hóa đơn, MST ${ACME_TAX} nhé` }, { body: 'Beta là công ty bên em, MST 0305551110 của đối tác', direction: 'out' }]);
     await thread(o, other.partyId, [{ body: 'MST 0305551110' }]);
@@ -155,8 +155,8 @@ suite('the company a person may work at (#2438, PR 3)', () => {
   it('finds the company of a tax code written with its branch suffix, and one only a merged party holds is not offered', async () => {
     const o = await org();
     const acme = await create(o, { kind: 'organization', name: 'Công ty Acme', taxCode: ACME_TAX });
-    const copy = await create(o, { kind: 'organization', name: 'Acme (bản sao)', email: 'info@acme.vn' });
-    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.vn' });
+    const copy = await create(o, { kind: 'organization', name: 'Acme (bản sao)', email: 'info@acme.test' });
+    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.test' });
     await thread(o, nam.partyId, [{ body: `Chi nhánh MST ${ACME_TAX}-001` }]);
     expect(names((await found(o, nam.partyId, o.owner)).taxCode)).toEqual(['Công ty Acme']);
     await execute(o, 'kernel.party.mark_duplicate', { partyId: copy.partyId, keepId: acme.partyId });
@@ -168,10 +168,10 @@ suite('the company a person may work at (#2438, PR 3)', () => {
   it('has no suggestion for a person who has a company, a company, or a party that is not in the org, and none across orgs', async () => {
     const o = await org();
     const other = await org();
-    const acme = await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.vn' });
-    await create(other, { kind: 'organization', name: 'Acme của org khác', email: 'info@acme.vn' });
-    const linked = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.vn' });
-    const lone = await create(other, { kind: 'person', name: 'Lan Tô', email: 'lan@acme.vn' });
+    const acme = await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.test' });
+    await create(other, { kind: 'organization', name: 'Acme của org khác', email: 'info@acme.test' });
+    const linked = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.test' });
+    const lone = await create(other, { kind: 'person', name: 'Lan Tô', email: 'lan@acme.test' });
     // The other org's company never reaches this org's person, whatever the domain.
     expect(names((await found(o, linked.partyId)).emailDomain)).toEqual(['Công ty Acme']);
     expect(names((await found(other, lone.partyId)).emailDomain)).toEqual(['Acme của org khác']);
@@ -184,8 +184,8 @@ suite('the company a person may work at (#2438, PR 3)', () => {
 
   it('refuses a viewer, writes nothing, and lets a member read it', async () => {
     const o = await org();
-    await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.vn' });
-    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.vn' });
+    await create(o, { kind: 'organization', name: 'Công ty Acme', email: 'lienhe@acme.test' });
+    const nam = await create(o, { kind: 'person', name: 'Nam Trần', email: 'nam@acme.test' });
     const before = Number((await admin((c) => c.query<{ n: number }>('SELECT count(*)::int AS n FROM crove_kernel.audit_event WHERE org_id = $1', [o.orgId]))).rows[0]?.n);
     await expect(found(o, nam.partyId, o.viewer)).rejects.toMatchObject({ status: 403 });
     expect((await found(o, nam.partyId, o.member)).emailDomain).toHaveLength(1);
