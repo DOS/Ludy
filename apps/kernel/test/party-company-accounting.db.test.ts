@@ -124,6 +124,15 @@ suite('the company of a person and the accounting (#2438)', () => {
       expect(JSON.stringify(a)).not.toMatch(/company/i);
     }
     expect(JSON.stringify(await customers(linked))).not.toMatch(/company/i);
+    // The same with the crm module off: a runtime with no crm commands and the module absent answers as the one that has them.
+    const noCrm = new Runtime(db, { manifests: TEST_MANIFESTS, absentModules: ['social', 'ads', 'crm', 'notes'] }).register({
+      commands: [...kernelCommands, ...financeCommands],
+      queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
+    });
+    expect(noCrm.installed('crm')).toBe(false);
+    const ctx = { actor: asUser(linked.owner), orgId: linked.orgId };
+    expect(await noCrm.query('finance.customers.list', {}, ctx)).toEqual(await rt.query('finance.customers.list', {}, ctx));
+    for (const all of [false, true]) expect(await noCrm.query('finance.vendors.list', { all }, ctx)).toEqual(await rt.query('finance.vendors.list', { all }, ctx));
   });
 
   it('lets a party that nothing points at change its kind, and keeps the kind of one the books, a person or a link point at', async () => {
@@ -151,6 +160,70 @@ suite('the company of a person and the accounting (#2438)', () => {
     await expect(rename(person.partyId, linked.version, 'organization', 'Bình Lê')).rejects.toMatchObject({ code: 'PARTY_HAS_COMPANY', status: 422 });
     const cleared = await execute<{ version: number }>(o, 'kernel.party.set_company', { partyId: person.partyId, companyId: null, version: linked.version });
     await rename(person.partyId, cleared.version, 'organization', 'Bình Lê');
+  });
+
+  it('leaves a kind change to a member who sees every legal entity, as the rows of another entity are hidden from one limited to a branch', async () => {
+    const o = await org();
+    await books(o);
+    const booked = (await partiesWithTax(o, CUSTOMER_TAX_CODE))[0]?.id as string;
+    const fresh = await create(o, { kind: 'organization', name: 'Công ty nhập nhầm' });
+    // An accountant limited to a branch: the books of the default entity are not theirs to see, so "nothing points at it" is not theirs to say.
+    const accountant = await identity('accountant');
+    await admin(async (c) => {
+      const branch = (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id;
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, accountant]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, accountant, branch, o.owner]);
+    });
+    const edit = (partyId: string, version: number, kind: 'person' | 'organization', name: string, user: string) =>
+      execute<{ partyId: string; version: number }>(o, 'kernel.party.update', { partyId, version, name, taxCode: null, address: null, email: null, phone: null, kind }, user);
+    const version = async (partyId: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM crove_kernel.party WHERE id = $1', [partyId]))).rows[0]?.version);
+    await expect(edit(fresh.partyId, fresh.version, 'person', 'Công ty nhập nhầm', accountant)).rejects.toMatchObject({ code: 'PARTY_KIND_SCOPE', status: 403 });
+    // Editing the name, the same kind, is not a kind change: the limited member still does it.
+    await edit(fresh.partyId, fresh.version, 'organization', 'Công ty đã đổi tên', accountant);
+    // The owner sees every entity: the booked company stays a company, the fresh one may change.
+    await expect(execute(o, 'kernel.party.update', { partyId: booked, version: await version(booked), name: 'Công ty Khách Hàng', taxCode: CUSTOMER_TAX_CODE, address: null, email: null, phone: null, kind: 'person' })).rejects.toMatchObject({ code: 'PARTY_KIND_LOCKED' });
+    await edit(fresh.partyId, await version(fresh.partyId), 'person', 'Công ty đã đổi tên', o.owner);
+  });
+
+  it('merges a company into another company with its people, and refuses to merge a company people work at into a person', async () => {
+    const o = await org();
+    const company = await create(o, { kind: 'organization', name: 'Công ty A' });
+    const same = await create(o, { kind: 'organization', name: 'Công ty A (trùng)' });
+    const alone = await create(o, { kind: 'organization', name: 'Công ty không ai làm' });
+    const lan = await create(o, { kind: 'person', name: 'Lan Trần' });
+    const linked = await execute<{ version: number }>(o, 'kernel.party.set_company', { partyId: lan.partyId, companyId: same.partyId, version: lan.version });
+    // Into a person: the people of the company would read a person as their company, or the person themselves.
+    await expect(execute(o, 'kernel.party.mark_duplicate', { partyId: same.partyId, keepId: lan.partyId })).rejects.toMatchObject({ code: 'PARTY_MERGE_KIND', status: 422 });
+    await expect(execute(o, 'kernel.party.mark_duplicate', { partyId: same.partyId, keepId: (await create(o, { kind: 'person', name: 'Bình Lê' })).partyId })).rejects.toMatchObject({ code: 'PARTY_MERGE_KIND' });
+    // A company with no one working at it may go where the person chooses (nothing reads a company through it); another company is the usual case.
+    await execute(o, 'kernel.party.mark_duplicate', { partyId: alone.partyId, keepId: lan.partyId });
+    await execute(o, 'kernel.party.mark_duplicate', { partyId: same.partyId, keepId: company.partyId });
+    const people = await query<{ items: Array<{ id: string; company: { id: string } | null }> }>(o, 'crm.contact.list', { filters: { v: 1, all: [{ field: 'company', op: 'is', value: company.partyId }] } });
+    expect(people.items.map((p) => [p.id, p.company?.id])).toEqual([[lan.partyId, company.partyId]]);
+    expect(linked.version).toBeGreaterThan(lan.version);
+  });
+
+  it('clears the link of a person who is erased, and of the people of a company that is erased', async () => {
+    const o = await org();
+    const company = await create(o, { kind: 'organization', name: 'Công ty xóa', email: 'cong-ty-xoa@example.test' });
+    const lan = await create(o, { kind: 'person', name: 'Lan Trần', email: 'lan-tran@example.test' });
+    const binh = await create(o, { kind: 'person', name: 'Bình Lê' });
+    await execute(o, 'kernel.party.set_company', { partyId: lan.partyId, companyId: company.partyId, version: lan.version });
+    await execute(o, 'kernel.party.set_company', { partyId: binh.partyId, companyId: company.partyId, version: binh.version });
+    const companyOf = async (partyId: string) => (await admin((c) => c.query<{ company_id: string | null }>('SELECT company_id FROM crove_kernel.party WHERE id = $1', [partyId]))).rows[0]?.company_id;
+    // An erasure is irreversible (R3): it needs a session of the owner.
+    const erase = (value: string) => rt.execute('kernel.personal_data.erase', { value }, { actor: { ...asUser(o.owner), sessionId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() });
+    // Erasing the company by its email (it has no document, so it is forgotten): both people are no one's staff of it any more.
+    await erase('cong-ty-xoa@example.test');
+    expect(await companyOf(lan.partyId)).toBeNull();
+    expect(await companyOf(binh.partyId)).toBeNull();
+    // Erasing a person with a company (undocumented) clears their own link too.
+    const another = await create(o, { kind: 'organization', name: 'Công ty khác' });
+    const mai = await create(o, { kind: 'person', name: 'Mai Phạm', email: 'mai-pham@example.test' });
+    await execute(o, 'kernel.party.set_company', { partyId: mai.partyId, companyId: another.partyId, version: mai.version });
+    await erase('mai-pham@example.test');
+    expect(await companyOf(mai.partyId)).toBeNull();
+    expect(await companyOf(another.partyId)).toBeNull();
   });
 
   it('knows every table that points at a party: each foreign key to party either holds its kind or is listed as not reading it', async () => {

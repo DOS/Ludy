@@ -496,8 +496,25 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       const without = await names(o, o.lan, all({ field: 'kind', op: 'is', value: 'person' }, { field: 'company', op: 'is_empty' }, { field: 'search', op: 'contains', value: 'Phúc' }));
       expect(without).toEqual(['Phúc Độc Lập']);
       expect(await versionOf(solo.partyId)).toBe(solo.version);
-      // Open deals count on either kind of party.
       expect(await row(kept.partyId)).toMatchObject({ openDeals: 0 });
+    });
+
+    it('counts the open deals of a company on its row, and not those of the people who work there', async () => {
+      const acme = await company('Công ty Zeta');
+      const person = await create(o, o.lan, { name: 'Khoa Vũ' });
+      await link(o.lan, person.partyId, acme.partyId, person.version);
+      const stages = await exec<Array<{ id: string; kind: string }>>(o, o.lan, 'crm.pipeline.setup', {});
+      const open = stages.find((s) => s.kind === 'open');
+      const won = stages.find((s) => s.kind === 'won');
+      const deal = (partyId: string, title: string) => exec<{ id: string; version: number }>(o, o.lan, 'crm.deal.create', { partyId, title, amount: '2000000', expectedClose: null, ...(open ? { stageId: open.id } : {}) });
+      const first = await deal(acme.partyId, 'Hợp đồng với Zeta');
+      await deal(acme.partyId, 'Gói thứ hai với Zeta');
+      await deal(person.partyId, 'Báo giá cho Khoa');
+      expect(await row(acme.partyId)).toMatchObject({ peopleCount: 1, openDeals: 2 });
+      expect(await row(person.partyId)).toMatchObject({ openDeals: 1 });
+      // A won deal is no longer open.
+      await exec(o, o.lan, 'crm.deal.move', { dealId: first.id, version: first.version, stageId: won?.id });
+      expect(await row(acme.partyId)).toMatchObject({ openDeals: 1 });
     });
   });
 });

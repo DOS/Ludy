@@ -520,6 +520,15 @@ export const personalDataErase = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', party.id)
         .execute();
+      // The people who worked at a forgotten company are not left pointing at the placeholder name.
+      if (forget) {
+        await ctx.trx
+          .updateTable('crove_kernel.party')
+          .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
+          .where('org_id', '=', ctx.orgId)
+          .where('company_id', '=', party.id)
+          .execute();
+      }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
       add('crove_kernel.party.address', Number(party.address));

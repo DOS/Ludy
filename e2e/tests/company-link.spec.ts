@@ -46,7 +46,7 @@ test('a member links a person to a company from either side and sees it on both 
     await page.getByRole('button', { name: 'Mở Công ty Acme' }).click();
     const people = page.getByTestId('company-people');
     await expect(people).toContainText('Lan Trần');
-    await people.getByRole('button', { name: 'Bỏ Lan Trần khỏi công ty' }).click();
+    await people.getByRole('button', { name: 'Bỏ liên kết: Lan Trần' }).click();
     await expect(people).toContainText('Chưa có người liên hệ nào làm việc ở đây.');
   });
 
