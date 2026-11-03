@@ -96,12 +96,12 @@ function planOf(row: DraftRow): AdsCampaignPlanDraft {
 
 // What local validation needs about an account and the org that does not depend on a draft: the switches and the caps in force, read now, in the
 // caller's transaction (a list of drafts reads them once per account).
-interface ContextBase {
+export interface ContextBase {
   writeEnabled: boolean;
   launchesBlocked: boolean;
   caps: PlanContext['caps'];
 }
-async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
+export async function contextBase(ctx: Db, accountId: string): Promise<ContextBase> {
   const setting = await currentSetting(ctx);
   const capRows = await ctx.trx
     .selectFrom('crove_ads.ad_spend_cap')
@@ -135,7 +135,7 @@ async function planContext(ctx: Db, account: { id: string; currency: string | nu
   };
 }
 
-async function accountOf(ctx: Db, adAccountId: string, lock = false) {
+export async function accountOf(ctx: Db, adAccountId: string, lock = false) {
   let q = ctx.trx.selectFrom('crove_ads.ad_account').select(['id', 'name', 'currency', 'time_zone', 'write_enabled', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('id', '=', adAccountId);
   if (lock) q = q.forShare();
   const account = await q.executeTakeFirst();
@@ -192,7 +192,7 @@ async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now
 }
 
 // The columns a plan writes. `undefined` leaves a column as it is, `null` clears it.
-function columnsOf(plan: AdsCampaignPlanDraft) {
+export function columnsOf(plan: AdsCampaignPlanDraft) {
   const days = flightDays(plan.startOn, plan.endOn);
   return {
     name: plan.name,
@@ -347,6 +347,8 @@ export const adsCampaignPrepareLaunch = defineCommand({
         currency: account.currency,
         days: checked.days,
         planHash: planHash(plan, account.id, account.currency),
+        origin: row.origin as 'human' | 'ai',
+        aiFields: row.ai_fields,
         plan,
       }),
       // The proposal belongs to the account's legal entity (#1538).
@@ -388,7 +390,10 @@ export const adsCampaignLaunch = defineCommand({
       planHash(plan, account.id, account.currency) !== payload.planHash ||
       canonicalJson(plan) !== canonicalJson(payload.plan) ||
       payload.adAccountId.toLowerCase() !== account.id ||
-      proposal?.legal_entity_id !== account.legalEntityId
+      proposal?.legal_entity_id !== account.legalEntityId ||
+      // The taint the card showed (who wrote the plan, which fields the AI coworker drafted) is the draft's now.
+      payload.origin !== row.origin ||
+      canonicalJson([...payload.aiFields].sort()) !== canonicalJson([...row.ai_fields].sort())
     ) {
       throw new DomainError('ADS_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     }

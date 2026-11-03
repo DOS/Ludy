@@ -7,7 +7,7 @@ import type { Database, Db } from '@crove/db';
 import { vietnamToday } from '@crove/kernel-contract';
 import { DomainError, inboundKey, type AgentProgram, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
 import { KERNEL_NOTIFYING_EVENTS, PROPOSAL_NUDGE_SWEEP_MS, TODAY_MAIL_SWEEP_MS, runAgentWake, sweepProposalNudges, sweepTodayMail, type UsageLimits } from '@crove/kernel';
-import { aiDocumentFailure, type ConversationWriter, type InvoiceReader } from '@crove/agent';
+import { aiDocumentFailure, type AdsCampaignWriter, type ConversationWriter, type InvoiceReader } from '@crove/agent';
 import type { CalendarAdapter, Publisher, Refresher } from '@crove/channel';
 import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
@@ -54,6 +54,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
+import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
 import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
 import { runLiveCheck } from './calendar-live.ts';
 import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type CalendarWriteBackJob } from './calendar-sync.ts';
@@ -354,6 +355,9 @@ export interface WorkerDeps {
   extractor: InvoiceReader | null;
   // Vy's reply drafts (CV8, #2310): the model that reads a conversation's text and writes a draft; null runs without AI (a draft asked for is settled as none).
   conversationWriter?: Pick<ConversationWriter, 'draft'> | null;
+  // The AI coworker's campaign drafts (ads W1b, #2295): the model that reads a member's brief and writes the creative part of a campaign; null runs without
+  // AI (a request is settled as none with the code AI_OFF).
+  adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
@@ -1168,6 +1172,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       if (!job) return;
       const outcome = await runConversationDraft({ runtime: deps.runtime, writer: draftWriter, limits: deps.usageLimits, meter: aiMeter, budget: draftBudget }, job.data);
       console.log(`[conversations] draft ${job.data.draftId}: ${outcome}`);
+    });
+  }
+
+  // The AI coworker's campaign drafts (ads W1b, #2295): the model reads a member's brief and a system command records the draft. Only where an AI endpoint is
+  // configured; elsewhere a request is settled as none by the relay below.
+  const adsWriter = deps.adsCampaignWriter;
+  if (adsWriter && deps.runtime.installed('ads')) {
+    await boss.work<AdsCampaignDraftJob>(QUEUES.adsCampaignDraft, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const outcome = await runAdsCampaignDraft({ runtime: deps.runtime, writer: adsWriter, meter: aiMeter, budget: draftBudget }, job.data);
+      console.log(`[ads] campaign draft ${job.data.requestId}: ${outcome}`);
     });
   }
 
@@ -2027,6 +2042,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   await failUndraftable(deps.runtime, draftJob);
                 }
               }
+              // The AI coworker's draft of a campaign (ads W1b): ids only in the job; with no model here the request is settled as none at once.
+              if (row.type === 'ads.campaign.draft_queued') {
+                const adsJob: AdsCampaignDraftJob = { orgId: row.org_id, requestId: String(row.payload.requestId) };
+                if (deps.adsCampaignWriter) {
+                  await boss.send(QUEUES.adsCampaignDraft, adsJob, { singletonKey: jobKey(row.org_id, QUEUES.adsCampaignDraft, adsJob.requestId), retryLimit: 2, retryDelay: 30, retryBackoff: true });
+                } else {
+                  await failUnaskable(deps.runtime, adsJob);
+                }
+              }
               if (row.type === 'kernel.conversation.reply_queued' || row.type === 'kernel.conversation.hide_queued') {
                 const messageId = String(row.payload.messageId);
                 const action = row.type === 'kernel.conversation.reply_queued' ? 'reply' : 'hide';
@@ -2276,6 +2300,8 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       await sweepConversationDrafts({ workerDb: deps.workerDb });
       // The expired "you are replying" markers of the Inbox (CV3).
       await sweepConversationComposing({ workerDb: deps.workerDb });
+      // The campaign draft requests the job never answered (ads W1b): in every deployment, so a member can ask again after 15 minutes.
+      await sweepAdsCampaignRequests({ workerDb: deps.workerDb });
       // The new conversations Vy drafts a reply for (CV8): only where a model is configured.
       if (deps.conversationWriter) await requestDueConversationDrafts({ runtime: deps.runtime, workerDb: deps.workerDb });
       // The blobs whose images are gone (an erased customer, a purged thread, a removed message): deleted from the store, in every deployment.

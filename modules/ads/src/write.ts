@@ -476,7 +476,7 @@ function changeOf(kind: string, raw: unknown): AdsChange | null {
       return zAdsLaunchesUnblockPayload.safeParse(raw).success ? { change: 'launches_unblock' } : null;
     case ADS_CAMPAIGN_LAUNCH_KIND: {
       const p = zAdsCampaignLaunchPayload.safeParse(raw);
-      return p.success ? { change: 'campaign_launch', draftId: p.data.draftId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, amount: p.data.amount, currency: p.data.currency, days: p.data.days, plan: p.data.plan } : null;
+      return p.success ? { change: 'campaign_launch', draftId: p.data.draftId, adAccountId: p.data.adAccountId, adAccountName: p.data.adAccountName, amount: p.data.amount, currency: p.data.currency, days: p.data.days, plan: p.data.plan, origin: p.data.origin, aiFields: p.data.aiFields } : null;
     }
     default:
       return null;
