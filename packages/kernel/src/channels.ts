@@ -395,7 +395,9 @@ export const channelsList = defineQuery({
       // crowd a channel out.
       .where('provider', 'not like', 'bank\\_%')
       // Nor an ad account's (provider ..._ads, ADR-0040): the ads module lists it with its settings.
-      .where('provider', 'not like', '%\\_ads');
+      .where('provider', 'not like', '%\\_ads')
+      // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish.
+      .where('provider', '<>', 'email');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({

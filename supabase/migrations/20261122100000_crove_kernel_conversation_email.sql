@@ -64,3 +64,6 @@ RETURNS boolean LANGUAGE sql STABLE SET search_path = pg_catalog, pg_temp AS $$
 $$;
 REVOKE ALL ON FUNCTION crove_kernel.conversation_access(text, uuid, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.conversation_access(text, uuid, boolean) TO crove_tenant;
+
+-- Erasing or purging an email thread also drops the subject and the text of the replies sent on it (the guard lets a column only be nulled).
+GRANT UPDATE (subject, payload) ON crove_kernel.mail_message TO crove_tenant;

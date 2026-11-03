@@ -34,6 +34,13 @@ describe('splitQuoted', () => {
     expect(middle.quoted).toBe('');
   });
 
+  it('stays fast on a mail of thousands of quote lines', () => {
+    const started = Date.now();
+    const body = `${'> trích dẫn\n'.repeat(10_000)}một dòng thường`;
+    expect(splitQuoted(body).quoted).toBe('');
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
   it('shows a mail that is all quote whole, so no bubble is empty', () => {
     const all = splitQuoted('> chỉ có trích dẫn');
     expect(all).toEqual({ fresh: '> chỉ có trích dẫn', quoted: '' });

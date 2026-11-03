@@ -51,7 +51,7 @@ function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): bo
   if (autoSubmitted !== undefined && autoSubmitted !== 'no') return true;
   const precedence = header('precedence');
   if (precedence !== undefined && ['bulk', 'junk', 'list', 'auto_reply'].includes(precedence)) return true;
-  return ['list-id', 'list-unsubscribe', 'x-auto-response-suppress', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
+  return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
 }
 
 function sentAtOf(date: string | undefined): string | null {

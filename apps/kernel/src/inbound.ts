@@ -256,10 +256,10 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   );
 }
 
-const MESSAGE_ID = /^<[^<>\s]{1,300}>$/;
+const CLOCK_SKEW_MS = 5 * 60_000;
+const MESSAGE_ID = /^<[^<>\s]{1,298}>$/;
 const NO_TEXT = '[Thư không có nội dung chữ]';
 // A mail dated further ahead than this is dated now: a clock set wrong must not put a thread's newest message in the future.
-const CLOCK_SKEW_MS = 5 * 60_000;
 
 export type ConversationMail = { event: ConversationEvent } | { ignored: 'automated' | 'own_address' | 'no_sender' };
 
@@ -289,7 +289,7 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
       threadId: messageId,
       messageId,
       direction: 'in',
-      contact: { id: sender, ...(name ? { name } : {}) },
+      contact: { id: sender, name: name || sender },
       text,
       at,
       ...(subject ? { subject } : {}),

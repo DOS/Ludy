@@ -414,7 +414,7 @@ const REPLY_FROM: Readonly<Record<'sent' | 'failed' | 'unknown', readonly SendSt
   unknown: ['queued', 'sending'],
 };
 async function settleConversationReply(ctx: CommandContext, mailId: string, state: 'sent' | 'failed' | 'unknown', code: string | null): Promise<void> {
-  const mail = await ctx.trx.selectFrom('crove_kernel.mail_message').select(['source', 'source_id']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
+  const mail = await ctx.trx.selectFrom('crove_kernel.mail_message').select(['source', 'source_id', 'message_id_header']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
   if (mail?.source !== 'kernel.conversation.reply' || !mail.source_id) return;
   await ctx.trx
     .updateTable('crove_kernel.conversation_message')
@@ -422,6 +422,8 @@ async function settleConversationReply(ctx: CommandContext, mailId: string, stat
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', mail.source_id)
     .where('direction', '=', 'out')
+    // Only the mail the message now carries settles it: a late event of an earlier mail (a retry made a new one) must not undo the current one.
+    .where('external_message_id', '=', mail.message_id_header)
     .where('send_state', 'in', [...REPLY_FROM[state]])
     .execute();
 }

@@ -297,7 +297,10 @@ export const conversationEmailIngest = defineCommand({
   access: 'system',
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
-    return ingestEvents(ctx, await emailConnectionId(ctx), input.events);
+    const result = await ingestEvents(ctx, await emailConnectionId(ctx), input.events);
+    // What the org used of its daily mail limit (#675): a mail kept counts, as one to the document address does; a redelivery counts nothing.
+    if (result.stored > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'inbound_emails', amount: String(result.stored) }).execute();
+    return result;
   },
 });
 
@@ -344,10 +347,14 @@ async function emailThreadId(ctx: CommandContext, connectionId: string, event: C
   const row = await ctx.trx
     .selectFrom('crove_kernel.conversation_message as m')
     .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
+    .innerJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
     .select('c.external_thread_id')
     .where('m.org_id', '=', ctx.orgId)
     .where('m.channel_connection_id', '=', connectionId)
     .where('c.kind', '=', 'email')
+    // Only the thread's own customer continues it: someone copied on the mail, or who learned a Message-ID, opens a conversation of their own and does not
+    // put words in the customer's thread (the answer goes to the customer's address).
+    .where('i.external_user_id', '=', event.contact.id)
     .where('m.external_message_id', 'in', refs)
     .orderBy('m.sent_at', 'desc')
     .limit(1)
@@ -605,7 +612,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   const lastInbound = inbound && (!conversation.last_inbound_at || conversation.last_inbound_at.getTime() < sentAt.getTime()) ? sentAt : conversation.last_inbound_at;
   // A customer's new message reopens the thread as new; the org's own message from the platform's inbox answers it.
   // A customer message the platform dated before the thread was resolved does not reopen it.
-  const predatesResolution = inbound && conversation.status === 'resolved' && conversation.resolved_at !== null && sentAt.getTime() <= conversation.resolved_at.getTime();
+  // An email is delivered once, as it arrives, so it never predates the resolution: its Date header is the sender's clock, and a mail that arrives after a
+  // person resolved the thread reopens it whatever the header says.
+  const predatesResolution = inbound && event.kind !== 'email' && conversation.status === 'resolved' && conversation.resolved_at !== null && sentAt.getTime() <= conversation.resolved_at.getTime();
   const status = inbound ? (predatesResolution ? 'resolved' : 'new') : conversation.status === 'new' ? 'pending' : conversation.status;
   await ctx.trx
     .updateTable('crove_kernel.conversation')
@@ -626,7 +635,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // members who can answer it (CV3).
   // Not for a message the platform dated more than a day ago: an old thread brought in by a history read or a reconcile is not news, and a burst of
   // them would be a notice for each reader.
-  if (inbound && status === 'new' && (conversation.status !== 'new' || conversation.last_seq === 0) && sentAt.getTime() > ctx.now.getTime() - NEW_NOTICE_AGE_MS) {
+  if (inbound && status === 'new' && (conversation.status !== 'new' || conversation.last_seq === 0) && (event.kind === 'email' || sentAt.getTime() > ctx.now.getTime() - NEW_NOTICE_AGE_MS)) {
     await routeNewConversation(ctx, conversation.id, conversation.assignee_user_id, seq);
   }
   return 'stored';
@@ -1464,8 +1473,8 @@ async function mayAssign(ctx: CommandContext, conversation: ConversationRow, use
   const member = await ctx.trx.selectFrom('crove_kernel.tenant_member').select('role').where('org_id', '=', ctx.orgId).where('user_id', '=', userId).executeTakeFirst();
   if (!member || member.role === 'viewer') return false;
   if (member.role === 'owner' || member.role === 'admin') return true;
-  if (conversation.kind === 'direct') {
-    // A private message is handled by a member who holds the permission to read it (the desk.agent role, CV3), through an org-wide assignment.
+  if (conversation.kind === 'direct' || conversation.kind === 'email') {
+    // A private message or an email is handled by a member who holds the permission to read it (the desk.agent role, CV3), through an org-wide assignment.
     const held = await ctx.trx
       .selectFrom('crove_kernel.role_assignment as a')
       .innerJoin('crove_kernel.role_permission as p', 'p.role_key', 'a.role_key')
@@ -1987,12 +1996,11 @@ export const conversationRetentionSet = defineCommand({
 
 // Deletes threads and what hangs on them (messages, notes and read marks go with a thread by the foreign keys). Returns counts.
 async function deleteThreads(ctx: CommandContext, filter: ReturnType<typeof sql>): Promise<{ threads: number; messages: number }> {
-  // The mails the org sent in answer on an email thread (#2439) carry the customer's address: it is dropped with the thread (the keyed hash stays, so
-  // a bounce still suppresses the address). A mail still queued then fails at send time with no address. The subject and the merge data of such a mail
-  // go with the mail retention (13 months and 30 days after its final status), as for every mail.
+  // The mails the org sent in answer on an email thread (#2439) carry the customer's address, their subject and the answer's text: all three are dropped
+  // with the thread (the keyed hash stays, so a bounce still suppresses the address). A mail still queued then fails at send time with no address.
   await sql`
-    UPDATE crove_kernel.mail_message mm SET to_address = NULL
-    WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND mm.to_address IS NOT NULL
+    UPDATE crove_kernel.mail_message mm SET to_address = NULL, subject = NULL, payload = NULL
+    WHERE mm.org_id = ${ctx.orgId}::uuid AND mm.source = ${EMAIL_REPLY_SOURCE} AND (mm.to_address IS NOT NULL OR mm.subject IS NOT NULL OR mm.payload IS NOT NULL)
       AND mm.source_id IN (SELECT m.id FROM crove_kernel.conversation_message m JOIN crove_kernel.conversation c ON c.org_id = m.org_id AND c.id = m.conversation_id
                            WHERE m.org_id = ${ctx.orgId}::uuid AND c.kind = 'email' AND ${filter})`.execute(ctx.trx);
   const { rows } = await sql<{ threads: string; messages: string }>`

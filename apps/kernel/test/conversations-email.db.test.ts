@@ -344,7 +344,7 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     await rt.execute('kernel.conversation.erase_contact', { conversationId: erased?.id, confirm: true }, { actor: asMfa(o.owner), orgId: o.orgId });
     expect((await threads(o)).map((t) => t.id)).toEqual([kept?.id]);
     // The mail the org sent that customer keeps no address; the other customer's thread is untouched.
-    expect(await rows("SELECT to_address FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: null }]);
+    expect(await rows("SELECT to_address, subject, payload FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId])).toEqual([{ to_address: null, subject: null, payload: null }]);
     expect((await rows<{ n: string }>('SELECT count(*)::text AS n FROM crove_kernel.conversation_message WHERE org_id = $1', [o.orgId]))[0]?.n).toBe('1');
     // The retention purge deletes an old email thread by its last message.
     await exec(o, o.owner, 'kernel.conversation.retention_set', { retentionMonths: 6 });
@@ -355,6 +355,55 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     // Mail that arrives again for the erased customer within the tombstone's days and dated before the erasure is not stored.
     expect(await deliver(o.address, raw({ to: o.address, messageId: '<e3@mau.test>', from: 'Khách Xoá <xoa@khach.test>', date: new Date(Date.now() - 3_600_000).toUTCString() }))).toMatchObject({ conversation: 'ignored' });
     expect(await threads(o)).toEqual([]);
+  });
+
+  it('opens a thread of its own for a mail from someone else who names a thread\'s Message-ID, and reopens a resolved thread whatever the Date header says', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<own1@mau.test>', from: 'Khách A <a@khach.test>' }));
+    // Someone copied on the mail, or who learned its id, answers it from another address: not the customer's thread, so not their words in it.
+    await deliver(o.address, raw({ to: o.address, messageId: '<own2@mau.test>', inReplyTo: '<own1@mau.test>', from: 'Người Khác <b@khach.test>', body: 'Tôi là người khác.' }));
+    const all = await threads(o);
+    expect(all.length).toBe(2);
+    expect(all[0]?.last_seq).toBe(1);
+    // A mail dated before the thread was resolved, arriving after it, reopens the thread.
+    await exec(o, o.owner, 'kernel.conversation.resolve', { conversationId: all[0]?.id });
+    await deliver(o.address, raw({ to: o.address, messageId: '<own3@mau.test>', inReplyTo: '<own1@mau.test>', from: 'Khách A <a@khach.test>', date: new Date(Date.now() - 600_000).toUTCString() }));
+    expect((await threads(o))[0]).toMatchObject({ status: 'new', last_seq: 2 });
+  });
+
+  it('counts a kept mail against the daily mail limit, shows the sender\'s address when there is no name, and keeps the Inbox connection out of the Social channel list', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<cnt1@mau.test>', from: 'bare@khach.test' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<cnt1@mau.test>', from: 'bare@khach.test' }));
+    const used = await rows<{ n: string }>("SELECT coalesce(sum(amount), 0)::text AS n FROM crove_kernel.org_usage WHERE org_id = $1 AND metric = 'inbound_emails'", [o.orgId]);
+    expect(Number(used[0]?.n)).toBe(1);
+    const [thread] = await threads(o);
+    const seen = await detail(o, o.owner, thread?.id as string);
+    expect(seen.conversation.contact.displayName).toBe('bare@khach.test');
+    const channels = await query<{ provider: string }[]>(o, o.owner, 'kernel.channel.list', {});
+    expect(channels.map((c) => c.provider)).not.toContain('email');
+  });
+
+  it('assigns an email thread to a member who can read it, not to one who cannot', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<asg1@mau.test>' }));
+    const [thread] = await threads(o);
+    await expect(exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.member })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_ALLOWED' });
+    await exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.owner });
+  });
+
+  it('does not settle the message from an earlier mail once a retry made a new one', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<old1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ, giá 25.000.' });
+    const [first] = await rows<{ id: string }>("SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply' ORDER BY created_at", [o.orgId]);
+    const out = (await messagesOf(thread?.id as string)).slice(-1)[0];
+    expect(out?.direction).toBe('out');
+    // The message now carries another mail's id (a retry made a new mail): a late bounce of the first mail leaves it alone.
+    await admin((c) => c.query("UPDATE crove_kernel.conversation_message SET external_message_id = '<newer-mail@mail.test>', send_state = 'sent', send_error_code = NULL WHERE org_id = $1 AND conversation_id = $2 AND direction = 'out'", [o.orgId, thread?.id]));
+    await sys(o, 'kernel.mail.event.record', { messageId: first?.id, provider: 'smtp', providerEventId: `dsn:${randomUUID()}`, kind: 'bounce_hard', occurredAt: new Date().toISOString(), detail: {} });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]?.send_state).toBe('sent');
   });
 
   it('leaves no mail text, subject or address in an audit row or an event', async () => {

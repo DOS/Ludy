@@ -16,7 +16,19 @@ const RULE = /^-{2,}\s*(?:original message|forwarded message|thư gốc|tin nh�
 const HEADER = /^(?:from|từ):\s/i;
 const NEXT_HEADER = /^(?:sent|date|to|subject|gửi|ngày|tới|đến|chủ đề):/i;
 
-function startsQuote(lines: readonly string[], i: number): boolean {
+// For each line, whether it and every line after it is blank or a "> quoted" line, computed in one pass.
+function quoteTail(lines: readonly string[]): boolean[] {
+  const tail = Array.from({ length: lines.length }, () => false);
+  let all = true;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = (lines[i] ?? '').trim();
+    all = all && (t === '' || t.startsWith('>'));
+    tail[i] = all;
+  }
+  return tail;
+}
+
+function startsQuote(lines: readonly string[], i: number, tail: readonly boolean[]): boolean {
   const line = (lines[i] ?? '').trim();
   const next = (lines[i + 1] ?? '').trim();
   if (line === '') return false;
@@ -25,12 +37,13 @@ function startsQuote(lines: readonly string[], i: number): boolean {
   // The header block a forwarded or Outlook-style reply repeats: "From:" followed by another header, so a sentence that begins "From:" stays.
   if (HEADER.test(line) && NEXT_HEADER.test(next)) return true;
   // A trailing block of "> quoted" lines.
-  return line.startsWith('>') && lines.slice(i).every((l) => l.trim() === '' || l.trim().startsWith('>'));
+  return line.startsWith('>') && tail[i] === true;
 }
 
 export function splitQuoted(body: string): SplitEmail {
   const lines = body.replace(/\r\n?/g, '\n').split('\n');
-  const cut = lines.findIndex((_, i) => startsQuote(lines, i));
+  const tail = quoteTail(lines);
+  const cut = lines.findIndex((_, i) => startsQuote(lines, i, tail));
   if (cut <= 0) return { fresh: body.trim(), quoted: '' };
   const fresh = lines.slice(0, cut).join('\n').trim();
   // A mail that is all quote (a forward with no comment) is shown whole rather than as an empty bubble.
