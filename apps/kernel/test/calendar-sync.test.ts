@@ -26,9 +26,15 @@ interface Call {
   input: Record<string, unknown>;
 }
 
-function fakeRuntime(state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null, credential: unknown, plan: { actions: unknown[] } = { actions: [] }) {
+function fakeRuntime(
+  state: { status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null,
+  credential: unknown,
+  plan: { actions: unknown[] } = { actions: [] },
+  behaviour: { settleFails?: Error; crm?: boolean } = {},
+) {
   const calls: Call[] = [];
   const runtime = {
+    installed: (module: string) => module !== 'crm' || behaviour.crm !== false,
     query: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'query', name, input });
       if (name === 'kernel.calendar.connection_state') return state;
@@ -41,6 +47,7 @@ function fakeRuntime(state: { status: string; provider: string; expiresAt: strin
     },
     execute: async (name: string, input: Record<string, unknown>) => {
       calls.push({ kind: 'execute', name, input });
+      if (name === 'crm.booking.meeting_settle' && behaviour.settleFails) throw behaviour.settleFails;
       if (name === 'kernel.calendar.busy_replace') return { replaced: true, added: 2, removed: 1 };
       if (name === 'kernel.calendar.refresh') return { refreshed: true, updatedAt: '2026-11-03T05:30:00.000Z' };
       if (name === 'kernel.calendar.finish_disconnect') return { finished: true };
@@ -500,7 +507,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
   it('makes each write-back connection of the org match its bookings, with the token it has, and renews nothing', async () => {
     const { runtime, calls } = jobRuntime([CONNECTION, CONN_B], { [CONNECTION]: on, [CONN_B]: on });
     const a = adapter({ refresh: async () => Promise.reject(new Error('the job never renews')) });
-    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 2, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 2, busy: 0, expiring: 0 });
     expect(a.writes).toEqual(['write ext1ext1ext1 Tư vấn: Lan 2026-11-04T02:00:00.000Z', 'write ext1ext1ext1 Tư vấn: Lan 2026-11-04T02:00:00.000Z']);
     expect(records(calls)).toEqual([
       { connectionId: CONNECTION, eventId: 'e1', state: 'written' },
@@ -514,16 +521,31 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
     const soon = { ...on, expiresAt: new Date(NOW.getTime() + 60_000).toISOString() };
     const { runtime } = jobRuntime(['c-off', 'c-gone', 'c-soon', CONNECTION], { 'c-off': { ...on, writeBack: false }, 'c-soon': soon, [CONNECTION]: on });
     const a = adapter();
-    expect(await job(runtime, a)).toEqual({ connections: 4, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 4, ran: 1, busy: 0, expiring: 1 });
     expect(a.writes).toHaveLength(1);
     const { runtime: other } = jobRuntime([CONNECTION], { [CONNECTION]: { ...on, provider: 'microsoft' } });
-    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0 });
+    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
+  });
+
+  // A booking's Google Meet (C7, #1375) is made by this write, so the worker asks for a sweep at once when it leaves a connection to it: the count says so.
+  it('counts the connections it leaves to the sweep for a token that is about to run out or has no known end, and none otherwise', async () => {
+    const soon = { ...on, expiresAt: new Date(NOW.getTime() + 60_000).toISOString() };
+    const unknown = { ...on, expiresAt: null };
+    const { runtime, calls } = jobRuntime(['c-soon', 'c-unknown', CONNECTION], { 'c-soon': soon, 'c-unknown': unknown, [CONNECTION]: on });
+    const a = adapter({ refresh: async () => Promise.reject(new Error('the job never renews')) });
+    expect(await job(runtime, a)).toEqual({ connections: 3, ran: 1, busy: 0, expiring: 2 });
+    expect(calls.some((c) => c.name === 'kernel.calendar.refresh')).toBe(false);
+    // A connection that is off or has no adapter is not one the sweep would write: it is not counted.
+    const { runtime: off } = jobRuntime(['c-off'], { 'c-off': { ...soon, writeBack: false } });
+    expect(await job(off, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
+    const { runtime: other } = jobRuntime(['c-other'], { 'c-other': { ...soon, provider: 'microsoft' } });
+    expect(await job(other, adapter())).toEqual({ connections: 1, ran: 0, busy: 0, expiring: 0 });
   });
 
   it('does not renew or expire a connection whose token the provider refuses: the sweep does that', async () => {
     const { runtime, calls } = jobRuntime([CONNECTION], { [CONNECTION]: on });
     const a = adapter({ writeEvent: async () => ({ refused: 'invalid_token' }), refresh: async () => Promise.reject(new Error('the job never renews')) });
-    expect(await job(runtime, a)).toEqual({ connections: 1, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 1, ran: 1, busy: 0, expiring: 0 });
     expect(calls.some((c) => c.name === 'kernel.calendar.mark_failed' || c.name === 'kernel.calendar.refresh' || c.name === 'kernel.calendar.link.record')).toBe(false);
   });
 
@@ -538,7 +560,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
       held.push(`unlock ${id}`);
       return { ran: true as const, value };
     };
-    expect(await runCalendarWriteBack({ runtime, broker: vault, adapters: { google_calendar: a }, now: () => NOW, lockConnection }, { orgId: ORG })).toEqual({ connections: 2, ran: 1, busy: 1 });
+    expect(await runCalendarWriteBack({ runtime, broker: vault, adapters: { google_calendar: a }, now: () => NOW, lockConnection }, { orgId: ORG })).toEqual({ connections: 2, ran: 1, busy: 1, expiring: 0 });
     // The write happened between the lock and its release; the busy connection was left alone.
     expect(held).toEqual([`lock ${CONNECTION}`, `unlock ${CONNECTION}`]);
     expect(records(calls)).toEqual([{ connectionId: CONNECTION, eventId: 'e1', state: 'written' }]);
@@ -549,7 +571,7 @@ describe('runCalendarWriteBack (the job a booking event queues)', () => {
     let n = 0;
     const a = adapter({ writeEvent: async () => (++n === 1 ? Promise.reject(new Error('socket hang up')) : { ok: true }) });
     const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 1, busy: 0 });
+    expect(await job(runtime, a)).toEqual({ connections: 2, ran: 1, busy: 0, expiring: 0 });
     expect(records(calls)).toEqual([{ connectionId: CONN_B, eventId: 'e1', state: 'written' }]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('[calendar-writeback]'));
     spy.mockRestore();
@@ -702,5 +724,73 @@ describe('syncCalendars', () => {
     const boom = new DomainError('INTERNAL', 500, 'x');
     const failing = fakeRuntime({ status: 'disconnecting', provider: 'google', expiresAt: null, updatedAt: NOW.toISOString() }, boom);
     expect(await sweep(failing.runtime, { google_calendar: adapter() })).toMatchObject({ retry: 1, disconnected: 0 });
+  });
+});
+
+// A booking that asked for a Google Meet (C7, #1375): the event is written with the conference asked for, and the booking learns the outcome (the join link, or
+// none) before the link is recorded, so a crash between the two repeats a write that makes no second Meet and the settle of a booking no longer pending does nothing.
+describe('write-back of an event that asked for a conference', () => {
+  const on = { ...fresh, writeBack: true };
+  const MEET = 'https://meet.google.com/abc-defg-hij';
+  const meet = { eventId: 'e1', externalId: 'ext1ext1ext1', kind: 'upsert', summary: 'Tư vấn: Lan', startsAt: '2026-11-04T02:00:00.000Z', endsAt: '2026-11-04T03:00:00.000Z', conference: true, hash: 'sha256:aaa' };
+  const plain = { ...meet, eventId: 'e2', externalId: 'ext2ext2ext2', conference: false };
+  const settles = (calls: Call[]) => calls.filter((c) => c.name === 'crm.booking.meeting_settle').map((c) => c.input);
+
+  it('asks the adapter for a conference and tells the booking the join link before it records the write', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    const asked: Array<boolean | undefined> = [];
+    const a = adapter({ writeEvent: async (_secret, event) => (asked.push(event.conference), { ok: true, meetUrl: MEET }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    expect(asked).toEqual([true]);
+    expect(settles(calls)).toEqual([{ calendarEventId: 'e1', url: MEET }]);
+    const names = calls.map((c) => c.name);
+    expect(names.indexOf('crm.booking.meeting_settle')).toBeLessThan(names.indexOf('kernel.calendar.link.record'));
+  });
+
+  it('tells the booking there is no Meet when the event was written without one', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    expect(await run(runtime, adapter({ writeEvent: async () => ({ ok: true, meetUrl: null }) }))).toMatchObject({ outcome: 'synced' });
+    expect(settles(calls)).toEqual([{ calendarEventId: 'e1', url: null }]);
+    // And one an adapter answers plain ok to (no conference was made or reported) is also no link.
+    const second = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+    await run(second.runtime, adapter());
+    expect(settles(second.calls)).toEqual([{ calendarEventId: 'e1', url: null }]);
+  });
+
+  it('tells the booking nothing when the write did not happen, and nothing for an event that asked for no conference', async () => {
+    for (const answer of [{ failed: 'backendError', transient: true }, { failed: 'invalid' }, { scope: true }, { gone: true }] as const) {
+      const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] });
+      await run(runtime, adapter({ writeEvent: async () => answer }));
+      expect(settles(calls), JSON.stringify(answer)).toEqual([]);
+    }
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [plain] });
+    const asked: Array<boolean | undefined> = [];
+    await run(runtime, adapter({ writeEvent: async (_secret, event) => (asked.push(event.conference), { ok: true }) }));
+    expect(asked).toEqual([undefined]);
+    expect(settles(calls)).toEqual([]);
+  });
+
+  it('records the write and goes on to the next event when the settle throws, naming the error in the log and quoting nothing', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet, plain] }, { settleFails: new Error('Tư vấn: Lan khach@example.test secret') });
+    const wrote: string[] = [];
+    const a = adapter({ writeEvent: async (_secret, event) => (wrote.push(event.externalId), { ok: true, meetUrl: MEET }) });
+    expect(await run(runtime, a)).toMatchObject({ outcome: 'synced' });
+    // Both events were written and both links recorded: the failing settle stalled neither.
+    expect(wrote).toEqual(['ext1ext1ext1', 'ext2ext2ext2']);
+    const recorded = calls.filter((c) => c.name === 'kernel.calendar.link.record').map((c) => c.input);
+    expect(recorded).toHaveLength(2);
+    expect(settles(calls)).toHaveLength(1);
+    expect(JSON.stringify(log.mock.calls)).toContain('Error');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('khach@example.test');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('secret');
+    log.mockRestore();
+  });
+
+  it('leaves a booking alone, and still records the write, when the crm module is not installed', async () => {
+    const { runtime, calls } = fakeRuntime(on, seal(SECRET), { actions: [meet] }, { crm: false });
+    expect(await run(runtime, adapter({ writeEvent: async () => ({ ok: true, meetUrl: MEET }) }))).toMatchObject({ outcome: 'synced' });
+    expect(settles(calls)).toEqual([]);
+    expect(calls.some((c) => c.name === 'kernel.calendar.link.record')).toBe(true);
   });
 });

@@ -4,6 +4,11 @@
 // event on the host's calendar, links the booking to a party (matched by email, else created) with an activity on its
 // timeline, and marks the booking confirmed, or refused when the time was taken or is no longer offered.
 //
+// A Google Meet per booking (C7, #1375): a booking of a google_meet type whose host has a Google connection that can write to their calendar is confirmed
+// with meeting_state pending and its calendar event asking for a conference; the C6 write-back job makes the Meet with the event and the worker tells the
+// booking the outcome (crm.booking.meeting_settle: the join link, or none). The confirmation mails are queued then, so the first mail already carries the
+// link; a booking still pending after a few minutes is settled as failed by a delayed job, and the fixed link of the type, if there is one, is used.
+//
 // Mails and links (#1319, step C4): a confirmation queues a mail to the visitor and one to the host (template
 // crm.booking, with an .ics event) and emits crm.booking.scheduled, from which the worker queues the reminders (24 hours
 // and 1 hour before; crm.booking.remind sends one only while the booking still starts then). The visitor's mails carry
@@ -21,7 +26,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { sql } from 'kysely';
-import { freeSlots, zBookingCancel, zBookingListQuery, zBookingMove, zId, zonedDate, zoneOffsetMs, type BookingItem, type Interval, type WorkingHours } from '@crove/kernel-contract';
+import { GOOGLE_CALENDAR_EVENTS_SCOPE, MEET_URL, freeSlots, zBookingCancel, zBookingListQuery, zBookingMove, zId, zonedDate, zoneOffsetMs, type BookingItem, type Interval, type WorkingHours } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { busyOf, createMailMessage, workingHoursOf } from '@crove/kernel';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
@@ -86,6 +91,23 @@ async function hostsOf(ctx: Pick<CommandContext, 'trx' | 'orgId'>, type: EventTy
     .execute();
   const able = new Set(members.filter((m) => HOST_ROLES.has(m.role)).map((m) => m.user_id));
   return ids.filter((id) => able.has(id));
+}
+
+// Whether the host's Google connection can make a Meet now: active, with write-back on and the permission to write events. The system sees every member's
+// connection; nothing of it but this yes or no is used.
+async function meetReady(ctx: CommandContext, userId: string): Promise<boolean> {
+  const row = await ctx.trx
+    .selectFrom('crove_kernel.calendar_connection')
+    .select('id')
+    .where('org_id', '=', ctx.orgId)
+    .where('user_id', '=', userId)
+    .where('provider', '=', 'google')
+    .where('status', '=', 'active')
+    .where('write_back', '=', true)
+    .where(sql<boolean>`scopes @> ARRAY[${GOOGLE_CALENDAR_EVENTS_SCOPE}]::text[]`)
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
 }
 
 // Of the round-robin hosts free at a time, the one with the fewest upcoming bookings of the type (ties by member id).
@@ -309,6 +331,10 @@ export const bookingConfirm = defineCommand({
       holding = free.filter((c) => c.userId === pick);
     }
 
+    // A Meet is made only for a single-host type, through its host's own Google connection. A type that asks for one when the host cannot make it now (the
+    // connection is gone, or write-back is off) is `failed` from the start, so the host is told and the visitor gets the type's fixed link, if it has one.
+    const wantsMeet = type.location_kind === 'google_meet';
+    const meet = wantsMeet && type.assignment === 'single' && holding.length === 1 && (await meetReady(ctx, (holding[0] as { userId: string }).userId));
     const held: Held[] = [];
     for (const host of holding) {
       const event = await ctx.trx
@@ -321,6 +347,7 @@ export const bookingConfirm = defineCommand({
           time_zone: host.hours.timeZone,
           title: `${type.title}: ${booking.visitor_name}`.slice(0, 200),
           kind: 'booking',
+          conference: meet,
           created_by: host.userId,
           created_at: ctx.now,
         })
@@ -333,7 +360,7 @@ export const bookingConfirm = defineCommand({
     await ctx.activity('kernel.party', partyId, 'crm.booking.confirmed', `Đặt lịch hẹn ${type.title} lúc ${wallTime(primary.hours.timeZone, start)}`);
     await ctx.trx
       .updateTable('crove_crm.booking')
-      .set({ status: 'confirmed', calendar_event_id: primary.eventId, hold_event_ids: more.map((h) => h.eventId), party_id: partyId, decided_at: ctx.now })
+      .set({ status: 'confirmed', calendar_event_id: primary.eventId, hold_event_ids: more.map((h) => h.eventId), party_id: partyId, decided_at: ctx.now, meeting_state: meet ? 'pending' : wantsMeet ? 'failed' : 'none' })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', booking.id)
       .execute();
@@ -345,8 +372,12 @@ export const bookingConfirm = defineCommand({
       ...(more.length > 0 ? { holdEventIds: more.map((h) => h.eventId) } : {}),
       hostUserIds: held.map((h) => h.userId),
       partyId,
+      ...(wantsMeet ? { meet: meet ? 'pending' : 'failed' } : {}),
     });
-    await queueBookingMails(ctx, 'confirmed', booking, type, held);
+    // A booking waiting for its Meet has its mails queued when the outcome is known (crm.booking.meeting_settle); the delayed job of crm.booking.meeting_pending
+    // settles it as failed if no outcome comes.
+    if (meet) await ctx.emit('crm.booking.meeting_pending', { booking_id: booking.id });
+    else await queueBookingMails(ctx, 'confirmed', booking, type, held);
     await scheduled(ctx, booking.id, booking.starts_at);
     return { bookingId: booking.id, status: 'confirmed' };
   },
@@ -357,6 +388,8 @@ export interface BookingMailData {
   token: string | null;
   // The visitor's details as the booking holds them now (null fields once erased).
   visitor: { name: string | null; email: string | null; phone: string | null; note: string | null } | null;
+  // The Google Meet of the booking as it is now (C7, #1375): ready with the join link, failed (the fixed link is used), or none.
+  meeting: { state: 'none' | 'pending' | 'ready' | 'failed'; url: string | null };
 }
 
 // What a booking mail being sent now needs beyond its merge data (the worker's mail template asks for it): the
@@ -371,7 +404,7 @@ export const bookingMailData = defineCommand({
   handler: async (ctx, input): Promise<BookingMailData> => {
     const booking = await ctx.trx
       .selectFrom('crove_crm.booking')
-      .select(['revision', 'visitor_name', 'email', 'phone', 'note'])
+      .select(['revision', 'visitor_name', 'email', 'phone', 'note', 'meeting_state', 'meeting_url'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.bookingId)
       // Held until the token is read, so a move cannot commit between the revision check and the token.
@@ -382,7 +415,50 @@ export const bookingMailData = defineCommand({
       // A mail of an earlier revision (sent after a move) carries no link: links of earlier revisions are dead.
       token: booking?.revision === input.revision ? (rows[0]?.token ?? null) : null,
       visitor: booking ? { name: booking.visitor_name, email: booking.email, phone: booking.phone, note: booking.note } : null,
+      meeting: { state: booking?.meeting_state ?? 'none', url: booking?.meeting_url ?? null },
     };
+  },
+});
+
+// The outcome of a booking's Google Meet (C7, #1375), told by the worker: after the write-back made the event, with the join link (or none: Google would not make
+// one), or by the delayed job when nothing came in time (no link). Only a booking that is still pending is settled, once; it then stands with the link (ready) or
+// without (failed, and its event no longer asks for a conference), and the confirmation mails, held back until now, are queued. A booking found by its event
+// (the write-back's) or by its id (the delayed job's).
+export const bookingMeetingSettle = defineCommand({
+  name: 'crm.booking.meeting_settle',
+  input: z
+    .strictObject({ calendarEventId: zId.optional(), bookingId: zId.optional(), url: z.string().max(200).nullable() })
+    .refine((i) => (i.calendarEventId === undefined) !== (i.bookingId === undefined), 'name the event or the booking'),
+  // It queues the confirmation mails (a send derives R2; #1579). A system command, like confirm.
+  risk: 'R2',
+  sideEffect: 'external',
+  access: 'system',
+  handler: async (ctx, input): Promise<{ settled: boolean; state?: 'ready' | 'failed' }> => {
+    const found = await ctx.trx
+      .selectFrom('crove_crm.booking')
+      .select(['id', 'event_type_id', 'starts_at', 'ends_at', 'status', 'time_zone', 'revision', 'visitor_name', 'email', 'calendar_event_id', 'hold_event_ids', 'meeting_state'])
+      .where('org_id', '=', ctx.orgId)
+      .$if(input.calendarEventId !== undefined, (q) => q.where('calendar_event_id', '=', input.calendarEventId as string))
+      .$if(input.bookingId !== undefined, (q) => q.where('id', '=', input.bookingId as string))
+      .forUpdate()
+      .executeTakeFirst();
+    // Not a booking waiting for its Meet (settled before, cancelled, or the event is not a booking's): nothing to do.
+    if (!found || found.meeting_state !== 'pending' || found.status !== 'confirmed') return { settled: false };
+    const url = input.url !== null && MEET_URL.test(input.url) ? input.url : null;
+    const state = url === null ? ('failed' as const) : ('ready' as const);
+    await ctx.trx.updateTable('crove_crm.booking').set({ meeting_state: state, meeting_url: url }).where('org_id', '=', ctx.orgId).where('id', '=', found.id).execute();
+    // The event stops asking for a conference either way: a failed one makes none, and a ready one keeps the Meet Google made (a later write of the event, a move,
+    // leaves its conference data alone), so the request is not sent again.
+    if (found.calendar_event_id) {
+      await ctx.trx.updateTable('crove_kernel.calendar_event').set({ conference: false }).where('org_id', '=', ctx.orgId).where('id', '=', found.calendar_event_id).execute();
+    }
+    const type = await eventTypeOf(ctx, found.event_type_id);
+    const held = await holdHosts(ctx, await eventsOf(ctx, { calendar_event_id: found.calendar_event_id, hold_event_ids: found.hold_event_ids }));
+    ctx.audit({ bookingId: found.id, eventTypeId: type.id, meeting: state });
+    // The confirmation mails held back until now go out with the booking as it stands: a booking moved while it waited was never announced (the move held its mail
+    // too), so the visitor's first mail names the new time, and its manage link is for the current revision. A booking cancelled meanwhile is not settled at all.
+    if (held.length > 0) await queueBookingMails(ctx, 'confirmed', found, type, held);
+    return { settled: true, state };
   },
 });
 
@@ -491,7 +567,8 @@ async function moveHeld(
   if (booking.party_id) {
     await ctx.activity('kernel.party', booking.party_id, 'crm.booking.moved', `${BY_TEXT[by]} đổi lịch hẹn ${type.title} sang ${wallTime(hours.timeZone, start)}`);
   }
-  await queueBookingMails(ctx, 'moved', { ...booking, starts_at: startsAt, ends_at: endsAt, revision: booking.revision + 1 }, type, held, by === 'visitor');
+  // A booking still waiting for its Meet has told nobody anything yet (its confirmation is held back): the confirmation, sent when the Meet is settled, names the new time.
+  if (booking.meeting_state !== 'pending') await queueBookingMails(ctx, 'moved', { ...booking, starts_at: startsAt, ends_at: endsAt, revision: booking.revision + 1 }, type, held, by === 'visitor');
   await scheduled(ctx, booking.id, startsAt);
   return 'moved';
 }
@@ -599,6 +676,9 @@ export const bookingRemind = defineCommand({
       .executeTakeFirst();
     if (!booking || booking.status !== 'confirmed' || new Date(booking.starts_at).getTime() !== Date.parse(input.startsAt)) return { sent: false };
     if (new Date(booking.starts_at).getTime() <= ctx.now.getTime()) return { sent: false };
+    // A booking still waiting for its Google Meet has told the visitor nothing yet: its confirmation (held back, sent when the Meet is settled, within minutes) is the
+    // first mail, and a reminder before it would name no link and could arrive first.
+    if (booking.meeting_state === 'pending') return { sent: false };
     const source = `crm.booking.remind_${input.lead}`;
     const earlier = await ctx.trx
       .selectFrom('crove_kernel.mail_message')
@@ -667,6 +747,8 @@ async function loadBookings(
       'b.phone',
       'b.note',
       'b.party_id',
+      'b.meeting_state',
+      'b.meeting_url',
       'e.id as type_id',
       'e.slug',
       'e.title',
@@ -705,6 +787,7 @@ async function loadBookings(
     timeZone: r.time_zone,
     visitor: { name: r.visitor_name, email: r.email, phone: r.phone, note: r.note },
     partyId: r.party_id,
+    meeting: { state: r.meeting_state, url: r.meeting_url },
   }));
 }
 
@@ -774,4 +857,4 @@ export const bookingLiveTarget = defineQuery({
 });
 export const bookingQueries = [bookingList, bookingGet, bookingLiveTarget];
 
-export const bookingCommands = [bookingConfirm, bookingMailData, bookingManage, bookingRemind, bookingCancel, bookingMove];
+export const bookingCommands = [bookingConfirm, bookingMailData, bookingMeetingSettle, bookingManage, bookingRemind, bookingCancel, bookingMove];

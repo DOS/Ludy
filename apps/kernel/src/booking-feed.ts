@@ -17,7 +17,7 @@ export interface BookingFeedEvent {
   endsAt: string;
   revision: number;
   title: string;
-  locationKind: 'in_person' | 'phone' | 'video';
+  locationKind: 'in_person' | 'phone' | 'video' | 'google_meet';
   location: string | null;
   // NULL once the visitor's personal data was erased.
   visitorName: string | null;
@@ -38,7 +38,7 @@ export async function bookingFeed(runtime: Runtime, token: string): Promise<Book
   });
 }
 
-const LOCATIONS: Record<BookingFeedEvent['locationKind'], string> = { in_person: 'Gặp trực tiếp', phone: 'Gọi điện', video: 'Họp trực tuyến' };
+const LOCATIONS: Record<BookingFeedEvent['locationKind'], string> = { in_person: 'Gặp trực tiếp', phone: 'Gọi điện', video: 'Họp trực tuyến', google_meet: 'Google Meet' };
 
 // One line, at most 200 characters: a title or a name never breaks the event's layout.
 const oneLine = (text: string) => [...text.replace(/\s+/g, ' ').trim()].slice(0, 200).join('');
