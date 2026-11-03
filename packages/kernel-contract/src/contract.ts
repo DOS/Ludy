@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zStockAliasTeach, zStockAssign, zStockItem, zStockItemInput, zStockMove, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
@@ -1653,6 +1653,9 @@ export const contract = {
     // Writes the move of a line and, unless told not to, teaches its name to the item. STOCK_LINE_NOT_FOUND (404), STOCK_LINE_ASSIGNED and STOCK_LINE_VOIDED (409),
     // STOCK_LINE_NOT_GOODS, STOCK_LINE_NO_QUANTITY and STOCK_ITEM_ENTITY_MISMATCH (422).
     assign: oc.input(zStockAssign).output(z.object({ moveId: zId, aliasId: zId.nullable() })),
+    // Nhập xuất tồn of one month and the stock card of an item (#2513): read-only and provisional (the weighted average of the month); every role reads.
+    report: oc.input(zStockReportInput).output(z.array(zStockReportRow)),
+    card: oc.input(zStockCardInput).output(zStockCard),
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),

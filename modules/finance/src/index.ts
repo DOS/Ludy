@@ -37,6 +37,7 @@ import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoic
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { stockCommands, stockQueries } from './stock.ts';
 import { stockLineCommands, stockLineQueries } from './stock-lines.ts';
+import { stockReportQueries } from './stock-report.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
@@ -200,6 +201,7 @@ export const financeQueries = [
   ...einvoiceConnectionQueries,
   ...stockQueries,
   ...stockLineQueries,
+  ...stockReportQueries,
   financeToday,
   searchQuery,
   ...yearArchiveQueries,

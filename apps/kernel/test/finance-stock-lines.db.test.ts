@@ -299,6 +299,40 @@ suite('stock from document lines (#2512)', () => {
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
   });
 
+  it('reports the month the weighted average way, a stock card with its balances, and the month after from the closing', async () => {
+    const o = await org();
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO, '10');
+    await post(o, invoice('7013'), '156');
+    const made = await moves(o, item);
+    const month = String(made[0]?.date).slice(0, 7);
+    // A manual stock-out of five, later in the month.
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, $3, -5, 'manual')", [o.orgId, item, `${month}-28`]);
+    const report = (m: string, user = o.owner) => rt.query<Array<Record<string, unknown>>>('finance.stock.report', { month: m }, { actor: asUser(user), orgId: o.orgId });
+    // The line's amount (2 packages at 500,000) comes in with its twenty units: 50,000 each, and five leave at that.
+    expect(await report(month)).toEqual([
+      expect.objectContaining({ itemId: item, code: 'QC', openingQuantity: '0', openingValue: '0', inQuantity: '20', inValue: '1000000', outQuantity: '5', outValue: '250000', closingQuantity: '15', closingValue: '750000', unitCost: '50000' }),
+    ]);
+    const card = await rt.query<{ openingQuantity: string; closingQuantity: string; provisional: boolean; moves: Array<{ quantity: string; value: string | null; balance: string }> }>(
+      'finance.stock.card',
+      { itemId: item, month },
+      { actor: asUser(o.viewer), orgId: o.orgId },
+    );
+    expect(card).toMatchObject({ openingQuantity: '0', closingQuantity: '15', provisional: true });
+    expect(card.moves.map((m) => [m.quantity, m.value, m.balance])).toEqual([
+      ['20', '1000000', '20'],
+      ['-5', null, '15'],
+    ]);
+    // The next month starts from what was left, at what it was worth; a viewer reads the report too.
+    const [year, mm] = month.split('-').map(Number) as [number, number];
+    const next = mm === 12 ? `${year + 1}-01` : `${year}-${String(mm + 1).padStart(2, '0')}`;
+    expect(await report(next, o.viewer)).toEqual([expect.objectContaining({ openingQuantity: '15', openingValue: '750000', closingQuantity: '15', closingValue: '750000', inQuantity: '0', outQuantity: '0' })]);
+    // The month before the first move has nothing in it; another org's item is not found.
+    expect(await report('2020-01')).toEqual([expect.objectContaining({ itemId: item, closingQuantity: '0', unitCost: null })]);
+    const other = await org();
+    await expect(rt.query('finance.stock.card', { itemId: item, month }, { actor: asUser(other.owner), orgId: other.orgId })).rejects.toMatchObject({ code: 'STOCK_ITEM_NOT_FOUND' });
+  });
+
   it("keeps one entity's stock apart from another's: an item of the other entity is refused for the line", async () => {
     const o = await org();
     const posted = await post(o, invoice('7012'), '156');

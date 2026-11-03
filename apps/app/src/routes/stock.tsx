@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
-import { STOCK_TRADES, type StockItem, type StockTradeKey, type StockUnassignedLine } from '@crove/kernel-contract';
+import { STOCK_TRADES, vietnamToday, type StockItem, type StockTradeKey, type StockUnassignedLine } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -137,6 +137,104 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
       )}
       {reverse.error && <ErrorText>{errorMessage(reverse.error)}</ErrorText>}
     </Card>
+  );
+}
+
+// The stock card of an item for a month: its moves in order with the balance after each.
+function CardPanel({ item, month, onClose }: { item: StockItem; month: string; onClose: () => void }) {
+  const t = useTranslations('stock');
+  const f = useFormat();
+  const card = useQuery(orpc.stock.card.queryOptions({ input: { itemId: item.id, month } }));
+  return (
+    <Card className="mb-6 block p-4" data-testid="stock-card">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-base font-medium text-foreground">{t('cardTitle', { name: item.name, month })}</h3>
+        <Button variant="ghost" size="sm" onClick={onClose}>
+          {t('close')}
+        </Button>
+      </div>
+      {card.isPending ? (
+        <TableSkeleton columns={5} />
+      ) : card.error ? (
+        <ErrorText>{errorMessage(card.error)}</ErrorText>
+      ) : (
+        <>
+          <p className="mt-2 text-sm text-subtle-foreground">
+            {t('cardOpening')}: {card.data.openingQuantity} {item.unit} · {t('cardClosing')}: {card.data.closingQuantity} {item.unit}
+          </p>
+          {card.data.moves.length === 0 ? (
+            <p className="mt-3 text-sm text-subtle-foreground">{t('movesEmpty')}</p>
+          ) : (
+            <DataTable head={[t('moveDate'), t('moveSource'), t('moveQuantity'), t('cardValue'), t('balance')]} numeric={[2, 3, 4]}>
+              {card.data.moves.map((m) => (
+                <TableRow key={m.id}>
+                  <TableCell className="px-4 py-3">{f.date(m.date)}</TableCell>
+                  <TableCell className="px-4 py-3">{t(`sources.${m.source}`)}</TableCell>
+                  <TableCell className={NUM}>{m.quantity}</TableCell>
+                  <TableCell className={NUM}>{m.value === null ? '' : f.money(m.value, 'VND')}</TableCell>
+                  <TableCell className={NUM}>{m.balance}</TableCell>
+                </TableRow>
+              ))}
+            </DataTable>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+// Nhập xuất tồn for one month (the weighted average way, provisional): what each item opened, took in, sent out and closed with, in quantity and value.
+function ReportSection({ legalEntityId, ready, items }: { legalEntityId: string | undefined; ready: boolean; items: StockItem[] }) {
+  const t = useTranslations('stock');
+  const f = useFormat();
+  const [month, setMonth] = useState(() => vietnamToday().slice(0, 7));
+  const [cardOf, setCardOf] = useState<string | null>(null);
+  const valid = /^[0-9]{4}-(0[1-9]|1[0-2])$/.test(month);
+  const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
+  const cardItem = cardOf === null ? undefined : items.find((i) => i.id === cardOf);
+  return (
+    <section className="mt-10" aria-label={t('reportTitle')} data-testid="stock-report">
+      <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 className="text-base font-medium text-foreground">
+            {t('reportTitle')} <Badge variant="secondary">{t('provisional')}</Badge>
+          </h2>
+          <p className="max-w-3xl text-sm text-subtle-foreground">{t('reportHint')}</p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="stock-month">{t('month')}</Label>
+          <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        </div>
+      </div>
+      {cardItem && valid && <CardPanel key={`${cardItem.id}-${month}`} item={cardItem} month={month} onClose={() => setCardOf(null)} />}
+      {!valid ? null : report.isPending ? (
+        <TableSkeleton columns={8} />
+      ) : report.error ? (
+        <ErrorText>{errorMessage(report.error)}</ErrorText>
+      ) : report.data.length === 0 ? (
+        <p className="text-sm text-subtle-foreground">{t('reportEmpty')}</p>
+      ) : (
+        <DataTable head={[t('code'), t('name'), t('openingQty'), t('inQty'), t('outQty'), t('closingQty'), t('closingVal'), t('unitCost'), '']} numeric={[2, 3, 4, 5, 6, 7]}>
+          {report.data.map((r) => (
+            <TableRow key={r.itemId} data-testid="stock-report-row">
+              <TableCell className="px-4 py-3">{r.code}</TableCell>
+              <TableCell className="px-4 py-3">{r.name}</TableCell>
+              <TableCell className={NUM}>{r.openingQuantity}</TableCell>
+              <TableCell className={NUM}>{r.inQuantity}</TableCell>
+              <TableCell className={NUM}>{r.outQuantity}</TableCell>
+              <TableCell className={NUM}>{r.closingQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
+              <TableCell className={NUM}>{r.unitCost === null ? '' : f.money(r.unitCost, 'VND')}</TableCell>
+              <TableCell className="px-4 py-3 text-right">
+                <Button variant="ghost" size="sm" onClick={() => setCardOf(r.itemId)} data-testid="stock-report-card">
+                  {t('card')}
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </DataTable>
+      )}
+    </section>
   );
 }
 
@@ -313,6 +411,7 @@ export function StockPage() {
         </DataTable>
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
+      <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} items={list} />
     </>
   );
 }

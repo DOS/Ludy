@@ -96,3 +96,54 @@ export const zStockAssign = z.strictObject({
   teach: z.boolean().default(true),
 });
 export type StockAssign = z.infer<typeof zStockAssign>;
+
+// The month of a report: YYYY-MM.
+export const zStockMonth = z.string().regex(/^[0-9]{4}-(?:0[1-9]|1[0-2])$/);
+
+export const zStockReportInput = z.strictObject({ month: zStockMonth, legalEntityId: zId.optional() });
+
+// One item's month, the weighted average way (#2513): quantity and value at the opening, in, out and at the closing, and the unit cost the month's goods leave at. Every figure is
+// a decimal string. Provisional until a person closes the month.
+export const zStockReportRow = z.object({
+  itemId: zId,
+  legalEntityId: zId,
+  code: z.string(),
+  name: z.string(),
+  unit: z.string(),
+  openingQuantity: z.string(),
+  openingValue: z.string(),
+  inQuantity: z.string(),
+  inValue: z.string(),
+  outQuantity: z.string(),
+  outValue: z.string(),
+  closingQuantity: z.string(),
+  closingValue: z.string(),
+  unitCost: z.string().nullable(),
+});
+export type StockReportRow = z.infer<typeof zStockReportRow>;
+
+export const zStockCardInput = z.strictObject({ itemId: zId, month: zStockMonth });
+
+// An item's stock card for a month: its moves in order with the balance after each.
+export const zStockCard = z.object({
+  item: z.object({ id: zId, code: z.string(), name: z.string(), unit: z.string() }),
+  month: zStockMonth,
+  openingQuantity: z.string(),
+  closingQuantity: z.string(),
+  unitCost: z.string().nullable(),
+  provisional: z.literal(true),
+  moves: z.array(
+    z.object({
+      id: zId,
+      date: z.string(),
+      source: z.enum(STOCK_MOVE_SOURCES),
+      quantity: z.string(),
+      // What came in with it (a purchase line's amount), when it brought value.
+      value: z.string().nullable(),
+      balance: z.string(),
+      documentId: zId.nullable(),
+      lineNo: z.number().int().nullable(),
+    }),
+  ),
+});
+export type StockCard = z.infer<typeof zStockCard>;

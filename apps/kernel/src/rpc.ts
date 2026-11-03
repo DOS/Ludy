@@ -2265,6 +2265,8 @@ export function createRpcHandler(
       },
       unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
       assign: os.stock.assign.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.assign', input, { actor, orgId }))),
+      report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
+      card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
