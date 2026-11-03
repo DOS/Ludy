@@ -3,11 +3,11 @@
 // edits and sends. Nothing here sends by itself: every mail goes out on a click of Gửi, one customer or several at once, each through
 // finance.payment_reminder.send, which rebuilds the invoices, amounts and bank account from the books at that moment. The screen shows those facts as
 // the mail will carry them and lets a person edit only the words around them.
-import { useQueries, useQuery } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { PaymentReminderCustomer, PaymentReminderDraft } from '@crove/kernel-contract';
-import { PAYMENT_REMINDER_SUBJECT_MAX, PAYMENT_REMINDER_TEXT_MAX } from '@crove/kernel-contract';
+import { PAYMENT_REMINDER_HINT_MAX, PAYMENT_REMINDER_SUBJECT_MAX, PAYMENT_REMINDER_TEXT_MAX } from '@crove/kernel-contract';
 import { Alert, AlertDescription } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -25,6 +25,7 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const LEVEL = { 1: 'levels.first', 2: 'levels.second', 3: 'levels.third' } as const;
+const WORDING = { used: 'wording.used', off: 'wording.off', busy: 'wording.busy', budget: 'wording.budget', failed: 'wording.failed' } as const;
 
 // What a person changed in a draft; whatever is left out is the server's draft.
 interface Edit {
@@ -44,6 +45,7 @@ const errorCode = (error: unknown): string | null => {
 
 function DraftCard({
   draft,
+  legalEntityId,
   edit,
   approved,
   outcome,
@@ -54,6 +56,7 @@ function DraftCard({
   onResend,
 }: {
   draft: PaymentReminderDraft;
+  legalEntityId: string | undefined;
   edit: Edit;
   approved: boolean;
   outcome: Outcome | undefined;
@@ -69,6 +72,15 @@ function DraftCard({
   const words = { ...draft.words, ...edit };
   const payToId = edit.payToId === undefined ? (draft.payTo[0]?.id ?? null) : edit.payToId;
   const sent = outcome?.state === 'sent' || outcome?.state === 'suppressed';
+  // The finance coworker words the opening and the closing; the table, the total and the bank account stay the books'. A refusal of any kind leaves the words
+  // as they are.
+  const [hint, setHint] = useState('');
+  const wording = useMutation({
+    mutationFn: () => client.paymentReminders.wording({ partyId: draft.partyId, ...(legalEntityId ? { legalEntityId } : {}), ...(hint.trim() ? { hint: hint.trim() } : {}) }),
+    onSuccess: (answer) => {
+      if (answer.words) onEdit({ lead: answer.words.lead, closing: answer.words.closing });
+    },
+  });
   return (
     <Card className="block p-4" aria-label={t('draftOf', { name: draft.name })} data-testid="reminder-draft">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -90,6 +102,24 @@ function DraftCard({
         <Alert className="mt-3">
           <AlertDescription>{t('noEmailHint')}</AlertDescription>
         </Alert>
+      )}
+
+      {!sent && (
+        <div className="mt-3 space-y-2 rounded-lg border border-dashed p-3">
+          <Label htmlFor={`${id}-hint`}>{t('hint')}</Label>
+          <div className="flex flex-wrap gap-2">
+            <Input id={`${id}-hint`} className="min-w-48 flex-1" value={hint} maxLength={PAYMENT_REMINDER_HINT_MAX} placeholder={t('hintExample')} disabled={busy || wording.isPending} onChange={(e) => setHint(e.target.value)} />
+            <Button variant="outline" size="sm" loading={wording.isPending} disabled={busy} onClick={() => wording.mutate()} data-testid="reminder-wording">
+              {t('wordingButton')}
+            </Button>
+          </div>
+          {wording.data && (
+            <p className="text-xs text-subtle-foreground" role="status" data-testid="reminder-wording-state">
+              {t(WORDING[wording.data.ai])}
+            </p>
+          )}
+          {wording.error && <ErrorText>{errorMessage(wording.error)}</ErrorText>}
+        </div>
       )}
 
       <fieldset className="mt-3 space-y-3" disabled={busy || sent}>
@@ -269,6 +299,7 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
         <DraftCard
           key={draft.partyId}
           draft={draft}
+          legalEntityId={legalEntityId}
           edit={edits[draft.partyId] ?? {}}
           approved={!skipped.has(draft.partyId)}
           outcome={outcomes[draft.partyId]}

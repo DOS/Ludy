@@ -35,6 +35,8 @@ export const AI_FEATURES = {
   // The Inbox's suggestions (CV3, #2306): the intent of a conversation, and which contact a customer most likely is.
   'conversation.intent': 'conversation',
   'conversation.contact_rank': 'conversation',
+  // The finance coworker's wording of a payment reminder (#2488): the lead-in and the closing only, never a fact of the books.
+  'finance.payment_reminder': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
 } as const satisfies Record<string, string>;
