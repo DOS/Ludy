@@ -173,7 +173,7 @@ describe('module screens against the router (#1652)', () => {
       [
         'accounting',
         [
-          ['books', ['/o/$slug/documents', '/o/$slug/journal', '/o/$slug/vouchers', '/o/$slug/bank', '/o/$slug/fixed-assets', '/o/$slug/ledger']],
+          ['books', ['/o/$slug/documents', '/o/$slug/journal', '/o/$slug/vouchers', '/o/$slug/sales-invoices', '/o/$slug/bank', '/o/$slug/fixed-assets', '/o/$slug/ledger']],
           ['tax', ['/o/$slug/vat', '/o/$slug/portal-invoices']],
           ['parties', ['/o/$slug/customers', '/o/$slug/payment-reminders', '/o/$slug/vendors']],
         ],
@@ -196,7 +196,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'salesInvoices', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
     ]);
   });
 });

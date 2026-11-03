@@ -170,6 +170,11 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
   },
+  // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
+  'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },

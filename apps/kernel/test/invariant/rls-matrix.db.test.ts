@@ -56,9 +56,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_finance.einvoice_draft',
-  'crove_finance.einvoice_draft_line',
-  'crove_finance.einvoice_series',
+  'crove_ads.ad_object',
+  'crove_finance.einvoice_connection',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -160,6 +159,9 @@ const tag = () => randomUUID().slice(0, 8);
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
+// A provider connection is unique per entity, provider and seller tax code, and the matrix seeds several in one org: each takes the next 10-digit code.
+let einvoiceTaxSeq = 0;
+const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -410,6 +412,45 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           commit_until: '2031-01-10',
           created_by: o.owner,
         },
+      };
+    },
+  },
+  // What a launch created at the platform (W2-3, #2296): one row per object of a launch (campaign, ad set, creative, ad) with the platform's id and the name
+  // that carries the launch's tag, written by the launch job's record step alone. The entity is the account's (b_legal_entity, the composite foreign key);
+  // tenant roles update the status columns only (a column grant), so the update probes assign the configured status to itself.
+  'crove_ads.ad_object': {
+    update: { set: 'configured_status = configured_status' },
+    noInsertControl: "only the system inserts an object, in the launch job's record step, for a launch that is running; every other context of the org is refused by its guard (the W2-3 tests cover it)",
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix object', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, slot: 'campaign', level: 'campaign', external_id: `rls-${randomUUID()}`, name: 'RLS matrix object ludy:0000000000' },
       };
     },
   },
@@ -689,6 +730,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.fixed_asset', values: asset }],
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
+      };
+    },
+  },
+  // #2501: an org's connection to an e-invoice provider (ADR-0044 point 2): the channel connection that holds the sealed credential, the seller's tax code and the
+  // entity it issues for (the org's default, by its trigger). Tenant roles update only the last connection test (a column grant), so the update probes assign
+  // the state to itself.
+  'crove_finance.einvoice_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'einvoice_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: einvoiceTaxCode() },
       };
     },
   },

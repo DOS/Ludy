@@ -468,6 +468,14 @@ export type VatReturnFiledTable = Refine<
 // Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
 export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
 export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+// A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
+export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
+export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+export type EInvoiceDraftTable = Refine<
+  G.FinanceEinvoiceDraftTable,
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
@@ -965,6 +973,7 @@ type Refined = Tables<{
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
   'crove_finance.bank_party_rule': BankPartyRuleTable;
+  'crove_finance.einvoice_draft': EInvoiceDraftTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;
