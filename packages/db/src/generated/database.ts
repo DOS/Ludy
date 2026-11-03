@@ -1501,8 +1501,8 @@ export interface KernelMailMessageTable {
   template_version: ColumnType<number, number | undefined, NotGranted>;
   to_address: string | null;
   to_hash: ColumnType<string, string, NotGranted>;
-  subject: ColumnType<string | null, string | null, NotGranted>;
-  payload: ColumnType<unknown, string | null | undefined, NotGranted>;
+  subject: string | null;
+  payload: ColumnType<unknown, string | null | undefined, string | null>;
   message_id_header: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   attempts: Generated<number>;
