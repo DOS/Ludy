@@ -501,6 +501,9 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect(seen.conversation.contact.displayName).toBe('bare@khach.test');
     const channels = await query<{ provider: string }[]>(o, o.owner, 'kernel.channel.list', {});
     expect(channels.map((c) => c.provider)).not.toContain('email');
+    // The screen that limits what a member may read lists it.
+    const forAccess = await query<{ provider: string }[]>(o, o.owner, 'kernel.channel.list', { includeEmail: true });
+    expect(forAccess.map((c) => c.provider)).toContain('email');
   });
 
   it('assigns an email thread to a member who can read it, not to one who cannot', async () => {

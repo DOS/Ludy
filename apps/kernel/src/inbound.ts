@@ -280,7 +280,11 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   const attachments = email.attachments.length > 0 ? `\n\n[Thư có ${email.attachments.length} tệp đính kèm, chưa hiển thị]` : '';
   const text = `${written === '' ? NO_TEXT : written.slice(0, CONVERSATION_BODY_MAX - 80)}${attachments}`.slice(0, CONVERSATION_BODY_MAX);
   const sent = email.sentAt ? Date.parse(email.sentAt) : Number.NaN;
-  const at = new Date(Number.isNaN(sent) || sent > now.getTime() + CLOCK_SKEW_MS ? now.getTime() : sent).toISOString();
+  // The sender's clock is only trusted within a day back and a few minutes ahead: a mail dated years ago would be the thread's last message and fall to
+  // the retention purge as soon as it arrived.
+  const earliest = now.getTime() - 24 * 3_600_000;
+  const stamped = Number.isNaN(sent) || sent > now.getTime() + CLOCK_SKEW_MS ? now.getTime() : Math.max(sent, earliest);
+  const at = new Date(stamped).toISOString();
   const subject = (email.subject ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, EMAIL_SUBJECT_MAX);
   const name = (email.fromName ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
   return {

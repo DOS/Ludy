@@ -455,7 +455,7 @@ export const contract = {
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
-    list: oc.input(z.object({ includeRevoked: z.boolean().optional() })).output(z.array(zChannelConnection)),
+    list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() })).output(z.array(zChannelConnection)),
     // The offline sandbox channel, when the deployment enables it. Connecting again with the same key reconnects the
     // same sandbox account.
     connectSandbox: oc
