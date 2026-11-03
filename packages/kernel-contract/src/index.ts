@@ -15,6 +15,7 @@ export * from './vat-deadline.ts';
 export * from './tax-calendar.ts';
 export * from './vietnam-time.ts';
 export * from './bank-statement.ts';
+export * from './payment-reminder.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
