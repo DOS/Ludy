@@ -171,7 +171,7 @@ function DraftCard({
                 {t('sendAnyway')}
               </Button>
             )}
-            {errorCode(outcome.error) === 'STALE_REMINDER' && (
+            {(errorCode(outcome.error) === 'STALE_REMINDER' || errorCode(outcome.error) === 'PAY_TO_NOT_FOUND') && (
               <Button variant="outline" size="sm" disabled={busy} onClick={onRefresh}>
                 {t('reopen')}
               </Button>
@@ -199,7 +199,7 @@ function FactsTotal({ draft }: { draft: PaymentReminderDraft }) {
 function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('paymentReminders');
   const results = useQueries({
-    queries: ids.map((partyId) => ({ ...orpc.paymentReminders.draft.queryOptions({ input: { partyId, ...(legalEntityId ? { legalEntityId } : {}) } }), staleTime: 0, gcTime: 0, retry: false })),
+    queries: ids.map((partyId) => ({ ...orpc.paymentReminders.draft.queryOptions({ input: { partyId, ...(legalEntityId ? { legalEntityId } : {}) } }), staleTime: 0, gcTime: 0, retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false })),
   });
   const [edits, setEdits] = useState<Record<string, Edit>>({});
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
@@ -220,6 +220,7 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
         ...(legalEntityId ? { legalEntityId } : {}),
         level: draft.level,
         total: draft.total,
+        invoiceIds: draft.invoices.map((i) => i.id),
         subject: words.subject,
         greeting: words.greeting,
         lead: words.lead,
@@ -386,7 +387,7 @@ export function PaymentRemindersPage() {
           <p className="mt-3 text-xs text-subtle-foreground">{t('termsNote')}</p>
         </>
       )}
-      {reviewing && canSend && <Review key={reviewing.opened} ids={reviewing.ids} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
+      {reviewing && canSend && <Review key={`${reviewing.opened}:${entity.legalEntityId ?? ''}`} ids={reviewing.ids} legalEntityId={entity.legalEntityId} onClose={() => setReviewing(null)} />}
     </>
   );
 }

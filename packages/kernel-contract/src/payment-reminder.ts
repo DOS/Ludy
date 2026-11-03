@@ -83,10 +83,12 @@ export type PaymentReminderDraft = z.infer<typeof zPaymentReminderDraft>;
 export const zPaymentReminderSend = z.object({
   partyId: zId,
   legalEntityId: zId.optional(),
-  // What the person reviewed: the notice level and the total owed. When the books moved since (a payment, a day past a level), the send
+  // What the person reviewed: the notice level, the total owed and the invoices. When the books moved since (a payment, a day past a level), the send
   // is refused with STALE_REMINDER and the screen reads the draft again.
   level: zNoticeLevel,
   total: z.string().max(40),
+  // The invoices of the draft (their ids); a send for a different set is stale too.
+  invoiceIds: z.array(zId).min(1).max(1000),
   subject: z.string().trim().min(1).max(PAYMENT_REMINDER_SUBJECT_MAX),
   greeting: z.string().trim().min(1).max(PAYMENT_REMINDER_TEXT_MAX),
   lead: z.string().trim().min(1).max(PAYMENT_REMINDER_TEXT_MAX),

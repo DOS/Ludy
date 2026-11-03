@@ -108,6 +108,8 @@ describe('notice level and language', () => {
     expect(reminderLang([{ currency: 'USD' }, { currency: 'VND' }])).toBe('vi');
     expect(reminderLang([{ currency: 'USD' }, { currency: 'EUR' }])).toBe('en');
     expect(reminderLang([])).toBe('vi');
+    // Documents recorded before the currency rules may spell the book currency in lower case.
+    expect(reminderLang([{ currency: 'vnd' }, { currency: ' VND ' }])).toBe('vi');
   });
 });
 
@@ -120,6 +122,10 @@ describe('templateWords', () => {
         expect(w.subject.length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('keeps the subject within what a send accepts, however long the name', () => {
+    for (const lang of ['vi', 'en'] as const) expect(templateWords({ level: 3, lang, customer: 'A', org: 'X'.repeat(200) }).subject.length).toBeLessThanOrEqual(200);
   });
 
   it('gets firmer with the level and stays polite', () => {
@@ -169,10 +175,16 @@ describe('renderPaymentReminderMail', () => {
     expect(mail.text).not.toContain('Thông tin chuyển khoản');
   });
 
-  it('renders English for an English reminder', () => {
+  it('renders English for an English reminder, naming the book currency by its code', () => {
     const mail = renderPaymentReminderMail({ ...base, lang: 'en' }, { replyTo: null });
-    expect(mail.text).toContain('Total: 1.734.567 đồng');
+    expect(mail.text).toContain('Total: 1.734.567 VND');
+    expect(mail.text).not.toContain('đồng');
     expect(mail.html).toContain('lang="en"');
+  });
+
+  it('keeps an invoice series and number on one line', () => {
+    const mail = renderPaymentReminderMail({ ...base, invoices: [{ ...base.invoices[0], series: 'C26\nTAA', number: '1\r\n2' }] , count: 1 }, { replyTo: null });
+    expect(mail.text).toContain('số 1 2, ký hiệu C26 TAA');
   });
 
   it('refuses merge data that is not what the template needs', () => {

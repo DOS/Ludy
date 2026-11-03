@@ -47,7 +47,7 @@ import {
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { oneLine } from './missing-invoices.ts';
-import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, type PaymentReminderMail } from './payment-reminder-mail.ts';
+import { PAYMENT_REMINDER_INVOICES_MAX, PAYMENT_REMINDER_SOURCE, PAYMENT_REMINDER_TEMPLATE, zPaymentReminderMail, type PaymentReminderMail } from './payment-reminder-mail.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const EDITORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -74,8 +74,9 @@ interface Customer {
 
 // The customers of one legal entity with a positive balance on 131, their sales invoices laid under it (domain/payment-reminder.ts),
 // and the invoices past due. A party and the parties marked as its duplicates are one customer, as on the customers list. `only`:
-// one customer. The invoices of a customer are the sales still in the books: not voided, and no adjustment invoice (its difference is
-// in the balance already).
+// one customer. The invoices of a customer are the sales still in the books, not voided. An adjustment invoice carries the difference it changes an invoice by: an
+// increase is billed like an invoice of its own amount, and a decrease (a negative total) is skipped, as the balance already holds it, so the older invoices
+// show as paid by it.
 async function loadCustomers(ctx: QueryContext, entity: string, today: string, only?: string): Promise<Customer[]> {
   const kept = sql<string>`coalesce(x.duplicate_of, x.id)`;
   let balances = ctx.trx
@@ -103,7 +104,6 @@ async function loadCustomers(ctx: QueryContext, entity: string, today: string, o
     .where('d.legal_entity_id', '=', entity)
     .where('d.direction', '=', 'sale')
     .where('v.document_id', 'is', null)
-    .where(sql<boolean>`d.correction_kind IS DISTINCT FROM 'adjustment'`)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) IN (${sql.join(ids)})`)
     .execute();
   const byParty = new Map(parties.map((p) => [p.id, p]));
@@ -204,6 +204,9 @@ async function orgName(ctx: QueryContext, entity: string): Promise<string> {
   return oneLine(tenant.name);
 }
 
+// One plain address: no space, comma, semicolon or angle bracket, so a party's email can never name a second recipient.
+const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
+
 const nothingOverdue = () => new DomainError('NOTHING_OVERDUE', 409, 'Khách hàng này không còn hóa đơn nào quá hạn');
 
 export const paymentReminderDraft = defineQuery({
@@ -247,11 +250,13 @@ export const paymentReminderSend = defineCommand({
     if (!customer || customer.overdue.length === 0) throw nothingOverdue();
     const level = noticeLevel(customer.overdue) as NoticeLevel;
     const total = totalOf(customer.overdue);
-    if (level !== input.level || total !== input.total) {
+    // What the person reviewed: the notice level, the total and the very invoices (a payment on one and a due date reached on another can leave the total as it was).
+    const reviewed = [...input.invoiceIds].sort().join(',');
+    if (level !== input.level || total !== input.total || reviewed !== customer.overdue.map((i) => i.id).sort().join(',')) {
       throw new DomainError('STALE_REMINDER', 409, 'Sổ sách đã thay đổi từ lúc bạn mở bản nháp (có khoản vừa được thanh toán hoặc đã sang mức nhắc khác); hãy mở lại bản nháp để xem số liệu mới');
     }
     const email = customer.email?.trim() ?? '';
-    if (!email.includes('@')) throw new DomainError('CUSTOMER_EMAIL_REQUIRED', 409, 'Khách hàng này chưa có email; hãy nhập email trong hồ sơ khách hàng rồi gửi lại');
+    if (!PLAIN_ADDRESS.test(email)) throw new DomainError('CUSTOMER_EMAIL_REQUIRED', 409, 'Khách hàng này chưa có email; hãy nhập email trong hồ sơ khách hàng rồi gửi lại');
     const source = `${PAYMENT_REMINDER_SOURCE}${level}`;
     const since = new Date(ctx.now.getTime() - REMINDER_REPEAT_DAYS * DAY_MS);
     const recent = await ctx.trx
@@ -282,12 +287,16 @@ export const paymentReminderSend = defineCommand({
       greeting: oneLine(input.greeting, PAYMENT_REMINDER_TEXT_MAX),
       lead: paragraph(input.lead),
       closing: paragraph(input.closing),
-      invoices: shown.map((i) => ({ series: i.series, number: i.number, date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue, currency })),
+      invoices: shown.map((i) => ({ series: oneLine(i.series, 50), number: oneLine(i.number, 50), date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue, currency })),
       count: customer.overdue.length,
       total,
       currency,
       payTo,
     };
+    // The worker validates this at render; a mail it would refuse is refused here, before anything is queued or audited as sent.
+    if (!zPaymentReminderMail.safeParse(payload).success) {
+      throw new DomainError('REMINDER_INVALID', 422, 'Không soạn được thư từ số liệu hiện có (số hóa đơn hoặc ngày quá dài hoặc không hợp lệ); hãy kiểm tra các hóa đơn của khách hàng này');
+    }
     const mail = await createMailMessage(ctx, {
       stream: 'transactional',
       source,

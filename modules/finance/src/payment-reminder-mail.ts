@@ -73,9 +73,16 @@ const LABELS = {
   },
 } as const;
 
+// An invoice's series and number come from an e-invoice file: one line each, whatever they hold.
 function invoiceName(invoice: PaymentReminderInvoice, lang: 'vi' | 'en'): string {
-  const symbol = invoice.series || '-';
-  return LABELS[lang].invoice(symbol, invoice.number);
+  const symbol = oneLine(invoice.series, 50) || '-';
+  return LABELS[lang].invoice(symbol, oneLine(invoice.number, 50));
+}
+
+// The amount as the books hold it. In an English mail the book currency is named by its code, not as "đồng".
+function amount(value: string, currency: string, lang: 'vi' | 'en'): string {
+  const text = formatAmount(value, currency);
+  return lang === 'en' && currency === 'VND' ? text.replace(/ đồng$/, ' VND') : text;
 }
 
 // The mail from its stored merge data. replyTo: the org's inbound address when the deployment receives mail. brand: the product name users
@@ -91,9 +98,9 @@ export function renderPaymentReminderMail(raw: unknown, context: { replyTo: stri
     formatDate(i.date),
     formatDate(i.dueDate),
     t.days(i.daysOverdue),
-    formatAmount(i.amountDue, i.currency),
+    amount(i.amountDue, i.currency, mail.lang),
   ]);
-  const totalText = formatAmount(mail.total, mail.currency);
+  const totalText = amount(mail.total, mail.currency, mail.lang);
   const payLines = mail.payTo ? [`${t.bank}: ${oneLine(mail.payTo.bank)}`, `${t.number}: ${oneLine(mail.payTo.number, 40)}`, `${t.holder}: ${oneLine(mail.payTo.holder)}`] : [];
 
   const text = [

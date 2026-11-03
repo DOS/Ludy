@@ -107,7 +107,8 @@ export function noticeLevel(overdue: readonly { daysOverdue: number }[]): Notice
 
 // The language of a reminder: English for a customer whose invoices are in a foreign currency, Vietnamese otherwise.
 export function reminderLang(invoices: readonly { currency: string }[]): ReminderLang {
-  return invoices.length > 0 && invoices.every((i) => i.currency !== 'VND') ? 'en' : 'vi';
+  // Compared as the books' own check does (documents recorded before the currency rules may spell it in lower case).
+  return invoices.length > 0 && invoices.every((i) => i.currency.trim().toUpperCase() !== 'VND') ? 'en' : 'vi';
 }
 
 // The words around the facts. Fixed text with no digit in it: the amounts, dates and numbers of a reminder come from the facts block
@@ -121,6 +122,8 @@ export interface ReminderWords {
 
 export function templateWords(input: { level: NoticeLevel; lang: ReminderLang; customer: string; org: string }): ReminderWords {
   const { level, lang, customer, org } = input;
+  // A legal entity's name can be long: the subject is cut to the most a send accepts.
+  const cut = (subject: string) => subject.slice(0, 200);
   if (lang === 'en') {
     const lead = {
       1: `Thank you for your business. Our records show that the invoices below have reached their due date. If you have already paid them, please disregard this message.`,
@@ -128,7 +131,7 @@ export function templateWords(input: { level: NoticeLevel; lang: ReminderLang; c
       3: `This is our final notice before we need to look at next steps together. The invoices below are well past their due date. Please arrange payment as soon as you can, or get in touch so we can agree on a plan.`,
     }[level];
     return {
-      subject: { 1: `Payment reminder from ${org}`, 2: `Second reminder: overdue invoices from ${org}`, 3: `Final notice: overdue invoices from ${org}` }[level],
+      subject: cut({ 1: `Payment reminder from ${org}`, 2: `Second reminder: overdue invoices from ${org}`, 3: `Final notice: overdue invoices from ${org}` }[level]),
       greeting: `Dear ${customer},`,
       lead,
       closing: 'If anything above looks wrong, please reply to this message and we will check it with you. Thank you for your prompt attention.',
@@ -140,7 +143,7 @@ export function templateWords(input: { level: NoticeLevel; lang: ReminderLang; c
     3: `Đây là thông báo cuối cùng của chúng tôi trước khi hai bên cần bàn phương án tiếp theo. Các hóa đơn dưới đây đã quá hạn thanh toán từ lâu. Kính mong Quý khách sắp xếp thanh toán sớm nhất, hoặc liên hệ để chúng ta thống nhất lịch thanh toán.`,
   }[level];
   return {
-    subject: { 1: `Nhắc thanh toán hóa đơn đến hạn, ${org}`, 2: `Nhắc lần hai: hóa đơn quá hạn thanh toán, ${org}`, 3: `Thông báo cuối: hóa đơn quá hạn thanh toán, ${org}` }[level],
+    subject: cut({ 1: `Nhắc thanh toán hóa đơn đến hạn, ${org}`, 2: `Nhắc lần hai: hóa đơn quá hạn thanh toán, ${org}`, 3: `Thông báo cuối: hóa đơn quá hạn thanh toán, ${org}` }[level]),
     greeting: `Kính gửi Quý khách ${customer},`,
     lead,
     closing: 'Nếu có điểm nào chưa khớp, Quý khách vui lòng phản hồi thư này để chúng tôi cùng kiểm tra. Trân trọng cảm ơn Quý khách.',

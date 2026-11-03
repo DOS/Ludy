@@ -57,14 +57,14 @@ suite('customer payment reminders (#2488)', () => {
   const customer = async (o: Org, name: string, email: string | null) => (await execute<{ partyId: string }>(o, 'kernel.party.create', { kind: 'organization', name, ...(email ? { email } : {}) })).partyId;
 
   // A sales invoice with its entry (Dr 131, Cr 511), written the way finance.purchase.record writes one, in one transaction.
-  async function sale(o: Org, party: string, number: string, date: string, total: string): Promise<string> {
+  async function sale(o: Org, party: string, number: string, date: string, total: string, adjusts?: { number: string; date: string }): Promise<string> {
     return admin(async (c) => {
       const doc = randomUUID();
       await c.query('BEGIN');
       await c.query(
-        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id)
-         VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7)`,
-        [o.orgId, doc, party, number, date, total, o.entity],
+        `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date)
+         VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7, $8, $9, $10, $11)`,
+        [o.orgId, doc, party, number, date, total, o.entity, adjusts ? 'adjustment' : null, adjusts ? 'C26TAA' : null, adjusts?.number ?? null, adjusts?.date ?? null],
       );
       const entry = randomUUID();
       await c.query(
@@ -108,6 +108,7 @@ suite('customer payment reminders (#2488)', () => {
     partyId: d.partyId,
     level: d.level,
     total: d.total,
+    invoiceIds: d.invoices.map((i) => i.id),
     subject: d.words.subject,
     greeting: d.words.greeting,
     lead: d.words.lead,
@@ -181,6 +182,17 @@ suite('customer payment reminders (#2488)', () => {
     await receipt(o, p, TODAY, '1600000');
     expect((await list(o)).customers).toEqual([]);
     await expect(draft(o, p)).rejects.toMatchObject({ code: 'NOTHING_OVERDUE' });
+  });
+
+  it('bills an adjustment invoice that raises an invoice as an invoice of its own amount', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Thiên Long', 'tl@thienlong.test');
+    await sale(o, p, '1', dated(10), '1000000');
+    await sale(o, p, '2', dated(5), '500000', { number: '1', date: dated(10) });
+    const d = await draft(o, p);
+    expect(d.invoices.map((i) => [i.number, i.amountDue])).toEqual([['1', '1000000'], ['2', '500000']]);
+    expect(d.total).toBe('1500000');
+    expect(d.other).toBe('0');
   });
 
   it('keeps a balance no invoice covers out of the reminder', async () => {
@@ -303,6 +315,29 @@ suite('customer payment reminders (#2488)', () => {
     expect((await draft(o, withEmail, o.viewer)).total).toBe('600000');
     await expect(execute(o, 'finance.payment_reminder.send', sendInput(d2), o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(await mails(o, withEmail)).toHaveLength(0);
+  });
+
+  it('refuses an email that is not one plain address, and a send for another set of invoices than the one reviewed', async () => {
+    const o = await org();
+    // The party command refuses such an address; a row written around it (an import, a superuser) is still never mailed.
+    const two = await customer(o, 'Công ty Rạng Đông', 'a@rangdong.test');
+    await admin((c) => c.query(`UPDATE crove_kernel.party SET email = 'a@rangdong.test, b@other.test' WHERE org_id = $1 AND id = $2`, [o.orgId, two]));
+    await sale(o, two, '81', dated(5), '700000');
+    await expect(execute(o, 'finance.payment_reminder.send', sendInput(await draft(o, two)))).rejects.toMatchObject({ code: 'CUSTOMER_EMAIL_REQUIRED' });
+    expect(await mails(o, two)).toHaveLength(0);
+    // The total stays 1,000,000 while the invoices change: the oldest is paid off and a newer one falls due.
+    const p = await customer(o, 'Công ty Sao Mai', 'sm@saomai.test');
+    await sale(o, p, '91', dated(4), '500000');
+    await sale(o, p, '92', dated(3), '500000');
+    const d = await draft(o, p);
+    expect(d.invoices.map((i) => i.number)).toEqual(['91', '92']);
+    await receipt(o, p, TODAY, '500000');
+    await sale(o, p, '93', dated(1), '500000');
+    const now = await draft(o, p);
+    expect(now.invoices.map((i) => i.number)).toEqual(['92', '93']);
+    expect(now.total).toBe(d.total);
+    await expect(execute(o, 'finance.payment_reminder.send', sendInput(d))).rejects.toMatchObject({ code: 'STALE_REMINDER' });
+    expect(await mails(o, p)).toHaveLength(0);
   });
 
   it('keeps a suppressed address from being mailed and says so', async () => {

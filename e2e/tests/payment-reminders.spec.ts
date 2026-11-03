@@ -112,8 +112,9 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
   });
 
   await test.step('the mail is in the customer inbox with the facts from the books', async () => {
-    let mail: Awaited<ReturnType<typeof mailTo>> = null;
-    await expect.poll(async () => (mail = await mailTo(BUYER_EMAIL)), { message: `mail to ${BUYER_EMAIL}`, timeout: 60_000 }).not.toBeNull();
+    const found: { mail: Awaited<ReturnType<typeof mailTo>> } = { mail: null };
+    await expect.poll(async () => (found.mail = await mailTo(BUYER_EMAIL)), { message: `mail to ${BUYER_EMAIL}`, timeout: 60_000 }).not.toBeNull();
+    const mail = found.mail;
     expect(mail?.Subject).toMatch(SUBJECT);
     expect(mail?.Text).toContain('Kính nhờ Quý khách kiểm tra giúp các hóa đơn dưới đây.');
     expect(mail?.Text).toContain('1.980.000 đồng');
