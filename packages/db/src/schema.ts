@@ -465,6 +465,11 @@ export type VatReturnFiledTable = Refine<
   }
 >;
 
+// Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
+export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
+export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
 // never changes in place.
 export const CATEGORIZATION_RULE_MATCH_KINDS = ['description', 'keyword'] as const;
@@ -922,6 +927,7 @@ type Refined = Tables<{
   'crove_finance.org_account': OrgAccountTable;
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
+  'crove_finance.bank_party_rule': BankPartyRuleTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

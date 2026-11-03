@@ -542,6 +542,16 @@ export const personalDataErase = defineCommand({
         keptParties += 1;
       }
     }
+    // The learned bank-line rules of those parties (#2402): the keyed hash of a payer's name in a statement line points at the
+    // person, and a party the books keep (a voucher names it) is never deleted, so the cascade never reaches them. They go,
+    // documented or not; the vouchers they were learned from stay as the books keep them.
+    if (parties.length > 0) {
+      const { rows: rules } = await sql<{ id: string }>`
+        DELETE FROM crove_finance.bank_party_rule
+         WHERE org_id = ${ctx.orgId}::uuid AND party_id = ANY(${parties.map((p) => p.id)}::uuid[])
+         RETURNING id`.execute(ctx.trx);
+      add('crove_finance.bank_party_rule.key_hash', rules.length);
+    }
 
     // Bookings the visitor made on a public booking page (#1318), matched by their email or phone: the visitor's name,
     // email, phone and note all go (the booking keeps its time and its link to the calendar event).

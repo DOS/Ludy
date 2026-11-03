@@ -29,6 +29,7 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 import { Decimal } from '@crove/l10n-vn';
+import { learnedParties } from './bank-rules.ts';
 import { matchLine, type MatchCandidate } from './domain/bank-match.ts';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { ledgerPeriod } from './domain/ledger-reports.ts';
@@ -237,6 +238,7 @@ export async function lineMatchFor(
     parties.map((p) => ({ id: p.id, name: p.name, taxCode: p.tax_code })),
     invoices.map((i) => ({ partyId: i.party_id, series: i.invoice_series, number: i.invoice_number, total: i.total })),
     balances.flatMap((b) => (b.party_id ? [{ partyId: b.party_id, balance: b.balance }] : [])),
+    await learnedParties(ctx, line),
   );
   const byId = new Map(parties.map((p) => [p.id, p]));
   const view = (c: MatchCandidate): BankLineCandidate[] => {
