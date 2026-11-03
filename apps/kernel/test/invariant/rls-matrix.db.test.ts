@@ -39,6 +39,8 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
+  // The sealed copy of a closed ads connection's token (W2-1, #2296; pending): read only by the revoke worker through a definer.
+  'crove_ads.ad_token_seal',
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
@@ -54,6 +56,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_ads.ad_token_revoke',
+  'crove_ads.ad_token_seal',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -423,6 +427,17 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
         ],
         row: { org_id: o.id, id: randomUUID(), ad_account_id: account, status: 'ok' },
+      };
+    },
+  },
+  // The revoke at the platform of a closed ads connection's token (W2-1, #2296; pending): its state, count and next try, never the token (that is in
+  // crove_ads.ad_token_seal, definer-only). Written by the system context and definers alone: no tenant role inserts, updates or deletes a row.
+  'crove_ads.ad_token_revoke': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' },
       };
     },
   },

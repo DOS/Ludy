@@ -81,6 +81,9 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // Graph API host, and later adapters their own hosts, each bound to them by its allowlisted fetch, so the field is
   // classified for what it can reach: the platforms of @crove/ad-platform.
   'channels.adPlatforms': ['provider:ad_platform'],
+  // The revokers of the ad platforms (ADR-0043 point 4, #2296 W2-1): what the revoke worker may call, as a narrowed view of the writers of
+  // @crove/ad-platform that has `revokeToken` and nothing else (W2-4 adds the one call that pauses an object). Each is bound to its platform's host.
+  'channels.adRevokers': ['provider:ad_platform'],
   // The outside calendar adapters (#2123): Google's OAuth and Calendar hosts, through @crove/channel.
   'channels.calendars': ['provider:channel'],
   publicUrl: [],

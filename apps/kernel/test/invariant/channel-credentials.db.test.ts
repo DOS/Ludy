@@ -4,7 +4,13 @@
 //   of its org, and only while the member who connected the account is still in the org;
 // - only owners and admins seal tokens in or drop them, also when calling the definers directly;
 // - no token reaches an audit row, an event, an idempotency record or a query answer;
-// - a disconnect leaves nothing to decrypt.
+// - a disconnect leaves nothing to decrypt in crove_kernel.credential. One deliberate, dated exception (owner decision of
+//   2026-11-03, #2296, ADR-0025 amendment): when an ads write connection (or an ads read connection that holds a spend
+//   permission) is closed, the ads module may keep a sealed copy of its token for at most seven days, only so the worker
+//   can revoke the person's permissions at the platform and pause what was launched; the copy sits in the definer-only
+//   table crove_ads.ad_token_seal, no role reads it, and it is wiped when the revoke worked, after ten attempts or seven
+//   days, and by the org's purge. This file names every table that holds a sealed envelope and accepts that one until its
+//   expiry date; the change that adds the table (W2-1) replaces the allowance with the tests that pin its behaviour.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md). Set
 // CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -21,6 +27,19 @@ import { contextToken } from './fixtures/context-token.ts';
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
+
+// Every column of a tenant schema that holds a sealed envelope, by name: a new store of a sealed token is named here on purpose, in a reviewed change,
+// and each one is a table no Crove role can read (the MACHINERY list of the RLS matrix proves the grants).
+const SEALED_STORES = ['crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
+// Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
+// present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then.
+const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
+  'crove_ads.ad_token_seal.envelope': {
+    issue: '#2296',
+    expires: '2026-12-31',
+    reason: 'a closed ads connection keeps a sealed token for at most seven days, to revoke the permissions at the platform and pause what was launched (ADR-0025 amendment, ADR-0043 point 4)',
+  },
+};
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   const dbName = `crove_test_channels_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -168,6 +187,47 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
       ),
     );
     expect(rows).toEqual([]);
+  });
+
+  it('names every table that holds a sealed envelope, and accepts a dated allowance for one that may outlive a disconnect', async () => {
+    const { rows } = await admin((c) =>
+      c.query<{ col: string }>(
+        `SELECT n.nspname || '.' || c.relname || '.' || a.attname AS col
+         FROM pg_catalog.pg_attribute a
+         JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+         JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+         WHERE c.relkind IN ('r', 'p') AND n.nspname LIKE 'crove\\_%' AND a.attnum > 0 AND NOT a.attisdropped
+           AND a.atttypid = 'bytea'::regtype AND a.attname ~* 'envelope'
+         ORDER BY 1`,
+      ),
+    );
+    const today = new Date().toISOString().slice(0, 10);
+    for (const [column, { issue, expires, reason }] of Object.entries(SEALED_ALLOWANCES)) {
+      expect(issue, column).toMatch(/^#\d+$/);
+      expect(reason.length, column).toBeGreaterThan(20);
+      expect(/^\d{4}-\d{2}-\d{2}$/.test(expires) && today <= expires, `the allowance of ${column} expired on ${expires} (${issue}): pin the behaviour in tests and remove it, or extend it by an owner decision`).toBe(true);
+    }
+    const found = rows.map((r) => r.col);
+    // Nothing but the named stores and an allowed one that exists; an allowed one that does not exist yet is accepted.
+    expect(found.filter((col) => !SEALED_STORES.includes(col) && !(col in SEALED_ALLOWANCES))).toEqual([]);
+    expect(SEALED_STORES.filter((col) => !found.includes(col))).toEqual([]);
+  });
+
+  it('lets no Crove role touch an allowed sealed copy, where it exists', async () => {
+    for (const column of Object.keys(SEALED_ALLOWANCES)) {
+      const [schema, table] = column.split('.') as [string, string];
+      const exists = await admin((c) => c.query<{ ok: boolean }>('SELECT to_regclass($1) IS NOT NULL AS ok', [`${schema}.${table}`]));
+      if (!exists.rows[0]?.ok) continue;
+      const { rows } = await admin((c) =>
+        c.query<{ role: string; op: string }>(
+          `SELECT r AS role, p AS op FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader']) r,
+                  unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
+           WHERE has_table_privilege(r, $1::regclass, p)`,
+          [`${schema}.${table}`],
+        ),
+      );
+      expect(rows, column).toEqual([]);
+    }
   });
 
   it('lets only the worker read a credential out (EXECUTE matrix)', async () => {
