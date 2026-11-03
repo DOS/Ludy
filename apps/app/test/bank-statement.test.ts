@@ -34,7 +34,7 @@ describe('findColumns', () => {
       7: [null, 'Tổng cộng', null, 11000, '50.000.000'],
     });
     const mapping = findColumns(rows);
-    expect(mapping).toEqual({ headerRow: 4, columns: { date: 1, reference: 2, moneyOut: 3, moneyIn: 4, balance: 5, description: 6, amount: null } });
+    expect(mapping).toEqual({ headerRow: 4, columns: { date: 1, reference: 2, moneyOut: 3, moneyIn: 4, balance: 5, description: 6, amount: null, counterpartyAccount: null } });
     expect(headerLabels(rows, 4).map((h) => h.label)).toEqual(['STT', 'Ngày giao dịch', 'Số tham chiếu', 'Số tiền ghi nợ', 'Số tiền ghi có', 'Số dư', 'Nội dung']);
     // Number cells go as stored, text amounts made plain; the total row has no date and is left out.
     expect(statementRows(rows, mapping as NonNullable<typeof mapping>)).toEqual([
@@ -46,7 +46,7 @@ describe('findColumns', () => {
   it('takes one signed amount column when the file has no sides, and English headers', () => {
     const rows = sheet({ 1: ['Transaction Date', 'Description', 'Amount', 'Balance', 'Reference'], 2: ['2026-09-01', 'Fee', '-11,000', '989,000', 'R1'] });
     const mapping = findColumns(rows);
-    expect(mapping?.columns).toEqual({ date: 0, description: 1, amount: 2, balance: 3, reference: 4, moneyIn: null, moneyOut: null });
+    expect(mapping?.columns).toEqual({ date: 0, description: 1, amount: 2, balance: 3, reference: 4, moneyIn: null, moneyOut: null, counterpartyAccount: null });
     expect(statementRows(rows, mapping as NonNullable<typeof mapping>)).toEqual([
       { rowNo: 2, date: '2026-09-01', description: 'Fee', moneyIn: '-11000', moneyOut: '', balance: '989000', reference: 'R1' },
     ]);

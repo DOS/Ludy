@@ -82,6 +82,12 @@ describe('reading a statement', () => {
     expect(oneDay.lines.map((l) => l.balance)).toEqual(['150', '120']);
   });
 
+  it('keeps a counterparty account as its digits when they are 6 to 20, else none (#2402)', () => {
+    const withAccount = (account: string | undefined): BankStatementRow => ({ ...row('01/09/2026', '1000', ''), ...(account === undefined ? {} : { counterpartyAccount: account }) });
+    const { lines } = readStatement(input([withAccount('0011 0000.5555'), withAccount('12345'), withAccount('1'.repeat(21)), withAccount('ABC'), withAccount(''), withAccount(undefined)]));
+    expect(lines.map((l) => l.counterpartyAccount)).toEqual(['001100005555', null, null, null, null, null]);
+  });
+
   it('keys by reference, else by date, amount, balance and occurrence, else none', () => {
     const { lines } = readStatement(
       input([

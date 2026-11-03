@@ -79,6 +79,19 @@ describe('statementLines', () => {
     expect(lines?.[1]?.balance).toEqual({ kind: 'number', value: '11489000' });
   });
 
+  it('finds a counterparty account column by the words banks use and keeps its cell as text (#2402)', () => {
+    for (const label of ['Số tài khoản đối ứng', 'Tài khoản thụ hưởng', 'STK đối ứng', 'Counterparty account', 'Beneficiary account']) {
+      const withAccount = grid({ 1: ['Ngày giao dịch', 'Diễn giải', 'Ghi nợ', 'Ghi có', label], 2: ['01/09/2026', 'Chi', '50000', null, '0011 0000 5555'] });
+      const mapping = findColumns(withAccount) as NonNullable<ReturnType<typeof findColumns>>;
+      expect(mapping.columns.counterpartyAccount, label).toBe(4);
+      expect(statementLines(withAccount, mapping, 10)?.[0]?.counterpartyAccount, label).toBe('0011 0000 5555');
+    }
+    // A file without the column has none, and the statement's own account number label is not that column.
+    const mapping = findColumns(rows) as NonNullable<ReturnType<typeof findColumns>>;
+    expect(mapping.columns.counterpartyAccount).toBeNull();
+    expect(statementLines(rows, mapping, 10)?.[0]?.counterpartyAccount).toBe('');
+  });
+
   it('is null when the file has more lines than allowed', () => {
     const mapping = findColumns(rows) as NonNullable<ReturnType<typeof findColumns>>;
     expect(statementLines(rows, mapping, 2)).toHaveLength(2);

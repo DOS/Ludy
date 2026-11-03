@@ -105,7 +105,7 @@ suite('learned bank line rules (#2402)', () => {
   }
 
   let rowNo = 1;
-  const row = (date: string, moneyOut: string, reference: string, description: string): BankStatementRow => ({
+  const row = (date: string, moneyOut: string, reference: string, description: string, counterpartyAccount?: string): BankStatementRow => ({
     rowNo: rowNo++,
     date,
     description,
@@ -113,6 +113,7 @@ suite('learned bank line rules (#2402)', () => {
     moneyOut: normalizeStatementAmount(moneyOut),
     balance: '',
     reference,
+    ...(counterpartyAccount ? { counterpartyAccount } : {}),
   });
   const importLines = async (slug: string, who: Account, rows: BankStatementRow[], filename: string) =>
     rpc('bank/import', await tokenFor(who), { bankAccount: '1121', filename, rows, idempotencyKey: randomUUID() }, slug);
@@ -327,5 +328,47 @@ suite('learned bank line rules (#2402)', () => {
       async (c) => (await c.query(`SELECT 1 FROM crove_finance.bank_party_rule r JOIN crove_finance.cash_voucher v ON v.org_id = r.org_id AND v.id = r.source_voucher_id WHERE r.legal_entity_id <> v.legal_entity_id`)).rowCount,
     );
     expect(mismatched).toBe(0);
+  });
+
+  it('learns a counterparty account number too: the next line with the same account is suggested with the reason `account`', async () => {
+    const epsilon = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [org.orgId, epsilon]);
+    });
+    // The words of these lines say nothing (no key); only the account number is the same.
+    expect(
+      (
+        await importLines(
+          org.slug,
+          member,
+          [row('24/11/2026', '700.000', 'RA1', 'GD 998877', '0011 2233 4455'), row('03/12/2026', '700.000', 'RA2', 'GD 112233', '001122334455'), row('04/12/2026', '700.000', 'RA3', 'GD 445566', '0099 8877 6655')],
+          'sao-ke-epsilon.xlsx',
+        )
+      ).status,
+    ).toBe(200);
+    await refresh();
+    // The account is stored as its digits on the line.
+    expect(await admin(async (c) => (await c.query<{ a: string }>(`SELECT counterparty_account AS a FROM crove_finance.bank_line WHERE bank_ref = 'RA1'`)).rows[0]?.a)).toBe('001122334455');
+    expect((await suggestion('RA1')).suggested).toBeNull();
+    await matchByHand('RA1', '2026-11-24', epsilon, '700000', { kind: 'manual' });
+    const mine = (await rules()).filter((r) => r.party_id === epsilon);
+    expect(mine.map((r) => r.kind)).toEqual(['account']);
+    expect(JSON.stringify(mine)).not.toContain('001122334455');
+    expect((await suggestion('RA2')).suggested).toMatchObject({ party: { id: epsilon }, reason: 'account' });
+    expect((await suggestion('RA3')).suggested).toBeNull();
+    // The list says what the rule is about, and never the number.
+    const item = (await listed()).find((r) => r.party.partyId === epsilon);
+    expect(item).toMatchObject({ kind: 'account', voucher: { code: expect.any(String) } });
+    expect(JSON.stringify(item)).not.toContain('001122334455');
+    // Another org with the same account number suggests nobody: the hash is bound to the org.
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Epsilon Trade')`, [other.orgId, randomUUID()]);
+    });
+    expect((await importLines(other.slug, outsider, [row('03/12/2026', '700.000', 'XA1', 'GD 112233', '001122334455')], 'sao-ke-khac-2.xlsx')).status).toBe(200);
+    await refresh();
+    expect((await suggestion('XA1', other.slug, outsider)).suggested).toBeNull();
+    // Removing the rule ends the suggestion.
+    expect((await rpc('bankPartyRules/remove', await tokenFor(owner, { mfa: true }), { id: item.id })).status).toBe(200);
+    expect((await suggestion('RA2')).suggested).toBeNull();
   });
 });

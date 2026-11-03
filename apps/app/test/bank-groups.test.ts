@@ -53,6 +53,7 @@ describe('reasonTag and matchedByTag', () => {
     expect(reasonTag({ reason: 'tax_code' })).toEqual({ tag: 'taxCode', number: '' });
     expect(reasonTag({ reason: 'invoice', invoice: { number: '9' } })).toEqual({ tag: 'invoice', number: '9' });
     expect(reasonTag({ reason: 'learned' }).tag).toBe('learned');
+    expect(reasonTag({ reason: 'account' }).tag).toBe('account');
     expect(reasonTag({ reason: 'name' }).tag).toBe('name');
     expect(reasonTag({ reason: 'balance' }).tag).toBe('balance');
     expect(reasonTag({}).tag).toBe('none');
