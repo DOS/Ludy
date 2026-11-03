@@ -4,7 +4,8 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -223,8 +224,8 @@ export interface RpcChannels {
   sandbox: boolean;
   // The offline sandbox bank feed is enabled (BANK_FEED_SANDBOX, ADR-0039).
   bankFeedSandbox?: boolean;
-  // The offline sandbox e-invoice provider is enabled (EINVOICE_SANDBOX, ADR-0044).
-  einvoiceSandbox?: boolean;
+  // The e-invoice providers this deployment offers, by adapter id (ADR-0044): the offline sandbox when EINVOICE_SANDBOX is on, a real adapter when its own switch is.
+  einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
   // The ad platforms this deployment offers, by provider id (ADR-0040, #2217): the offline sandbox when ADS_SANDBOX is on.
   adsPlatforms?: Readonly<Record<string, AdPlatform>>;
   // The write Meta app is the read ads app or the Pages app (metaWriteAppShared of the config): switching running ads off then closes every
@@ -349,6 +350,13 @@ export function createRpcHandler(
   const inFinance = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
     if (!finance) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun tài chính chưa được bật' });
     return inOrg(context, fn);
+  };
+  // The e-invoice provider this deployment offers under an adapter id (EINVOICE_SANDBOX and, later, one switch per real adapter), or nothing.
+  const einvoiceProviderOf = (id: string): EInvoiceProvider | undefined => (Object.hasOwn(channels?.einvoiceProviders ?? {}, id) ? channels?.einvoiceProviders?.[id] : undefined);
+  // The commands check the role again; this answers first, in words, before anything is sealed or called.
+  const requireOwnerOrAdmin = async (context: RpcContext, message: string) => {
+    const { role } = await resolveMembership(runtime, context.user, context.orgSlug);
+    if (role !== 'owner' && role !== 'admin') throw new DomainError('FORBIDDEN', 403, message);
   };
   // The assisted tax portal sync (issue #325): the steps check the member's role again in their commands; the password
   // in login's input goes to the portal and nowhere else.
@@ -2141,15 +2149,104 @@ export function createRpcHandler(
       },
     },
     einvoice: {
-      status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(channels?.einvoiceSandbox) })),
+      status: os.einvoice.status.handler(async () => ({ sandbox: Boolean(einvoiceProviderOf('sandbox')) })),
+      // What the connect form may offer: the providers this deployment enabled, never a credential or a host.
+      providers: os.einvoice.providers.handler(({ context }) =>
+        inFinance(context, async () => Object.entries(channels?.einvoiceProviders ?? {}).map(([id, provider]) => ({ id, offline: provider.hosts.length === 0, connectFields: [...provider.connectFields] }))),
+      ),
+      // The org's own account at a provider (ADR-0044 point 2). The fields it types are sealed here, once; the command gets the envelope, never the secret, and only the
+      // worker opens it. A provider whose signature needs the seller's own token is refused before anything is sealed.
+      connections: {
+        list: os.einvoice.connections.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_connection.list', {}, { actor, orgId }))),
+        connect: os.einvoice.connections.connect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kết nối được nhà cung cấp hóa đơn điện tử');
+            const provider = einvoiceProviderOf(input.provider);
+            if (!provider || !channels) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử này chưa được bật');
+            if (provider.capabilities.signing === 'seller_token') {
+              throw new DomainError('EINVOICE_SIGNING_TOKEN', 422, 'Nhà cung cấp này ký hóa đơn bằng chữ ký số nằm trên máy của người bán, Ludy không dùng được cách đó; hãy dùng nhà cung cấp ký trên máy chủ của họ');
+            }
+            const fields = Object.keys(input.fields);
+            if (fields.length !== provider.connectFields.length || !provider.connectFields.every((name) => Object.hasOwn(input.fields, name))) {
+              throw new DomainError('EINVOICE_FIELDS', 422, 'Hãy nhập đủ các thông tin mà nhà cung cấp yêu cầu, không thêm thông tin khác');
+            }
+            const seller = await runtime.query<{ legalEntityId: string; sellerTaxCode: string }>(
+              'finance.einvoice_connection.target',
+              { legalEntityId: input.legalEntityId, sellerTaxCode: input.sellerTaxCode },
+              { actor, orgId },
+            );
+            const channelProvider = `einvoice_${input.provider}`;
+            // The account is the seller under this entity, so a second connect of it is the same connection.
+            const externalAccountId = `${seller.sellerTaxCode}@${seller.legalEntityId}`;
+            // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
+            const secret = provider.hosts.length === 0 ? SANDBOX_EINVOICE_SECRET : JSON.stringify(input.fields);
+            const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
+            const command: ChannelConnectInput = {
+              provider: channelProvider,
+              externalAccountId,
+              displayName: provider.hosts.length === 0 ? `Nhà cung cấp hóa đơn thử nghiệm (${seller.sellerTaxCode})` : `${input.provider} (${seller.sellerTaxCode})`,
+              scopes: [],
+              expiresAt: null,
+              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+            };
+            const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
+            try {
+              const linked = await runtime.execute<{ id: string }>(
+                'finance.einvoice_connection.link',
+                { connectionId, legalEntityId: seller.legalEntityId, sellerTaxCode: seller.sellerTaxCode },
+                { actor, orgId },
+              );
+              return { id: linked.id };
+            } catch (error) {
+              // The link was refused: no connection is left behind that no screen lists, with its sealed credential. One this call only reconnected is the account's own: it stays.
+              if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
+              throw error;
+            }
+          }),
+        ),
+        test: os.einvoice.connections.test.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới kiểm tra được kết nối hóa đơn điện tử');
+            const rows = await runtime.query<EInvoiceConnection[]>('finance.einvoice_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) throw new DomainError('EINVOICE_CONNECTION_NOT_FOUND', 404, 'Không tìm thấy kết nối hóa đơn điện tử này');
+            const provider = einvoiceProviderOf(row.provider);
+            if (!provider) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử này chưa được bật');
+            // The API never opens a credential: a provider that is reached over the network is tested by the worker (a later build, with its adapter). The offline
+            // provider reaches no host and needs no credential, so its test runs here.
+            if (provider.hosts.length > 0) throw new DomainError('EINVOICE_PROVIDER_NOT_READY', 503, 'Nhà cung cấp này chưa kiểm tra được từ màn hình, sẽ có khi bộ kết nối của nó hoàn thành');
+            let state: ConnectionState;
+            let templates: EInvoiceSeriesTemplate[] = [];
+            try {
+              state = await provider.testConnection(SANDBOX_EINVOICE_SECRET);
+              if (state === 'works') templates = await provider.listTemplates(SANDBOX_EINVOICE_SECRET);
+            } catch (error) {
+              state = error instanceof EInvoiceProviderError && error.kind === 'credentials' ? 'wrong_credentials' : 'unreachable';
+            }
+            return runtime.execute('finance.einvoice_connection.record_test', { id: row.id, state, templates }, { actor, orgId });
+          }),
+        ),
+        disconnect: os.einvoice.connections.disconnect.handler(({ context, input }) =>
+          inFinance(context, async (orgId, actor) => {
+            await requireOwnerOrAdmin(context, 'Chỉ chủ sở hữu hoặc quản trị viên mới ngắt được kết nối hóa đơn điện tử');
+            const rows = await runtime.query<EInvoiceConnection[]>('finance.einvoice_connection.list', {}, { actor, orgId });
+            const row = rows.find((r) => r.id === input.id);
+            if (!row) return { removed: false };
+            // The credential goes first: a failure after it leaves a row of a closed connection that a second disconnect removes, never a live credential with no row.
+            await runtime.execute('kernel.channel.disconnect', { connectionId: row.connectionId }, { actor, orgId });
+            return runtime.execute<{ removed: boolean }>('finance.einvoice_connection.unlink', { id: row.id }, { actor, orgId });
+          }),
+        ),
+      },
       series: {
         list: os.einvoice.series.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_series.list', {}, { actor, orgId }))),
         sync: os.einvoice.series.sync.handler(({ context, input }) =>
           inFinance(context, async (orgId, actor) => {
-            if (!channels?.einvoiceSandbox) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử thử nghiệm chưa được bật');
+            if (!einvoiceProviderOf('sandbox')) throw new DomainError('EINVOICE_DISABLED', 404, 'Nhà cung cấp hóa đơn điện tử thử nghiệm chưa được bật');
             return runtime.execute('finance.einvoice_series.sync', input, { actor, orgId });
           }),
         ),
+        setDefault: os.einvoice.series.setDefault.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_series.set_default', input, { actor, orgId }))),
       },
       drafts: {
         list: os.einvoice.drafts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.list', input ?? {}, { actor, orgId }))),

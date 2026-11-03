@@ -18,6 +18,7 @@ import { BankPartyRulesCard } from './bank-party-rules.tsx';
 import { ApprovalPresetCard, MEMBERS_CARD_ID } from './approval-preset.tsx';
 import { BankAccountNumbersCard } from './bank-account-numbers.tsx';
 import { BankFeedsCard } from './bank-feeds.tsx';
+import { EInvoiceConnectionsCard } from './einvoice-connections.tsx';
 import { LegalEntitiesCard } from './legal-entities.tsx';
 import { MemberRolesRow } from './member-roles.tsx';
 import { WorkingHoursCard } from './working-hours.tsx';
@@ -1167,6 +1168,7 @@ export function SettingsPage() {
         {getConfig().modules.includes('finance') && canManage && <BankAccountNumbersCard key={`bank-account-numbers:${org.data?.slug}`} canManage={canManage} />}
         {/* Bank feeds (ADR-0039, #2099): with the finance module, and only where the deployment offers one. */}
         {showsBankFeeds(getConfig()) && org.data && <BankFeedsCard key={`bank-feeds:${org.data.slug}`} role={org.data.role} />}
+        {getConfig().modules.includes('finance') && org.data && <EInvoiceConnectionsCard key={`einvoice-connections:${org.data.slug}`} role={org.data.role} />}
         {/* The chart of accounts belongs to the finance module (#319). */}
         {getConfig().modules.includes('finance') && <ChartOfAccountsCard canManage={canManage} />}
         {/* The MISA codes of stock purchases (#1398), for the goods purchase export. */}

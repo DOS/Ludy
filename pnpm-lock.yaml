@@ -490,6 +490,9 @@ importers:
       '@crove/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@crove/einvoice':
+        specifier: workspace:*
+        version: link:../../packages/einvoice
       '@crove/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract

@@ -142,6 +142,14 @@ suite('org purge on PostgreSQL (#1024)', () => {
            ($1, $2, 1, 'Hàng A', 1, 100000, 100000, '10%', 10000), ($1, $2, 2, 'Hàng B', 2, 100000, 200000, '10%', 20000)`,
         [org.orgId, einvoiceDraft],
       );
+      // A connection to an e-invoice provider (#2501): its channel connection (with a credential row) and the row that files it under the entity. Deleted with the
+      // org's working rows, before the channel connection it references.
+      const einvoiceChannel = randomUUID();
+      await c.query(
+        'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
+        [org.orgId, einvoiceChannel, 'einvoice_sandbox', `einvoice-${tag}`, 'Hóa đơn thử', owner],
+      );
+      await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', '0101234564')`, [org.orgId, einvoiceChannel]);
       // An approved Social post (append-only approval, #1032): its approval, variant, post and channel connection.
       const connection = randomUUID();
       await c.query(
@@ -400,7 +408,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     const after = await snapshot(s.org.orgId);
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
     // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500).
-    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line']);
+    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_connection']);
     for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && !workingRows.has(t))) {
       expect([table, after[table]]).toEqual([table, before[table]]);
     }
@@ -436,7 +444,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
     // its parent and assignee position, the approved variant, its post and channel connection.
-    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series']) {
+    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series', 'crove_finance.einvoice_connection']) {
       expect([table, before[table]]).not.toEqual([table, 0]);
       expect([table, after[table] ?? 0]).toEqual([table, 0]);
     }
@@ -495,8 +503,9 @@ suite('org purge on PostgreSQL (#1024)', () => {
             'crove_social.post_approval': 1,
             'crove_social.post_variant': 1,
             'crove_social.post': 1,
-            'crove_kernel.channel_connection': 2,
+            'crove_kernel.channel_connection': 3,
             'crove_finance.bank_feed_account': 1,
+            'crove_finance.einvoice_connection': 1,
             'crove_finance.bank_account_number': 1,
             'crove_social.push_subscription': 1,
             'crove_social.saved_view': 1,
