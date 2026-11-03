@@ -258,6 +258,15 @@ export const en = {
     },
   },
   notifications: {
+    todayMail: {
+      title: 'Daily brief by email',
+      hint: 'Every morning, a short mail with how many items need you today and a link to Home. It holds counts and links only, no amounts or content.',
+      label: 'Send me the daily brief by email',
+      noMail: 'This server cannot send email yet, so nothing is sent until the installer sets up mail.',
+      turnOffAsked: 'You asked to turn the daily brief mail off.',
+      turnOff: 'Turn off',
+      turnedOff: 'The daily brief mail is off.',
+    },
     title: 'Work notifications',
     subtitle: 'Proposals waiting for your approval, files that could not be read, bank statements and tax portal checks to look at, and periods whose VAT return is due but are not locked.',
     readAll: 'Mark all as read',
@@ -7920,6 +7929,11 @@ export const en = {
         save: 'Save the tax profile',
       },
       today: 'Read what needs you today',
+      today_mail: {
+        get: 'Read the daily brief mail setting',
+        send: 'Send the daily brief mails of an org',
+        set: 'Turn the daily brief mail on or off',
+      },
       usage: {
         defer: 'Defer an item over a usage limit',
         over: 'Check the usage limits',
