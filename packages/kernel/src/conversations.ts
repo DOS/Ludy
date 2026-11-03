@@ -1636,6 +1636,8 @@ export const conversationLinkContact = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('identity_id', '=', conversation.identity_id)
         .where('kind', '=', conversation.kind)
+        // A thread whose sender nobody vouched for does not get the link from another thread: a person links it (seeing its mark) or it keeps none.
+        .where('sender_unverified', '=', false)
         .execute();
     }
     ctx.audit({ conversation_id: conversation.id, party_id: input.partyId });

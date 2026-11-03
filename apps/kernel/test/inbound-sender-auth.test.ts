@@ -38,7 +38,7 @@ describe('isMailAddress', () => {
 
 describe('senderVerified', () => {
   it('believes nothing when no server name is configured', () => {
-    expect(senderVerified([`${SERVER}; dmarc=pass`], undefined, 'khach.test')).toBe(false);
+    expect(senderVerified([`${SERVER}; dmarc=pass header.from=khach.test`], undefined, 'khach.test')).toBe(false);
   });
 
   it('believes dmarc=pass, or an aligned dkim=pass, written by our own server', () => {
@@ -58,15 +58,37 @@ describe('senderVerified', () => {
     expect(senderVerified([], SERVER, 'khach.test')).toBe(false);
   });
 
+  it('reads results, not the text a sender put in a comment or a quoted string', () => {
+    // An envelope sender with a quoted local part, and an SPF comment that repeats it: the ";" and the "dmarc=pass" inside them are not results.
+    const quoted = `${SERVER}; spf=pass smtp.mailfrom="x; dmarc=pass header.from=victim.test"@evil.test; dmarc=fail header.from=victim.test`;
+    expect(senderVerified([quoted], SERVER, 'victim.test')).toBe(false);
+    const commented = `${SERVER}; spf=pass (domain of "x; dmarc=pass header.from=victim.test"@evil.test designates 192.0.2.1 as permitted sender) smtp.mailfrom=evil.test; dmarc=fail header.from=victim.test`;
+    expect(senderVerified([commented], SERVER, 'victim.test')).toBe(false);
+    // Nested comments, quoted pairs, and a value that is not closed.
+    expect(senderVerified([`${SERVER}; spf=pass (a (b; dmarc=pass header.from=victim.test) c) smtp.mailfrom=evil.test`], SERVER, 'victim.test')).toBe(false);
+    expect(senderVerified([`${SERVER}; dmarc=fail (unclosed ; dmarc=pass header.from=victim.test`], SERVER, 'victim.test')).toBe(false);
+    expect(senderVerified([`${SERVER}; dmarc=fail "unclosed ; dmarc=pass header.from=victim.test`], SERVER, 'victim.test')).toBe(false);
+    // OpenDKIM writes a comment with a ";" in it, and the pass still counts.
+    expect(senderVerified([`${SERVER}; dkim=pass (2048-bit key; unprotected) header.d=khach.test header.b=abcd`], SERVER, 'khach.test')).toBe(true);
+    // A method only counts at the start of its own result.
+    expect(senderVerified([`${SERVER}; spf=pass smtp.helo=dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
+  });
+
+  it('ties a DMARC pass to the From domain', () => {
+    expect(senderVerified([`${SERVER}; dmarc=pass header.from=other.test`], SERVER, 'victim.test')).toBe(false);
+    expect(senderVerified([`${SERVER}; dmarc=pass`], SERVER, 'victim.test')).toBe(false);
+    expect(senderVerified([`${SERVER}; dmarc=pass header.from=victim.test`], SERVER, 'victim.test')).toBe(true);
+  });
+
   it('believes only a header written by our own server: a pass any other hop wrote says nothing', () => {
-    expect(senderVerified(['mx.evil.test; dmarc=pass'], SERVER, 'khach.test')).toBe(false);
-    expect(senderVerified(['mx.evil.test; dmarc=pass', `${SERVER}; dmarc=fail`], SERVER, 'khach.test')).toBe(false);
+    expect(senderVerified(['mx.evil.test; dmarc=pass header.from=khach.test'], SERVER, 'khach.test')).toBe(false);
+    expect(senderVerified(['mx.evil.test; dmarc=pass header.from=khach.test', `${SERVER}; dmarc=fail`], SERVER, 'khach.test')).toBe(false);
     // The topmost header of ours decides: one an earlier hop wrote further down, claiming our name, is not read.
-    expect(senderVerified([`${SERVER}; dmarc=fail`, `${SERVER}; dmarc=pass`], SERVER, 'khach.test')).toBe(false);
-    expect(senderVerified(['mx.evil.test; dmarc=pass', `${SERVER}; dmarc=pass`], SERVER, 'khach.test')).toBe(true);
+    expect(senderVerified([`${SERVER}; dmarc=fail`, `${SERVER}; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
+    expect(senderVerified(['mx.evil.test; dmarc=pass header.from=khach.test', `${SERVER}; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(true);
     // The name is the first token only, case aside; a comment or a longer name is not ours.
-    expect(senderVerified([`MX.EXAMPLE.TEST 1; dmarc=pass`], SERVER, 'khach.test')).toBe(true);
-    expect(senderVerified([`${SERVER}.evil.test; dmarc=pass`], SERVER, 'khach.test')).toBe(false);
+    expect(senderVerified([`MX.EXAMPLE.TEST 1; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(true);
+    expect(senderVerified([`${SERVER}.evil.test; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
   });
 });
 

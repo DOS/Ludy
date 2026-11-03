@@ -311,23 +311,63 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   };
 }
 
+// An Authentication-Results value with its comments (RFC 8601 section 2.2: "( ... )", nested, with quoted pairs) removed and its quoted strings emptied. A
+// comment or a quoted string may hold text the sender chose (an envelope sender with a quoted local part, the "designates" note of an SPF check) and
+// may hold a ";", so neither may be read as a result. Null when the value is not well formed (an unclosed comment or quote).
+function plainResults(value: string): string | null {
+  let out = '';
+  let depth = 0;
+  let quoted = false;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i] as string;
+    if (depth > 0) {
+      if (ch === '\\') i++;
+      else if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      continue;
+    }
+    if (quoted) {
+      if (ch === '\\') i++;
+      else if (ch === '"') {
+        quoted = false;
+        out += '"';
+      }
+      continue;
+    }
+    if (ch === '(') {
+      depth = 1;
+      out += ' ';
+    } else if (ch === '"') {
+      quoted = true;
+      out += '"';
+    } else out += ch;
+  }
+  return depth > 0 || quoted ? null : out;
+}
+
 // Whether the receiving mail server vouched for the sender's domain (RFC 8601): the topmost Authentication-Results header written by our own server
-// (its authserv-id is `authservId`; a header any earlier hop wrote could say anything), with dmarc=pass, or dkim=pass for a signing domain (header.d) the
-// From domain is, or is a subdomain of. With no authserv-id configured nothing is verified.
+// (its authserv-id is `authservId`; a header any earlier hop wrote could say anything), with dmarc=pass for the From domain (header.from), or dkim=pass for a
+// signing domain (header.d) the From domain is, or is a subdomain of. Each result is read as `method=result` at the start of its own `;` segment, after the
+// comments and quoted strings are gone. With no authserv-id configured nothing is verified.
 export function senderVerified(results: readonly string[], authservId: string | undefined, fromDomain: string): boolean {
   if (!authservId) return false;
   const ours = authservId.trim().toLowerCase();
-  const own = results.find((line) => (line.split(';')[0] ?? '').trim().toLowerCase().split(/\s+/)[0] === ours);
-  if (own === undefined) return false;
+  const header = (line: string): string | null => {
+    const plain = plainResults(line);
+    return plain !== null && (plain.split(';')[0] ?? '').trim().toLowerCase().split(/\s+/)[0] === ours ? plain : null;
+  };
+  const own = results.map(header).find((plain) => plain !== null);
+  if (own === undefined || own === null) return false;
   const methods = own
     .split(';')
     .slice(1)
     .map((part) => part.trim().toLowerCase());
-  if (methods.some((m) => /^dmarc=pass(?:\s|$)/.test(m))) return true;
   const from = fromDomain.toLowerCase();
+  const property = (resinfo: string, name: string): string | undefined => new RegExp(`(?:^|\\s)${name.replace('.', '\\.')}=([a-z0-9.-]+)(?:\\s|$)`).exec(resinfo)?.[1];
   return methods.some((m) => {
+    if (/^dmarc=pass(?:\s|$)/.test(m)) return property(m, 'header.from') === from;
     if (!/^dkim=pass(?:\s|$)/.test(m)) return false;
-    const signer = /\bheader\.d=([a-z0-9.-]+)/.exec(m)?.[1];
+    const signer = property(m, 'header.d');
     return signer !== undefined && (from === signer || from.endsWith(`.${signer}`));
   });
 }

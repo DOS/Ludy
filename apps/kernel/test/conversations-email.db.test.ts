@@ -293,6 +293,24 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect((await detail(o, o.owner, forged?.id as string)).conversation).toMatchObject({ senderUnverified: false });
   });
 
+  it("does not carry a person's contact link to a thread whose sender nobody vouched for, even one that existed before the link", async () => {
+    const o = await org();
+    const sender = 'Khách B <b@khach.test>';
+    await deliver(o.address, raw({ to: o.address, messageId: '<lk1@mau.test>', from: sender, subject: 'Thật' }));
+    await deliver(o.address, raw({ to: o.address, messageId: '<lk2@mau.test>', from: sender, subject: 'Giả mạo', auth: 'none' }));
+    const [real, forged] = await threads(o);
+    const party = (await rows<{ id: string }>("INSERT INTO crove_kernel.party (org_id, kind, name, email) VALUES ($1, 'organization', 'Công ty B', 'b@khach.test') RETURNING id", [o.orgId]))[0]?.id;
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: real?.id, partyId: party });
+    const linked = await rows<{ subject: string; party_id: string | null }>('SELECT subject, party_id FROM crove_kernel.conversation WHERE org_id = $1 ORDER BY created_at, id', [o.orgId]);
+    expect(linked.map((r) => [r.subject, r.party_id === party])).toEqual([
+      ['Thật', true],
+      ['Giả mạo', false],
+    ]);
+    // A person who looks at the forged thread and links it themselves may.
+    await exec(o, o.owner, 'kernel.conversation.link_contact', { conversationId: forged?.id, partyId: party });
+    expect((await rows<{ party_id: string | null }>('SELECT party_id FROM crove_kernel.conversation WHERE id = $1', [forged?.id]))[0]?.party_id).toBe(party);
+  });
+
   it('accepts one mailbox in From and nothing else: a list or a quoted local part opens nothing, and a reply to a list address is refused', async () => {
     const o = await org();
     for (const [i, from] of ['<a@x.test,b@y.test>', '"a b"@x.test', 'a@@x.test'].entries()) {
