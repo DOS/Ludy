@@ -15,6 +15,7 @@ export * from './meta.ts';
 // `sandboxwrite_ads`) are not ad platforms of the readers' registry below: AD_PLATFORM_PROVIDERS, isAdPlatformProvider and
 // adPlatforms() never see them.
 export * from './meta-write-connector.ts';
+export * from './meta-write.ts';
 export * from './sandbox-write.ts';
 export * from './writer.ts';
 
