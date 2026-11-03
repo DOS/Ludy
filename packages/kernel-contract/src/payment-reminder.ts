@@ -34,11 +34,27 @@ export const zPaymentReminderCustomer = z.object({
 });
 export type PaymentReminderCustomer = z.infer<typeof zPaymentReminderCustomer>;
 
+// A customer whose reminders are paused: when its pause ends (the last day with no reminder), the terms it set for itself (null: the org's), and what it owes.
+export const zPausedCustomer = z.object({
+  partyId: zId,
+  name: z.string(),
+  pausedUntil: z.string(),
+  ownTermsDays: z.number().int().nullable(),
+  invoiceCount: z.number().int(),
+  total: z.string(),
+});
+
+export type PausedCustomer = z.infer<typeof zPausedCustomer>;
+
 export const zPaymentReminderList = z.object({
   currency: z.string(),
   customers: z.array(zPaymentReminderCustomer),
   // The list stopped at PAYMENT_REMINDER_CUSTOMERS_MAX.
   more: z.boolean(),
+  // The org's payment terms in days (what the due dates of customers with no terms of their own use).
+  termsDays: z.number().int(),
+  // Customers with an overdue invoice whose reminders are paused: not in `customers`, no draft, no send.
+  paused: z.array(zPausedCustomer),
 });
 export type PaymentReminderList = z.infer<typeof zPaymentReminderList>;
 
@@ -69,6 +85,13 @@ export const zPaymentReminderDraft = z.object({
   currency: z.string(),
   // The legal entity the invoices are in: the sender the mail speaks for.
   org: z.string(),
+  // The payment terms that dated its invoices, and the terms it set for itself (null: the org's).
+  termsDays: z.number().int(),
+  // The org's terms, which the customer's own replace.
+  orgTermsDays: z.number().int(),
+  ownTermsDays: z.number().int().nullable(),
+  // A digest of the invoices of this draft: the send must name it, so it is held to the set the person reviewed.
+  invoiceKey: z.string().regex(/^[0-9a-f]{64}$/),
   level: zNoticeLevel,
   lang: zReminderLang,
   invoices: z.array(zReminderInvoiceView),
@@ -89,8 +112,8 @@ export const zPaymentReminderSend = z.object({
   // is refused with STALE_REMINDER and the screen reads the draft again.
   level: zNoticeLevel,
   total: z.string().max(40),
-  // The invoices of the draft (their ids); a send for a different set is stale too.
-  invoiceIds: z.array(zId).min(1).max(1000),
+  // The digest of the invoices of the draft; a send for a different set is stale too.
+  invoiceKey: z.string().regex(/^[0-9a-f]{64}$/),
   subject: z.string().trim().min(1).max(PAYMENT_REMINDER_SUBJECT_MAX),
   greeting: z.string().trim().min(1).max(PAYMENT_REMINDER_TEXT_MAX),
   lead: z.string().trim().min(1).max(PAYMENT_REMINDER_TEXT_MAX),
@@ -115,3 +138,16 @@ export const zPaymentReminderWording = z.object({
   words: z.object({ lead: z.string(), closing: z.string() }).nullable(),
 });
 export type PaymentReminderWording = z.infer<typeof zPaymentReminderWording>;
+// The org's settings for its reminders and a customer's own (#2488, slice 3). Terms are whole days, 1 to 365; a pause is the last day with no reminder.
+export const zTermsDays = z.number().int().min(1).max(365);
+export const zCollectionSetting = z.object({ termsDays: zTermsDays, weeklyItem: z.boolean() });
+export type CollectionSetting = z.infer<typeof zCollectionSetting>;
+export const zCustomerCollection = z.object({
+  partyId: zId,
+  termsDays: zTermsDays.nullable(),
+  effectiveTermsDays: zTermsDays,
+  pausedUntil: z.string().nullable(),
+});
+export type CustomerCollection = z.infer<typeof zCustomerCollection>;
+// Only what is named changes: leaving a field out keeps it (lifting a pause keeps the customer's own terms).
+export const zCustomerCollectionSet = z.object({ partyId: zId, termsDays: zTermsDays.nullable().optional(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional() });

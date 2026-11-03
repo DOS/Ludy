@@ -5,7 +5,7 @@
 // at the moment of the send. The Reply-To is the org's inbound address when the deployment receives mail, so the customer's answer
 // reaches the Inbox.
 import { z } from 'zod';
-import { PAYMENT_REMINDER_TEXT_MAX } from '@crove/kernel-contract';
+import { PAYMENT_REMINDER_TEXT_MAX, zId } from '@crove/kernel-contract';
 import { formatAmount, formatDate, escapeHtml, oneLine, type RenderedMail } from './missing-invoices.ts';
 
 export const PAYMENT_REMINDER_TEMPLATE = 'finance.payment_reminder';
@@ -28,6 +28,9 @@ export const zPaymentReminderPayTo = z.object({ bank: z.string().max(200), numbe
 
 // The merge data of the mail, as stored on its row (mail_message.payload).
 export const zPaymentReminderMail = z.object({
+  // The legal entity whose invoices the mail is about: the reminder history is read per entity. A mail made before this field, or whose merge data is gone, counts for
+  // every entity.
+  legalEntityId: zId.optional(),
   lang: z.enum(['vi', 'en']),
   level: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   org: z.string().max(200),
