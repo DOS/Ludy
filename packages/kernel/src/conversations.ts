@@ -381,7 +381,7 @@ async function emailThreadId(ctx: CommandContext, connectionId: string, event: C
 }
 
 async function ingestEvent(ctx: CommandContext, connectionId: string, provider: string, windowHours: number | null, original: ConversationEvent): Promise<'stored' | 'duplicates' | 'ignored'> {
-  const event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
+  let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
     .select(['id', 'conversation_id', 'body', 'direction', 'platform_removed_at'])
@@ -413,6 +413,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
   // that was in flight is checked against the tombstone after the erasure commits, not before it.
   await customerLock(ctx, provider, event.contact.id);
+  // The thread is found again under the lock: a mail of this customer that was in flight at the same time (the first mail, as this one answers it) has
+  // committed by now, and the first lookup may have missed it.
+  if (original.kind === 'email') event = { ...original, threadId: await emailThreadId(ctx, connectionId, original) };
   // A customer erased at the org's request: nothing of theirs dated at or before the erasure comes back (a replayed body, a redelivery,
   // a removal notice). The tombstone is the identity row an erasure leaves, found by the keyed hash of the platform's user id.
   const hashed = await sql<{ h: string }>`SELECT crove_kernel.conversation_identity_hash(${provider}, ${event.contact.id}) AS h`.execute(ctx.trx);
@@ -498,7 +501,8 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .values({ org_id: ctx.orgId, provider, external_user_id: event.contact.id, display_name: event.contact.name ?? null, created_at: ctx.now, updated_at: ctx.now })
     .onConflict((oc) =>
       oc.columns(['org_id', 'provider', 'external_user_id']).doUpdateSet({
-        display_name: sql<string | null>`COALESCE(excluded.display_name, crove_kernel.conversation_identity.display_name)`,
+        // A name an unverified sender wrote does not replace the one the customer's verified mail gave: the name belongs to the address, which the sender may be forging.
+        display_name: event.kind === 'email' && event.verified !== true ? sql<string | null>`crove_kernel.conversation_identity.display_name` : sql<string | null>`COALESCE(excluded.display_name, crove_kernel.conversation_identity.display_name)`,
         updated_at: ctx.now,
       }),
     )
@@ -632,8 +636,11 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   await staleDrafts(ctx, conversation.id);
 
   const inbound = event.direction === 'in';
-  const newest = conversation.last_message_at && conversation.last_message_at.getTime() > sentAt.getTime() ? conversation.last_message_at : sentAt;
-  const lastInbound = inbound && (!conversation.last_inbound_at || conversation.last_inbound_at.getTime() < sentAt.getTime()) ? sentAt : conversation.last_inbound_at;
+  // An email's activity is dated no earlier than a day back: the sender's clock may be years off, and a thread whose last message looks that old would fall to the
+  // retention purge as it arrives. Its own Date header is kept as the message's sent_at (and for the erasure tombstone).
+  const activityAt = event.kind === 'email' ? new Date(Math.max(sentAt.getTime(), ctx.now.getTime() - 24 * 3_600_000)) : sentAt;
+  const newest = conversation.last_message_at && conversation.last_message_at.getTime() > activityAt.getTime() ? conversation.last_message_at : activityAt;
+  const lastInbound = inbound && (!conversation.last_inbound_at || conversation.last_inbound_at.getTime() < activityAt.getTime()) ? activityAt : conversation.last_inbound_at;
   // A customer's new message reopens the thread as new; the org's own message from the platform's inbox answers it.
   // A customer message the platform dated before the thread was resolved does not reopen it.
   // An email is delivered once, as it arrives, so it never predates the resolution: its Date header is the sender's clock, and a mail that arrives after a

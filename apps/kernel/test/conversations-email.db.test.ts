@@ -524,6 +524,17 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     await exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.owner });
   });
 
+  it("dates a thread by the mail's arrival when its Date header is years off, and keeps the customer name against an unverified sender", async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<old1@mau.test>', from: 'Chị Thật <that@khach.test>', date: new Date('2019-01-01T00:00:00Z').toUTCString() }));
+    const stamps = await rows<{ fresh: boolean; sent_old: boolean }>("SELECT c.last_message_at > now() - interval '2 days' AS fresh, m.sent_at < now() - interval '1 year' AS sent_old FROM crove_kernel.conversation c JOIN crove_kernel.conversation_message m ON m.conversation_id = c.id WHERE c.org_id = $1", [o.orgId]);
+    expect(stamps).toEqual([{ fresh: true, sent_old: true }]);
+    // The same address, written by someone nobody vouched for, does not rename the customer on the verified thread.
+    await deliver(o.address, raw({ to: o.address, messageId: '<old2@mau.test>', from: 'Ngân Hàng Giả <that@khach.test>', auth: 'none' }));
+    const [first] = await threads(o);
+    expect((await detail(o, o.owner, first?.id as string)).conversation.contact.displayName).toBe('Chị Thật');
+  });
+
   it('shows the reply mail row only to those who may read its thread', async () => {
     const o = await org();
     await deliver(o.address, raw({ to: o.address, messageId: '<pol1@mau.test>' }));

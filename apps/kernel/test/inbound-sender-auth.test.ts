@@ -74,13 +74,13 @@ describe('conversationEventOf', () => {
   const base = { from: 'khach@mau.test', fromName: null, subject: 'Hỏi giá', messageId: '<m1@mau.test>', inReplyTo: null, references: [], text: 'Xin chào', attachments: [], deliveredTo: null, to: [], sentAt: null, automated: false };
   const now = new Date('2026-11-03T10:00:00Z');
 
-  it('dates a mail by its Date header within a day back and a few minutes ahead, and by its arrival otherwise', () => {
+  it('dates a mail by its Date header, up to a few minutes ahead, and by its arrival otherwise', () => {
     const at = (sentAt: string | null) => {
       const made = conversationEventOf({ ...base, sentAt }, 'ab', 'in.test', now, SERVER);
       return 'event' in made ? made.event.at : null;
     };
     expect(at('2026-11-03T09:00:00.000Z')).toBe('2026-11-03T09:00:00.000Z');
-    expect(at('2019-01-01T00:00:00.000Z')).toBe('2026-11-02T10:00:00.000Z');
+    expect(at('2019-01-01T00:00:00.000Z')).toBe('2019-01-01T00:00:00.000Z');
     expect(at('2030-01-01T00:00:00.000Z')).toBe('2026-11-03T10:00:00.000Z');
     expect(at(null)).toBe('2026-11-03T10:00:00.000Z');
   });
