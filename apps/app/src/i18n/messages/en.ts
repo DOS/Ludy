@@ -2582,6 +2582,7 @@ export const en = {
       approving: 'Approving batch {done, number} of {total, number}',
       doneApproved: '{asked, plural, one {# voucher proposal} other {# voucher proposals}} created; {approved, number} approved and posted.',
       doneAsked: '{asked, plural, one {# voucher proposal} other {# voucher proposals}} created; each waits in the Inbox for someone who may approve it.',
+      aloneOnly: 'This voucher has a warning (an unusual payment amount), so it is approved on its own: open it and approve it by itself. It is still waiting in the Inbox.',
       secondApprover: "The org's approval policy needs someone else to approve (or you may not approve). The refused vouchers are not posted and wait in the Inbox.",
       refused: '{count, plural, one {# voucher is} other {# vouchers are}} not posted:',
       proposal: 'Proposal',
@@ -6602,6 +6603,8 @@ export const en = {
     anomaly_amount: {
       high: 'Warning: the amount {total} is {ratio} times this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged from 3 times).',
       low: 'Warning: the amount {total} is only {percent}% of this vendor\'s usual ({usual}, the median of its last {count} invoices; flagged below a third).',
+      highPayment: 'Warning: the payment of {total} is {ratio} times what this party is usually paid ({usual}, the median of its last {count} payments; flagged from 3 times).',
+      lowPayment: 'Warning: the payment of {total} is only {percent}% of what this party is usually paid ({usual}, the median of its last {count} payments; flagged below a third).',
     },
     anomaly_price: { jump: 'Warning: the unit price of "{item}" rose {percent}% above its usual ({usual}, the median of up to 3 earlier invoices), now {current}; flagged from 25%.' },
     accounts: {
