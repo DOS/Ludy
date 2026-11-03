@@ -5,6 +5,7 @@ import { bookingMailTemplate } from './booking-mail.ts';
 import { digestMailTemplate } from './digest-mail.ts';
 import { MISSING_INVOICE_TEMPLATE, missingInvoiceMailTemplate } from './missing-invoice-mail.ts';
 import { notificationMailTemplate } from './notification-mail.ts';
+import { PAYMENT_REMINDER_TEMPLATE, paymentReminderMailTemplate } from './payment-reminder-mail.ts';
 import { proposalReminderMailTemplate } from './proposal-reminder-mail.ts';
 import { reportMailTemplate } from './report-mail.ts';
 import { todayMailTemplate } from './today-mail.ts';
@@ -21,6 +22,8 @@ export const MAIL_TEMPLATES: MailTemplates = {
   'kernel.proposal.reminder': proposalReminderMailTemplate,
   // Finance's request to a client company for its missing purchase invoices, and the monthly reminder (#669).
   [MISSING_INVOICE_TEMPLATE]: missingInvoiceMailTemplate,
+  // Finance's reminder to a customer of its overdue invoices, sent by a person's click (#2488).
+  [PAYMENT_REMINDER_TEMPLATE]: paymentReminderMailTemplate,
   // An org over a daily abuse limit (#675).
   'kernel.usage.deferred': usageDeferredMailTemplate,
   // The daily "Hôm nay cần bạn" mail of a member who opted in, counts and links only (#2406).

@@ -445,12 +445,12 @@ export interface RenderedMail {
   replyTo?: string;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c);
 }
 
 // Names come from the portal's sheet and the org: one line, no control or format characters, bounded.
-function oneLine(value: string, max = 200): string {
+export function oneLine(value: string, max = 200): string {
   const flat = value
     .replace(/\p{Cf}+/gu, '')
     .replace(/[\p{Cc}\p{Zl}\p{Zp}]+/gu, ' ')
@@ -468,7 +468,7 @@ export function formatAmount(value: string, currency: string): string {
   return currency === 'VND' ? `${amount} đồng` : `${amount} ${currency}`;
 }
 
-function formatDate(iso: string): string {
+export function formatDate(iso: string): string {
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
 }
