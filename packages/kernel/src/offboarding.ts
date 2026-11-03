@@ -70,6 +70,9 @@ export const EXPORT_TABLES = {
   'finance.journal_entry': { from: 'crove_finance.journal_entry', omit: ['search'] },
   'finance.journal_line': { from: 'crove_finance.journal_line', omit: [] },
   'finance.vendor_account_rule': { from: 'crove_finance.vendor_account_rule', omit: [] },
+  // Learned bank-line rules (#2402): which party a statement line's words point at. The keyed hash is org-bound and of no use outside
+  // the deployment, so the export leaves it out.
+  'finance.bank_party_rule': { from: 'crove_finance.bank_party_rule', omit: ['key_hash'] },
   // Learned account rules with their provenance (#1399).
   'finance.categorization_rule': { from: 'crove_finance.categorization_rule', omit: [] },
   // The org's sub-accounts (#319): journal lines name them by code.
