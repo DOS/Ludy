@@ -35,7 +35,7 @@ type Ctx = Pick<QueryContext, 'trx' | 'orgId'>;
 // A decimal read from the database (numeric keeps its scale: '200000.0000') as the API writes it ('200000').
 const plain = (value: string): string => money(value).toFixed();
 
-async function loadSeries(ctx: Ctx): Promise<EInvoiceSeries[]> {
+export async function loadSeries(ctx: Ctx): Promise<EInvoiceSeries[]> {
   const rows = await ctx.trx
     .selectFrom('crove_finance.einvoice_series')
     .select(['id', 'legal_entity_id', 'provider', 'template_no', 'symbol', 'description', 'is_default'])
@@ -54,6 +54,39 @@ export const einvoiceSeriesList = defineQuery({
   handler: async (ctx): Promise<EInvoiceSeries[]> => loadSeries(ctx),
 });
 
+// Adds the templates and series a provider holds that the entity does not have yet; the first series an entity ever gets is its default. The caller holds the
+// entity's lock (two syncs of one entity wait for each other, so neither adds a row the other already did nor a second default).
+export async function addSeriesFrom(
+  ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor'>,
+  entity: string,
+  provider: string,
+  templates: ReadonlyArray<{ templateNo: string; symbol: string; description: string }>,
+): Promise<number> {
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.einvoice_series:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
+  // The default is the entity's, whatever provider holds it: only the first series an entity ever gets is made the default.
+  const existing = await ctx.trx
+    .selectFrom('crove_finance.einvoice_series')
+    .select(['provider', 'template_no', 'symbol', 'is_default'])
+    .where('org_id', '=', ctx.orgId)
+    .where('legal_entity_id', '=', entity)
+    .execute();
+  let hasDefault = existing.some((r) => r.is_default);
+  const known = new Set(existing.filter((r) => r.provider === provider).map((r) => `${r.template_no}/${r.symbol}`));
+  const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+  let added = 0;
+  for (const template of templates) {
+    if (known.has(`${template.templateNo}/${template.symbol}`)) continue;
+    known.add(`${template.templateNo}/${template.symbol}`);
+    await ctx.trx
+      .insertInto('crove_finance.einvoice_series')
+      .values({ org_id: ctx.orgId, legal_entity_id: entity, provider, template_no: template.templateNo, symbol: template.symbol, description: template.description, is_default: !hasDefault, created_by: userId })
+      .execute();
+    hasDefault = true;
+    added += 1;
+  }
+  return added;
+}
+
 export const einvoiceSeriesSync = defineCommand({
   name: 'finance.einvoice_series.sync',
   input: zEInvoiceSeriesSync,
@@ -63,30 +96,9 @@ export const einvoiceSeriesSync = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<EInvoiceSeriesSynced> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
-    // Two syncs of one entity wait for each other, so neither adds a row the other already did nor a second default.
-    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.einvoice_series:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
     const { provider } = createSandboxEInvoiceProvider();
     const templates = await provider.listTemplates(SANDBOX_EINVOICE_SECRET);
-    // The default is the entity's, whatever provider holds it: only the first series an entity ever gets is made the default.
-    const existing = await ctx.trx
-      .selectFrom('crove_finance.einvoice_series')
-      .select(['provider', 'template_no', 'symbol', 'is_default'])
-      .where('org_id', '=', ctx.orgId)
-      .where('legal_entity_id', '=', entity)
-      .execute();
-    let hasDefault = existing.some((r) => r.is_default);
-    const known = new Set(existing.filter((r) => r.provider === input.provider).map((r) => `${r.template_no}/${r.symbol}`));
-    const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-    let added = 0;
-    for (const template of templates) {
-      if (known.has(`${template.templateNo}/${template.symbol}`)) continue;
-      await ctx.trx
-        .insertInto('crove_finance.einvoice_series')
-        .values({ org_id: ctx.orgId, legal_entity_id: entity, provider: input.provider, template_no: template.templateNo, symbol: template.symbol, description: template.description, is_default: !hasDefault, created_by: userId })
-        .execute();
-      hasDefault = true;
-      added += 1;
-    }
+    const added = await addSeriesFrom(ctx, entity, input.provider, templates);
     ctx.audit({ legalEntityId: entity, provider: input.provider, added });
     return { added, series: (await loadSeries(ctx)).filter((s) => s.legalEntityId === entity) };
   },

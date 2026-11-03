@@ -80,6 +80,7 @@ export const socialToday = defineQuery({
         // Social and messaging channels only: an ad account's or a bank feed's connection is another module's.
         .where('provider', 'not like', 'bank\\_%')
         .where('provider', 'not like', '%\\_ads')
+        .where('provider', 'not like', 'einvoice\\_%')
         .executeTakeFirstOrThrow();
       const n = Number(channels.n);
       if (n > 0) items.push({ kind: 'flag', app: 'social', id: 'channels', title: { key: 'social.channels', params: { count: n } }, count: n, severity: 'warn', href: '/social/channels' });

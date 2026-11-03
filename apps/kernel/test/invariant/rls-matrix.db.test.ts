@@ -60,7 +60,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_alias',
   'crove_finance.stock_item',
   'crove_finance.stock_move',
-  'crove_finance.einvoice_connection',
   'crove_notes.link',
   'crove_notes.note',
 ]);
