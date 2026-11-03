@@ -14,6 +14,7 @@ import { StepUpPrompt, TwoFactorCard } from '../components/two-factor.tsx';
 import { ChartOfAccountsCard } from './accounts.tsx';
 import { MisaGoodsCodesCard } from './misa-goods-codes.tsx';
 import { AccountRulesCard } from './account-rules.tsx';
+import { BankPartyRulesCard } from './bank-party-rules.tsx';
 import { ApprovalPresetCard, MEMBERS_CARD_ID } from './approval-preset.tsx';
 import { BankAccountNumbersCard } from './bank-account-numbers.tsx';
 import { BankFeedsCard } from './bank-feeds.tsx';
@@ -1172,6 +1173,7 @@ export function SettingsPage() {
         {getConfig().modules.includes('finance') && <MisaGoodsCodesCard key={`misa-goods:${org.data?.slug}`} canManage={canManage} />}
         {/* The account rules learned from approvals, and keyword rules (#1399). */}
         {getConfig().modules.includes('finance') && org.data && <AccountRulesCard key={`account-rules:${org.data.slug}`} canManage={canManage} />}
+        {getConfig().modules.includes('finance') && org.data && <BankPartyRulesCard key={`bank-party-rules:${org.data.slug}`} canManage={canManage} />}
         <TwoFactorCard />
         {me.data && <MySessions userId={me.data.userId} />}
         {isOwner && org.data && <Offboarding name={org.data.name} slug={org.data.slug} />}

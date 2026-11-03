@@ -606,6 +606,19 @@ export const en = {
     reset: 'Use the default',
     resetOf: 'Clear the codes set for account {code}',
   },
+  // Learned bank-line rules in Settings (#2402).
+  bankRules: {
+    title: 'Learned bank line rules',
+    intro: 'When you choose the party of a bank line voucher yourself and approve it, {brand} remembers how the transfer text points at that party and suggests it next time. Only a hash of the main words is kept, never the text. A rule is only a suggestion: a person still makes and approves the voucher.',
+    empty: 'No rule yet. One appears when you choose the party of a bank line voucher yourself and approve it.',
+    forParty: 'A transfer text like the earlier one matches {party}',
+    learnedFrom: 'Confirmed by {name} on {date}, when approving voucher {code}',
+    formerMember: 'a former member',
+    remove: 'Remove',
+    removeOf: 'Remove the rule matching {party}',
+    confirmRemove: 'Remove this rule? New bank lines will no longer be suggested by it.',
+    confirm: 'Remove the rule',
+  },
   accountRules: {
     title: 'Learned account rules',
     intro:
@@ -2655,6 +2668,7 @@ export const en = {
         taxCodeInvoice: 'Suggested match: the tax code is in the transfer text, and the amount equals invoice {number}',
         taxCode: 'Suggested match: the tax code is in the transfer text',
         invoice: 'Suggested match: invoice {number} and its amount are in the transfer text',
+        learned: 'Suggested match: by the rule learned from an earlier approval',
         name: "Suggested match: the party's name is in the transfer text",
         balance: "Suggested match: the amount equals the party's open balance",
         none: 'How it matched is not known',
@@ -2937,6 +2951,7 @@ export const en = {
     reasons: {
       tax_code: 'its tax code is in the transfer description',
       invoice: 'invoice {number} of this amount is in the transfer description',
+      learned: 'by a rule learned from an earlier approval',
       name: 'its name is in the transfer description',
       balance: 'its open balance is exactly this amount',
     },
@@ -7488,6 +7503,12 @@ export const en = {
         record_pull: 'Record a pull of a bank feed account',
         map: 'Map a bank feed account',
         unmap: 'Unmap a bank feed account',
+      },
+      bank_party_rule: {
+        remove: 'Remove a bank line rule',
+      },
+      bank_party_rules: {
+        list: 'List bank line rules',
       },
       categorization_rule: {
         create: 'Add an account rule',

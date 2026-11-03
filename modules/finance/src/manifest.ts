@@ -15,6 +15,7 @@ export const financeManifest = defineModule({
       bank_feed_listed_account: columns(['org_id', 'id', 'channel_connection_id', 'listed_at'], { external_account_id: 'payment', display_name: 'pii' }),
       bank_feed_notice_pending: columns(['seq', 'provider', 'received_at'], { external_account_id: 'payment' }),
       bank_line: columns(['org_id', 'id', 'import_id', 'position', 'value_date', 'amount', 'running_balance', 'bank_ref', 'dedupe_key', 'ambiguous', 'created_by', 'created_at', 'legal_entity_id'], { bank_account: 'payment', description: 'pii' }),
+      bank_party_rule: columns(['org_id', 'id', 'legal_entity_id', 'kind', 'party_id', 'confirmed_by', 'confirmed_at', 'source_voucher_id', 'created_at'], { key_hash: 'pii' }),
       cash_voucher: columns(['org_id', 'id', 'voucher_type', 'number', 'voucher_date', 'cash_account', 'party_id', 'amount', 'proposal_id', 'created_by', 'created_at', 'bank_line_id', 'legal_entity_id', 'number_period', 'number_allocation_id'], { person_name: 'pii', description: 'pii' }),
       categorization_rule: columns(['org_id', 'id', 'vendor_party_id', 'match_kind', 'match_text', 'label', 'debit_account', 'confirmed_by', 'confirmed_at', 'source_document_id', 'created_at', 'legal_entity_id']),
       chart: columns(['regime', 'version', 'name']),
@@ -54,6 +55,7 @@ export const financeManifest = defineModule({
   // Its entities (#1656), each with its table: every type its commands name as their audit target, the records the
   // kernel numbers, and the records other code names by type; apps/kernel/test/manifest.db.test.ts checks them.
   entities: [
+    { type: 'finance.bank_party_rule', table: 'bank_party_rule', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.cash_voucher', table: 'cash_voucher', legalEntityScoped: true, numbering: { docType: 'finance.cash_voucher.<voucher_type>' }, audit: 'append_only' },
     { type: 'finance.categorization_rule', table: 'categorization_rule', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.fixed_asset', table: 'fixed_asset', legalEntityScoped: true, audit: 'command' },
