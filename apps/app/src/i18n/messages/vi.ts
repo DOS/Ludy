@@ -658,6 +658,17 @@ export const vi = {
     suppressed: 'Không gửi được: địa chỉ email của khách đang bị chặn.',
     sendAnyway: 'Gửi lại, tôi xác nhận',
     reopen: 'Mở lại thư',
+    hint: 'Gợi ý cho {finance} về giọng văn (không bắt buộc)',
+    hintExample: 'Ví dụ: khách quen, nhắc nhẹ nhàng',
+    wordingButton: 'Nhờ {finance} soạn lời',
+    wordingUndo: 'Khôi phục lời trước đó',
+    wording: {
+      used: '{finance} đã soạn phần mở đầu và kết thư. Bảng hóa đơn, số tiền và tài khoản vẫn lấy từ sổ. Bạn xem và sửa trước khi gửi.',
+      off: 'Máy chủ này chưa bật AI, nên dùng thư mẫu bên dưới.',
+      busy: '{finance} đang soạn nhiều thư cùng lúc. Hãy thử lại sau ít phút, hoặc dùng thư mẫu bên dưới.',
+      budget: '{finance} đã hết ngân sách AI của tháng này. Thư mẫu bên dưới vẫn dùng được.',
+      failed: '{finance} chưa soạn được lời phù hợp. Thư mẫu bên dưới vẫn dùng được.',
+    },
   },
   bankRules: {
     title: 'Quy tắc khớp dòng sao kê đã học',
@@ -1742,10 +1753,17 @@ export const vi = {
       // With the one Meta app that serves reading and writing, the person's reading token holds the same permission (it belongs to the app and the person).
       disableClosesReads: 'Các kết nối đọc số liệu từ Meta cũng bị đóng, vì với một ứng dụng Meta thì mã truy cập của chúng cũng sửa được chiến dịch, và {brand} xóa mã đó. Hãy kết nối lại để chỉ đọc; người đã cấp quyền chạy quảng cáo cần gỡ ứng dụng trong Facebook trước.',
       readsClosedToast: 'Đã đóng các kết nối đọc số liệu từ Meta ({count}), vì mã truy cập của chúng cũng sửa được chiến dịch. Hãy kết nối lại để chỉ đọc; người đã cấp quyền chạy quảng cáo cần gỡ ứng dụng trong Facebook trước.',
-      disableClosesConnections: 'Mọi kết nối có thể chạy quảng cáo cũng bị đóng, và {brand} xóa mã truy cập của chúng ngay.',
-      // Said wherever such a connection is closed: dropping the token from here does not remove the permission at the platform.
+      disableClosesConnections: 'Mọi kết nối có thể chạy quảng cáo cũng bị đóng, và {brand} gỡ quyền của ứng dụng ở nền tảng; mã truy cập chỉ được giữ dạng mã hóa tối đa 7 ngày để làm việc đó.',
+      // Said wherever such a connection is closed: the permission at the platform is removed by {brand} from a sealed copy of the token, kept 7 days at most.
       platformNote:
-        'Bạn cũng cần gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp, và muốn kết nối lại chỉ để đọc thì cũng phải gỡ trước.',
+        '{brand} tự gỡ quyền của ứng dụng ở Meta, trong ít phút sau khi đóng kết nối nếu Meta phản hồi ngay, và chậm hơn nếu Meta chậm, gián đoạn hoặc giới hạn yêu cầu; chỉ giữ bản mã hóa của mã truy cập tối đa 7 ngày để làm việc đó. Nếu không gỡ được, màn hình này sẽ báo và bạn gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp, và muốn kết nối lại chỉ để đọc thì cũng phải gỡ trước.',
+      // The removal of the permission at the platform, as the screen shows it while it is tried and after it gave up (W2-1, #2296).
+      revokeTitle: 'Gỡ quyền của ứng dụng ở nền tảng',
+      revokePending: 'Đang gỡ quyền của ứng dụng {brand} ở Meta cho {account}. Đã thử {attempts} lần, lần tới lúc {when}. Bản mã hóa của mã truy cập được giữ tối đa 7 ngày chỉ để việc này, rồi bị xóa.',
+      revokeGaveUp: 'Chưa gỡ được quyền của ứng dụng {brand} ở Meta cho {account}, và {brand} đã xóa mã truy cập. Hãy gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp.',
+      revokePendingSandbox: 'Đang gỡ quyền của kết nối thử nghiệm cho {account}. Đã thử {attempts} lần, lần tới lúc {when}. Bản mã hóa của mã truy cập thử nghiệm được giữ tối đa 7 ngày chỉ để việc này, rồi bị xóa.',
+      revokeGaveUpSandbox: 'Chưa gỡ được quyền của kết nối thử nghiệm cho {account}, và {brand} đã xóa mã truy cập. Đây là kết nối thử nghiệm: không còn gì ở nền tảng nào để gỡ.',
+      revokeAccountFallback: 'một tài khoản quảng cáo',
       caps: 'Hạn mức chi tiêu',
       capsHint: 'Chưa có hạn mức theo ngày và theo tháng thì chưa chạy được quảng cáo nào. Mỗi hạn mức có loại tiền riêng. Đặt hoặc tăng hạn mức là một đề xuất cần người duyệt; chủ sở hữu giảm hạn mức thì có hiệu lực ngay.',
       capOrg: 'Cả tổ chức',
@@ -4032,6 +4050,7 @@ export const vi = {
       conversation_intent: 'Đọc lời khách để gợi ý ý định',
       conversation_contact_rank: 'Xếp các liên hệ có thể là khách này',
       crm_company_rank: 'Xếp các công ty mà một người liên hệ có thể làm việc',
+      finance_payment_reminder: 'Soạn lời mở đầu và kết thư nhắc thu nợ',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
@@ -7628,6 +7647,9 @@ export const vi = {
         target: 'Xem tài khoản quảng cáo cần đồng bộ',
       },
       today: 'Xem việc quảng cáo cần bạn hôm nay',
+      token_revoke: {
+        record: 'Ghi kết quả một lần gỡ quyền của ứng dụng ở nền tảng',
+      },
       write: {
         disable: 'Tắt chạy quảng cáo cho tổ chức',
         enable: 'Bật chạy quảng cáo cho tổ chức (đề nghị đã duyệt)',
@@ -7997,6 +8019,7 @@ export const vi = {
       },
       channel: {
         connect: 'Kết nối kênh',
+        close_orphan: 'Đóng kết nối chạy quảng cáo của người đã rời tổ chức',
         credential: 'Đọc thông tin đăng nhập của kênh',
         disconnect: 'Ngắt kết nối kênh',
         list: 'Xem danh sách kênh đã kết nối',

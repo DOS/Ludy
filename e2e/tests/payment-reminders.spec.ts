@@ -105,6 +105,10 @@ test('lists an overdue customer, drafts the reminder, sends it on a click with t
     const draft = page.getByTestId('reminder-draft');
     await expect(draft.getByLabel('Tiêu đề')).toHaveValue(SUBJECT);
     await expect(draft.getByText('Số 1', { exact: false }).first()).toBeVisible();
+    // The deployment has no model: the coworker's wording says so and the template words stay.
+    await draft.getByTestId('reminder-wording').click();
+    await expect(draft.getByTestId('reminder-wording-state')).toContainText('chưa bật AI');
+    await expect(draft.getByLabel('Mở đầu')).toHaveValue(/Theo ghi nhận của chúng tôi/);
     // The words are editable; what they say about money is only words.
     await draft.getByLabel('Mở đầu').fill('Kính nhờ Quý khách kiểm tra giúp các hóa đơn dưới đây. Con số 1 đồng trong câu này chỉ là lời, không phải số liệu.');
     await page.getByTestId('reminder-send').click();

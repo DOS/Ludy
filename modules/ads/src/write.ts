@@ -41,6 +41,7 @@ import {
   type AdsWriteState,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { tokenRevokeViews } from './token-revoke-commands.ts';
 import { closeSpendCapableReadConnections, closeWriteConnections } from './write-connection.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -351,9 +352,9 @@ export const adsWriteDisable = defineCommand({
   // app of its own, where no reading token can hold the permission. Left out, the close fails safe.
   input: z.strictObject({ sharedApp: z.boolean().optional() }),
   // Closes the path: every account's flag off, launches blocked, and every write connection of the org closed with its sealed token
-  // dropped (W0b). The platform's own copy of a token is revoked by the write queue of W2, which cannot merge without it; until
-  // then the screen tells the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an
-  // external effect.
+  // dropped (W0b). The permission at the platform is then removed by the revoke sweep from a sealed copy the database made in this
+  // transaction when the credential was dropped (W2-1, crove_ads.token_hold, seven days at most); where it cannot, the screen tells
+  // the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an external effect.
   risk: 'R2',
   sideEffect: 'external',
   access: OWNERS,
@@ -533,6 +534,7 @@ export const adsWriteState = defineQuery({
       updatedAt: setting ? new Date(setting.updated_at).toISOString() : null,
       caps,
       pending,
+      tokenRevokes: await tokenRevokeViews(ctx),
     };
   },
 });

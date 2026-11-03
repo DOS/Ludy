@@ -79,6 +79,9 @@ export const QUEUES = {
   conversationsDraft: 'kernel-conversation-draft',
   // Created by the campaign request migration (20261121180000): the AI coworker's draft of an ad campaign, ids only in its data (#2295, W1b).
   adsCampaignDraft: 'ads-campaign-draft',
+  // Created by the token revoke migration (20261122050000): a sweep on a schedule with no data at all, that removes at the platform the permissions of a
+  // closed ads connection's token from its sealed copy, the copy being opened by a worker-only definer (#2296, W2-1).
+  adsRevoke: 'ads-revoke',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -167,6 +170,8 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.conversationsDraft]: ['provider:ai'],
   // The model reads a member's brief and writes a campaign's creative part (packages/agent's AdsCampaignWriter): the AI endpoint, nothing else.
   [QUEUES.adsCampaignDraft]: ['provider:ai'],
+  // The one revoking call of the ad platform's writer (DELETE /me/permissions), through the narrowed `channels.adRevokers`: nothing else is reachable.
+  [QUEUES.adsRevoke]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

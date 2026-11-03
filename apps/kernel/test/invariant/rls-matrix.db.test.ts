@@ -39,7 +39,7 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
-  // The sealed copy of a closed ads connection's token (W2-1, #2296; pending): read only by the revoke worker through a definer.
+  // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
   'crove_ads.ad_token_seal',
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
@@ -56,8 +56,6 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_ads.ad_token_revoke',
-  'crove_ads.ad_token_seal',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -430,8 +428,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // The revoke at the platform of a closed ads connection's token (W2-1, #2296; pending): its state, count and next try, never the token (that is in
-  // crove_ads.ad_token_seal, definer-only). Written by the system context and definers alone: no tenant role inserts, updates or deletes a row.
+  // The revoke at the platform of a closed ads connection's token (W2-1, #2296): its state, count and next try, never the token (that is in
+  // crove_ads.ad_token_seal, definer-only). Written by definers alone (the system's command calls one): no tenant role inserts, updates or deletes a row.
   'crove_ads.ad_token_revoke': {
     systemWritesOnly: 'only the system context and the revoke definers write the state of a revoke (#2296); a member context is refused',
     make: (o) => {
@@ -442,7 +440,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // The sealed copy of that token (W2-1, #2296; pending): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
+  // The sealed copy of that token (W2-1, #2296): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
   'crove_ads.ad_token_seal': {
     make: (o) => {
       const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };

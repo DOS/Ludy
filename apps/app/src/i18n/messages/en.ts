@@ -660,6 +660,17 @@ export const en = {
     suppressed: "Not sent: the customer's email address is blocked.",
     sendAnyway: 'Send again, I confirm',
     reopen: 'Open the message again',
+    hint: 'Hint for {finance} about the tone (optional)',
+    hintExample: 'For example: a long-time customer, keep it gentle',
+    wordingButton: 'Ask {finance} to word it',
+    wordingUndo: 'Restore the previous words',
+    wording: {
+      used: '{finance} worded the opening and the closing. The invoice table, the amounts and the account still come from the books. Read and edit before sending.',
+      off: 'This server has no AI turned on, so the template below is used.',
+      busy: '{finance} is wording many messages at once. Try again in a few minutes, or use the template below.',
+      budget: '{finance} has used this month\'s AI budget. The template below still works.',
+      failed: '{finance} could not word it well enough. The template below still works.',
+    },
   },
   bankRules: {
     title: 'Learned bank line rules',
@@ -1741,13 +1752,20 @@ export const en = {
       accountConnectedToast: 'Connected this account to run ads.',
       accountCanRun: 'Can run ads',
       accountStopped: 'The connection to run ads on this account has stopped.',
-      disableClosesConnections: 'Each connection that can run ads is closed, and {brand} drops its token at once.',
+      disableClosesConnections: 'Each connection that can run ads is closed, and {brand} removes the app’s permission at the platform; the token is kept only as an encrypted copy, for seven days at most, for that alone.',
       // With the one Meta app that serves reading and writing, the person's reading token holds the same permission (it belongs to the app and the person).
       disableClosesReads: 'The connections that read figures from Meta are closed too, because with one Meta app their token can also change campaigns, and {brand} drops it. Connect them again for reading; whoever granted the permission to run ads removes the app in Facebook first.',
       readsClosedToast: 'Closed the Meta connections that read figures ({count}), because their token could also change campaigns. Connect them again for reading; whoever granted the permission to run ads removes the app in Facebook first.',
-      // Said wherever such a connection is closed: dropping the token from here does not remove the permission at the platform.
+      // Said wherever such a connection is closed: the permission at the platform is removed by {brand} from a sealed copy of the token, kept 7 days at most.
       platformNote:
-        'Also remove {brand}’s app in your Facebook settings (Settings, Business integrations); until then Meta still honours the permission, and a read-only reconnect works only after you have.',
+        '{brand} removes the app’s permission at Meta by itself, within minutes of the close when Meta answers at once and later when Meta is slow, unavailable or limiting requests, keeping an encrypted copy of the token for seven days at most for that alone. If it cannot, this screen says so and you remove {brand}’s app in your Facebook settings (Settings, Business integrations); until it is removed Meta still honours the permission, and a read-only reconnect works only after you have.',
+      // The removal of the permission at the platform, as the screen shows it while it is tried and after it gave up (W2-1, #2296).
+      revokeTitle: 'Removing the app’s permission at the platform',
+      revokePending: 'Removing {brand}’s app permission at Meta for {account}. Tried {attempts} time(s), next try at {when}. An encrypted copy of the token is kept for seven days at most for this alone, then deleted.',
+      revokeGaveUp: 'Could not remove {brand}’s app permission at Meta for {account}, and {brand} has deleted the token. Remove {brand}’s app in your Facebook settings (Settings, Business integrations); until you do, Meta still honours the permission.',
+      revokePendingSandbox: 'Removing the practice connection’s permission for {account}. Tried {attempts} time(s), next try at {when}. An encrypted copy of the practice token is kept for seven days at most for this alone, then deleted.',
+      revokeGaveUpSandbox: 'Could not remove the practice connection’s permission for {account}, and {brand} has deleted the token. It is a practice connection: nothing is left at any platform to remove.',
+      revokeAccountFallback: 'an ad account',
       caps: 'Spend caps',
       capsHint: 'With no daily and no monthly cap set, no ad can run. Each cap has its own currency. Setting or raising a cap is a proposal that needs a person to approve it; an owner can lower one at once.',
       capOrg: 'The whole org',
@@ -4035,6 +4053,7 @@ export const en = {
       conversation_intent: 'Reading customers’ words to suggest an intent',
       conversation_contact_rank: 'Ranking the contacts this customer may be',
       crm_company_rank: 'Ranking the companies a contact may work at',
+      finance_payment_reminder: 'Wording the opening and closing of a payment reminder',
       kernel_unattributed: 'Not attributed to a feature (before the meter)',
     },
   },
@@ -7631,6 +7650,9 @@ export const en = {
         target: 'Read the ad account a sync reads',
       },
       today: 'Read what needs you in ads today',
+      token_revoke: {
+        record: 'Record the result of one removal of the app’s permissions at the platform',
+      },
       write: {
         disable: 'Turn off running ads for the org',
         enable: 'Turn on running ads for the org (an approved request)',
@@ -7999,6 +8021,7 @@ export const en = {
         slots: 'Read free slots',
       },
       channel: {
+        close_orphan: 'Close the connection that runs ads of a person who left the org',
         connect: 'Connect a channel',
         credential: "Read a channel's credential",
         disconnect: 'Disconnect a channel',

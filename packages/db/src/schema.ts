@@ -870,6 +870,24 @@ export type AdsAdCampaignRequestTable = Refine<
   }
 >;
 
+// The revoke at the platform of a closed ads connection's token (#2296, W2-1): which token it was, where the obligation stands, how it ended or why it gave
+// up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
+export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
+export const AD_REVOKE_STATES = ['pending', 'done', 'gave_up'] as const;
+export const AD_REVOKE_HOWS = ['revoked', 'already_invalid', 'sandbox', 'shared_grant', 'reconnected'] as const;
+export const AD_REVOKE_GIVE_UPS = ['attempts', 'age', 'unrevocable'] as const;
+export const AD_REVOKE_ERROR_KINDS = ['rate_limited', 'transient', 'permission', 'bad_request', 'unknown'] as const;
+export type AdsAdTokenRevokeTable = Refine<
+  G.AdsAdTokenRevokeTable,
+  {
+    kind: (typeof AD_TOKEN_KINDS)[number];
+    state: Generated<(typeof AD_REVOKE_STATES)[number]>;
+    how_done: (typeof AD_REVOKE_HOWS)[number] | null;
+    give_up: (typeof AD_REVOKE_GIVE_UPS)[number] | null;
+    last_error_kind: (typeof AD_REVOKE_ERROR_KINDS)[number] | null;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
@@ -877,6 +895,7 @@ type Refined = Tables<{
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
+  'crove_ads.ad_token_revoke': AdsAdTokenRevokeTable;
   'crove_crm.booking': CrmBookingTable;
   'crove_crm.deal': CrmDealTable;
   'crove_crm.deal_next_step': CrmDealNextStepTable;

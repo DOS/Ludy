@@ -8,7 +8,7 @@
 import { randomBytes } from 'node:crypto';
 import type { ConnectedAccount } from '@crove/channel';
 import { AdPlatformError, SANDBOX_CURRENCIES, type SandboxCurrency } from './index.ts';
-import type { AdWriter, AdWriterVerification } from './writer.ts';
+import type { AdWriter, AdWriterRevocation, AdWriterVerification } from './writer.ts';
 
 export const SANDBOX_WRITE_PROVIDER = 'sandboxwrite_ads' as const;
 // The permissions this connection holds, as the real one's do (the read scope and the one that can change campaigns).
@@ -75,5 +75,12 @@ export const sandboxAdWriter = {
     // A token that does not reach this account is a missing permission, as the real platform says it.
     if (accountId !== account.externalAccountId) throw new AdPlatformError('permission', 'ACCOUNT_NOT_REACHED');
     return { canRunAds: true, scopes: [...SANDBOX_WRITE_SCOPES] };
+  },
+  // The sandbox has no platform behind it, so there is no copy of the permission to remove: the secret must still be this sandbox's (a garbled
+  // one is refused as it is everywhere), and the answer says there was nothing at a platform. The revoke path of the worker runs the same
+  // steps for the sandbox as for Meta, so the offline stack exercises it.
+  async revokeToken(secret: string): Promise<AdWriterRevocation> {
+    parseSecret(secret);
+    return { how: 'sandbox' };
   },
 } satisfies AdWriter;

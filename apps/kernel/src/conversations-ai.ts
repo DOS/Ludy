@@ -16,7 +16,8 @@ import { CONVERSATION_CONTACT_MATCHES_MAX } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 // The part of the reader the API uses; tests give a fake.
-export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'>;
+// reminderWords (the finance coworker's wording of a payment reminder, #2488) rides on the same reader and is optional, so a reader that has none leaves that screen on its template words.
+export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords'>>;
 
 // An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
 // skipped is asked again soon.

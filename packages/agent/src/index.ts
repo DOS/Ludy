@@ -12,6 +12,7 @@ export * from './conversation.ts';
 export * from './errors.ts';
 export * from './eval.ts';
 export * from './inbox.ts';
+export * from './reminder.ts';
 export * from './meter.ts';
 export * from './proofread.ts';
 export * from './scheduling.ts';

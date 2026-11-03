@@ -67,6 +67,8 @@ export const zPaymentReminderDraft = z.object({
   name: z.string(),
   email: z.string().nullable(),
   currency: z.string(),
+  // The legal entity the invoices are in: the sender the mail speaks for.
+  org: z.string(),
   level: zNoticeLevel,
   lang: zReminderLang,
   invoices: z.array(zReminderInvoiceView),
@@ -102,3 +104,14 @@ export type PaymentReminderSend = z.infer<typeof zPaymentReminderSend>;
 
 export const zPaymentReminderSent = z.object({ messageId: zId, status: z.enum(['queued', 'suppressed']), level: zNoticeLevel });
 export type PaymentReminderSent = z.infer<typeof zPaymentReminderSent>;
+
+// The hint a person may type to steer the tone of the coworker's wording (one line).
+export const PAYMENT_REMINDER_HINT_MAX = 200;
+export const zPaymentReminderWordingAsk = z.object({ partyId: zId, legalEntityId: zId.optional(), hint: z.string().trim().max(PAYMENT_REMINDER_HINT_MAX).optional() });
+// ai: used (words came back), off (the deployment has no model), busy (too many asks at once), budget (the org's AI budget of the month is spent), failed
+// (the call failed or its text was refused). Without words the screen keeps the fixed template words.
+export const zPaymentReminderWording = z.object({
+  ai: z.enum(['used', 'off', 'busy', 'budget', 'failed']),
+  words: z.object({ lead: z.string(), closing: z.string() }).nullable(),
+});
+export type PaymentReminderWording = z.infer<typeof zPaymentReminderWording>;
