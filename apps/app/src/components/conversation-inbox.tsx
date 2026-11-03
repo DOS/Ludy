@@ -37,6 +37,16 @@ export interface PostRef {
 const codeOf = (error: unknown): string | null => ((error as { code?: unknown } | null)?.code as string | undefined) ?? null;
 
 // The codes a failed or unclear send is worded for; any other is shown as it is.
+// The mark of an email whose sender the receiving server did not vouch for (#2439): the name and address in From may be anyone's.
+function UnverifiedMark() {
+  const t = useTranslations('conversations');
+  return (
+    <span className="shrink-0 rounded border border-border px-1 text-[10px] leading-4 text-muted-foreground" data-testid="unverified-sender" title={t('unverifiedHint')}>
+      {t('unverified')}
+    </span>
+  );
+}
+
 const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
@@ -137,6 +147,13 @@ export function ConversationListItem({ conversation: c, open, onOpen, suggested 
             {c.lastMessageAt ? f.dateTime(c.lastMessageAt) : ''}
           </span>
         </span>
+        {c.kind === 'email' && (
+          // The sender chose the name shown above; the address is where the answer goes, so it always stands beside it.
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-item-address">
+            <span className="truncate">{c.contact.address}</span>
+            {c.senderUnverified && <UnverifiedMark />}
+          </span>
+        )}
         {c.kind === 'email' && c.subject && <span className={cn('truncate', c.unread ? 'font-medium text-foreground' : 'text-foreground')}>{c.subject}</span>}
         <span className="truncate text-muted-foreground">{c.preview || t('noText')}</span>
         <span className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
@@ -205,6 +222,12 @@ export function ConversationThread({ conversationId, onGone }: { conversationId:
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h2 className="truncate text-base font-semibold text-foreground">{contactName(c.contact)}</h2>
+          {c.kind === 'email' && (
+            <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground" data-testid="conversation-address">
+              <span className="truncate">{c.contact.address}</span>
+              {c.senderUnverified && <UnverifiedMark />}
+            </p>
+          )}
           {c.kind === 'email' && c.subject && (
             <p className="truncate text-sm text-foreground" data-testid="conversation-subject">
               {c.subject}

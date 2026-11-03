@@ -13,6 +13,7 @@ const WHAT: Record<string, string> = {
   attachment_bytes: 'dung lượng tệp đính kèm',
   extraction_pages: 'số trang đọc chứng từ',
   ai_cost: 'chi phí AI',
+  conversation_emails: 'số email khách gửi vào Hộp thư',
 };
 
 // The time the items are tried again, in Vietnam time, as "14:05 ngày 21/10/2026".

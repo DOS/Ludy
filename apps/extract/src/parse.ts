@@ -54,6 +54,14 @@ function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): bo
   return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
 }
 
+// The Authentication-Results headers, topmost first (a receiving server adds its own on top), unfolded and cut; at most maxAuthResults.
+function authResultsOf(headers: ReadonlyArray<{ key: string; value: string }>): string[] {
+  return headers
+    .filter((h) => h.key.toLowerCase() === 'authentication-results')
+    .slice(0, EXTRACT_LIMITS.maxAuthResults)
+    .map((h) => h.value.replace(/\s+/g, ' ').trim().slice(0, EXTRACT_LIMITS.maxAuthResultChars));
+}
+
 function sentAtOf(date: string | undefined): string | null {
   if (!date) return null;
   const time = Date.parse(date);
@@ -115,6 +123,7 @@ async function mime(bytes: Uint8Array): Promise<ExtractSuccess> {
       inReplyTo: cap(messageIds(email.inReplyTo)[0] ?? null),
       references: messageIds(email.references),
       automated: isAutomated(email.headers),
+      authResults: authResultsOf(email.headers),
     },
   };
 }

@@ -61,12 +61,12 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
 // Customer email (#2439, plan section 6.7): a conversation channel with no platform behind it, so no reply window and nothing to hide; a
 // reply goes out through the kernel mail pipeline, not an adapter. The connection is made when the first mail arrives.
 export const EMAIL_PROVIDER = 'email';
-// The tag of the org's conversation address: `<token>+hopthu@<inbound domain>`. The org is found from the token like the document address, and
-// the tag sends the mail to the Inbox instead of the invoice reader.
-export const EMAIL_ADDRESS_TAG = 'hopthu';
 // A customer's reply names earlier Message-IDs; at most this many are kept and looked up.
 export const EMAIL_REFS_MAX = 50;
 export const EMAIL_SUBJECT_MAX = 300;
+// The org's conversation address (#2439): its own token, apart from the document address, issued once and rotated by the owner.
+export const zConversationAddress = z.strictObject({ conversationAddress: z.string().nullable() });
+export type ConversationAddressView = z.infer<typeof zConversationAddress>;
 export const conversationRules = (provider: string): ConversationProviderRules | null =>
   Object.hasOwn(CONVERSATION_PROVIDER_RULES, provider) ? (CONVERSATION_PROVIDER_RULES[provider] ?? null) : null;
 
@@ -106,6 +106,9 @@ export const zConversationEvent = z.strictObject({
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.
   subject: z.string().trim().min(1).max(EMAIL_SUBJECT_MAX).refine(noNul, 'NUL character').optional(),
   refs: z.array(zThreadId).max(EMAIL_REFS_MAX).optional(),
+  // Email only: the mail server that received it vouched for the sender's domain (SPF, DKIM or DMARC pass, read from its Authentication-Results). A mail
+  // that is not verified does not join a thread by its References and brings no contact link with it.
+  verified: z.boolean().optional(),
 });
 export type ConversationEvent = z.infer<typeof zConversationEvent>;
 
@@ -130,6 +133,8 @@ export const zConversationContact = z.strictObject({
   idTail: z.string(),
   partyId: zId.nullable(),
   partyName: z.string().nullable(),
+  // An email thread's sender address (#2439), shown beside the name, which the sender chose: null for every other kind.
+  address: z.string().nullable().optional(),
 });
 export type ConversationContact = z.infer<typeof zConversationContact>;
 
@@ -153,6 +158,8 @@ export const zConversationSummary = z.strictObject({
   intent: zConversationIntent.nullable(),
   // An email thread's subject line (#2439): the sender's own words, shown in the thread header; null for every other kind.
   subject: z.string().nullable().optional(),
+  // An email thread that was opened by a mail whose sender the receiving server did not vouch for (#2439): shown with a mark.
+  senderUnverified: z.boolean().optional(),
 });
 export type ConversationSummary = z.infer<typeof zConversationSummary>;
 

@@ -103,6 +103,16 @@ describe('crove-extract HTTP service', () => {
     expect(Buffer.from(result.email.attachments[0]?.content ?? '', 'base64')).toEqual(FIXTURE);
   });
 
+  // #2439: the receiving server's verdict on the sender is copied out, topmost first and cut; the sandbox decides nothing about it.
+  it('copies the Authentication-Results headers of a mail, in order, unfolded and at most five', async () => {
+    const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a1@mau.test>'];
+    for (let i = 0; i < 7; i++) lines.push(`Authentication-Results: mx${i}.in.test;`, `  dmarc=pass header.from=mau.test${i}`);
+    lines.push('MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao');
+    const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    expect(result.email.authResults).toEqual([0, 1, 2, 3, 4].map((i) => `mx${i}.in.test; dmarc=pass header.from=mau.test${i}`));
+  });
+
   // #779: a forwarded mail's text, for an AI draft of a Social post.
   describe("a mail's text", () => {
     const mail = (contentType: string, body: string): Uint8Array<ArrayBuffer> =>

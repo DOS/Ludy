@@ -347,7 +347,7 @@ export const MAIL_EVENT_KINDS = ['delivered', 'deferred', 'bounce_hard', 'bounce
 export type MailEventTable = Refine<G.KernelMailEventTable, { kind: (typeof MAIL_EVENT_KINDS)[number] }>;
 
 // Per-org abuse limits (#675): what an org used, and the items kept for its next day's budget.
-export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost'] as const;
+export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails'] as const;
 export type UsageMetric = (typeof USAGE_METRICS)[number];
 // What a deferral may wait for: a limit above, or the AI budget of the month (#2382).
 export const USAGE_DEFERRAL_METRICS = [...USAGE_METRICS, 'ai_budget'] as const;

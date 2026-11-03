@@ -44,6 +44,8 @@ export interface MailTemplateInput {
   // The org's inbound address when this deployment receives mail (#669), else null. A template whose replies should
   // reach the org's Inbox returns it as replyTo.
   inboundAddress: string | null;
+  // The org's conversation address (#2439), when this deployment receives mail and the org has one: the Reply-To of an answer to a customer.
+  conversationAddress?: string | null;
   // The product name users see (BRAND_NAME, #1040), for the template's own texts.
   brand: string;
   execute<T>(command: string, input: unknown): Promise<T>;
@@ -144,6 +146,7 @@ async function sendOne(deps: MailQueueDeps, job: MailJob, mail: Extract<QueuedMa
       publicUrl: deps.publicUrl,
       brand: deps.brand ?? DEFAULT_BRAND_NAME,
       inboundAddress: deps.bounceDomain ? `${mail.inboundToken}@${deps.bounceDomain.toLowerCase()}` : null,
+      conversationAddress: deps.bounceDomain && mail.conversationToken ? `${mail.conversationToken}@${deps.bounceDomain.toLowerCase()}` : null,
       execute: <T>(command: string, input: unknown) => deps.runtime.execute<T>(command, input, { actor: ACTOR, orgId: job.orgId }),
     });
   } catch {

@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
+import { isMailAddress, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -112,6 +112,8 @@ export interface MailRecord {
 // Writes the mail_message row for one mail, as suppressed when the address is suppressed for its stream.
 export async function createMailMessage(ctx: CommandContext, mail: MailToSend): Promise<MailRecord> {
   const to = mail.to.trim().toLowerCase();
+  // One mailbox: a list in this field would go to every address in it and slip past the suppression check, which hashes the whole string.
+  if (!isMailAddress(to)) throw new DomainError('VALIDATION', 422, 'Địa chỉ email người nhận không hợp lệ');
   const hash = await mailAddressHash(ctx, to);
   const status = (await isSuppressed(ctx, hash, mail.stream, ctx.now)) ? 'suppressed' : mail.status;
   const messageIdHeader = `<${randomUUID()}@${mail.messageIdDomain ?? deploymentMessageIdDomain ?? DEFAULT_MESSAGE_ID_DOMAIN}>`;
@@ -401,6 +403,8 @@ export type QueuedMailBegin =
       // The org's inbound token (#669): a template whose replies should reach the Inbox names the org's inbound address
       // as the Reply-To.
       inboundToken: string;
+      // The org's conversation token (#2439): the Reply-To of an answer to a customer's mail; null before the address is issued.
+      conversationToken: string | null;
     };
 
 // A reply to an email conversation (#2439) is a mail of this queue, and its outcome is the outcome of the conversation message it carries: the mail's
@@ -497,7 +501,7 @@ export const beginQueuedMail = defineCommand({
       .where('id', '=', mail.id)
       .execute();
     const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.mail_bounce_token(${mail.id}) AS token`.execute(ctx.trx);
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('inbound_token').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['inbound_token', 'conversation_token']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const payload = mail.payload && typeof mail.payload === 'object' && !Array.isArray(mail.payload) ? (mail.payload as Record<string, unknown>) : {};
     return {
       action: 'send',
@@ -511,6 +515,7 @@ export const beginQueuedMail = defineCommand({
       messageIdHeader: mail.message_id_header,
       bounceToken: rows[0]?.token ?? null,
       inboundToken: tenant.inbound_token,
+      conversationToken: tenant.conversation_token,
     };
   },
 });

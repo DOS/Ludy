@@ -594,6 +594,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             adsCampaignWriter: resolved.adsCampaignWriter,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
+            inboundAuthservId: config.INBOUND_AUTHSERV_ID ?? null,
             revoker: resolved.identity.revoker,
             refusalTallyRetentionDays: config.REFUSAL_TALLY_RETENTION_DAYS,
             build: { id: config.CROVE_BUILD ?? null, time: config.CROVE_BUILD_TIME ?? null },

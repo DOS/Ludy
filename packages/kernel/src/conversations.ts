@@ -133,6 +133,7 @@ interface ConversationRow {
   external_post_id: string | null;
   identity_id: string | null;
   party_id: string | null;
+  sender_unverified: boolean;
   status: ConversationStatus;
   assignee_user_id: string | null;
   last_seq: number;
@@ -142,7 +143,7 @@ interface ConversationRow {
   resolved_at: Date | null;
 }
 const CONVERSATION_COLUMNS = [
-  'id', 'channel_connection_id', 'kind', 'external_thread_id', 'external_post_id', 'identity_id', 'party_id', 'status',
+  'id', 'channel_connection_id', 'kind', 'external_thread_id', 'external_post_id', 'identity_id', 'party_id', 'sender_unverified', 'status',
   'assignee_user_id', 'last_seq', 'last_inbound_at', 'last_message_at', 'reply_window_until', 'resolved_at',
 ] as const;
 
@@ -287,6 +288,22 @@ async function emailConnectionId(ctx: CommandContext): Promise<string> {
   return made.id;
 }
 
+// The org's conversation address (#2439, security review of #2528): its own token, issued the first time an owner or admin opens the Inbox (a later call
+// returns the same one) and rotated by the owner (kernel.conversation.address_rotate). The definer checks the role again.
+export const conversationAddressIssue = defineCommand({
+  name: 'kernel.conversation.address_issue',
+  input: z.strictObject({}),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin'],
+  handler: async (ctx): Promise<{ issued: boolean }> => {
+    requireUser(ctx);
+    const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_issue() AS token`.execute(ctx.trx);
+    if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không tạo được địa chỉ email của Hộp thư');
+    return { issued: true };
+  },
+});
+
 // A customer mail the worker parsed (#2439): the same intake as a platform's notice, for the org's email connection, which is made if it is the
 // first mail. The org is the worker's, found from the stored address. Idempotent: a redelivered Message-ID changes nothing.
 export const conversationEmailIngest = defineCommand({
@@ -298,8 +315,8 @@ export const conversationEmailIngest = defineCommand({
   handler: async (ctx, input): Promise<ConversationIngested> => {
     requireSystem(ctx);
     const result = await ingestEvents(ctx, await emailConnectionId(ctx), input.events);
-    // What the org used of its daily mail limit (#675): a mail kept counts, as one to the document address does; a redelivery counts nothing.
-    if (result.stored > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'inbound_emails', amount: String(result.stored) }).execute();
+    // What the org used of its daily limit of customer mail: a mail kept counts, a redelivery counts nothing; the invoice reader's limit is its own.
+    if (result.stored > 0) await ctx.trx.insertInto('crove_kernel.org_usage').values({ org_id: ctx.orgId, metric: 'conversation_emails', amount: String(result.stored) }).execute();
     return result;
   },
 });
@@ -343,7 +360,8 @@ const customerLock = (ctx: CommandContext, provider: string, externalUserId: str
 // thread whose id is its own Message-ID. The subject never joins threads: a wrong merge would show one customer another's mail.
 async function emailThreadId(ctx: CommandContext, connectionId: string, event: ConversationEvent): Promise<string> {
   const refs = [...new Set(event.refs ?? [])];
-  if (refs.length === 0) return event.messageId;
+  // A sender the receiving server did not vouch for may be anyone writing as the customer: the mail opens a thread of its own.
+  if (refs.length === 0 || event.verified !== true) return event.messageId;
   const row = await ctx.trx
     .selectFrom('crove_kernel.conversation_message as m')
     .innerJoin('crove_kernel.conversation as c', (join) => join.onRef('c.org_id', '=', 'm.org_id').onRef('c.id', '=', 'm.conversation_id'))
@@ -508,8 +526,9 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       external_thread_id: event.threadId,
       external_post_id: event.postId ?? null,
       identity_id: identity.id,
-      party_id: linked?.party_id ?? null,
+      party_id: event.kind === 'email' && event.verified !== true ? null : (linked?.party_id ?? null),
       subject: event.kind === 'email' ? (event.subject ?? null) : null,
+      sender_unverified: event.kind === 'email' && event.verified !== true,
       status: 'new',
       opened_at: ctx.now,
       created_at: ctx.now,
@@ -596,9 +615,14 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
       email_refs: event.kind === 'email' ? [...new Set(event.refs ?? [])] : [],
+      sender_verified: event.kind === 'email' ? event.verified === true : null,
     })
     .returning('id')
     .executeTakeFirstOrThrow();
+  // A mail the receiving server vouched for proves its sender controls the address: the thread's mark goes.
+  if (event.kind === 'email' && event.direction === 'in' && event.verified === true && conversation.sender_unverified) {
+    await ctx.trx.updateTable('crove_kernel.conversation').set({ sender_unverified: false }).where('org_id', '=', ctx.orgId).where('id', '=', conversation.id).execute();
+  }
   // The images a customer's message carries (CV5c, #2357): a pending row each, with the platform's address (personal data, cleared when the
   // bytes are stored, at six days at the latest) and a blob key of its own reserved now, so the row always names its blob. The relay hands
   // them to the worker. The message keeps the placeholder text it was stored with until then, and for good when the fetch cannot be made.
@@ -671,6 +695,7 @@ interface SummaryRow {
   intent: string | null;
   // An email thread's subject (#2439), or null.
   subject: string | null;
+  sender_unverified: boolean | null;
 }
 
 // The summary columns of a thread with its channel, customer, party, last message and the viewer's read mark. Row-level
@@ -678,7 +703,7 @@ interface SummaryRow {
 const summarySelect = (orgId: string, viewer: string | null) => sql`
   SELECT c.id, c.kind, c.status, c.channel_connection_id, ch.provider, ch.display_name AS channel_name, c.external_post_id,
          c.identity_id, i.display_name AS identity_name, i.external_user_id, c.party_id, p.name AS party_name,
-         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent, c.subject,
+         c.assignee_user_id, c.last_seq, c.last_message_at, c.last_inbound_at, c.reply_window_until, c.intent, c.subject, c.sender_unverified,
          (SELECT m.body FROM crove_kernel.conversation_message m
           WHERE m.org_id = c.org_id AND m.conversation_id = c.id ORDER BY m.seq DESC LIMIT 1) AS preview,
          r.last_read_seq AS read_seq,
@@ -701,7 +726,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
     status: row.status as ConversationSummary['status'],
     channel: { connectionId: row.channel_connection_id, provider: row.provider, displayName: row.channel_name },
     postId: row.external_post_id,
-    contact: { identityId: row.identity_id, displayName: row.identity_name, idTail: tail, partyId: row.party_id, partyName: row.party_name },
+    contact: { identityId: row.identity_id, displayName: row.identity_name, idTail: tail, partyId: row.party_id, partyName: row.party_name, ...(row.kind === 'email' ? { address: row.external_user_id } : {}) },
     assigneeUserId: row.assignee_user_id,
     lastSeq: row.last_seq,
     lastMessageAt: iso(row.last_message_at),
@@ -712,6 +737,7 @@ function toSummary(row: SummaryRow): ConversationSummary {
     composing: row.composing ?? [],
     intent: row.intent as ConversationIntent | null,
     subject: row.subject,
+    ...(row.kind === 'email' ? { senderUnverified: row.sender_unverified === true } : {}),
   };
 }
 
@@ -1689,7 +1715,7 @@ export const conversationContactCandidates = defineQuery({
   access: WRITERS,
   handler: async (ctx, input): Promise<ContactCandidates> => {
     const { rows } = await sql<{ party_id: string | null; identity_name: string | null; address: string | null }>`
-      SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' THEN i.external_user_id END AS address
+      SELECT c.party_id, i.display_name AS identity_name, CASE WHEN c.kind = 'email' AND NOT c.sender_unverified THEN i.external_user_id END AS address
       FROM crove_kernel.conversation c
       LEFT JOIN crove_kernel.conversation_identity i ON i.org_id = c.org_id AND i.id = c.identity_id
       WHERE c.org_id = ${ctx.orgId}::uuid AND c.id = ${input.conversationId}::uuid`.execute(ctx.trx);
@@ -1697,7 +1723,8 @@ export const conversationContactCandidates = defineQuery({
     if (!thread) throw notFound();
     const none: ContactCandidates = { customerName: thread.identity_name, email: [], phone: [], names: [] };
     if (thread.party_id !== null) return none;
-    // An email customer's address is the deterministic key: a contact that carries it (ignoring case) is the first candidate.
+    // An email customer's address is the deterministic key: a contact that carries it (ignoring case) is the first candidate. Not for a sender the
+    // receiving server did not vouch for: anyone can write a customer's address in From.
     const byEmail =
       thread.address === null
         ? []
@@ -2806,6 +2833,7 @@ export const conversationDraftDiscard = defineCommand({
 
 
 export const conversationCommands = [
+  conversationAddressIssue,
   conversationEmailIngest,
   conversationIngest,
   conversationReply,

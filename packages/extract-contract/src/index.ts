@@ -54,6 +54,9 @@ export const EXTRACT_LIMITS = {
   maxMailTextChars: 20_000,
   // The Message-IDs of a mail's References header that are kept (#2439).
   maxMailRefs: 50,
+  // The Authentication-Results headers a mail carries (#2439): how many are returned, each cut at this length.
+  maxAuthResults: 5,
+  maxAuthResultChars: 1000,
   // A blog's feed (#708): at most this many bytes, of which the newest items come back.
   maxFeedBytes: 1024 * 1024,
   maxFeedItems: 50,
@@ -203,6 +206,9 @@ export const zExtractedEmail = z.strictObject({
   inReplyTo: zText.nullable().optional(),
   references: z.array(zText).max(EXTRACT_LIMITS.maxMailRefs).optional(),
   automated: z.boolean().optional(),
+  // The Authentication-Results headers of the mail, topmost first, as written (RFC 8601): the receiving server's verdict on SPF, DKIM and DMARC. The
+  // sandbox only copies them; the worker believes the topmost one written by its own server (INBOUND_AUTHSERV_ID) and no other.
+  authResults: z.array(z.string().max(EXTRACT_LIMITS.maxAuthResultChars)).max(EXTRACT_LIMITS.maxAuthResults).optional(),
 });
 export type ExtractedEmail = z.infer<typeof zExtractedEmail>;
 

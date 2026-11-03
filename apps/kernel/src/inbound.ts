@@ -12,9 +12,9 @@ import {
   ACCEPTED_ARCHIVE_TYPES,
   ACCEPTED_UPLOAD_TYPES,
   CONVERSATION_BODY_MAX,
-  EMAIL_ADDRESS_TAG,
   EMAIL_REFS_MAX,
   EMAIL_SUBJECT_MAX,
+  isMailAddress,
   MAX_EMAIL_ARCHIVES,
   MAX_UPLOAD_BYTES,
   type ConversationEvent,
@@ -40,22 +40,13 @@ export function secretMatches(header: string | undefined, secrets: readonly stri
   return matched;
 }
 
-// The org token of <token>[+tag]@domain, or null.
+// The org token of <token>[+tag]@domain, or null (a document address or the Inbox's own: both are a random token before the @).
 function tokenOf(address: string, domain: string): string | null {
   const suffix = `@${domain.toLowerCase()}`;
   const normalized = address.toLowerCase().trim();
   if (!normalized.endsWith(suffix)) return null;
   const token = normalized.slice(0, -suffix.length).split('+')[0] ?? '';
   return TOKEN.test(token) ? token : null;
-}
-
-// The tag of <token>+<tag>@domain, lower-cased, or null (#2439: the conversation address is `<token>+hopthu@domain`).
-function tagOf(address: string, domain: string): string | null {
-  const suffix = `@${domain.toLowerCase()}`;
-  const normalized = address.toLowerCase().trim();
-  if (!normalized.endsWith(suffix)) return null;
-  const parts = normalized.slice(0, -suffix.length).split('+');
-  return parts.length > 1 ? (parts[1] ?? null) : null;
 }
 
 // The bounce token of bounce+<token>@domain (#539: the Return-Path of a mail Crove sent over SMTP), or null.
@@ -135,6 +126,9 @@ export interface InboundProcessDeps {
   extract: ExtractClient;
   // The per-org abuse limits (#675); without them no limit is checked.
   limits?: UsageLimits | undefined;
+  // The name the receiving mail server writes as the authserv-id of its Authentication-Results header (INBOUND_AUTHSERV_ID, RFC 8601). Only a result
+  // written by this server is believed; unset, no sender is verified (#2439).
+  authservId?: string | undefined;
 }
 
 // A message kept for later because its org is over a daily limit (#675): the worker queues it again for retryAt and
@@ -170,34 +164,42 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   }
   const email = parsed.email;
   const recipients = [job.recipient, email.deliveredTo, ...email.to].filter((r): r is string => typeof r === 'string' && r !== '');
-  const token = recipients.map((r) => tokenOf(r, domain)).find((t) => t !== null);
+  // The tokens this delivery was for, the envelope recipient first (it is the address the sender used), then the headers'.
+  const tokens = [...new Set(recipients.map((r) => tokenOf(r, domain)).filter((t): t is string => t !== null))];
+  const token = tokens[0];
   if (!token) throw unknownRecipient();
-  // The address this delivery was for decides where it goes: the envelope recipient when it is one of ours, else the first of ours in the headers.
-  // The conversation address (`<token>+hopthu@domain`) sends it to the Inbox and never to the invoice reader (#2439).
-  const addressedTo = [job.recipient, ...recipients].find((r): r is string => typeof r === 'string' && tokenOf(r, domain) === token);
-  const toConversation = addressedTo !== undefined && tagOf(addressedTo, domain) === EMAIL_ADDRESS_TAG;
 
   // The org is resolved now, when the message is processed, not when the API accepted it. So mail queued for a token
   // that the org rotated away in between is dropped here like mail to a token that never existed (plan §7.6, #113):
   // right for a leaked address, but a supplier's legitimate mail in that window is lost without a bounce. So the drop
   // is counted for the org that owned a retired token (#139): only the count, nothing about the message.
-  const orgId = await deps.runtime.orgless(async (db) => {
-    const { rows } = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${token}) AS org_id`.execute(db);
-    return rows[0]?.org_id ?? null;
+  // The Inbox's own address (#2439) is a token of its own, so it is tried first and a mail to it never reaches the invoice reader.
+  const routed = await deps.runtime.orgless(async (db) => {
+    for (const candidate of tokens) {
+      const inbox = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_conversation_token(${candidate}) AS org_id`.execute(db);
+      if (inbox.rows[0]?.org_id) return { orgId: inbox.rows[0].org_id, toConversation: true };
+      const documents = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${candidate}) AS org_id`.execute(db);
+      if (documents.rows[0]?.org_id) return { orgId: documents.rows[0].org_id, toConversation: false };
+    }
+    return null;
   });
-  if (!orgId) {
+  if (!routed) {
     await countDrop(deps.runtime, token);
     throw unknownRecipient();
   }
+  const { orgId, toConversation } = routed;
 
   // Over a daily limit of the org (#675) the message is kept, not filed: the worker tries it again once the org is back
   // under it. The check comes before anything is stored for the org.
   if (deps.limits) {
     const actor = { type: 'system' as const, component: 'inbound.email' };
-    const { inbound_emails, attachment_bytes } = deps.limits;
+    const { inbound_emails, attachment_bytes, conversation_emails } = deps.limits;
+    // Customer mail to the Inbox has a budget of its own, so spam on a published address never defers an invoice.
     const over = await deps.runtime.query<UsageOver | null>(
       'kernel.usage.over',
-      { metrics: ['inbound_emails', 'attachment_bytes'], limits: { inbound_emails, attachment_bytes } },
+      toConversation
+        ? { metrics: ['conversation_emails'], limits: { conversation_emails } }
+        : { metrics: ['inbound_emails', 'attachment_bytes'], limits: { inbound_emails, attachment_bytes } },
       { actor, orgId },
     );
     if (over) {
@@ -268,10 +270,11 @@ export type ConversationMail = { event: ConversationEvent } | { ignored: 'automa
 // conversation never replies by itself, so no loop can start. The thread is not decided here: the core finds it from the Message-IDs named in
 // `refs`, within the org, and never by subject. Text from the mail is tainted external text and stays text: the extract sandbox reduced any HTML to
 // text already, and attachments are only counted in this slice.
-export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date): ConversationMail {
+export function conversationEventOf(email: ExtractedEmail, rawSha256: string, domain: string, now: Date, authservId?: string): ConversationMail {
   if (email.automated === true) return { ignored: 'automated' };
   const sender = (email.from ?? '').trim().toLowerCase();
-  if (sender === '' || !sender.includes('@') || sender.length > 200) return { ignored: 'no_sender' };
+  // One mailbox only: a header like "<a@x.test,b@y.test>" is read by the parser as one address and by a mailer as two recipients.
+  if (!isMailAddress(sender)) return { ignored: 'no_sender' };
   if (sender.endsWith(`@${domain.toLowerCase()}`)) return { ignored: 'own_address' };
   const given = (email.messageId ?? '').trim();
   const messageId = MESSAGE_ID.test(given) ? given : `<sha256-${rawSha256}@mail.invalid>`;
@@ -294,8 +297,30 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
       at,
       ...(subject ? { subject } : {}),
       ...(refs.length > 0 ? { refs } : {}),
+      verified: senderVerified(email.authResults ?? [], authservId, sender.slice(sender.lastIndexOf('@') + 1)),
     },
   };
+}
+
+// Whether the receiving mail server vouched for the sender's domain (RFC 8601): the topmost Authentication-Results header written by our own server
+// (its authserv-id is `authservId`; a header any earlier hop wrote could say anything), with dmarc=pass, or dkim=pass for a signing domain (header.d) the
+// From domain is, or is a subdomain of. With no authserv-id configured nothing is verified.
+export function senderVerified(results: readonly string[], authservId: string | undefined, fromDomain: string): boolean {
+  if (!authservId) return false;
+  const ours = authservId.trim().toLowerCase();
+  const own = results.find((line) => (line.split(';')[0] ?? '').trim().toLowerCase().split(/\s+/)[0] === ours);
+  if (own === undefined) return false;
+  const methods = own
+    .split(';')
+    .slice(1)
+    .map((part) => part.trim().toLowerCase());
+  if (methods.some((m) => /^dmarc=pass(?:\s|$)/.test(m))) return true;
+  const from = fromDomain.toLowerCase();
+  return methods.some((m) => {
+    if (!/^dkim=pass(?:\s|$)/.test(m)) return false;
+    const signer = /\bheader\.d=([a-z0-9.-]+)/.exec(m)?.[1];
+    return signer !== undefined && (from === signer || from.endsWith(`.${signer}`));
+  });
 }
 
 export interface ConversationMailResult {
@@ -306,7 +331,7 @@ export interface ConversationMailResult {
 // A customer's mail to the org's conversation address: the intake of the Inbox, in the org the address names, as the system. Idempotent: a redelivery
 // of the same Message-ID is a duplicate and changes nothing.
 async function processConversationEmail(deps: InboundProcessDeps, orgId: string, email: ExtractedEmail, rawSha256: string, domain: string): Promise<ConversationMailResult> {
-  const made = conversationEventOf(email, rawSha256, domain, new Date());
+  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId);
   if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
   const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, { actor: { type: 'system', component: 'inbound.conversation' }, orgId });
   return { conversation: out.stored > 0 ? 'stored' : out.duplicates > 0 ? 'duplicate' : 'ignored' };

@@ -364,6 +364,8 @@ export interface WorkerDeps {
   // crove-extract (plan §7.6): every PDF, XML and MIME parse happens there, never in this process.
   extract: ExtractClient;
   inboundDomain: string | null;
+  // The authserv-id of the receiving mail server's Authentication-Results (INBOUND_AUTHSERV_ID); unset, no customer mail is verified.
+  inboundAuthservId?: string | null;
   // Supabase Auth sign-out after a Crove-side revoke (ADR-0028 section 4); null keeps revocation Crove-side only.
   revoker?: SessionRevoker | null;
   // Names this worker in crove_kernel.worker_heartbeat (default: the host name, the container id under Docker).
@@ -770,7 +772,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     const label = job.data.sha256.slice(0, 12);
     try {
       const result = await processInboundEmail(
-        { runtime: deps.runtime, store: deps.store, domain: deps.inboundDomain, extract: deps.extract, limits: deps.usageLimits },
+        { runtime: deps.runtime, store: deps.store, domain: deps.inboundDomain, extract: deps.extract, limits: deps.usageLimits, authservId: deps.inboundAuthservId ?? undefined },
         job.data,
         job.retryCount,
       );

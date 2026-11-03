@@ -652,6 +652,21 @@ export function createRpcHandler(
           return { inboundAddress: org.inboundAddress };
         }),
       ),
+      issueConversationAddress: os.org.issueConversationAddress.handler(({ context }) =>
+        inOrg(context, async (orgId, actor) => {
+          await runtime.execute('kernel.conversation.address_issue', {}, { actor, orgId });
+          const org = await runtime.query<{ conversationAddress: string | null }>('kernel.org.get', {}, { actor, orgId });
+          return { conversationAddress: org.conversationAddress ?? null };
+        }),
+      ),
+      rotateConversationAddress: os.org.rotateConversationAddress.handler(({ context, input }) =>
+        inOrg(context, async (orgId, actor) => {
+          await runtime.execute('kernel.conversation.address_rotate', {}, { actor, orgId, idempotencyKey: input.idempotencyKey });
+          // The current address, not a stored result: a key replayed after a later rotation must never show a retired address.
+          const org = await runtime.query<{ conversationAddress: string | null }>('kernel.org.get', {}, { actor, orgId });
+          return { conversationAddress: org.conversationAddress ?? null };
+        }),
+      ),
       changeMemberRole: os.org.changeMemberRole.handler(({ context, input }) =>
         inOrg(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;

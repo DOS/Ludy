@@ -236,6 +236,7 @@ import {
   zSavedReplyList,
   zSavedReplyListed,
   zSavedReplyUpdate,
+  zConversationAddress,
 } from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -383,6 +384,11 @@ export const contract = {
     // Owner only. Retires the org's inbound email address for good and returns the new one (null when the server
     // has no inbound domain). A retry with the same idempotencyKey does not rotate again.
     rotateInbound: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ inboundAddress: z.string().nullable() })),
+    // Owners and admins (#2439): the Inbox's own email address, made the first time it is asked for and the same one after; null when the server has no
+    // inbound domain.
+    issueConversationAddress: oc.input(z.object({})).output(zConversationAddress),
+    // Owner only (R3): retires the Inbox's email address for good and returns the new one. A retry with the same idempotencyKey does not rotate again.
+    rotateConversationAddress: oc.input(z.object({ idempotencyKey: zId })).output(zConversationAddress),
     // Owners only (R3). A retry with the same idempotencyKey returns the first result.
     changeMemberRole: oc
       .input(z.object({ userId: zId, role: zRole, idempotencyKey: zId }))
