@@ -3,7 +3,8 @@
 // worker as the system, once a minute. When an ads write connection is closed (or a Meta read connection whose token holds a spend permission), the database
 // copies its sealed token into a holding of its own in the statement that drops it (crove_ads.token_hold); this sweep removes the person's permissions at
 // the platform from that copy, and the copy is wiped when it worked, when the person had already removed the app, when another live connection of the same
-// person needs the grant, when nothing can be revoked from it, and after ten tries or seven days (modules/ads/src/token-revoke.ts is the policy).
+// person needs the grant, when the platform refuses the token or the copy does not open (nothing can be revoked from it), and after ten tries or seven days
+// (modules/ads/src/token-revoke.ts is the policy). A deployment that lacks the platform app's secret or the credential key records nothing: the copies wait.
 //
 // What this file may do with a token is one thing: open the copy of one claimed obligation through the worker-only definer `crove_ads.token_seal_get`, in
 // the org's system context, with the credential broker, and hand it to the narrowed `AdRevoker` of its provider (`revokeToken` and no other call). The
@@ -35,7 +36,7 @@ export const ADS_ORPHAN_MAX_PAGES = 5;
 export interface AdsRevokeDeps {
   runtime: Runtime;
   workerDb: Db;
-  // Without a broker nothing can be opened: a held copy cannot be revoked and is given up at once (NO_BROKER).
+  // Without a broker (no credential key) nothing can be opened: the copies stay pending until it is configured or the seventh day ends them.
   broker: CredentialBroker | undefined;
   revokers: Readonly<Record<string, AdRevoker>>;
 }
@@ -91,10 +92,12 @@ async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; l
 // Never throws a platform error and never returns or logs the secret.
 async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; provider: string; leaseToken: string }): Promise<Outcome | null> {
   const revoker = Object.hasOwn(deps.revokers, row.provider) ? deps.revokers[row.provider] : undefined;
-  // A deployment with no way to call the platform for this token (no app credentials, no credential key) can never revoke it: nothing is opened, the copy
-  // is wiped at once and the person is told to remove the app by hand.
-  if (!revoker) return unrevocable('NO_REVOKER');
-  if (!deps.broker) return unrevocable('NO_BROKER');
+  // A deployment with no way to call the platform for this token (no app credentials, no credential key) is a configuration fault, not a finding about the
+  // token: nothing is opened and nothing is recorded, so the copy stays pending, the claim runs out in ten minutes and it is claimed again once the
+  // configuration is fixed. If it never is, the seventh day ends it as given up and the person is told to remove the app by hand (the owner's end
+  // conditions are success, ten tries, seven days and the purge; a missing secret must not wipe every pending copy within a minute).
+  if (!revoker) return null;
+  if (!deps.broker) return null;
   // The person's permission is the person's across orgs: when another live connection of the same person needs it, no call is made and the copy goes.
   if (await sharedGrant(deps, row)) return { kind: 'done', how: 'shared_grant' };
   // A database failure while opening the copy is thrown: it leaves the claim to run out and the obligation to be claimed again.

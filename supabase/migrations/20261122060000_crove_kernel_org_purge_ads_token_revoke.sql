@@ -1,10 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- Crove kernel (issue #2296, ads W2-1): the org purge deletes the sealed copies of closed ads tokens and the revoke state at once, before the ad accounts
--- and the connections they name. Idempotent; applied files stay untouched.
--- This is the body of 20261121210000 (the newest) with crove_ads.ad_token_seal and crove_ads.ad_token_revoke added to the first list, in front of
--- crove_ads.ad_account (the seal first: it references the obligation), with its signature, owner, grants and every list and step it had, and one new step
--- right after the refusal checks: the purge marks its transaction (crove.org_purge_hold), so the credential table's own delete, later in the same list, makes
--- no copy for the hold (an org in offboarding does hold when its owner disconnects an ads connection; the purge wipes what is left).
+-- Crove kernel (issue #2296, ads W2-1): the org purge deletes the sealed copies of closed ads tokens and the revoke state at once. Idempotent; applied
+-- files stay untouched.
+-- This is the body of 20261121210000 (the newest) with its signature, owner, grants and every list and step it had, and one new step after the delete of
+-- the channel connections: the copies (crove_ads.ad_token_seal, then crove_ads.ad_token_revoke that it references) and the revoke state of the org are
+-- deleted there, so whatever the ads hold made in this transaction (the credential table's own delete, earlier in the first list, holds as any delete of
+-- a credential does: no session setting can switch the hold off) goes with the rest, and nothing is left for an org that is closed. An org in offboarding
+-- does hold when its owner disconnects an ads connection, so the revoke runs before the purge wipes what is left.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -33,7 +34,7 @@ DECLARE
   -- Rows of these tables are deleted whole, in this order (children before the rows they reference).
   v_kernel_first text[] := ARRAY[
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
-    'crove_ads.ad_token_seal', 'crove_ads.ad_token_revoke', 'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
+    'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
     'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
@@ -79,10 +80,6 @@ BEGIN
     RETURN NEXT;
     RETURN;
   END IF;
-
-  -- The purge marks its transaction for the ads hold: the credentials it drops below hold no copy (a copy made now would have to be deleted again), while an
-  -- org in offboarding does hold when its owner disconnects an ads connection, so the revoke runs before the purge wipes what is left (#2296).
-  PERFORM pg_catalog.set_config('crove.org_purge_hold', v_org::text, true);
 
   -- The append-only working rows (#1032): task comments and Social post approvals. Their append_only_row trigger
   -- (purge_append_only_guard) lets a DELETE through only from this function, for the org it purges, under this
@@ -190,6 +187,15 @@ BEGIN
   DELETE FROM crove_kernel.channel_connection c WHERE c.org_id = v_org AND c.id <> ALL (v_keep_connection);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.channel_connection', v_n);
+
+  -- The sealed copies of closed ads tokens and the revoke state (#2296), after every credential and connection of the org is gone: the ads hold made a
+  -- copy for each ads credential the deletes above dropped, and those go too. The seal first, since it references the obligation.
+  DELETE FROM crove_ads.ad_token_seal s WHERE s.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_seal', v_n);
+  DELETE FROM crove_ads.ad_token_revoke r WHERE r.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_revoke', v_n);
 
   -- The org chart and its work, but what a task comment pins.
   DELETE FROM crove_kernel.task t WHERE t.org_id = v_org AND t.id <> ALL (v_keep_task);

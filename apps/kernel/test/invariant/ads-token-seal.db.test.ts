@@ -14,7 +14,9 @@
 //   5. a reconnect of the account cancels the pending revoke and wipes its copy in the same transaction (a reseal does not);
 //   6. whether another live connection of the same grantor needs the grant is a boolean, and nothing else of another org leaves the database;
 //   7. the age limit holds with no job running: a copy older than seven days is wiped by the sweep alone;
-//   8. the org's purge wipes the copy and the state at once and holds nothing new, and a close racing the purge leaves no copy either way.
+//   8. the org's purge deletes the copies and the state of the org as a step of its own, after the connections, whatever its own credential drops held, and
+//      a close racing the purge leaves no copy either way;
+//   9. no setting a session can make switches the hold off: a login that sets the purge's old mark to its own org still gets its obligation and its copy.
 // The source pins (one file opens the copy, nothing else names its table) are in ads-token-seal-source.test.ts. Keep this directory self-contained:
 // import code under test, not fixtures from outside it. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 import { randomUUID } from 'node:crypto';
@@ -385,7 +387,7 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     const deleted = await connection(org, { provider: 'metawrite_ads' });
     await close(org, deleted.id, 'platform_deletion');
     for (const none of [read.id, sandboxRead.id, social.id, google.id, deleted.id]) expect(await obligations(org.orgId, none), none).toEqual([]);
-    // A closed org holds nothing; an org in offboarding still holds (its owner may disconnect in that window; the purge wipes what is left).
+    // A closed org holds nothing; an org in offboarding still holds (its owner may disconnect in that window; the purge deletes what is left).
     const closed = await makeOrg();
     const inClosed = await connection(closed, { provider: 'metawrite_ads' });
     const leaving = await makeOrg();
@@ -483,8 +485,8 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     await owner(`UPDATE crove_ads.ad_token_revoke SET state = 'done', how_done = 'shared_grant', next_attempt_at = NULL WHERE org_id = $1 AND id = $2`, [shared.org.orgId, shared.revoke]);
     expect((await obligations(shared.org.orgId))[0]).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 0, seals: '0' });
 
-    // Nothing can be revoked from the copy (the platform refuses the token for another reason than the person removing the app, the copy does not open, the
-    // deployment has no way to call the platform): given up and wiped at once, to be revoked by hand, whatever the count.
+    // Nothing can be revoked from the copy (the platform refuses the token for another reason than the person removing the app, the copy does not open):
+    // given up and wiped at once, to be revoked by hand, whatever the count. (A deployment with no way to call the platform records nothing; see the flow test.)
     const nothing = await held();
     await owner(`UPDATE crove_ads.ad_token_revoke SET state = 'gave_up', give_up = 'unrevocable', next_attempt_at = NULL, last_error_code = 'OPEN_FAILED' WHERE org_id = $1 AND id = $2`, [nothing.org.orgId, nothing.revoke]);
     expect((await obligations(nothing.org.orgId))[0]).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', seals: '0' });
@@ -814,11 +816,43 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     expect((await workerSql<{ n: number }>('SELECT crove_ads.deletion_request_forget($1) AS n', ['0'.repeat(32)]))[0]?.n).toBe(0);
   });
 
-  it('wipes the copy and the state at once when the org is purged, and the purge holds nothing new', async () => {
+  // The hold has no off switch a session can reach. An earlier design let the org purge mark its transaction with a custom setting (crove.org_purge_hold) that
+  // made the hold skip the org; any login may set a custom setting, so a login could drop a Meta write token with no copy and no obligation, and the person
+  // would be left believing Ludy had removed the grant (#2296, security review). The mark is gone and the hold reads no setting at all.
+  it('cannot be switched off by a session: a crove_app login that sets the old purge mark to its own org still gets exactly one obligation and one copy', async () => {
+    const body = (await rows<{ def: string }>(`SELECT pg_get_functiondef('crove_ads.token_hold_row(uuid,uuid,text,bytea,text,text,text[],text,uuid)'::regprocedure) AS def`))[0]?.def ?? '';
+    expect(body).not.toMatch(/current_setting|org_purge_hold/);
+    for (const local of [true, false]) {
+      const org = await makeOrg();
+      const conn = await connection(org, { provider: 'metawrite_ads' });
+      // The login of the API, as the API's own session: enters the org as its owner, sets the mark (for the transaction, or for the session), then drops the
+      // credential through the definer a disconnect uses.
+      await withClient(appUrl, async (c) => {
+        if (!local) await c.query(`SELECT set_config('crove.org_purge_hold', $1, false)`, [org.orgId]);
+        await c.query('BEGIN');
+        try {
+          await c.query('SELECT crove_kernel.enter_context($1::uuid, $2::uuid)', [org.userId, org.orgId]);
+          if (local) await c.query(`SELECT set_config('crove.org_purge_hold', $1, true)`, [org.orgId]);
+          expect((await c.query(`SELECT current_setting('crove.org_purge_hold', true) AS mark`)).rows[0]?.mark, 'the session did set the mark').toBe(org.orgId);
+          await c.query('SELECT crove_kernel.credential_drop($1::uuid)', [conn.id]);
+          await c.query('COMMIT');
+        } catch (error) {
+          await c.query('ROLLBACK').catch(() => undefined);
+          throw error;
+        }
+      });
+      expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [org.orgId, conn.id]), `credential dropped (local ${local})`).toEqual([]);
+      expect(await obligations(org.orgId, conn.id), `local ${local}`).toEqual([expect.objectContaining({ kind: 'write', state: 'pending', provider: 'metawrite_ads', seals: '1' })]);
+      expect(await rows('SELECT 1 FROM crove_ads.ad_token_seal WHERE org_id = $1', [org.orgId])).toHaveLength(1);
+    }
+  });
+
+  it('deletes the copies and the state of the org as a step of the purge, after the connections, whatever the purge\'s own credential drops held', async () => {
     const org = await makeOrg();
     const write = await connection(org, { provider: 'metawrite_ads' });
     await close(org, write.id);
-    // A connection that is still open when the purge runs: the purge drops its credential, which must not make a new copy.
+    // A connection that is still open when the purge runs: the purge drops its credential, which holds as any drop does (nothing can switch the hold off),
+    // and the purge's own step deletes what that made along with the rest.
     const open = await connection(org, { provider: 'metawrite_ads' });
     expect((await obligations(org.orgId)).map((o) => o.seals)).toEqual(['1']);
     await offboard(org);
@@ -826,14 +860,15 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     expect(await obligations(org.orgId)).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_ads.ad_token_seal WHERE org_id = $1', [org.orgId])).toEqual([]);
     expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [org.orgId, open.id])).toEqual([]);
-    // The purge's map names both tables, the copy before the state it references and both before the ad accounts.
+    // The purge's step: the copy, then the state it references, after the connections (the credentials are gone by then), with no mark set for the hold.
     const body = (await rows<{ def: string }>(`SELECT pg_get_functiondef('crove_kernel.org_purge(integer)'::regprocedure) AS def`))[0]?.def ?? '';
-    const seal = body.indexOf("'crove_ads.ad_token_seal'");
-    const state = body.indexOf("'crove_ads.ad_token_revoke'");
-    const account = body.indexOf("'crove_ads.ad_account'");
-    expect(seal).toBeGreaterThan(-1);
+    expect(body).not.toContain('org_purge_hold');
+    const connections = body.indexOf('DELETE FROM crove_kernel.channel_connection');
+    const seal = body.indexOf('DELETE FROM crove_ads.ad_token_seal');
+    const state = body.indexOf('DELETE FROM crove_ads.ad_token_revoke');
+    expect(connections).toBeGreaterThan(-1);
+    expect(seal).toBeGreaterThan(connections);
     expect(state).toBeGreaterThan(seal);
-    expect(account).toBeGreaterThan(state);
   });
 
   it('leaves no copy behind when a close races the purge, in either order, and a job for a purged org finds nothing', async () => {
@@ -844,7 +879,7 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
       await offboard(org);
       return { org, conn };
     }
-    // 1. The org is in offboarding: a close still holds, and the purge that follows deletes it and holds nothing for the credentials it drops.
+    // 1. The org is in offboarding: a close still holds, and the purge that follows deletes it, with whatever the credentials it drops held.
     {
       const { org, conn } = await offboardingOrg();
       const other = await connection(org, { provider: 'metawrite_ads' });

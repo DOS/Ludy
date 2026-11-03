@@ -1145,7 +1145,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
   }
 
   // The revoke at the platform of a closed ads connection's token (#2296, W2-1): a sweep with no data, every minute, whether or not a platform is
-  // configured: the sealed copies that outlive their seven days are wiped by it even with no revoker, and a copy nobody can revoke is given up at once and told to the person.
+  // configured: with no revoker or no credential key the copies wait (nothing is recorded, so a configuration fix restores the revoke) and the seventh day ends them.
   if (ads) {
     await boss.work(QUEUES.adsRevoke, { batchSize: 1 }, async ([job]) => {
       if (!job) return;

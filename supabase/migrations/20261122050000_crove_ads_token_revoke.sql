@@ -26,10 +26,11 @@
 --                             copies the envelope into the seal first, in the same statement, so a live credential is never copied, and opens the obligation,
 --                             once per connection (a unique index). It skips every provider outside the list above, a platform's own data deletion (the
 --                             person already removed the app; the erasure of an account whose write grant is another person's closes it as account_erased, which
---                             holds), a read connection whose recorded scopes hold no spend permission, a closed org, and the purge itself (it marks its
---                             transaction). An org in offboarding still holds, so a disconnect in that window is revoked before the purge wipes what is left.
---                             The tenant row is taken FOR SHARE, in the purge's lock order, so a close racing the purge either finishes first and the purge
---                             wipes it, or finds the org closed and holds nothing. An UPDATE of the credential (a reseal during a key rotation) holds nothing.
+--                             holds), a read connection whose recorded scopes hold no spend permission, and a closed org. No setting a session can make
+--                             switches it off. An org in offboarding still holds, so a disconnect in that window is revoked before the purge wipes what is
+--                             left; the purge's own credential drops hold too, and its last step for the org's ads tables deletes what they made. The tenant
+--                             row is taken FOR SHARE, in the purge's lock order, so a close racing the purge either finishes first and the purge wipes it, or
+--                             finds the org closed and holds nothing. An UPDATE of the credential (a reseal during a key rotation) holds nothing.
 --
 -- crove_ads.token_reconnected an AFTER INSERT trigger on crove_kernel.credential: a credential sealed for a new ads connection of an account whose earlier
 --                             connection has a pending revoke, made by the same member, cancels that revoke (done, how reconnected) and wipes its copy in the same
@@ -161,7 +162,8 @@ BEGIN
   END IF;
   -- A copy is never given up on without the tenth try or the seventh day (a few minutes of slack for a clock that differs from the database's), but for the
   -- finding that nothing can be revoked from it: a token the platform does not accept for a reason other than the person removing the app, a copy that
-  -- cannot be opened, or a deployment with no way to call the platform. It is then wiped at once and the person is told to revoke by hand.
+  -- cannot be opened. It is then wiped at once and the person is told to revoke by hand. (A deployment with no way to call the platform is a fault of its
+  -- configuration, not a finding about the token: the worker records nothing and the copy waits, so only the seventh day ends it.)
   IF NEW.state = 'gave_up' AND NOT (
     (NEW.give_up = 'attempts' AND NEW.attempts >= 10)
     OR (NEW.give_up = 'age' AND (
@@ -210,13 +212,11 @@ BEGIN
   IF p_status_reason IS NOT DISTINCT FROM 'platform_deletion' THEN
     RETURN;
   END IF;
-  -- The purge itself holds nothing (it deletes the copy and the state of the org, which it marks for the length of its transaction), and neither does a
-  -- closed org. An org in offboarding still holds: the owner may disconnect in that window and the revoke runs before the purge wipes what is left. The
-  -- tenant row is taken FOR SHARE, the lock the purge's FOR UPDATE waits for, in the purge's order (the write fence first, then the row), so a close racing
-  -- the purge finishes first, and the purge then deletes what it held, or finds the org closed and holds nothing.
-  IF pg_catalog.current_setting('crove.org_purge_hold', true) IS NOT DISTINCT FROM p_org::text THEN
-    RETURN;
-  END IF;
+  -- A closed org holds nothing. An org in offboarding still holds: the owner may disconnect in that window and the revoke runs before the purge wipes what
+  -- is left. The tenant row is taken FOR SHARE, the lock the purge's FOR UPDATE waits for, in the purge's order (the write fence first, then the row), so a
+  -- close racing the purge finishes first, and the purge then deletes what it held, or finds the org closed and holds nothing. The purge's own credential
+  -- drops hold too (the row is already locked by its transaction, so this does not wait): no session setting switches the hold off, and the purge deletes
+  -- the copies and the state it made as its last step for the org's ads tables (org_purge, after the connection rows).
   PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = p_org AND t.status IN ('active', 'offboarding') FOR SHARE;
   IF NOT FOUND THEN
     RETURN;
@@ -255,8 +255,11 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.token_hold() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
+-- migration-lint: cross-module the ads hold must fire in the statement that deletes a kernel credential, so the trigger sits on the kernel's table and is made here (ruling 1 of #2296, ADR-0025 amendment).
 DROP TRIGGER IF EXISTS token_hold ON crove_kernel.credential;
+-- migration-lint: cross-module the same trigger: it is created on the kernel's credential table (ruling 1 of #2296).
 CREATE TRIGGER token_hold BEFORE DELETE ON crove_kernel.credential FOR EACH ROW EXECUTE FUNCTION crove_ads.token_hold();
+-- migration-lint: cross-module the same trigger, set to ENABLE ALWAYS so session_replication_role does not skip it (ruling 1 of #2296).
 ALTER TABLE crove_kernel.credential ENABLE ALWAYS TRIGGER token_hold;
 
 -- The connection row is deleted (a connection is closed, never deleted, but an erasure or an operator's statement may): its credential goes with it by the
@@ -274,8 +277,11 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.token_hold_connection() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
+-- migration-lint: cross-module the ads hold must fire when a kernel connection row is deleted (its credential goes by the cascade), so the trigger sits on the kernel's table (ruling 1 of #2296).
 DROP TRIGGER IF EXISTS token_hold ON crove_kernel.channel_connection;
+-- migration-lint: cross-module the same trigger: it is created on the kernel's channel_connection table (ruling 1 of #2296).
 CREATE TRIGGER token_hold BEFORE DELETE ON crove_kernel.channel_connection FOR EACH ROW EXECUTE FUNCTION crove_ads.token_hold_connection();
+-- migration-lint: cross-module the same trigger, set to ENABLE ALWAYS so session_replication_role does not skip it (ruling 1 of #2296).
 ALTER TABLE crove_kernel.channel_connection ENABLE ALWAYS TRIGGER token_hold;
 
 -- A credential sealed for an ads connection cancels the pending revokes of the same account and provider that earlier connections left: the person has given
@@ -299,8 +305,11 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.token_reconnected() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
+-- migration-lint: cross-module the reconnect must be seen in the transaction that seals the new kernel credential, so the trigger sits on the kernel's table (ruling 1 of #2296).
 DROP TRIGGER IF EXISTS token_reconnected ON crove_kernel.credential;
+-- migration-lint: cross-module the same trigger: it is created on the kernel's credential table (ruling 1 of #2296).
 CREATE TRIGGER token_reconnected AFTER INSERT ON crove_kernel.credential FOR EACH ROW EXECUTE FUNCTION crove_ads.token_reconnected();
+-- migration-lint: cross-module the same trigger, set to ENABLE ALWAYS so session_replication_role does not skip it (ruling 1 of #2296).
 ALTER TABLE crove_kernel.credential ENABLE ALWAYS TRIGGER token_reconnected;
 
 -- The obligations past seven days or past their ten tries, settled and their copies wiped (worker login only). A claim whose lease ran out with ten tries

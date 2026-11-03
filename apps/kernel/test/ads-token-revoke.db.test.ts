@@ -298,32 +298,68 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     expect(view).toMatchObject({ state: 'gave_up', giveUp: 'unrevocable' });
   });
 
-  it('gives up at once, wipes the copy and says to revoke by hand when nothing can be revoked from it: no revoker for the provider, no broker, a copy that does not open', async () => {
+  const closeWrite = async (external: string) => {
+    const id = await connectWrite(owner, external);
+    await app.execute('kernel.channel.disconnect', { connectionId: id }, { actor: asUser(owner), orgId });
+    return id;
+  };
+
+  it('gives up at once, wipes the copy and says to revoke by hand when the copy does not open', async () => {
     await switchOn();
-    const close = async (external: string) => {
-      const id = await connectWrite(owner, external);
-      await app.execute('kernel.channel.disconnect', { connectionId: id }, { actor: asUser(owner), orgId });
-      return id;
-    };
-    // No revoker for the provider: nothing is opened (no try counted), the copy is wiped.
-    const noRevoker = await close('sbxads-no-revoker');
-    await dueNow();
-    await sweep({}, vault);
-    expect(await obligation(noRevoker)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', last_error_code: 'NO_REVOKER', attempts: 0, seals: '0' });
-    // A revoker but no broker (no credential key): nothing can be opened.
-    const noBroker = await close('sbxads-no-broker');
-    await dueNow();
-    await runAdsRevoke({ runtime: worker, workerDb, broker: undefined, revokers: sandboxRevokers });
-    expect(await obligation(noBroker)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', last_error_code: 'NO_BROKER', attempts: 0, seals: '0' });
     // The copy of a deployment whose key changed cannot be opened: the try was counted as it opened, the copy is wiped, and the code says so without a word of it.
-    const wrongKey = await close('sbxads-wrong-key');
+    const wrongKey = await closeWrite('sbxads-wrong-key');
     const otherKey = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     await dueNow();
     await sweep(sandboxRevokers, otherKey);
     expect(await obligation(wrongKey)).toMatchObject({ state: 'gave_up', give_up: 'unrevocable', attempts: 1, last_error_code: 'OPEN_FAILED', seals: '0' });
-    // And each is shown on the screen as given up, to be revoked by hand.
-    const shown = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes.filter((r) => ['sbxads-no-revoker', 'sbxads-no-broker', 'sbxads-wrong-key'].includes(r.externalAccountId));
-    expect(shown.map((r) => [r.state, r.giveUp])).toEqual([['gave_up', 'unrevocable'], ['gave_up', 'unrevocable'], ['gave_up', 'unrevocable']]);
+    // And it is shown on the screen as given up, to be revoked by hand.
+    const shown = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes.filter((r) => r.externalAccountId === 'sbxads-wrong-key');
+    expect(shown.map((r) => [r.state, r.giveUp])).toEqual([['gave_up', 'unrevocable']]);
+  });
+
+  // A worker started without the platform app's secret or the credential key is a configuration fault, not a finding about the token (#2296 review): nothing is
+  // recorded, the copy stays pending, a fix restores the revoke, and only the seventh day ends it, with "revoke by hand".
+  it('keeps the copy pending when the deployment cannot call the platform (no revoker, no broker), revokes once it is fixed, and lets the seventh day end it', async () => {
+    await switchOn();
+    await settleAll();
+    const noRevoker = await closeWrite('sbxads-no-revoker');
+    await dueNow();
+    await sweep({}, vault);
+    // Nothing was opened (no try counted) and nothing was recorded: the obligation is as the close left it, with its copy.
+    expect(await obligation(noRevoker)).toMatchObject({ state: 'pending', give_up: null, last_error_kind: null, last_error_code: null, attempts: 0, seals: '1' });
+    const noBroker = await closeWrite('sbxads-no-broker');
+    await dueNow();
+    await runAdsRevoke({ runtime: worker, workerDb, broker: undefined, revokers: sandboxRevokers });
+    expect(await obligation(noBroker)).toMatchObject({ state: 'pending', give_up: null, last_error_kind: null, last_error_code: null, attempts: 0, seals: '1' });
+    // Many sweeps later it is the same (the claim runs out and is taken again without counting a try).
+    for (let i = 0; i < 3; i++) {
+      await dueNow();
+      await sweep({}, undefined);
+    }
+    expect(await obligation(noRevoker)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });
+    expect(await obligation(noBroker)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });
+    // The configuration is fixed: both are revoked, each with its one counted try.
+    await dueNow();
+    await sweep();
+    expect(await obligation(noRevoker)).toMatchObject({ state: 'done', how_done: 'sandbox', attempts: 1, seals: '0' });
+    expect(await obligation(noBroker)).toMatchObject({ state: 'done', how_done: 'sandbox', attempts: 1, seals: '0' });
+    // Never fixed: the seventh day ends it as given up by age, the copy is wiped and the screen says to revoke by hand (the age is the database's, whatever the config).
+    const neverFixed = await closeWrite('sbxads-never-fixed');
+    await dueNow();
+    await sweep({}, undefined);
+    expect(await obligation(neverFixed)).toMatchObject({ state: 'pending', attempts: 0, seals: '1' });
+    await admin(async (c) => {
+      await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+      try {
+        await c.query(`UPDATE crove_ads.ad_token_revoke SET created_at = now() - interval '8 days' WHERE org_id = $1 AND connection_id = $2`, [orgId, neverFixed]);
+      } finally {
+        await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+      }
+    });
+    await sweep({}, undefined);
+    expect(await obligation(neverFixed)).toMatchObject({ state: 'gave_up', give_up: 'age', last_error_code: null, attempts: 0, seals: '0' });
+    const shown = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes.filter((r) => r.externalAccountId === 'sbxads-never-fixed');
+    expect(shown.map((r) => [r.state, r.giveUp])).toEqual([['gave_up', 'age']]);
   });
 
   it('counts the try when the copy is opened, so a crash after the open and before the answer still counts, and the claim runs out to be tried again', async () => {
