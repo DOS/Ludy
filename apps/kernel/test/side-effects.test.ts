@@ -199,6 +199,13 @@ describe('the risk of the commands of running ads (#2294)', () => {
     for (const name of ['finance.einvoice.issue', 'finance.einvoice.prepare_issue']) expect(byName().get(name)?.agent, name).toBeUndefined();
   });
 
+  it('keeps the e-invoice issue job (#2502) a system-only R2 begin that commits the provider call, and R1 records, none of them an agent', () => {
+    expect(byName().get('finance.einvoice.job_begin')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('finance.einvoice.job_files')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: 'system' });
+    expect(byName().get('finance.einvoice.job_record')).toMatchObject({ risk: 'R1', sideEffect: 'internal', access: 'system' });
+    for (const name of ['finance.einvoice.job_begin', 'finance.einvoice.job_files', 'finance.einvoice.job_record']) expect(byName().get(name)?.agent, name).toBeUndefined();
+  });
+
   it('keeps the cancel of a launch that has not started (W2-2, #2296) an R2 command of owners and admins: it only releases what a plan holds against the caps', () => {
     expect(byName().get('ads.launch.cancel')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
   });

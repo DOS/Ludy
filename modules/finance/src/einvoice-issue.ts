@@ -86,7 +86,8 @@ export const einvoicePrepareIssue = defineCommand({
 });
 
 export const einvoiceIssue = defineCommand({
-  name: EINVOICE_ISSUE_COMMAND,
+  // A literal, not EINVOICE_ISSUE_COMMAND: the job egress analysis reads a command's name from its source.
+  name: 'finance.einvoice.issue',
   input: z.object({ payload: zEInvoiceIssuePayload, acceptFailedChecks: z.boolean().default(false) }),
   risk: 'R3',
   sideEffect: 'legal',
@@ -118,6 +119,8 @@ export const einvoiceIssue = defineCommand({
       throw error;
     }
     ctx.audit({ draftId, legalEntityId: draft.legal_entity_id, total: money(draft.total).toFixed(), currency: draft.currency });
+    // The worker's job takes it from here (ids only in the event).
+    await ctx.emit('finance.einvoice_issue_requested', { draft_id: draftId });
     return { draftId, state: 'submitting' };
   },
 });

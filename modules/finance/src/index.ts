@@ -36,6 +36,7 @@ import { paymentReminderCommands, paymentReminderQueries } from './payment-remin
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { einvoiceIssueCommands } from './einvoice-issue.ts';
+import { einvoiceJobCommands } from './einvoice-job.ts';
 
 export { AI_BUDGET_MESSAGE, AI_BUDGET_RECHECK_MS, aiCost, extractAndPropose, recordExtractionFailure, type ExtractDeps } from './extract.ts';
 export { NOT_A_STATEMENT, readStatementFile, recordStatementReadFailure, statementFileRows, unmappedMessage, type StatementFileDeps, type StatementStageOutcome } from './bank-statement-file.ts';
@@ -149,7 +150,7 @@ export { SEARCH_LIMIT, searchAmount, type SearchResult } from './search.ts';
 export { ARCHIVE_FORMAT, type ArchiveSource, type ArchiveSourceFile, type RecordedArchive } from './year-archive.ts';
 export { type FinancialStatements, type StatementLine, type UnmappedRow } from './statements.ts';
 
-export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...einvoiceIssueCommands];
+export const financeCommands = [recordPurchase, revisePurchase, prepareReversal, reverseEntry, journalExport, vatExport, ledgerExport, statementsExport, openingBalancePost, periodLock, periodUnlock, bankImport, bankIngest, bankStatementConfirm, bankStatementReject, createAccount, updateAccount, setVendorDefaultAccount, prepareVoucher, recordVoucher, prepareJournalVoucher, recordJournalVoucher, prepareYearClosing, recordYearClosing, portalListImport, portalListRemove, portalListRecord, missingInvoicesRequest, missingInvoicesReminderSet, missingInvoicesRemind, vatPaymentMark, vatReturnMark, ...portalSyncCommands, ...financeNotificationCommands, ...yearArchiveCommands, ...fixedAssetCommands, ...misaGoodsCodeCommands, ...categorizationCommands, ...bankFeedCommands, ...bankAccountNumberCommands, ...bankPartyRuleCommands, ...paymentReminderCommands, ...collectionSettingCommands, ...einvoiceCommands, ...einvoiceConnectionCommands, ...einvoiceIssueCommands, ...einvoiceJobCommands];
 export const financeQueries = [
   ...fixedAssetQueries,
   ...bankFeedQueries,

@@ -71,6 +71,8 @@ export const QUEUES = {
   notesRemind: 'notes-reminders',
   // Created by the bank feed sync migration (20261108100000): a bank feed connection's sync (ADR-0039, #2044).
   bankFeedSync: 'finance-bank-feed-sync',
+  // Created by the e-invoice job migration (crove_finance_einvoice_job): one draft's issue, status question or evidence step (#2502).
+  einvoiceIssue: 'finance-einvoice-issue',
   // Created by the ads core migration (20261115120000): an ad account's sync (ADR-0040, #2217).
   adsSync: 'ads-sync',
   // Created by the conversations migration (20261118120000): a reply or a hide of the conversation core, ids only in its data (#2303).
@@ -161,6 +163,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The bank feed adapters (channels.bankFeeds): the offline sandbox reaches nothing. A real adapter (#2045) adds its
   // provider here, and to DEPS_REACH first.
   [QUEUES.bankFeedSync]: 'none',
+  // The e-invoice provider adapters (channels.einvoiceProviders, @crove/einvoice): the offline sandbox reaches nothing, a real adapter (#2503) the hosts it declares, each through its
+  // own host-bound fetch. The signed XML then goes through the ordinary intake (kernel.file.ingest), whose extraction job declares its own egress.
+  [QUEUES.einvoiceIssue]: ['provider:einvoice'],
   // The ad platform adapters (channels.adPlatforms, @crove/ad-platform): the offline sandbox reaches nothing, the real ones
   // (Meta from A2, #2218) the host of their platform, each through its own host-bound fetch.
   [QUEUES.adsSync]: ['provider:ad_platform'],

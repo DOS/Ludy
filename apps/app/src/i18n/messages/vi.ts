@@ -209,6 +209,7 @@ export const vi = {
       financeProposalsMore: '{count, plural, other {# chứng từ}} khác của các nhà cung cấp còn lại chờ bạn duyệt',
       financeChecksFailed: '{count, plural, other {# chứng từ}} có kiểm tra không đạt, cần xem lại',
       financeChecksWarn: '{count, plural, other {# chứng từ}} có cảnh báo cần xem',
+      financeEinvoiceAttention: '{count, plural, other {# hóa đơn bán ra}} cần bạn xem lại: bị từ chối, gửi lỗi hoặc chưa có trả lời',
       financeOriginalsNeeded: '{count, plural, other {# hóa đơn}} cần lấy bản gốc',
       financeOriginalsFlagged: '{count, plural, other {# hóa đơn gốc}} khác hóa đơn đã ghi sổ hoặc chưa xác minh được',
       financeStatementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',

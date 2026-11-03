@@ -53,6 +53,7 @@ import { withJobLogContext } from './log.ts';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { EINVOICE_DUE_PAGE, einvoiceDue, runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
@@ -62,6 +63,7 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
+import type { EInvoiceProvider } from '@crove/einvoice';
 import type { AdPlatform, AdRevoker } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
@@ -334,6 +336,9 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
 
 // The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
 const BANK_FEED_SYNC_CRON = '30 5 * * *';
+// The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
+const EINVOICE_SWEEP_CRON = '* * * * *';
+const EINVOICE_ISSUE_RETRY_LIMIT = 3;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -395,6 +400,8 @@ export interface WorkerDeps {
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
+    einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -1104,6 +1111,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.bankFeedSync, BANK_FEED_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.bankFeedSync);
+  }
+
+  // E-invoices (ADR-0044, #2502): a draft a person's approved issue moved to `submitting`, queued by the relay below, and, every minute, every draft whose time to ask
+  // the provider has come (or whose signed XML is still to store). The adapters are the deployment's; with none on, nothing is queued and nothing is sent.
+  const einvoiceProviders = deps.channels?.einvoiceProviders;
+  const einvoiceBroker = deps.channels?.broker;
+  if (finance && einvoiceProviders && einvoiceBroker && Object.keys(einvoiceProviders).length > 0) {
+    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; draftId: string } | null = null;
+        for (;;) {
+          const page = await einvoiceDue(deps.workerDb, after);
+          for (const row of page) {
+            await boss.send(QUEUES.einvoiceIssue, { orgId: row.orgId, draftId: row.draftId } satisfies EInvoiceIssueJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.einvoiceIssue, row.draftId),
+              retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < EINVOICE_DUE_PAGE) break;
+          after = { orgId: last.orgId, draftId: last.draftId };
+        }
+        return;
+      }
+      const done = await runEInvoiceIssue({ runtime: deps.runtime, broker: einvoiceBroker, store: deps.store, providers: einvoiceProviders }, job.data);
+      console.log(`[einvoice] draft ${job.data.draftId.slice(0, 8)}: ${done.action}, ${done.state}`);
+    });
+    await boss.schedule(QUEUES.einvoiceIssue, EINVOICE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.einvoiceIssue);
   }
 
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
@@ -2034,6 +2074,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.bankFeedSync, { orgId: row.org_id, connectionId } satisfies BankFeedSyncJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.bankFeedSync, connectionId),
                   retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A sales e-invoice approved for issue (ADR-0044, #2502): its job begins the call, sends or asks, and records the answer. Ids only in the job.
+              if (finance && deps.channels?.einvoiceProviders && Object.keys(deps.channels.einvoiceProviders).length > 0 && row.type === 'finance.einvoice_issue_requested') {
+                const draftId = String(row.payload.draft_id);
+                await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
+                  retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });

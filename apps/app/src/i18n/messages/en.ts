@@ -211,6 +211,7 @@ export const en = {
       financeProposalsMore: '{count, plural, one {# more document} other {# more documents}} from other vendors waiting for your approval',
       financeChecksFailed: '{count, plural, one {# document has} other {# documents have}} a failed check to look at',
       financeChecksWarn: '{count, plural, one {# document has} other {# documents have}} a warning to look at',
+      financeEinvoiceAttention: '{count, plural, one {# sales invoice needs} other {# sales invoices need}} another look: rejected, failed to send or still without an answer',
       financeOriginalsNeeded: '{count, plural, one {# invoice needs} other {# invoices need}} the original fetched',
       financeOriginalsFlagged: '{count, plural, one {# original differs} other {# originals differ}} from the posted invoice or cannot be verified',
       financeStatementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',

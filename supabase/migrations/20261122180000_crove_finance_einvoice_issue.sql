@@ -175,7 +175,7 @@ REVOKE CREATE ON SCHEMA crove_finance FROM crove_definer_einvoice;
 --   The system context (the issue job) moves a draft along these transitions and no others, each raising EINVOICE_STATE otherwise:
 --     draft -> submitting (not by the system: the person's approved issue above); submitting -> pending, issued, rejected or failed; pending -> issued, rejected or failed;
 --     failed -> submitting (the same key, the job's retry once it has asked the provider); rejected -> draft (a new key, no provider reference, no submit time, a clean slate).
---   `issued` is terminal. Once a draft has left `draft` its content (series, date, buyer, amounts) is frozen for the system context too. A transition changes the state, the
+--   `issued` is terminal (only its two file links and an error code are added after it). Once a draft has left `draft` its content (series, date, buyer, amounts) is frozen for the system context too. A transition changes the state, the
 --   provider's reference, the number, the time issued, the authority code and the two files (each set once, from empty), the error code, the next check time, the attempts
 --   count, and on rejected -> draft the key.
 --   Whoever the writer is, a draft that has left `draft` is deleted only by the org's purge.
@@ -255,6 +255,13 @@ BEGIN
   END IF;
 
   IF OLD.state = 'issued' THEN
+    -- Terminal: only the evidence is added after it, once the files are fetched and stored: the two file links (each set once, from empty) and the error code of that step.
+    IF NEW.state = 'issued'
+       AND pg_catalog.to_jsonb(NEW) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'updated_at'] = pg_catalog.to_jsonb(OLD) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'updated_at']
+       AND (OLD.signed_file_id IS NULL OR NEW.signed_file_id IS NOT DISTINCT FROM OLD.signed_file_id)
+       AND (OLD.pdf_file_id IS NULL OR NEW.pdf_file_id IS NOT DISTINCT FROM OLD.pdf_file_id) THEN
+      RETURN NEW;
+    END IF;
     RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
   END IF;
   IF NEW.state = OLD.state THEN
