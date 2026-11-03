@@ -20,6 +20,7 @@
     "@crove/bank-feed": "workspace:*",
     "@crove/channel": "workspace:*",
     "@crove/db": "workspace:*",
+    "@crove/einvoice": "workspace:*",
     "@crove/extract-contract": "workspace:*",
     "@crove/kernel": "workspace:*",
     "@crove/kernel-contract": "workspace:*",

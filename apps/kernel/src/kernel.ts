@@ -71,6 +71,7 @@ import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/m
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
 import { MetaAdsConnector, MetaWriteConnector, adPlatforms, adRevokers, type AdPlatform, type AdRevoker } from '@crove/ad-platform';
+import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -301,6 +302,12 @@ export function calendarAdapters(config: Pick<Config, 'CALENDAR_GOOGLE_CLIENT_ID
 export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_APP_ID'>): boolean {
   const write = config.CHANNEL_META_ADS_WRITE_APP_ID;
   return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID);
+}
+
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
+// its own switch when it is built (#2503); until then no host is ever called.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
+  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
 }
 
 export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
@@ -552,7 +559,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceSandbox: config.EINVOICE_SANDBOX === 'true', adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.

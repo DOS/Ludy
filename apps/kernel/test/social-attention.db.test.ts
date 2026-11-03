@@ -50,12 +50,12 @@ suite('social attention in the inbox on PostgreSQL (#771)', () => {
     return { orgId, owner, ...roles };
   }
 
-  async function connection(orgId: string, owner: string) {
+  async function connection(orgId: string, owner: string, provider = 'sandbox') {
     const id = randomUUID();
     await admin((c) =>
       c.query(
         'INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)',
-        [orgId, id, 'sandbox', `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
+        [orgId, id, provider, `acct-${id.slice(0, 8)}`, 'Kênh thử', owner],
       ),
     );
     return id;
@@ -102,6 +102,9 @@ suite('social attention in the inbox on PostgreSQL (#771)', () => {
     const { postId } = await exec<{ postId: string }>(o, o.member, 'social.post.create', { body: 'Không đăng được', channels: [{ connectionId: conn }] });
     await setVariant(postId, 'failed', 'TOKEN_EXPIRED');
     await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE id = $1", [conn]));
+    // An e-invoice provider's broken connection is the finance module's, not a Social channel to reconnect.
+    const einvoice = await connection(o.orgId, o.owner, 'einvoice_sandbox');
+    await admin((c) => c.query("UPDATE crove_kernel.channel_connection SET status = 'error' WHERE id = $1", [einvoice]));
     const seen = await attention(o, o.owner);
     expect(seen.total).toBe(2);
     expect(seen.channels).toEqual([expect.objectContaining({ connectionId: conn, status: 'expired' })]);
