@@ -26,9 +26,10 @@ export const AMOUNT_FACTOR = 3;
 export const PRICE_RISE_PERCENT = 25;
 // The earlier prices of an item that make its usual price: the latest few.
 export const PRICE_BASELINE_PRICES = 3;
+// How many earlier invoices or payments make a party's history: the last few.
+export const HISTORY_WINDOW = 12;
 // The longest item name a check carries.
 const ITEM_MAX = 60;
-
 
 // An account number as compared: letters and digits only, upper case, so spaces, dots and dashes do not make one account
 // two.
@@ -71,10 +72,13 @@ export function bankAccountCheck(account: string | null | undefined, earlier: re
   };
 }
 
+// What an amount is the amount of: an invoice of a vendor, or a payment voucher to a party (#2419), which share the rule.
+export type AmountSubject = 'invoice' | 'payment';
+
 // The invoice's total is at least AMOUNT_FACTOR times, or at most a third of, the median of the vendor's last invoices; judged
 // only with AMOUNT_MIN_HISTORY of them. Both are in VND as booked; a null total (a foreign-currency invoice still waiting for
 // its rate) is judged by nothing, since its amount is not in dong.
-export function amountCheck(total: string | null, earlier: readonly string[]): InvoiceCheck | null {
+export function amountCheck(total: string | null, earlier: readonly string[], subject: AmountSubject = 'invoice'): InvoiceCheck | null {
   const now = total === null ? null : positive(total);
   const history = earlier.map(positive).filter((d): d is DecimalValue => d !== null);
   if (now === null || history.length < AMOUNT_MIN_HISTORY) return null;
@@ -85,14 +89,19 @@ export function amountCheck(total: string | null, earlier: readonly string[]): I
   // How far from the usual: how many times it, and the share of it, as the sentence says them.
   const ratio = now.dividedBy(usual).toFixed(1);
   const percent = now.dividedBy(usual).times(100).toFixed(0);
+  const payment = subject === 'payment';
   return {
     id: 'anomaly_amount',
     status: 'warn',
     code: 'anomaly_amount.unusual',
-    message: high
-      ? `Cảnh báo: số tiền ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
-      : `Cảnh báo: số tiền ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`,
-    params: { total: now.toFixed(0), usual: usual.toFixed(0), count: String(history.length), direction: high ? 'high' : 'low', ratio, percent },
+    message: payment
+      ? high
+        ? `Cảnh báo: số tiền chi ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường chi cho đối tượng này (${usual.toFixed(0)} đ, trung vị của ${history.length} lần chi gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
+        : `Cảnh báo: số tiền chi ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường chi cho đối tượng này (${usual.toFixed(0)} đ, trung vị của ${history.length} lần chi gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`
+      : high
+        ? `Cảnh báo: số tiền ${now.toFixed(0)} đ cao gấp ${ratio} lần mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo từ ${AMOUNT_FACTOR} lần)`
+        : `Cảnh báo: số tiền ${now.toFixed(0)} đ chỉ bằng ${percent}% mức thường của nhà cung cấp này (${usual.toFixed(0)} đ, trung vị của ${history.length} hóa đơn gần nhất; cảnh báo khi dưới một phần ${AMOUNT_FACTOR})`,
+    params: { total: now.toFixed(0), usual: usual.toFixed(0), count: String(history.length), direction: high ? 'high' : 'low', ratio, percent, ...(payment ? { subject: 'payment' } : {}) },
   };
 }
 

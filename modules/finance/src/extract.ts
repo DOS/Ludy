@@ -15,7 +15,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
 import { isOwnTaxCode } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
-import { anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
+import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import {
   bookableLines,
@@ -109,7 +109,7 @@ export interface InvoiceLookup {
 }
 
 // The invoices of the vendor's history the anomaly rules read.
-const HISTORY_DOCUMENTS = 12;
+const HISTORY_DOCUMENTS = HISTORY_WINDOW;
 
 // The check a duplicate invoice carries: from the lookup before the record, or from the record's own (#2137).
 const DUPLICATE_CHECK: Readonly<InvoiceCheck> = Object.freeze({ id: 'duplicate', status: 'fail', code: 'duplicate.found', message: 'Hóa đơn này đã có trong Inbox hoặc đã ghi sổ' });

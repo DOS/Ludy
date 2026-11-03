@@ -72,26 +72,26 @@ export const crmEn: CrmCopy = {
       },
       {
         id: 'calendar-and-thy',
-        title: `Google Calendar and ${N.crm}`,
+        title: `Google Calendar and ${N.sales}`,
         lead: 'Connect your calendar so busy times are never double booked.',
         points: [
           'Connect Google Calendar: busy times block bookings, and only times are read, never titles. It needs Google keys that the installer has configured',
           'You can turn on writing new bookings to Google Calendar; the title holds the meeting type and the client’s name',
           'A subscription address to see your bookings in Google Calendar, Outlook or Apple Calendar',
-          `${N.crm} reads a client’s message, picks real free times and drafts a reply with the booking link. You read it and send it yourself. It needs an AI model that the installer has configured`,
+          `${N.sales} reads a client’s message, picks real free times and drafts a reply with the booking link. You read it and send it yourself. It needs an AI model that the installer has configured`,
         ],
       },
     ],
   },
   coworker: {
-    title: `What ${N.crm} does in Ludy CRM`,
-    lead: `${N.crm} is the AI head of sales, your coworker in scheduling, working under ${N.gm}’s coordination. The contact list and the deals are yours to manage.`,
-    doesTitle: `${N.crm} does`,
+    title: `What ${N.sales} does in Ludy CRM`,
+    lead: `${N.sales} is the AI head of sales, your coworker in scheduling, working under ${N.gm}’s coordination. The contact list and the deals are yours to manage.`,
+    doesTitle: `${N.sales} does`,
     does: [
       'Suggests meeting times from a client’s message and drafts the reply',
       'When a client cancels, the appointment scheduler agent (a separate position, if you add it to the org chart) writes the 3 nearest free times into a task and passes it to the person in charge',
     ],
-    doesNotTitle: `${N.crm} does not`,
+    doesNotTitle: `${N.sales} does not`,
     doesNot: ['Book a meeting or send an email on its own', 'Write to the contact list or the deals'],
   },
   audience: {

@@ -16,7 +16,7 @@ test('stale deals show a badge and a next steps list, done and snooze are one cl
   const slug = await createOrg(page, 'Công ty Theo Dõi');
   exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Khách hàng ABC', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
 
-  await page.getByRole('navigation').getByRole('link', { name: 'CRM', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
   await page.getByRole('navigation').getByRole('link', { name: 'Cơ hội' }).click();
   await expect(page).toHaveURL(new RegExp(`/o/${slug}/deals$`));
 

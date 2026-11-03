@@ -163,6 +163,7 @@ function ReversalCard({ reversal, slug }: { reversal: { entryId: string; entryDa
 // on approval; code is the one it was given, once approved.
 function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVoucherProposal; code: string | null; slug: string; accountName: (code: string) => string }) {
   const t = useTranslations('inboxDetail');
+  const root = useTranslations();
   const f = useFormat();
   const journal = previewVoucherJournal(voucher);
   return (
@@ -194,6 +195,20 @@ function VoucherCard({ voucher, code, slug, accountName }: { voucher: CashVouche
           </div>
         )}
       </div>
+      {voucher.checks && voucher.checks.length > 0 && (
+        // The warnings raised when the voucher was asked for (#2419), worded as an invoice's checks are.
+        <div data-testid="voucher-checks">
+          <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('checks')}</p>
+          <ul className="mt-3 space-y-1.5">
+            {voucher.checks.map((c) => (
+              <li key={c.id} className="flex items-start gap-2 text-sm">
+                <Badge variant={CHECK_TONE[c.status]}>{CHECK_ICON[c.status]}</Badge>
+                <span className="text-muted-foreground">{invoiceCheckMessage(c, root, { money: (value) => f.money(value), date: f.date })}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div>
         <p className="text-xs font-medium tracking-wide uppercase text-subtle-foreground">{t('journal')}</p>
         <table className="mt-3 w-full text-sm">
