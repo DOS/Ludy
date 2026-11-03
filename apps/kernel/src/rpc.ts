@@ -39,11 +39,12 @@ import {
   type OrgSummary,
 } from '@crove/kernel';
 import type { z } from 'zod';
-import type { ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
+import type { CompanyCandidates, ConversationAutoDraft, zAgentBudget, zAgentTemplate, zAiMeter, zAiUsageReport, zTask } from '@crove/kernel-contract';
 import type { SuggestedSlots } from '@crove/mod-crm';
 import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
+import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -300,6 +301,8 @@ export function createRpcHandler(
   // Its model calls have a budget of their own (a few a minute for each member and for the org, one at a time for a member), apart from the reply drafts'.
   const suggestionBudget = () => new DraftBudget({ perUserPerMinute: 12, perOrgPerMinute: 60 });
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
+  // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
+  const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -749,6 +752,16 @@ export function createRpcHandler(
       },
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+        // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
+        // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
+        // with it off the companies come in their own order and the answer says `off`.
+        companySuggestions: os.crm.contacts.companySuggestions.handler(({ context, input }) =>
+          inCrm(context, async (orgId, actor) => {
+            const found = await runtime.query<CompanyCandidates>('crm.contact.company_candidates', input, { actor, orgId });
+            const { autoDraft } = await runtime.query<ConversationAutoDraft>('kernel.conversation.auto_draft', {}, { actor, orgId });
+            return suggestCompanies(autoDraft ? companyAi : { ...companyAi, reader: null }, orgId, actor.userId, found);
+          }),
+        ),
       },
       contactImport: {
         stage: os.crm.contactImport.stage.handler(crmCommand('crm.import.stage')),

@@ -7,11 +7,12 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import type { Contact, FilterAst } from '@crove/kernel-contract';
+import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { refreshParties } from './party-edit.tsx';
-import { errorMessage, orpc } from '../lib/api.ts';
+import { client, errorMessage, orpc } from '../lib/api.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 // The most results a picker shows: a person types more to narrow them.
@@ -69,6 +70,53 @@ function PartyPicker({ kind, label, exclude, onPick, onCancel }: { kind: 'person
   );
 }
 
+const SUGGESTIONS_STALE_MS = 5 * 60_000;
+
+// The companies the sales coworker thinks a person works at (#2438, PR 3): a tax code the person wrote, the same email domain, then names that carry the word of
+// their email domain, ordered by the model when it is on. They are suggestions, shown only while the person has no company; nothing is linked until a person
+// clicks. With the model off, spent or failing the companies still come, in their own order, with no error.
+function CompanySuggestions({ person }: { person: Contact }) {
+  const t = useTranslations('contacts.company');
+  const found = useQuery({
+    queryKey: ['company-suggestions', person.id, person.version],
+    queryFn: () => client.crm.contacts.companySuggestions({ partyId: person.id }),
+    // An answer that is not one yet (busy) is asked again soon, a few times.
+    staleTime: (query) => (query.state.data?.ai === 'busy' ? 0 : SUGGESTIONS_STALE_MS),
+    refetchInterval: (query) => (query.state.data?.ai === 'busy' && query.state.dataUpdateCount < 6 ? 4_000 : false),
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+  const link = useMutation(orpc.parties.setCompany.mutationOptions({ onSuccess: () => refreshParties() }));
+  const candidates = found.data?.candidates ?? [];
+  if (candidates.length === 0) return null;
+  return (
+    <div className="space-y-1" data-testid="company-suggestions">
+      <h3 className="text-sm font-semibold text-foreground">{t('suggested')}</h3>
+      <ul className="divide-y divide-border rounded-md border border-border">
+        {candidates.map((c) => (
+          <li key={c.partyId} className="flex items-center justify-between gap-2 px-2 py-1.5">
+            <span className="min-w-0">
+              <span className="block truncate text-foreground">{c.name}</span>
+              <Badge variant="outline">{t(`reason.${c.reason}`)}</Badge>
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              aria-label={t('linkThis', { name: c.name })}
+              loading={link.isPending && link.variables?.companyId === c.partyId}
+              onClick={() => link.mutate({ partyId: person.id, companyId: c.partyId, version: person.version })}
+            >
+              {t('linkShort')}
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {link.error && <ErrorText>{errorMessage(link.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // A person's company: the name, and (for owners, admins and members) a way to link, change or clear it.
 export function PersonCompany({ person, canEdit }: { person: Contact; canEdit: boolean }) {
   const t = useTranslations('contacts.company');
@@ -95,6 +143,7 @@ export function PersonCompany({ person, canEdit }: { person: Contact; canEdit: b
         )}
       </div>
       {picking && <PartyPicker kind="organization" label={t('search')} exclude={(c) => c.id === person.company?.id} onPick={(c) => link(c.id)} onCancel={() => setPicking(false)} />}
+      {canEdit && !picking && !person.company && <CompanySuggestions person={person} />}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
     </div>
   );
