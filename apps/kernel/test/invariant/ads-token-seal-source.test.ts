@@ -90,7 +90,7 @@ describe('what may open or name the sealed copy of a closed ads connection token
     expect(worker).toMatch(/boss\.schedule\(QUEUES\.adsRevoke, ADS_REVOKE_CRON, null, \{[^}]*retryLimit: 0/);
     expect(naming('QUEUES.adsRevoke')).toEqual(['apps/kernel/src/jobs-schema.ts', 'apps/kernel/src/worker.ts']);
     expect(worker).not.toMatch(/boss\.send\(QUEUES\.adsRevoke/);
-    expect(read('supabase/migrations/20261121250000_crove_ads_token_revoke.sql')).toContain("crove_jobs.create_queue('ads-revoke'");
+    expect(read('supabase/migrations/20261122050000_crove_ads_token_revoke.sql')).toContain("crove_jobs.create_queue('ads-revoke'");
     // The job's egress is the ad platform's and nothing else.
     expect(code('apps/kernel/src/jobs-schema.ts')).toMatch(/\[QUEUES\.adsRevoke\]: \['provider:ad_platform'\]/);
   });

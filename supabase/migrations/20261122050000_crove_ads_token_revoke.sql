@@ -52,7 +52,7 @@
 --   token_revoke_expire   settles the obligations past seven days or ten tries and wipes their copies (also run by a sweep that has no egress, so the age
 --                         limit does not depend on the revoke job).
 --   write_orphans         lists the active write connections whose connector is no longer an owner or admin (a removed member's), to be closed so the
---                         revoke runs and the copy is wiped; the sweep closes them with the kernel's system command (20261121250200 adds the check that
+--                         revoke runs and the copy is wiped; the sweep closes them with the kernel's system command (20261122070000 adds the check that
 --                         command asks the database under the row's lock).
 SET LOCAL lock_timeout = '2s';
 
