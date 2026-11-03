@@ -54,12 +54,18 @@ function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): bo
   return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
 }
 
-// The Authentication-Results headers, topmost first (a receiving server adds its own on top), unfolded and cut; at most maxAuthResults.
+// The Authentication-Results headers, topmost first (a receiving server adds its own on top) and unfolded; at most maxAuthResults. A header longer than
+// maxAuthResultChars is never cut (a cut can turn "header.d=victim.test.evil.test" into "header.d=victim.test" and make a failure read as a pass): it is
+// kept as its authserv-id and "none", so it still stands in its place in the order and vouches for nothing.
 function authResultsOf(headers: ReadonlyArray<{ key: string; value: string }>): string[] {
   return headers
     .filter((h) => h.key.toLowerCase() === 'authentication-results')
     .slice(0, EXTRACT_LIMITS.maxAuthResults)
-    .map((h) => h.value.replace(/\s+/g, ' ').trim().slice(0, EXTRACT_LIMITS.maxAuthResultChars));
+    .map((h) => {
+      const value = h.value.replace(/\s+/g, ' ').trim();
+      if (value.length <= EXTRACT_LIMITS.maxAuthResultChars) return value;
+      return `${(value.split(/[;\s]/)[0] ?? '').slice(0, 255)}; none`;
+    });
 }
 
 function sentAtOf(date: string | undefined): string | null {
