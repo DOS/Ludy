@@ -252,6 +252,7 @@ export const paymentReminderDraft = defineQuery({
       email: customer.email,
       currency: await bookCurrency(ctx),
       termsDays: customer.termsDays,
+      ownTermsDays: customer.ownTermsDays,
       level: row.level,
       lang: row.lang,
       invoices: customer.overdue.map((i) => ({ id: i.id, series: i.series, number: i.number, date: i.date, dueDate: i.dueDate, daysOverdue: i.daysOverdue, amountDue: i.amountDue })),

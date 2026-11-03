@@ -361,4 +361,79 @@ suite('customer payment reminders (#2488)', () => {
     await expect(draft(b, p)).rejects.toMatchObject({ code: 'NOTHING_OVERDUE' });
     await expect(execute(b, 'finance.payment_reminder.send', sendInput(await draft(a, p)))).rejects.toMatchObject({ code: 'NOTHING_OVERDUE' });
   });
+
+  it('dates the invoices by the org\'s terms, and by a customer\'s own terms when it set them', async () => {
+    const o = await org();
+    const a = await customer(o, 'Công ty Terms A', 'a@terms.test');
+    const b = await customer(o, 'Công ty Terms B', 'b@terms.test');
+    // 40 days old: 10 days late under the default 30 days.
+    await sale(o, a, '1', addDays(TODAY, -40), '1000000');
+    await sale(o, b, '2', addDays(TODAY, -40), '2000000');
+    expect((await list(o)).customers.map((c) => [c.name, c.daysOverdue, c.level])).toEqual([['Công ty Terms A', 10, 1], ['Công ty Terms B', 10, 1]]);
+    expect((await list(o)).termsDays).toBe(30);
+    // The org gives 60 days: nobody is late. With 15 days both are 25 days late, the second notice.
+    await execute(o, 'finance.collection_setting.set', { termsDays: 60, weeklyItem: false });
+    expect((await list(o)).customers).toEqual([]);
+    await execute(o, 'finance.collection_setting.set', { termsDays: 15, weeklyItem: false });
+    expect((await list(o)).customers.map((c) => [c.daysOverdue, c.level])).toEqual([[25, 2], [25, 2]]);
+    // B has its own 90 days: it leaves the list, A stays under the org's 15.
+    await execute(o, 'finance.customer_collection.set', { partyId: b, termsDays: 90, pausedUntil: null });
+    const now = await list(o);
+    expect(now.customers.map((c) => c.name)).toEqual(['Công ty Terms A']);
+    expect(now.termsDays).toBe(15);
+    const d = await draft(o, a);
+    expect(d).toMatchObject({ termsDays: 15, ownTermsDays: null });
+    expect(d.invoices[0]).toMatchObject({ dueDate: addDays(addDays(TODAY, -40), 15), daysOverdue: 25 });
+    await execute(o, 'finance.customer_collection.set', { partyId: a, termsDays: 20, pausedUntil: null });
+    expect(await draft(o, a)).toMatchObject({ termsDays: 20, ownTermsDays: 20, level: 2 });
+  });
+
+  it('keeps a paused customer out of the list, the draft and the send, lists it apart, and brings it back when the pause ends', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Tạm Dừng', 'td@tamdung.test');
+    await sale(o, p, '1', dated(7), '900000');
+    const d = await draft(o, p);
+    const until = addDays(TODAY, 10);
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: until }, o.member);
+    const paused = await list(o);
+    expect(paused.customers).toEqual([]);
+    expect(paused.paused).toEqual([{ partyId: p, name: 'Công ty Tạm Dừng', pausedUntil: until, ownTermsDays: 25, invoiceCount: 1, total: '900000' }]);
+    await expect(draft(o, p)).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
+    await expect(execute(o, 'finance.payment_reminder.send', sendInput(d))).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
+    expect(await mails(o, p)).toHaveLength(0);
+    // The last day of the pause still holds; the day after, the customer is back (its terms are still its own: 25 days, so 12 late).
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: TODAY });
+    expect((await list(o)).paused).toHaveLength(1);
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: addDays(TODAY, -1) });
+    const back = await list(o);
+    expect(back.paused).toEqual([]);
+    expect(back.customers.map((c) => [c.name, c.daysOverdue])).toEqual([['Công ty Tạm Dừng', 12]]);
+    expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(await draft(o, p)))).status).toBe('queued');
+  });
+
+  it('adds the weekly item only where the org turned it on, counting the overdue customers not reminded since Monday, and sends and drafts nothing', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Hằng Tuần', 'ht@hangtuan.test');
+    const q = await customer(o, 'Công ty Hằng Tuần Hai', 'ht2@hangtuan.test');
+    await sale(o, p, '1', dated(3), '500000');
+    await sale(o, q, '2', dated(5), '600000');
+    const items = async (user = o.owner) => (await query<Array<{ id: string; kind: string; count?: number; href?: string; title: { key: string; params: Record<string, unknown> } }>>(o, 'finance.today', {}, user)).filter((i) => i.title.key === 'financeRemindersDue');
+    expect(await items()).toEqual([]);
+    await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: true });
+    const [item] = await items();
+    expect(item).toMatchObject({ kind: 'message', count: 2, href: '/payment-reminders', title: { key: 'financeRemindersDue', params: { count: 2 } } });
+    // A viewer acts on nothing: no item. Counting changed nothing: no mail.
+    expect(await items(o.viewer)).toEqual([]);
+    expect(await mails(o, p)).toHaveLength(0);
+    // One customer is reminded this week: one left. A paused customer is not counted. Reminded and paused: none, the item is gone.
+    await execute(o, 'finance.payment_reminder.send', sendInput(await draft(o, p)));
+    expect((await items())[0]?.count).toBe(1);
+    await execute(o, 'finance.customer_collection.set', { partyId: q, termsDays: null, pausedUntil: addDays(TODAY, 3) });
+    expect(await items()).toEqual([]);
+    // Off again: nothing.
+    await execute(o, 'finance.customer_collection.set', { partyId: q, termsDays: null, pausedUntil: null });
+    expect((await items()).length).toBe(1);
+    await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: false });
+    expect(await items()).toEqual([]);
+  });
 });
