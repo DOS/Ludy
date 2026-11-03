@@ -663,6 +663,7 @@ export const en = {
     hint: 'Hint for {finance} about the tone (optional)',
     hintExample: 'For example: a long-time customer, keep it gentle',
     wordingButton: 'Ask {finance} to word it',
+    wordingUndo: 'Restore the previous words',
     wording: {
       used: '{finance} worded the opening and the closing. The invoice table, the amounts and the account still come from the books. Read and edit before sending.',
       off: 'This server has no AI turned on, so the template below is used.',

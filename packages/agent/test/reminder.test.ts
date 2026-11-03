@@ -24,7 +24,8 @@ describe('what the model is told', () => {
     const system = reminderInstructions(REQUEST);
     expect(system).toContain('Vietnamese');
     expect(system).toContain('second reminder');
-    expect(system).toContain('Công ty TNHH Ánh Dương');
+    expect(system).not.toContain('Công ty TNHH Ánh Dương');
+    expect(reminderPrompt(REQUEST)).toContain('<<<\nCông ty TNHH Ánh Dương\n>>>');
     expect(system).toContain('Never write any digit');
     expect(system).toContain('never name the customer');
     expect(reminderInstructions({ ...REQUEST, level: 3, language: 'en' })).toContain('final notice');
@@ -63,6 +64,14 @@ describe('checkReminderWords', () => {
     ['a full-width digit', 'Quý khách còn nợ １２３ đồng.'],
     ['a number in words', 'Quý khách còn nợ một triệu hai trăm nghìn đồng.'],
     ['a percentage', 'Chậm thanh toán sẽ chịu lãi 10%.'],
+    ['an English amount in words', 'Please pay one million dollars for the invoices below.'],
+    ['English days in words', 'Please pay within seven days.'],
+    ['English tens in words', 'You are thirty days overdue.'],
+    ['half a million', 'The balance is half a million.'],
+    ['a Vietnamese amount without digits', 'Quý khách còn nợ nửa triệu đồng.'],
+    ['Vietnamese days in words', 'Hóa đơn đã quá hạn ba mươi ngày.'],
+    ['a day of the month in words', 'Hạn là mùng năm tháng sau.'],
+    ['a currency in words', 'The balance is a few dollars.'],
   ])('refuses a text with %s', (_, text) => {
     expect(checkReminderWords(REQUEST, { lead: text, closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
     expect(checkReminderWords(REQUEST, { lead: GOOD.lead, closing: text })).toEqual({ kind: 'none', code: 'FIGURES' });
@@ -72,6 +81,12 @@ describe('checkReminderWords', () => {
     ['a web address', 'Xem chi tiết tại https://pay.example.test/abc.'],
     ['a bare domain', 'Xem tại thanhtoan.vn ngay hôm nay.'],
     ['an account handle', 'Nhắn cho chúng tôi qua @thanhtoan_support.'],
+    ['a domain with another top-level domain', 'Pay at pay.example.cn today.'],
+    ['a domain with a mark before the dot', 'Xem ngân-hàng.vn nhé.'],
+    ['a look-alike letter domain', 'Visit exаmple.com now.'],
+    ['a bracketed dot', 'Visit example[.]com now.'],
+    ['an obfuscated address', 'Write to info(at)example(dot)com.'],
+    ['a spelled-out dot', 'Go to example dot com.'],
   ])('refuses a text with %s', (_, text) => {
     expect(checkReminderWords(REQUEST, { lead: text, closing: GOOD.closing })).toEqual({ kind: 'none', code: 'LINK' });
   });
@@ -80,6 +95,19 @@ describe('checkReminderWords', () => {
     const named: ReminderWordsRequest = { ...REQUEST, orgName: 'Công ty 3T' };
     expect(checkReminderWords(named, { lead: 'Công ty 3T xin nhắc Quý khách về các hóa đơn dưới đây.', closing: GOOD.closing })).toMatchObject({ kind: 'words' });
     expect(checkReminderWords(named, { lead: 'Công ty 3T xin nhắc Quý khách trả 500 đồng.', closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkReminderWords(named, { lead: 'Công ty 3T xin nhắc Quý khách; chỉ cần 3 ngày.', closing: GOOD.closing })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('keeps ordinary words that look like numbers, so a natural text passes', () => {
+    expect(checkReminderWords(REQUEST, { lead: 'Đây là thư nhắc lần thứ hai. Hai bên cùng kiểm tra một lần nữa các hóa đơn dưới đây.', closing: 'Xin cảm ơn Quý khách.' })).toMatchObject({ kind: 'words' });
+    expect(checkReminderWords({ ...REQUEST, language: 'en' }, { lead: 'This is our second reminder about the invoices below.', closing: 'Thank you for your prompt attention.' })).toMatchObject({ kind: 'words' });
+  });
+
+  it('allows the sender\'s name only as a whole: a number the name holds cannot be reused on its own', () => {
+    const named: ReminderWordsRequest = { ...REQUEST, language: 'en', orgName: 'Acme 2026' };
+    expect(checkReminderWords(named, { lead: 'Acme 2026 would like to remind you about the invoices below.', closing: 'Thank you.' })).toMatchObject({ kind: 'words' });
+    expect(checkReminderWords(named, { lead: 'Please pay before 2026 for the invoices below.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
+    expect(checkReminderWords(named, { lead: 'Acme 2026 asks you to pay before 2026.', closing: 'Thank you.' })).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
   it('refuses empty and over-long text, and nothing from a model that answered nothing', () => {

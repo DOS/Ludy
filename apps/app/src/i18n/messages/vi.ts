@@ -661,6 +661,7 @@ export const vi = {
     hint: 'Gợi ý cho {finance} về giọng văn (không bắt buộc)',
     hintExample: 'Ví dụ: khách quen, nhắc nhẹ nhàng',
     wordingButton: 'Nhờ {finance} soạn lời',
+    wordingUndo: 'Khôi phục lời trước đó',
     wording: {
       used: '{finance} đã soạn phần mở đầu và kết thư. Bảng hóa đơn, số tiền và tài khoản vẫn lấy từ sổ. Bạn xem và sửa trước khi gửi.',
       off: 'Máy chủ này chưa bật AI, nên dùng thư mẫu bên dưới.',

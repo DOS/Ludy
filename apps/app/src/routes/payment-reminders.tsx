@@ -52,6 +52,7 @@ function DraftCard({
   busy,
   onEdit,
   onApprove,
+  onAsking,
   onRefresh,
   onResend,
 }: {
@@ -63,6 +64,8 @@ function DraftCard({
   busy: boolean;
   onEdit: (patch: Edit) => void;
   onApprove: (value: boolean) => void;
+  // Whether the coworker is wording this draft: the send waits for it, so words that arrive late never land on a mail already sent.
+  onAsking: (value: boolean) => void;
   onRefresh: () => void;
   onResend: () => void;
 }) {
@@ -75,10 +78,17 @@ function DraftCard({
   // The finance coworker words the opening and the closing; the table, the total and the bank account stay the books'. A refusal of any kind leaves the words
   // as they are.
   const [hint, setHint] = useState('');
+  // The person's own words before the coworker's replaced them, for a way back.
+  const [before, setBefore] = useState<{ lead: string; closing: string } | null>(null);
   const wording = useMutation({
+    onMutate: () => onAsking(true),
+    onSettled: () => onAsking(false),
     mutationFn: () => client.paymentReminders.wording({ partyId: draft.partyId, ...(legalEntityId ? { legalEntityId } : {}), ...(hint.trim() ? { hint: hint.trim() } : {}) }),
     onSuccess: (answer) => {
-      if (answer.words) onEdit({ lead: answer.words.lead, closing: answer.words.closing });
+      if (answer.words && !sent) {
+        setBefore({ lead: words.lead, closing: words.closing });
+        onEdit({ lead: answer.words.lead, closing: answer.words.closing });
+      }
     },
   });
   return (
@@ -108,7 +118,11 @@ function DraftCard({
         <div className="mt-3 space-y-2 rounded-lg border border-dashed p-3">
           <Label htmlFor={`${id}-hint`}>{t('hint')}</Label>
           <div className="flex flex-wrap gap-2">
-            <Input id={`${id}-hint`} className="min-w-48 flex-1" value={hint} maxLength={PAYMENT_REMINDER_HINT_MAX} placeholder={t('hintExample')} disabled={busy || wording.isPending} onChange={(e) => setHint(e.target.value)} />
+            <Input id={`${id}-hint`} className="min-w-48 flex-1" value={hint} maxLength={PAYMENT_REMINDER_HINT_MAX} placeholder={t('hintExample')} disabled={busy || wording.isPending} onChange={(e) => {
+                setHint(e.target.value);
+                wording.reset();
+              }}
+            />
             <Button variant="outline" size="sm" loading={wording.isPending} disabled={busy} onClick={() => wording.mutate()} data-testid="reminder-wording">
               {t('wordingButton')}
             </Button>
@@ -119,10 +133,19 @@ function DraftCard({
             </p>
           )}
           {wording.error && <ErrorText>{errorMessage(wording.error)}</ErrorText>}
+          {before && wording.data?.words && (
+            <Button variant="ghost" size="sm" onClick={() => {
+                onEdit(before);
+                setBefore(null);
+                wording.reset();
+              }}>
+              {t('wordingUndo')}
+            </Button>
+          )}
         </div>
       )}
 
-      <fieldset className="mt-3 space-y-3" disabled={busy || sent}>
+      <fieldset className="mt-3 space-y-3" disabled={busy || sent || wording.isPending}>
         <legend className="sr-only">{t('wordsLegend')}</legend>
         <div className="space-y-1">
           <Label htmlFor={`${id}-subject`}>{t('subject')}</Label>
@@ -235,6 +258,8 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
   const [skipped, setSkipped] = useState<ReadonlySet<string>>(new Set());
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [sending, setSending] = useState(false);
+  // The drafts the coworker is wording right now.
+  const [asking, setAsking] = useState<ReadonlySet<string>>(new Set());
 
   const drafts = results.flatMap((r) => (r.data ? [r.data] : []));
   const failed = results.find((r) => r.error);
@@ -287,7 +312,7 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
           <Button variant="ghost" size="sm" disabled={sending} onClick={onClose}>
             {t('close')}
           </Button>
-          <Button loading={sending} disabled={pending.length === 0} onClick={() => void sendAll()} data-testid="reminder-send">
+          <Button loading={sending} disabled={pending.length === 0 || asking.size > 0} onClick={() => void sendAll()} data-testid="reminder-send">
             {t('send', { count: pending.length })}
           </Button>
         </div>
@@ -310,6 +335,14 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
               const next = new Set(s);
               if (value) next.delete(draft.partyId);
               else next.add(draft.partyId);
+              return next;
+            })
+          }
+          onAsking={(value) =>
+            setAsking((s) => {
+              const next = new Set(s);
+              if (value) next.add(draft.partyId);
+              else next.delete(draft.partyId);
               return next;
             })
           }
