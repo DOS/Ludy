@@ -32,7 +32,7 @@ export const ROSTER: Readonly<Record<CoworkerKey, Coworker>> = {
   sales: {
     name: 'Dy',
     title: { vi: 'Trưởng phòng bán hàng và chăm sóc khách hàng', en: 'Head of sales and customer care' },
-    // No app name until the CRM page folds into Ludy Engage (#2440 part 2): the site still shows Ludy CRM as its own app.
+    // Customers and sales are the group of Ludy Engage that the former Ludy CRM folded into (#2435, #2440).
     scope: { vi: 'Hộp thư, khách hàng và bán hàng', en: 'The Inbox, customers and sales' },
   },
   // Ludy Engage's marketing: publishing and ads.

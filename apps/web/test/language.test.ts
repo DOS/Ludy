@@ -69,7 +69,7 @@ describe('proxy', () => {
   it('rewrites to the English route, keeping the address, for an English browser or cookie', () => {
     expect(rewrittenTo('/', { 'accept-language': 'en-US,en;q=0.9' })).toBe('https://ludy.vn/en');
     expect(rewrittenTo('/ke-toan', { 'accept-language': 'en' })).toBe('https://ludy.vn/en/accounting');
-    expect(rewrittenTo('/crm', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/crm');
+    expect(rewrittenTo('/engage', { cookie: 'ludy-lang=en' })).toBe('https://ludy.vn/en/engage');
     expect(rewrittenTo('/notes', { cookie: 'ludy-lang=en', 'accept-language': 'vi' })).toBe('https://ludy.vn/en/notes');
     expect(proxy(visit('/', { cookie: 'ludy-lang=en' })).headers.get('vary')).toMatch(/cookie/i);
   });
@@ -79,7 +79,7 @@ describe('proxy', () => {
   });
 
   it('redirects an old /en link for good to the public address and remembers English', () => {
-    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/crm', '/crm'], ['/en/notes', '/notes']] as const) {
+    for (const [from, to] of [['/en', '/'], ['/en/accounting', '/ke-toan'], ['/en/engage', '/engage'], ['/en/notes', '/notes']] as const) {
       const response = proxy(visit(from));
       expect(response.status, from).toBe(301);
       expect(new URL(response.headers.get('location')!).pathname, from).toBe(to);
@@ -87,10 +87,24 @@ describe('proxy', () => {
     }
   });
 
+  it('redirects the retired /crm for good to /engage, and so its old /en twin, keeping the query', () => {
+    const crm = proxy(visit('/crm?utm=x', { cookie: 'ludy-lang=en' }));
+    expect(crm.status).toBe(301);
+    expect(crm.headers.get('location')).toBe('https://ludy.vn/engage?utm=x');
+    expect(crm.headers.get('vary')).toMatch(/cookie/i);
+    expect(proxy(visit('/crm/')).headers.get('location')).toBe('https://ludy.vn/engage');
+    const twin = proxy(visit('/en/crm'));
+    expect(twin.status).toBe(301);
+    expect(new URL(twin.headers.get('location')!).pathname).toBe('/engage');
+    expect(twin.cookies.get('ludy-lang')?.value).toBe('en');
+    // The page it lands on is a page, not another redirect.
+    expect(proxy(visit('/engage', { cookie: 'ludy-lang=en' })).headers.get('location')).toBeNull();
+  });
+
   it('turns the toggle into a cookie and the same address without the parameter', () => {
-    const toEnglish = proxy(visit('/crm?lang=en'));
+    const toEnglish = proxy(visit('/engage?lang=en'));
     expect(toEnglish.status).toBe(302);
-    expect(toEnglish.headers.get('location')).toBe('https://ludy.vn/crm');
+    expect(toEnglish.headers.get('location')).toBe('https://ludy.vn/engage');
     expect(toEnglish.cookies.get('ludy-lang')).toMatchObject({ value: 'en', path: '/', sameSite: 'lax', secure: true });
     expect(toEnglish.cookies.get('ludy-lang')?.maxAge).toBeGreaterThan(60 * 60 * 24 * 300);
     // The choice is Vietnamese even when the browser is English, and other parameters survive.
@@ -100,7 +114,7 @@ describe('proxy', () => {
   });
 
   it('never redirects a redirect: the answer for the address it sends back to is a page, not another redirect', () => {
-    for (const from of ['/en', '/en/accounting', '/crm?lang=en']) {
+    for (const from of ['/en', '/en/accounting', '/engage?lang=en']) {
       const to = new URL(proxy(visit(from)).headers.get('location')!, 'https://ludy.vn');
       expect(proxy(visit(`${to.pathname}${to.search}`, { cookie: 'ludy-lang=en' })).headers.get('location'), from).toBeNull();
     }
@@ -124,7 +138,7 @@ describe('proxy matcher', () => {
   const matches = (path: string) => matcher.test(path);
 
   it('runs on pages and on the social preview routes', () => {
-    for (const path of ['/', '/ke-toan', '/crm', '/notes', '/en', '/en/accounting', '/opengraph-image-35znhg', '/en/crm/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
+    for (const path of ['/', '/ke-toan', '/engage', '/notes', '/en', '/en/accounting', '/opengraph-image-35znhg', '/en/engage/opengraph-image-1gjxt2']) expect(matches(path), path).toBe(true);
   });
 
   it('skips Next.js internals and every file with an extension', () => {
