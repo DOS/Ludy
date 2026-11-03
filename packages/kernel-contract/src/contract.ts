@@ -4,6 +4,7 @@ import {
   zBulkApproveItems,
   SOCIAL_REVIEW_CHECKS_MAX,
   zAccount,
+  zBankPartyRule,
   zCategorizationRule,
   zAgentBudget,
   zAiMeter,
@@ -1544,6 +1545,12 @@ export const contract = {
   // admins (R1), a keyword rule for every vendor or for one; RULE_TEXT_TOO_SHORT (422) when fewer than two letters or
   // digits are left once normalized, RULE_EXISTS (409) for the same keyword and vendor. remove: owners and admins (R1),
   // any rule, learned or added; RULE_NOT_FOUND (404). Approving an invoice writes the rules learned from it.
+  // The learned rules that point a bank line's text at a party (#2402): list (every role) and remove (owners and admins,
+  // R1, audited; RULE_NOT_FOUND 404). Approving the voucher of a bank line whose party a person chose writes the rule.
+  bankPartyRules: {
+    list: oc.input(zLegalEntityChoice.optional()).output(z.array(zBankPartyRule)),
+    remove: oc.input(z.object({ id: zId })).output(z.object({ id: zId })),
+  },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
     create: oc
