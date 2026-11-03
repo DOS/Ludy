@@ -14,7 +14,7 @@ import type { ExtractClient } from '@crove/extract-contract';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { kernelCommands, kernelQueries } from '@crove/kernel';
 import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
-import { money, sum } from '@crove/l10n-vn';
+import { enterpriseCheckDigit, money, sum } from '@crove/l10n-vn';
 import { extractAndPropose, financeCommands, financeQueries, salesRows, type PurchaseVoucher, type SalesVoucher } from '@crove/mod-finance';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
@@ -527,6 +527,48 @@ suite('sales e-invoices (#313)', () => {
     expect(purchaseDetail.body).toMatchObject({ direction: 'purchase' });
     expect(purchaseDetail.body.payload).toMatchObject({ seller: { taxCode: supplierBranch } });
     await expect(approve(purchase)).resolves.toMatchObject({ documentId: expect.any(String) });
+  });
+
+  it('reads an invoice issued as another legal entity of the org as that entity\'s sale, books it only in that entity, and never reads it as a purchase (#2502)', async () => {
+    // A tax code made at run time (the repository holds no checksum-valid one): another entity of the same org with a code of its own.
+    const prefix = '030123456';
+    const entityCode = `${prefix}${enterpriseCheckDigit(prefix)}`;
+    const entityId = String(
+      (await admin((c) => c.query(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, tax_code, created_by) VALUES ($1, 'Công ty con', 'company', $2, $3) RETURNING id`, [org.orgId, entityCode, owner.userId]))).rows[0]?.id,
+    );
+    const fromEntity = (number: string) => new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', `<SHDon>${number}</SHDon>`).replace(`<MST>${SELLER_TAX_CODE}</MST>`, `<MST>${entityCode}</MST>`));
+    // The upload names the entity its document is booked in: the file is read in the entity whose invoice it is.
+    const ingestIn = async (bytes: Uint8Array, legalEntityId: string) => {
+      const sha256 = sha256Hex(bytes);
+      const storageKey = fileKey(org.orgId, sha256);
+      const generation = await store.put(storageKey, bytes);
+      const { fileId } = await runtime.execute<{ fileId: string }>(
+        'kernel.file.ingest',
+        { filename: 'hd.xml', contentType: 'application/xml', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload', legalEntityId },
+        { actor: asUser(owner.userId), orgId: org.orgId },
+      );
+      return String((await extractAndPropose({ runtime: workerRuntime, store, extractor: null, extract, today: () => '2026-10-13' }, org.orgId, fileId)).proposalId);
+    };
+    const sale = await ingestIn(fromEntity('6101'), entityId);
+    const detail = await rpc('inbox/get', await tokenFor(owner), { id: sale });
+    // A sale, whatever entity's: the journal is the sale's (receivable, revenue, output VAT), and no purchase is made of it.
+    expect(detail.body).toMatchObject({ direction: 'sale' });
+    expect(detail.body.payload).toMatchObject({ direction: 'sale', seller: { taxCode: entityCode } });
+    expect(detail.body.payload.journal.map((j: { accountCode: string }) => j.accountCode)).toEqual(['131', '511', '3331']);
+    const recorded = await approve(sale);
+    expect(await admin(async (c) => (await c.query(`SELECT direction, legal_entity_id FROM crove_finance.purchase_document WHERE id = $1`, [recorded.documentId])).rows[0])).toEqual({ direction: 'sale', legal_entity_id: entityId });
+    // The same invoice read in another entity's inbox (the org's default) is still a sale, but is refused where it would be booked: it is not that entity's.
+    const [defaultEntity] = (await admin((c) => c.query(`SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default`, [org.orgId]))).rows as Array<{ id: string }>;
+    const misfiled = await ingestIn(fromEntity('6102'), String(defaultEntity?.id));
+    expect((await rpc('inbox/get', await tokenFor(owner), { id: misfiled })).body).toMatchObject({ direction: 'sale' });
+    await expect(approve(misfiled)).rejects.toMatchObject({ code: 'SALE_OTHER_ENTITY', status: 422 });
+    // The org's own default entity is unchanged: its invoices book in it, as before.
+    const own = await read(new TextEncoder().encode(FIXTURE.replace('<SHDon>1234</SHDon>', '<SHDon>6103</SHDon>')));
+    await expect(approve(own)).resolves.toMatchObject({ documentId: expect.any(String) });
+    // Without the entity's code the same seller is a stranger again: a purchase, never a sale of anyone's.
+    await admin((c) => c.query('UPDATE crove_kernel.legal_entity SET tax_code = NULL WHERE org_id = $1 AND id = $2', [org.orgId, entityId]));
+    const stranger = await read(fromEntity('6104'));
+    expect((await rpc('inbox/get', await tokenFor(owner), { id: stranger })).body).toMatchObject({ direction: 'purchase' });
   });
 
   it('lists the numbers missing in the sales series between the lowest and the highest recorded, for a period and for the Overview (#2140)', async () => {

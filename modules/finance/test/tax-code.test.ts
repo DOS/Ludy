@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeTaxCode } from '@crove/kernel-contract';
 import { parseTaxCode } from '@crove/l10n-vn';
 import { journalMemo } from '../src/memo.ts';
-import { isOwnTaxCode } from '../src/own-tax-code.ts';
+import { isOwnTaxCode, ownSeller, type OwnTaxCodes } from '../src/own-tax-code.ts';
 
 describe('the org tax code and the invoice seller tax code', () => {
   it('normalize every input the same way', () => {
@@ -59,5 +59,31 @@ describe('journal memo', () => {
     expect(journalMemo({ seller: ref('NCC A'), buyer: ref('Org'), invoice })).toBe('HĐ C26TAB-12 NCC A');
     expect(journalMemo({ direction: 'sale', seller: ref('Org'), buyer: ref('Khách B'), invoice })).toBe('HĐ bán C26TAB-12 Khách B');
     expect(journalMemo({ direction: 'sale', seller: ref('Org'), buyer: ref(''), invoice: { series: '', number: '7' } })).toBe('HĐ bán 7');
+  });
+});
+
+describe('the seller of an invoice among the legal entities of the org (#2502)', () => {
+  // Synthetic codes that fail the checksum on purpose, as in the rest of this file.
+  const own: OwnTaxCodes = {
+    tenant: '0101234564',
+    entities: [
+      { id: 'head', taxCode: '0101234564', isDefault: true },
+      { id: 'branch', taxCode: '0101234564-001', isDefault: false },
+      { id: 'other', taxCode: '0309876546', isDefault: false },
+      { id: 'bare', taxCode: null, isDefault: false },
+    ],
+  };
+  it('is the entity with exactly the seller code, however it is written, and the head office for a branch no entity holds', () => {
+    expect(ownSeller('0101234564', own)).toEqual({ own: true, legalEntityId: 'head', isDefault: true });
+    expect(ownSeller(' 0101.234.564 ', own)).toEqual({ own: true, legalEntityId: 'head', isDefault: true });
+    expect(ownSeller('0101234564-001', own)).toEqual({ own: true, legalEntityId: 'branch', isDefault: false });
+    expect(ownSeller('0101234564001', own)).toEqual({ own: true, legalEntityId: 'branch', isDefault: false });
+    expect(ownSeller('0309876546', own)).toEqual({ own: true, legalEntityId: 'other', isDefault: false });
+    expect(ownSeller('0101234564-002', own)).toEqual({ own: true, legalEntityId: 'head', isDefault: true });
+  });
+  it('is the org own code with no entity when only the org code matches, and nobody for a stranger, a missing code or an entity with no code', () => {
+    expect(ownSeller('0101234564-007', { tenant: '0101234564', entities: [] })).toEqual({ own: true, legalEntityId: null, isDefault: false });
+    for (const code of ['0412345675', '0412345675-001', '', null, undefined]) expect(ownSeller(code, own), String(code)).toEqual({ own: false, legalEntityId: null, isDefault: false });
+    expect(ownSeller('0101234564', { tenant: null, entities: [{ id: 'bare', taxCode: null, isDefault: true }] }).own).toBe(false);
   });
 });

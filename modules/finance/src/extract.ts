@@ -13,7 +13,7 @@ import { BOOK_CURRENCY, convertInvoice, type ForeignAmounts } from './domain/for
 
 // A decimal string a lookup is given to compare amounts with (#2320): the money helpers parse it, so it is refused here when it is not one.
 const zAmount = z.string().regex(/^-?\d{1,20}(\.\d{1,6})?$/);
-import { isOwnTaxCode } from './own-tax-code.ts';
+import { loadOwnTaxCodes, ownSeller } from './own-tax-code.ts';
 import { rulesForSuggestion } from './categorization.ts';
 import { HISTORY_WINDOW, anomalyChecks, type VendorHistory } from './domain/anomaly.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
@@ -86,7 +86,7 @@ export const fileForExtraction = defineQuery({
 });
 
 export interface InvoiceLookup {
-  // 'sale' when the seller's tax code is the org's own or one of its branches (crove_kernel.tenant.tax_code, #313, #686).
+  // 'sale' when the seller's tax code is the org's own or one of its branches (crove_kernel.tenant.tax_code, #313, #686), or the code of any of its legal entities (#2502).
   direction: DocumentDirection;
   vendorDefault: string | null;
   // The learned account rules of the vendor and of every vendor (#1399), for a purchase; none for a sale.
@@ -183,10 +183,12 @@ export const purchaseLookup = defineQuery({
   }),
   access: 'system',
   handler: async (ctx, input): Promise<InvoiceLookup> => {
-    const org = await ctx.trx.selectFrom('crove_kernel.tenant').select('tax_code').where('org_id', '=', ctx.orgId).executeTakeFirst();
     // A sale (issue #313): the org issued the invoice and numbers its own invoices, so a duplicate is the same series
-    // and number whoever the customer is, and no account is remembered per customer.
-    const sale = isOwnTaxCode(input.sellerTaxCode, org?.tax_code);
+    // and number whoever the customer is, and no account is remembered per customer. The seller is the org's own when its
+    // code is the org's or any legal entity's (#2502): an invoice issued as another entity of the org is that entity's sale,
+    // never a purchase from a supplier.
+    const seller = ownSeller(input.sellerTaxCode, await loadOwnTaxCodes(ctx));
+    const sale = seller.own;
     const party =
       !sale && input.sellerTaxCode
         ? await ctx.trx
