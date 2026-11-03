@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2488, slice 3): the org purge deletes the org's payment reminder settings too. Idempotent; applied files stay
--- untouched. This is the body of 20261121210000 (the newest) with crove_finance.customer_collection and crove_finance.collection_setting added to
+-- untouched. This is the body of 20261122060000 (the newest) with crove_finance.customer_collection and crove_finance.collection_setting added to
 -- the first list, next to the learned bank-line rules and before the parties they reference, with its signature, owner, grants and
 -- every list and step it had.
 SET LOCAL lock_timeout = '2s';
@@ -184,6 +184,15 @@ BEGIN
   DELETE FROM crove_kernel.channel_connection c WHERE c.org_id = v_org AND c.id <> ALL (v_keep_connection);
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_kernel.channel_connection', v_n);
+
+  -- The sealed copies of closed ads tokens and the revoke state (#2296), after every credential and connection of the org is gone: the ads hold made a
+  -- copy for each ads credential the deletes above dropped, and those go too. The seal first, since it references the obligation.
+  DELETE FROM crove_ads.ad_token_seal s WHERE s.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_seal', v_n);
+  DELETE FROM crove_ads.ad_token_revoke r WHERE r.org_id = v_org;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deleted := v_deleted || pg_catalog.jsonb_build_object('crove_ads.ad_token_revoke', v_n);
 
   -- The org chart and its work, but what a task comment pins.
   DELETE FROM crove_kernel.task t WHERE t.org_id = v_org AND t.id <> ALL (v_keep_task);
