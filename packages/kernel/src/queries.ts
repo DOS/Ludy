@@ -7,6 +7,7 @@ import {
   zCashVoucherProposal,
   zJournalVoucherProposal,
   zId,
+  EMAIL_ADDRESS_TAG,
   LEARNED_RULE_IDS_MAX,
   zJournalReversal,
   zLocalDate,
@@ -102,6 +103,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
         address: tenant.address,
         contactEmail: tenant.contact_email,
         inboundAddress: seesInbound ? `${tenant.inbound_token}@${options.inboundDomain}` : null,
+        conversationAddress: seesInbound ? `${tenant.inbound_token}+${EMAIL_ADDRESS_TAG}@${options.inboundDomain}` : null,
         inboundDroppedCount,
         members: members.map((m) => ({ userId: m.user_id, email: m.email, displayName: m.display_name, role: m.role })),
         // What the signed-in member holds through org-wide role assignments (#1279).
