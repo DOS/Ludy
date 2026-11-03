@@ -113,8 +113,9 @@ function parseRow(row: BankStatementImport['rows'][number]): Parsed {
   if (!balance.ok) errors.push('BALANCE_INVALID');
   if (errors.length > 0 || date === null || amount === null || !balance.ok) return { ok: false, rowNo: row.rowNo, errors };
   const reference = row.reference.trim();
-  // An account number is its digits, banks print them with spaces or dots; anything that is not 6 to 20 digits is no account.
-  const digits = (row.counterpartyAccount ?? '').replace(/\D/g, '');
+  // An account number is 6 to 20 digits, banks print them with spaces, dots or dashes between groups (the rule of accountNumberDigits);
+  // anything else (a name, a reference, a date, a number in exponent form) is no account.
+  const digits = (row.counterpartyAccount ?? '').replace(/[\s.-]/g, '');
   return {
     ok: true,
     rowNo: row.rowNo,

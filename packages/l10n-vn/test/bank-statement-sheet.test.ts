@@ -80,13 +80,18 @@ describe('statementLines', () => {
   });
 
   it('finds a counterparty account column by the words banks use and keeps its cell as text (#2402)', () => {
-    for (const label of ['Số tài khoản đối ứng', 'Tài khoản thụ hưởng', 'STK đối ứng', 'Counterparty account', 'Beneficiary account']) {
+    for (const label of ['Số tài khoản đối tác', 'Tài khoản thụ hưởng', 'STK đối tác', 'Counterparty account', 'Beneficiary account']) {
       const withAccount = grid({ 1: ['Ngày giao dịch', 'Diễn giải', 'Ghi nợ', 'Ghi có', label], 2: ['01/09/2026', 'Chi', '50000', null, '0011 0000 5555'] });
       const mapping = findColumns(withAccount) as NonNullable<ReturnType<typeof findColumns>>;
       expect(mapping.columns.counterpartyAccount, label).toBe(4);
       expect(statementLines(withAccount, mapping, 10)?.[0]?.counterpartyAccount, label).toBe('0011 0000 5555');
     }
-    // A file without the column has none, and the statement's own account number label is not that column.
+    // The name of the account is not its number, and a ledger's contra account ("Tài khoản đối ứng") is never taken as one.
+    for (const label of ['Tên tài khoản thụ hưởng', 'Tài khoản đối ứng']) {
+      const named = grid({ 1: ['Ngày giao dịch', 'Diễn giải', 'Ghi nợ', 'Ghi có', label], 2: ['01/09/2026', 'Chi', '50000', null, 'CÔNG TY ABC'] });
+      expect((findColumns(named) as NonNullable<ReturnType<typeof findColumns>>).columns.counterpartyAccount, label).toBeNull();
+    }
+    // A file without the column has none.
     const mapping = findColumns(rows) as NonNullable<ReturnType<typeof findColumns>>;
     expect(mapping.columns.counterpartyAccount).toBeNull();
     expect(statementLines(rows, mapping, 10)?.[0]?.counterpartyAccount).toBe('');

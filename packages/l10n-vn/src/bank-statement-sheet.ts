@@ -46,7 +46,9 @@ const WORDS: Record<StatementColumn, { contains: string[]; exact?: string[] }> =
   reference: { contains: ['so tham chieu', 'ma giao dich', 'so giao dich', 'so but toan', 'ma gd', 'so ct', 'transaction id', 'reference', 'ref no'], exact: ['ref'] },
   // The other side's account number (#2402), where a bank's export prints it.
   counterpartyAccount: {
-    contains: ['so tai khoan doi ung', 'tai khoan doi ung', 'so tk doi ung', 'stk doi ung', 'so tai khoan doi tac', 'tai khoan doi tac', 'so tai khoan nguoi nhan', 'tai khoan nguoi nhan', 'tai khoan thu huong', 'so tai khoan nguoi gui', 'tai khoan nguoi gui', 'counterparty account', 'beneficiary account', 'beneficiary acc', 'sender account'],
+    // Not "tài khoản đối ứng": in accounting that is the contra ledger account, and a ledger export would map its codes. A file that
+    // names the bank's counterparty account that way is mapped by hand in the picker.
+    contains: ['so tai khoan doi tac', 'tai khoan doi tac', 'stk doi tac', 'so tai khoan nguoi nhan', 'tai khoan nguoi nhan', 'tai khoan thu huong', 'so tai khoan nguoi gui', 'tai khoan nguoi gui', 'counterparty account', 'beneficiary account', 'beneficiary acc', 'sender account'],
   },
   description: { contains: ['noi dung', 'dien giai', 'mo ta', 'chi tiet', 'description', 'remark', 'narrative', 'details'] },
   amount: { contains: ['so tien', 'amount'] },
@@ -62,7 +64,8 @@ function claim(headers: Map<number, string>): Record<StatementColumn, number | n
   for (const field of CLAIM_ORDER) {
     const words = WORDS[field];
     for (const word of words.contains) {
-      const hit = [...headers].find(([col, key]) => !taken.has(col) && (key === word || key.includes(word)));
+      // The name of an account ("Tên tài khoản thụ hưởng") is not its number.
+      const hit = [...headers].find(([col, key]) => !taken.has(col) && (key === word || key.includes(word)) && !(field === 'counterpartyAccount' && /(^| )ten( |$)/.test(key)));
       if (hit) {
         columns[field] = hit[0];
         taken.add(hit[0]);

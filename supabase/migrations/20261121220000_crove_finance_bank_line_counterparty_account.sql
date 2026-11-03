@@ -10,4 +10,12 @@
 --                                 hash only); the number itself is never copied into a rule.
 SET LOCAL lock_timeout = '2s';
 
-ALTER TABLE crove_finance.bank_line ADD COLUMN IF NOT EXISTS counterparty_account text CHECK (counterparty_account IS NULL OR counterparty_account ~ '^[0-9]{6,20}$');
+ALTER TABLE crove_finance.bank_line ADD COLUMN IF NOT EXISTS counterparty_account text;
+-- Added NOT VALID and validated after, so the table is not held for the scan of its rows (every one is NULL).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conname = 'bank_line_counterparty_account_digits' AND conrelid = 'crove_finance.bank_line'::regclass) THEN
+    ALTER TABLE crove_finance.bank_line ADD CONSTRAINT bank_line_counterparty_account_digits CHECK (counterparty_account IS NULL OR counterparty_account ~ '^[0-9]{6,20}$') NOT VALID;
+  END IF;
+END $$;
+ALTER TABLE crove_finance.bank_line VALIDATE CONSTRAINT bank_line_counterparty_account_digits;

@@ -371,4 +371,64 @@ suite('learned bank line rules (#2402)', () => {
     expect((await rpc('bankPartyRules/remove', await tokenFor(owner, { mfa: true }), { id: item.id })).status).toBe(200);
     expect((await suggestion('RA2')).suggested).toBeNull();
   });
+
+  it('points at no party with an account two parties were matched to, and never learns the org\'s own account numbers', async () => {
+    const zeta = randomUUID();
+    const eta = randomUUID();
+    const theta = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Zeta Trade'), ($1, $3, 'Công ty Eta Trade'), ($1, $4, 'Công ty Theta Trade')`, [org.orgId, zeta, eta, theta]);
+      // The org's own number, as a bank statement may print it in the counterparty column for fees and interest.
+      await c.query(`INSERT INTO crove_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '4455667788')`, [org.orgId]);
+    });
+    expect(
+      (
+        await importLines(
+          org.slug,
+          member,
+          [
+            row('25/11/2026', '800.000', 'RS1', 'GD 11', '5566 7788 99'),
+            row('26/11/2026', '810.000', 'RS2', 'GD 12', '5566778899'),
+            row('06/12/2026', '820.000', 'RS3', 'GD 13', '5566778899'),
+            row('27/11/2026', '830.000', 'RO1', 'GD 14', '4455667788'),
+          ],
+          'sao-ke-chung.xlsx',
+        )
+      ).status,
+    ).toBe(200);
+    await refresh();
+    await matchByHand('RS1', '2026-11-25', zeta, '800000', { kind: 'manual' });
+    expect((await suggestion('RS3')).suggested).toMatchObject({ party: { id: zeta }, reason: 'account' });
+    await matchByHand('RS2', '2026-11-26', eta, '810000', { kind: 'manual' });
+    // One account, two parties (a settlement account): it points at neither, and offers neither as a candidate.
+    const shared = await suggestion('RS3');
+    expect(shared.suggested).toBeNull();
+    expect(shared.candidates).toEqual([]);
+    // The org's own account number teaches nothing.
+    await matchByHand('RO1', '2026-11-27', theta, '830000', { kind: 'manual' });
+    expect((await rules()).some((r) => r.party_id === theta && r.kind === 'account')).toBe(false);
+  });
+
+  it('stops suggesting by an account once the voucher that taught it is reversed, and keeps the number checked by the database', async () => {
+    const iota = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Iota Trade')`, [org.orgId, iota]);
+    });
+    expect((await importLines(org.slug, member, [row('28/11/2026', '900.000', 'RV1', 'GD 21', '7788990011'), row('07/12/2026', '900.000', 'RV2', 'GD 22', '7788990011')], 'sao-ke-iota.xlsx')).status).toBe(200);
+    await refresh();
+    const voucher = await matchByHand('RV1', '2026-11-28', iota, '900000', { kind: 'manual' });
+    expect((await suggestion('RV2')).suggested).toMatchObject({ party: { id: iota }, reason: 'account' });
+    const reversal = await rpc('inbox/request', await tokenFor(member), {
+      command: 'finance.journal.reverse',
+      input: { entryId: voucher.journalEntryId, entryDate: '2026-11-30', reason: 'Chọn nhầm đối tượng' },
+      idempotencyKey: randomUUID(),
+    });
+    expect(reversal.status).toBe(200);
+    expect((await rpc('inbox/approve', await tokenFor(adminUser, { mfa: true }), { id: reversal.body.proposalId, revision: 1, idempotencyKey: randomUUID() })).status).toBe(200);
+    expect((await suggestion('RV2')).suggested).toBeNull();
+    // The column holds digits only, and the check is validated, so no row of the table breaks it.
+    expect(
+      await admin(async (c) => (await c.query<{ convalidated: boolean }>(`SELECT convalidated FROM pg_constraint WHERE conname = 'bank_line_counterparty_account_digits'`)).rows[0]?.convalidated),
+    ).toBe(true);
+  });
 });

@@ -26,9 +26,10 @@ const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 // The most rules the Settings list shows, newest first.
 export const BANK_RULE_LIST_LIMIT = 500;
-// The version of the key derivation (domain/bank-rule-key.ts), part of what is hashed.
-export const BANK_KEY_VERSION = 1;
-const hashed = (key: string) => `${BANK_KEY_VERSION}:${key}`;
+// The version of each key derivation (the words: domain/bank-rule-key.ts; the account: its digits), part of what is hashed, so a change
+// to one never orphans the rules of the other.
+export const BANK_KEY_VERSIONS = { text: 1, account: 1 } as const;
+const hashed = (kind: 'text' | 'account', key: string) => `${BANK_KEY_VERSIONS[kind]}:${key}`;
 
 // The parties whose rule this line hits, in the line's org and legal entity: by the key of its words (kind 'text') and by its
 // counterparty account number (kind 'account', #2402). A rule whose voucher was reversed since (a wrong match undone) teaches no
@@ -43,8 +44,8 @@ export async function learnedParties(
   const { rows } = await sql<{ party_id: string; kind: string }>`
     SELECT r.party_id, r.kind FROM crove_finance.bank_party_rule r
     WHERE r.org_id = ${ctx.orgId} AND r.legal_entity_id = ${line.legalEntityId}
-      AND ((${key}::text IS NOT NULL AND r.kind = 'text' AND r.key_hash = crove_finance.bank_party_rule_hash('text', ${hashed(key ?? '')}))
-        OR (${account}::text IS NOT NULL AND r.kind = 'account' AND r.key_hash = crove_finance.bank_party_rule_hash('account', ${hashed(account ?? '')})))
+      AND ((${key}::text IS NOT NULL AND r.kind = 'text' AND r.key_hash = crove_finance.bank_party_rule_hash('text', ${hashed('text', key ?? '')}))
+        OR (${account}::text IS NOT NULL AND r.kind = 'account' AND r.key_hash = crove_finance.bank_party_rule_hash('account', ${hashed('account', account ?? '')})))
       AND NOT EXISTS (
         SELECT 1 FROM crove_finance.journal_entry j
         JOIN crove_finance.journal_entry x ON x.org_id = j.org_id AND x.reverses_entry_id = j.id
@@ -63,14 +64,18 @@ export async function learnFromVoucher(
   const write = async (kind: 'text' | 'account', key: string): Promise<string | undefined> => {
     const { rows } = await sql<{ id: string }>`
       INSERT INTO crove_finance.bank_party_rule (org_id, legal_entity_id, kind, key_hash, party_id, confirmed_by, confirmed_at, source_voucher_id)
-      VALUES (${ctx.orgId}, ${input.legalEntityId}, ${kind}, crove_finance.bank_party_rule_hash(${kind}, ${hashed(key)}), ${input.partyId}, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}, ${ctx.now}, ${input.voucherId})
+      VALUES (${ctx.orgId}, ${input.legalEntityId}, ${kind}, crove_finance.bank_party_rule_hash(${kind}, ${hashed(kind, key)}), ${input.partyId}, ${ctx.actor.type === 'user' ? ctx.actor.userId : null}, ${ctx.now}, ${input.voucherId})
       ON CONFLICT ON CONSTRAINT bank_party_rule_key_uq DO NOTHING
       RETURNING id`.execute(ctx.trx);
     return rows[0]?.id;
   };
   const key = bankLineKey(input.description);
   const text = key === null ? undefined : await write('text', key);
-  const account = input.counterpartyAccount ? await write('account', input.counterpartyAccount) : undefined;
+  // The org's own account numbers say nothing about the other side (a bank prints the holder's own account for fees and interest).
+  const own = input.counterpartyAccount
+    ? (await sql<{ n: string }>`SELECT 1 AS n FROM crove_finance.bank_account_number WHERE org_id = ${ctx.orgId} AND account_number = ${input.counterpartyAccount}`.execute(ctx.trx)).rows.length > 0
+    : true;
+  const account = input.counterpartyAccount && !own ? await write('account', input.counterpartyAccount) : undefined;
   return text || account ? { ...(text ? { text } : {}), ...(account ? { account } : {}) } : null;
 }
 

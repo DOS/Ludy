@@ -28,7 +28,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // What a value is, for the finder: which columns a searched email, phone or code is compared with. free_text: words
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'other'] as const;
+// account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -206,9 +207,9 @@ export const PERSONAL_DATA_COLUMNS = {
     reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
   },
   'crove_finance.bank_line.counterparty_account': {
-    kind: 'other',
+    kind: 'account_number',
     handling: 'keep_legal',
-    reason: "The other side's account number on an imported bank statement line, as the bank printed it (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). The learned rule that points at a party by it holds only a keyed hash, and goes with the party's erasure",
+    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
   },
   'crove_finance.journal_line.memo': {
     kind: 'free_text',
@@ -298,7 +299,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
     return null;
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
-  if (kind === 'tax_code') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;

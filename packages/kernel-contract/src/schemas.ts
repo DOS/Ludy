@@ -584,8 +584,9 @@ export type VoucherLine = z.infer<typeof zVoucherLine>;
 // Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
 // description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
 // `learned` (#2402): the line's words point at a party a person matched by hand before.
-// `account` (#2402): the line's counterparty account number is one a person matched to the party by hand before.
-export const BANK_MATCH_REASONS = ['tax_code', 'account', 'invoice', 'learned', 'name', 'balance'] as const;
+// `account` (#2402): the line's counterparty account number is one a person matched to the party by hand before; a hint like
+// `learned`, weaker than the invoice the text names.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'account', 'learned', 'name', 'balance'] as const;
 export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
 
 // How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:
