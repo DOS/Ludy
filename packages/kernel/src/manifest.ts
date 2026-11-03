@@ -44,7 +44,7 @@ export const kernelManifest = defineModule({
         ['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'basis_seq', 'source', 'requested_by', 'state', 'tainted', 'draft_length', 'final_length', 'edit_size', 'created_at', 'written_at', 'decided_at'],
         { body: 'pii' },
       ),
-      conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'pii', display_name: 'pii' }),
+      conversation_identity: columns(['org_id', 'id', 'provider', 'party_id', 'created_at', 'updated_at', 'erased_at', 'profile_checked_at', 'profile_requested_at'], { external_user_id: 'contact', display_name: 'pii' }),
       conversation_message: columns(['org_id', 'id', 'conversation_id', 'channel_connection_id', 'kind', 'seq', 'direction', 'sent_at', 'received_at', 'author_kind', 'author_user_id', 'attachments', 'author_identity_id', 'send_state', 'send_attempt', 'send_error_code', 'hidden_at', 'hidden_by', 'hide_request', 'hide_attempt', 'hide_error_code', 'platform_removed_at', 'tainted', 'sender_verified'], { external_message_id: 'pii', body: 'pii', email_refs: 'pii' }),
       conversation_note: columns(['org_id', 'id', 'conversation_id', 'author_user_id', 'created_at'], { body: 'pii' }),
       conversation_read: columns(['org_id', 'id', 'conversation_id', 'user_id', 'last_read_seq', 'updated_at']),
