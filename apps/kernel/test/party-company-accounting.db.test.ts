@@ -226,6 +226,31 @@ suite('the company of a person and the accounting (#2438)', () => {
     expect(await companyOf(another.partyId)).toBeNull();
   });
 
+  it('clears the company of a person the books name when they are erased, keeps their name for the books, and counts it', async () => {
+    const o = await org();
+    const company = await create(o, { kind: 'organization', name: 'Công ty Chủ Việc' });
+    const hoa = await create(o, { kind: 'person', name: 'Hoa Nguyễn', email: 'hoa-chung-tu@example.test' });
+    await execute(o, 'kernel.party.set_company', { partyId: hoa.partyId, companyId: company.partyId, version: hoa.version });
+    // A line of the ledger names the person (a receivable), so the books keep their place and their name.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      const entry = (await c.query<{ id: string }>("INSERT INTO crove_finance.journal_entry (org_id, entry_date, description, source_type, source_id) VALUES ($1, current_date, 'Bán hàng', 'test.sale', $2) RETURNING id", [o.orgId, randomUUID()])).rows[0]?.id;
+      await c.query("INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id) VALUES ($1, $2, 1, '131', 500000, 0, $3), ($1, $2, 2, '511', 0, 500000, NULL)", [o.orgId, entry, hoa.partyId]);
+      await c.query('COMMIT');
+    });
+    const erased = await rt.execute<{ erased: Array<{ column: string; rows: number }>; kept: Array<{ column: string }> }>(
+      'kernel.personal_data.erase',
+      { value: 'hoa-chung-tu@example.test' },
+      { actor: { ...asUser(o.owner), sessionId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() },
+    );
+    const row = (await admin((c) => c.query<{ name: string; company_id: string | null; email: string | null }>('SELECT name, company_id, email FROM crove_kernel.party WHERE id = $1', [hoa.partyId]))).rows[0];
+    // The books keep the name; the employer and the contact details go.
+    expect(row).toEqual({ name: 'Hoa Nguyễn', company_id: null, email: null });
+    expect(erased.erased).toContainEqual({ column: 'crove_kernel.party.company_id', rows: 1 });
+    expect(erased.erased).toContainEqual({ column: 'crove_kernel.party.email', rows: 1 });
+    expect(erased.erased.map((e) => e.column)).not.toContain('crove_kernel.party.name');
+  });
+
   it('knows every table that points at a party: each foreign key to party either holds its kind or is listed as not reading it', async () => {
     // A table added later with a foreign key to party fails here until it is put on one side: PARTY_KIND_HOLDERS (the rows that pin a party's kind) or this list.
     const NOT_READING_THE_KIND = ['crove_notes.link.party_id', 'crove_crm.import_row.match_party_id'];
