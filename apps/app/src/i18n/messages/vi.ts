@@ -7157,6 +7157,7 @@ export const vi = {
       NOTHING_MISSING: 'Kỳ này không còn hóa đơn nào thiếu nên không cần gửi đề nghị.',
       PAUSE_DATE_INVALID: 'Ngày tạm dừng không hợp lệ.',
       PAUSE_TOO_LONG: 'Chỉ tạm dừng nhắc tối đa hai năm kể từ hôm nay.',
+      PARTY_CHANGING: 'Khách hàng này đang được gộp hoặc tách. Hãy thử lại sau giây lát.',
       REQUEST_TOO_SOON: 'Vừa gửi đề nghị cho kỳ này trong vòng một giờ qua. Hãy đợi thêm rồi gửi lại.',
       NOTHING_OVERDUE: 'Khách hàng này không còn hóa đơn nào quá hạn.',
       STALE_REMINDER: 'Sổ sách đã thay đổi từ lúc bạn mở thư (có khoản vừa được thanh toán hoặc đã sang mức nhắc khác). Hãy mở lại thư để xem số liệu mới.',

@@ -291,4 +291,19 @@ suite('payment reminder settings (#2488)', () => {
     expect(firstOrg).toBeDefined();
     expect(orgChain.find((a) => a !== firstOrg)?.previousTermsDays).toBe(firstOrg?.termsDays);
   });
+
+  it('answers the same terms for a merged group whose kept party has no row: the lowest party id wins a tie', async () => {
+    const o = await org();
+    const kept = await customer(o, 'Công ty Giữ Lại Bốn');
+    const one = await customer(o, 'Công ty Trùng Bốn A');
+    const two = await customer(o, 'Công ty Trùng Bốn B');
+    await execute(o, 'finance.customer_collection.set', { partyId: one, termsDays: 20, pausedUntil: null });
+    await execute(o, 'finance.customer_collection.set', { partyId: two, termsDays: 40, pausedUntil: null });
+    for (const dup of [one, two]) await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    const expected = one < two ? 20 : 40;
+    for (let i = 0; i < 3; i++) expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ partyId: kept, termsDays: expected });
+    // A set through a duplicate lands on the kept party (the locks of lockedKeptParty see the merge) and wins from then on.
+    await execute(o, 'finance.customer_collection.set', { partyId: two, termsDays: 55, pausedUntil: null });
+    expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: one })).toMatchObject({ partyId: kept, termsDays: 55 });
+  });
 });

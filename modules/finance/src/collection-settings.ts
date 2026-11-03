@@ -56,6 +56,25 @@ async function keptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: stri
   return row.kept;
 }
 
+// The kept party, resolved with the party and its kept party locked FOR SHARE (in id order, as kernel.party.mark_duplicate locks the pair FOR UPDATE), so a merge or a split
+// that would move the party waits for this transaction and the write below lands on the party that is kept when it commits. A merge that got in between the first read and
+// the locks shows as a different kept party the second time, and the lock is taken again.
+async function lockedKeptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<string> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const guess = await keptParty(ctx, partyId);
+    await ctx.trx
+      .selectFrom('crove_kernel.party')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', [partyId, guess])
+      .orderBy('id')
+      .forShare()
+      .execute();
+    if ((await keptParty(ctx, partyId)) === guess) return guess;
+  }
+  throw new DomainError('PARTY_CHANGING', 409, 'Khách hàng này đang được gộp hoặc tách; hãy thử lại');
+}
+
 // What a duplicate group has set. The row sits on the kept party; a party marked as a duplicate afterwards may still hold its own (nothing moves it), so every party of the
 // group is read: the kept party's row wins, else the row whose pause runs longest, so a pause or terms set before a merge are not hidden by it.
 async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string): Promise<{ terms_days: number | null; paused_until: string | null } | undefined> {
@@ -65,6 +84,8 @@ async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string):
     .select(['c.party_id', 'c.terms_days', 'c.paused_until'])
     .where('c.org_id', '=', ctx.orgId)
     .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ${kept}`)
+    // Ties between rows of duplicates that never had a pause resolve by party id, so a read always answers the same.
+    .orderBy('c.party_id')
     .execute();
   const own = rows.find((r) => r.party_id === kept);
   if (own) return own;
@@ -129,7 +150,7 @@ export const customerCollectionSet = defineCommand({
       if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil || input.pausedUntil < '2000-01-01') throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
       if (when - ctx.now.getTime() > PAUSE_MAX_DAYS * DAY_MS) throw new DomainError('PAUSE_TOO_LONG', 422, `Chỉ tạm dừng nhắc tối đa ${PAUSE_MAX_DAYS} ngày kể từ hôm nay`);
     }
-    const kept = await keptParty(ctx, input.partyId);
+    const kept = await lockedKeptParty(ctx, input.partyId);
     // One writer per customer at a time, the first set of a customer included (no row to lock yet): the audit row names the values the previous writer left.
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.customer_collection:${ctx.orgId}:${kept}`}, 0))`.execute(ctx.trx);
     const before = await readCustomer(ctx, kept);
