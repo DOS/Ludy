@@ -136,7 +136,7 @@ describe('brand name (#1040)', () => {
     const APP_OF: Record<string, RegExp> = {
       finance: /^(auth\.|inboxDetail\.|inbox\.(?!socialMails))/,
       sales: /^(bookings\.|conversations\.|commands\.|contacts\.company\.)/,
-      marketing: /^(social\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
+      marketing: /^(social\.|ads\.|inbox\.socialMails\.|kernelErrors\.codes\.(AI_|ALT_TEXT_))/,
       gm: /^(aiMeter\.|today\.brief\.|kernelErrors\.codes\.AI_BUDGET_EXHAUSTED)/,
     };
     for (const [role, where] of Object.entries(APP_OF)) {

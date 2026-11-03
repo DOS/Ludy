@@ -25,7 +25,7 @@ export const kernelManifest = defineModule({
       budget_policy: columns(['org_id', 'id', 'scope', 'target', 'monthly_limit', 'warn_percent', 'hard_stop', 'updated_by', 'updated_at']),
       calendar_connection: columns(['org_id', 'id', 'user_id', 'provider', 'scopes', 'status', 'status_reason', 'expires_at', 'last_synced_at', 'write_back', 'connected_at', 'updated_at'], { external_account: 'contact', display_name: 'contact' }),
       calendar_credential: columns(['org_id', 'id', 'key_id', 'created_at', 'sealed_at'], { envelope: 'sensitive' }),
-      calendar_event: columns(['org_id', 'id', 'user_id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind', 'status', 'created_by', 'created_at', 'cancelled_by', 'cancelled_at', 'source_id', 'external_id']),
+      calendar_event: columns(['org_id', 'id', 'user_id', 'starts_at', 'ends_at', 'time_zone', 'title', 'kind', 'status', 'created_by', 'created_at', 'cancelled_by', 'cancelled_at', 'source_id', 'external_id', 'conference']),
       calendar_event_link: columns(['org_id', 'id', 'connection_id', 'event_id', 'user_id', 'external_id', 'state', 'synced_hash', 'attempts', 'last_error', 'updated_at']),
       channel_access: columns(['org_id', 'id', 'user_id', 'channel_connection_id', 'created_by', 'created_at']),
       channel_connection: columns(['org_id', 'id', 'provider', 'scopes', 'status', 'status_reason', 'connected_by', 'expires_at', 'connected_at', 'updated_at', 'history_synced_at', 'gap_from', 'gap_to', 'history_requested_at'], { external_account_id: 'pii', display_name: 'pii', granted_by_hash: 'sensitive' }),

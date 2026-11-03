@@ -202,12 +202,12 @@ function AddContact({ kind, onDone }: { kind: 'person' | 'organization'; onDone:
   };
   return (
     <form className="mb-4 grid gap-3 rounded-xl border p-4 sm:grid-cols-2" noValidate aria-label={t('add')} onSubmit={submit}>
+      {/* The screen fixes the kind (Người liên hệ are people, Công ty are companies): a contact of the other kind would be made and not show in this list. */}
       <div className="flex flex-col gap-1">
-        <Label htmlFor="add-contact-kind">{t('fields.kind')}</Label>
-        <NativeSelect id="add-contact-kind" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value === 'organization' ? 'organization' : 'person' })}>
-          <NativeSelectOption value="person">{t('kind.person')}</NativeSelectOption>
-          <NativeSelectOption value="organization">{t('kind.organization')}</NativeSelectOption>
-        </NativeSelect>
+        <span className="text-sm font-medium">{t('fields.kind')}</span>
+        <p className="text-sm text-foreground" data-testid="add-contact-kind">
+          {t(`kind.${kind}`)}
+        </p>
       </div>
       {text('name', { maxLength: 300, required: true })}
       {text('taxCode', { maxLength: 20 })}

@@ -264,7 +264,7 @@ export const vi = {
       social: {
         kicker: 'Đồng nghiệp AI',
         title: `${N.marketing}`,
-        sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, đăng khi có người duyệt.',
+        sub: 'Báo cáo cho Anh Minh (Marketing). Soạn và lên lịch bài, mọi bài chờ người duyệt. Đăng lên kênh: đã làm xong, chưa thử với tài khoản thật.',
         items: [
           { title: 'Gạo ST25 vụ mới đã về', amount: '', sub: 'Facebook, TikTok, 19:30 18/10/2026', tone: 'warn', chip: 'Chờ Anh Minh duyệt', note: '' },
         ],
@@ -452,7 +452,13 @@ export const vi = {
     },
     social: {
       name: 'Ludy Engage',
-      body: 'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác. Mỗi kênh có các bước duyệt riêng, ảnh và video nằm trong thư viện chung. Với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước.',
+      body: 'Một ứng dụng cho hộp thư chung, khách hàng và bán hàng, lịch hẹn, bài đăng và quảng cáo, kèm báo cáo cho từng phần. Mỗi kênh đăng bài có các bước duyệt riêng, ảnh và video nằm trong thư viện chung.',
+      points: [
+        'Hộp thư chung cho tin nhắn riêng của khách; kênh nối được hôm nay là Zalo OA (đã làm xong, chưa thử với một OA thật)',
+        'Danh sách liên hệ dùng chung với Ludy Kế toán, cơ hội bán hàng trên bảng theo giai đoạn và trang đặt lịch công khai',
+        'Lên lịch bài cho Facebook, Instagram, Threads, TikTok, YouTube, LinkedIn, X, Zalo OA và nhiều kênh khác (đã làm xong, chưa thử với tài khoản thật); với các nền tảng lớn, người cài đặt khai báo ứng dụng của nền tảng đó trước',
+        'Xem quảng cáo Facebook và Instagram (đã làm xong, chưa thử với tài khoản thật), và báo cáo cho từng phần',
+      ],
       people: [
         { name: 'Anh Minh', initials: 'M', agent: false },
         { name: `${N.marketing}`, initials: '', agent: true },
@@ -469,17 +475,8 @@ export const vi = {
         { label: 'T5 22/10', today: false, post: null },
       ],
     },
-    crm: {
-      name: 'Ludy CRM',
-      body: 'Danh sách liên hệ dùng chung với Ludy Kế toán, các cơ hội bán hàng trên bảng theo giai đoạn, và trang đặt lịch công khai cho từng loại cuộc hẹn: khách tự chọn giờ trống, hai bên nhận email xác nhận kèm tệp lịch, lịch nhắc gửi tự động, và khách tự dời hoặc huỷ bằng liên kết dùng một lần.',
-      points: [
-        'Liên hệ nhập từ file Excel hoặc CSV sau khi xem trước từng dòng, tìm không cần gõ dấu',
-        'Cơ hội trên bảng kéo thả theo giai đoạn do bạn đặt, mỗi cột có số thẻ và tổng tiền',
-        'Loại hẹn theo nhóm: luân phiên cho người rảnh, hoặc chỉ hiện giờ cả nhóm cùng rảnh',
-        'Giờ làm việc và ngày nghỉ của từng người, ngày lễ và Tết đã tính sẵn đến năm 2028',
-        'Nối Google Calendar (người cài đặt cấu hình khoá Google): giờ bận trên đó chặn giờ hẹn, và lịch hẹn mới có thể tự ghi vào lịch của bạn',
-      ],
-      people: [{ name: 'Chị Hoa', initials: 'H', agent: false }],
+    // The booking pieces the Ludy Engage page and the sales coworker's suggestion draw (the Customers & Sales group).
+    sales: {
       calendar: {
         title: 'Lịch ngoài của Chị Hoa',
         provider: 'Google Calendar',
@@ -570,8 +567,8 @@ export const vi = {
         a: 'Hoá đơn điện tử XML theo Nghị định 254/2026 và Thông tư 91/2026 (cả hoá đơn lập theo Nghị định 123/2020 trước đó) được đọc chính xác mà không cần AI. PDF và ảnh chụp dùng một model tương thích OpenAI do bạn cấu hình, kể cả model chạy trên máy như Ollama hay vLLM.',
       },
       {
-        q: 'Ludy CRM và Ludy Notes làm được gì hôm nay?',
-        a: 'Ludy CRM giữ danh sách liên hệ (cùng danh sách đối tác với Ludy Kế toán), các cơ hội bán hàng trên bảng theo giai đoạn và lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
+        q: 'Khách hàng và bán hàng trong Ludy Engage, và Ludy Notes, làm được gì hôm nay?',
+        a: 'Nhóm Khách hàng & Bán hàng của Ludy Engage giữ danh sách liên hệ (cùng danh sách đối tác với Ludy Kế toán), các cơ hội bán hàng trên bảng theo giai đoạn và lịch hẹn: trang đặt lịch công khai, loại hẹn theo nhóm và nối Google Calendar khi người cài đặt đã cấu hình khoá Google. Công nợ phải thu của khách nằm ở Ludy Kế toán. Ludy Notes là ghi chú gắn với khách hàng, chứng từ hay lịch hẹn, và danh sách việc riêng của từng người.',
       },
       {
         q: 'Dữ liệu của tôi nằm ở đâu?',

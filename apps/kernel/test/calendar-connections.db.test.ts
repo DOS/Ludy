@@ -767,7 +767,7 @@ suite('outside calendars on PostgreSQL (#2123)', () => {
     const c = await connectWriter(o, o.member);
     const theirs = await bookingEvent(o, o.other, day, 540, 570);
     const mine = await bookingEvent(o, o.member, day, 600, 630);
-    const action = (eventId: string): WriteBackAction => ({ eventId, externalId: writeBackEventId(o.orgId, eventId, c.connectionId), kind: 'upsert', summary: 'x', startsAt: null, endsAt: null, hash: 'sha256:aaa' });
+    const action = (eventId: string): WriteBackAction => ({ eventId, externalId: writeBackEventId(o.orgId, eventId, c.connectionId), kind: 'upsert', summary: 'x', startsAt: null, endsAt: null, conference: false, hash: 'sha256:aaa' });
     await expect(record(o, c.connectionId, action(theirs), 'written')).rejects.toMatchObject({ code: 'CALENDAR_EVENT_NOT_FOUND' });
     await expect(o.exec(o.member, 'kernel.calendar.link.record', { connectionId: c.connectionId, eventId: mine, externalId: 'abcdefgh', state: 'written', syncedHash: 'x' })).rejects.toMatchObject({ status: 403 });
     // The provider's id must be the one derived for this org, event and connection (#2163): the worker deletes events by it, so

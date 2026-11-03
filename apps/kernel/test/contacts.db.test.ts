@@ -516,5 +516,37 @@ suite('contacts on PostgreSQL (CRM K4, #2228)', () => {
       await exec(o, o.lan, 'crm.deal.move', { dealId: first.id, version: first.version, stageId: won?.id });
       expect(await row(acme.partyId)).toMatchObject({ openDeals: 1 });
     });
+
+    it('takes no new link for a person merged into another, lets one they had be cleared, and records the departure on the company kept', async () => {
+      const kept = await company('Công ty Eta');
+      const dup = await company('Công ty Eta (trùng)');
+      const lan = await create(o, o.lan, { name: 'Trang Mai' });
+      const copy = await create(o, o.lan, { name: 'Trang Mai (trùng)' });
+      const linked = await link(o.lan, lan.partyId, dup.partyId, lan.version);
+      await exec(o, o.owner, 'kernel.party.mark_duplicate', { partyId: copy.partyId, keepId: lan.partyId });
+      // A merged person is hidden from the lists: a new link would never show, so it is refused and names the person kept.
+      await expect(link(o.lan, copy.partyId, kept.partyId, await versionOf(copy.partyId))).rejects.toMatchObject({ code: 'PARTY_IS_DUPLICATE', status: 422 });
+      // The company the person worked at is merged into another; the person leaves it: the departure is on the company kept, where the counts put them.
+      await exec(o, o.owner, 'kernel.party.mark_duplicate', { partyId: dup.partyId, keepId: kept.partyId });
+      await link(o.lan, lan.partyId, null, linked.version);
+      const departures = await admin((c) => c.query<{ record_id: string }>("SELECT record_id FROM crove_kernel.activity WHERE org_id = $1 AND kind = 'party.person_unlinked'", [o.orgId]));
+      expect(departures.rows.map((r) => r.record_id)).toContain(kept.partyId);
+      expect(departures.rows.map((r) => r.record_id)).not.toContain(dup.partyId);
+    });
+
+    it('holds in the table that a company people work at is merged only into another company, for any writer', async () => {
+      const lan = await create(o, o.lan, { name: 'Việt Hà' });
+      const boss = await create(o, o.lan, { name: 'Chủ Việt Hà' });
+      const staffed = await company('Công ty Theta');
+      const other = await company('Công ty Iota');
+      const empty = await company('Công ty Kappa');
+      await link(o.lan, lan.partyId, staffed.partyId, lan.version);
+      const merge = (id: string, into: string) => sqlError('UPDATE crove_kernel.party SET duplicate_of = $2 WHERE id = $1', [id, into]);
+      // Into a person: refused while people work at it (the table says so even when the command's own check is skipped).
+      expect(await merge(staffed.partyId, boss.partyId)).toMatchObject({ code: '23514', message: expect.stringContaining('PARTY_COMPANY_HAS_PEOPLE') });
+      // A company with no one working at it may go anywhere, and a staffed one into another company.
+      expect(await merge(empty.partyId, boss.partyId)).toBeNull();
+      expect(await merge(staffed.partyId, other.partyId)).toBeNull();
+    });
   });
 });

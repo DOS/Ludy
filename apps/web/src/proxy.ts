@@ -2,11 +2,12 @@
 // One URL per page in both languages (#2360, DESIGN.md 6.4 and 8). The pages stay static, one tree per language
 // ((vi) at the public paths, (en) under /en); this proxy picks the tree for each request:
 //   - an old `/en...` link is redirected (301) to the public address and the English choice is remembered;
+//   - the address of a retired page (/crm, folded into /engage) is redirected (301) to the page that replaced it;
 //   - `?lang=vi|en`, the header toggle, remembers the choice in a cookie and goes back to the same address (302);
 //   - otherwise the cookie, else the browser's language, decides, and English is a rewrite to the page's /en route.
 // The answer depends on the Cookie and Accept-Language headers, so every response says so in `Vary`.
 import { NextResponse, type NextRequest } from 'next/server';
-import { chooseLanguage, englishRoute, isLang, LANG_COOKIE, LANG_COOKIE_MAX_AGE, LANG_PARAM, publicPathOfLegacy, type Lang } from './lib/language';
+import { chooseLanguage, englishRoute, isLang, LANG_COOKIE, LANG_COOKIE_MAX_AGE, LANG_PARAM, publicPathOfLegacy, retiredTarget, type Lang } from './lib/language';
 
 function remember(response: NextResponse, request: NextRequest, lang: Lang): NextResponse {
   response.cookies.set(LANG_COOKIE, lang, {
@@ -27,6 +28,13 @@ export function proxy(request: NextRequest): NextResponse {
   const { pathname, searchParams } = request.nextUrl;
   // The social preview images are routes of their own that each tree names in its meta tags: serve them as asked.
   if (pathname.includes('opengraph-image')) return NextResponse.next();
+
+  // A page that was folded into another (/crm into /engage): a permanent redirect, keeping the query; the visitor's language
+  // choice is the cookie's, as for any page.
+  const retired = retiredTarget(pathname);
+  if (retired !== null) {
+    return varied(NextResponse.redirect(new URL(`${retired}${request.nextUrl.search}`, request.nextUrl.origin), 301));
+  }
 
   const asked = searchParams.get(LANG_PARAM);
   const legacy = publicPathOfLegacy(pathname);

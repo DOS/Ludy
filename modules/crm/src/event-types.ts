@@ -7,7 +7,8 @@
 // host) or collectively (every host). A team books other members' time, so only owners and admins make a type a team
 // type, change its co-hosts or change how it assigns; a member who leads one still edits everything else.
 import { z } from 'zod';
-import { zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, type EventType, type EventTypeAssignment, type EventTypeInput } from '@crove/kernel-contract';
+import { sql } from 'kysely';
+import { GOOGLE_CALENDAR_EVENTS_SCOPE, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate, type EventType, type EventTypeAssignment, type EventTypeInput } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
@@ -135,6 +136,31 @@ function assertTeamShape(input: EventTypeInput): void {
   }
 }
 
+// A Google Meet per booking (C7, #1375) is made through the host's own Google connection, with write-back on. A connection is its member's alone (the database
+// shows it to nobody else), so only the host picks it, for a one-host type; an event type that already has it keeps it when someone else edits the rest. A
+// host who loses the connection later is not refused here: a booking then falls back to the fixed link (crm.booking.confirm decides when it is made).
+async function assertMeet(ctx: CommandContext, userId: string, input: EventTypeInput, before: Row | null): Promise<void> {
+  if (input.locationKind !== 'google_meet') return;
+  if (before && before.location_kind === 'google_meet' && before.host_user_id === input.hostUserId && before.assignment === input.assignment) return;
+  const mine =
+    input.assignment === 'single' && input.hostUserId === userId
+      ? await ctx.trx
+          .selectFrom('crove_kernel.calendar_connection')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('user_id', '=', userId)
+          .where('provider', '=', 'google')
+          .where('status', '=', 'active')
+          .where('write_back', '=', true)
+          .where(sql<boolean>`scopes @> ARRAY[${GOOGLE_CALENDAR_EVENTS_SCOPE}]::text[]`)
+          .limit(1)
+          .executeTakeFirst()
+      : undefined;
+  if (!mine) {
+    throw new DomainError('EVENT_TYPE_MEET_UNAVAILABLE', 422, 'Chỉ người chủ trì đã kết nối Google Calendar và bật ghi lịch hẹn vào lịch mới chọn được Google Meet, cho loại lịch hẹn một người');
+  }
+}
+
 // Only owners and admins set up a team: it books other members' time.
 function assertMayTeam(ctx: CommandContext): void {
   if (!manager(ctx)) throw new DomainError('EVENT_TYPE_TEAM_FORBIDDEN', 403, 'Chỉ chủ sở hữu hoặc quản trị viên mới lập lịch hẹn theo nhóm');
@@ -187,6 +213,7 @@ export const eventTypeCreate = defineCommand({
     assertMayHost(ctx, userId, input.hostUserId);
     assertTeamShape(input);
     if (input.assignment !== 'single') assertMayTeam(ctx);
+    await assertMeet(ctx, userId, input, null);
     await assertHost(ctx, input.hostUserId);
     for (const coHost of input.coHostUserIds) await assertHost(ctx, coHost);
     if (!(await slugFree(ctx, input.slug, null))) throw slugTaken(input.slug);
@@ -217,6 +244,7 @@ export const eventTypeUpdate = defineCommand({
     assertMayHost(ctx, userId, before.host_user_id);
     assertMayHost(ctx, userId, fields.hostUserId);
     assertTeamShape(fields);
+    await assertMeet(ctx, userId, fields, before);
     const teamChanged =
       fields.assignment !== before.assignment || fields.coHostUserIds.length !== before.co_host_user_ids.length || fields.coHostUserIds.some((id, i) => id !== before.co_host_user_ids[i]);
     if (teamChanged) assertMayTeam(ctx);

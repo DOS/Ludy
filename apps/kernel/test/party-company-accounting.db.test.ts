@@ -162,7 +162,7 @@ suite('the company of a person and the accounting (#2438)', () => {
     await rename(person.partyId, cleared.version, 'organization', 'Bình Lê');
   });
 
-  it('leaves a kind change to a member who sees every legal entity, as the rows of another entity are hidden from one limited to a branch', async () => {
+  it('leaves a kind change to an owner or an admin who sees every legal entity, as the rows of another entity are hidden from a member limited to a branch', async () => {
     const o = await org();
     await books(o);
     const booked = (await partiesWithTax(o, CUSTOMER_TAX_CODE))[0]?.id as string;
@@ -178,6 +178,9 @@ suite('the company of a person and the accounting (#2438)', () => {
       execute<{ partyId: string; version: number }>(o, 'kernel.party.update', { partyId, version, name, taxCode: null, address: null, email: null, phone: null, kind }, user);
     const version = async (partyId: string) => Number((await admin((c) => c.query<{ version: number }>('SELECT version FROM crove_kernel.party WHERE id = $1', [partyId]))).rows[0]?.version);
     await expect(edit(fresh.partyId, fresh.version, 'person', 'Công ty nhập nhầm', accountant)).rejects.toMatchObject({ code: 'PARTY_KIND_SCOPE', status: 403 });
+    // A member who sees every entity but is neither owner nor admin cannot read every conversation (a private message is for owners and admins), so the
+    // check could miss a thread that names the party: the change is theirs to ask an owner for.
+    await expect(edit(fresh.partyId, fresh.version, 'person', 'Công ty nhập nhầm', o.member)).rejects.toMatchObject({ code: 'PARTY_KIND_SCOPE', status: 403 });
     // Editing the name, the same kind, is not a kind change: the limited member still does it.
     await edit(fresh.partyId, fresh.version, 'organization', 'Công ty đã đổi tên', accountant);
     // The owner sees every entity: the booked company stays a company, the fresh one may change.
@@ -214,9 +217,11 @@ suite('the company of a person and the accounting (#2438)', () => {
     // An erasure is irreversible (R3): it needs a session of the owner.
     const erase = (value: string) => rt.execute('kernel.personal_data.erase', { value }, { actor: { ...asUser(o.owner), sessionId: randomUUID() }, orgId: o.orgId, idempotencyKey: randomUUID() });
     // Erasing the company by its email (it has no document, so it is forgotten): both people are no one's staff of it any more.
-    await erase('cong-ty-xoa@example.test');
+    const forgotten = (await erase('cong-ty-xoa@example.test')) as { erased: Array<{ column: string; rows: number }> };
     expect(await companyOf(lan.partyId)).toBeNull();
     expect(await companyOf(binh.partyId)).toBeNull();
+    // The two people the bulk clear unlinked are counted: the company had no link of its own.
+    expect(forgotten.erased).toContainEqual({ column: 'crove_kernel.party.company_id', rows: 2 });
     // Erasing a person with a company (undocumented) clears their own link too.
     const another = await create(o, { kind: 'organization', name: 'Công ty khác' });
     const mai = await create(o, { kind: 'person', name: 'Mai Phạm', email: 'mai-pham@example.test' });
