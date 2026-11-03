@@ -56,7 +56,8 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
-  email: { kinds: ['email'], replyMax: 20_000, canHide: false, windowHours: null },
+  // An email reply is as long as any other reply the core takes (CONVERSATION_REPLY_MAX), so the input, the box and the channel agree.
+  email: { kinds: ['email'], replyMax: CONVERSATION_REPLY_MAX, canHide: false, windowHours: null },
 };
 // Customer email (#2439, plan section 6.7): a conversation channel with no platform behind it, so no reply window and nothing to hide; a
 // reply goes out through the kernel mail pipeline, not an adapter. The connection is made when the first mail arrives.
