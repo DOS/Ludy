@@ -310,7 +310,15 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
     await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'queued' WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_STATE'));
     // The writer cannot stamp the start or the finish: the guard does.
     await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET finished_at = now() WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_FORBIDDEN'));
-    // Live to stopped: a person's or the system's, with the commitment shortened to what ran; and a stopped launch never changes again, but a no-op passes.
+    // Live to stopped: a person's or the system's, with the commitment shortened to what ran, never cleared; a person does not set the writer's step on the way;
+    // and a stopped launch never changes again, but a no-op passes.
+    for (const who of ['owner', 'admin', 'system'] as const) {
+      await inContext(org, who, (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_FORBIDDEN'));
+    }
+    await inContext(org, 'owner', (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = '2031-03-04', step = 'ad' WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_FORBIDDEN'));
+    // A context with no role (the table's owner in no context, as a raw statement) is no stop either: the check is written so a NULL role cannot pass.
+    await expect(owner(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = '2031-03-04' WHERE org_id = $1 AND id = $2`, [org.orgId, run.id])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_LAUNCH_FORBIDDEN') });
+    await expect(owner(`UPDATE crove_ads.ad_launch SET state = 'cancelled' WHERE org_id = $1 AND id = $2`, [org.orgId, (await launch(org)).id])).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_LAUNCH_FORBIDDEN') });
     await inContext(org, 'owner', (c) => move(c, org, run.id, `state = 'stopped', commit_until = '2031-03-04', stop_reason = 'paused'`), true);
     expect(await get(org, run.id)).toMatchObject({ state: 'stopped', commit_until: '2031-03-04', stop_reason: 'paused', attempt: 2 });
     for (const set of [`state = 'live'`, `commit_until = '2031-03-09'`, `step = 'ad'`, `stop_reason = 'x'`]) {
@@ -391,9 +399,14 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
     // A person does not change it without a move, and an open launch cannot clear it (the table's own check).
     await inContext(org, 'owner', (c) => refused(c, `UPDATE crove_ads.ad_launch SET commit_until = '2031-03-05' WHERE org_id = $1 AND id = $2`, [org.orgId, l.id], 'ADS_LAUNCH_FORBIDDEN'));
     await inContext(org, 'system', (c) => expect(move(c, org, l.id, `commit_until = NULL`)).rejects.toMatchObject({ code: '23514', constraint: 'ad_launch_open_ck' }));
-    // Failed before it was activated: nothing is committed any more, and it never comes back.
-    await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'stopped', commit_until = NULL`), true);
-    expect(await get(org, l.id)).toMatchObject({ state: 'stopped', commit_until: null });
+    // A launch that ran is stopped with what ran committed, never cleared; one that failed before it was activated commits nothing any more, and it never comes back.
+    await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL WHERE org_id = $1 AND id = $2`, [org.orgId, l.id], 'ADS_LAUNCH_FORBIDDEN'));
+    const failed = await launch(org);
+    await inContext(org, 'system', (c) => move(c, org, failed.id, `state = 'launching'`), true);
+    await inContext(org, 'system', (c) => move(c, org, failed.id, `state = 'failed', commit_until = NULL`), true);
+    expect(await get(org, failed.id)).toMatchObject({ state: 'failed', commit_until: null });
+    await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'stopped', commit_until = '2031-03-07'`), true);
+    expect(await get(org, l.id)).toMatchObject({ state: 'stopped', commit_until: '2031-03-07' });
   });
 
   it('follows its account when the account moves to another legal entity, whatever state the launch is in, and nothing else changes', async () => {

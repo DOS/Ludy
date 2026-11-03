@@ -195,12 +195,22 @@ BEGIN
        AND v_actor IS DISTINCT FROM 'system' THEN
       RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
+    -- (Written with IS DISTINCT FROM so a context with no role, an agent's or none at all, is refused: a plain NOT (... OR ...) would be NULL, not true.)
     IF v_move IN ('queued>cancelled', 'launching>stopped', 'needs_attention>stopped', 'live>stopped')
-       AND NOT (v_actor = 'system' OR v_role IN ('owner', 'admin')) THEN
+       AND v_actor IS DISTINCT FROM 'system' AND v_role IS DISTINCT FROM 'owner' AND v_role IS DISTINCT FROM 'admin' THEN
+      RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
+    END IF;
+    -- A launch the writer has activated cannot be stopped with its whole commitment cleared: what ran counts (the commitment is shortened to the last day it
+    -- ran, never cleared), whoever stops it.
+    IF v_move = 'live>stopped' AND NEW.commit_until IS NULL THEN
       RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
   ELSIF v_actor IS DISTINCT FROM 'system' THEN
     -- Without a move, the step and the commitment are the writer's: the system's.
+    RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
+  END IF;
+  -- The step is where the writer is: only the writer's (the system's) to set, even on a stop a person makes.
+  IF v_actor IS DISTINCT FROM 'system' AND NEW.step IS DISTINCT FROM OLD.step THEN
     RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
   END IF;
   -- The attempt counts the writer's runs: one more each time a launch that needed attention runs again, and nothing else moves it.

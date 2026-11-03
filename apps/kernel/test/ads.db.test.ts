@@ -1610,7 +1610,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect(await draftRow(fourth.id)).toMatchObject({ status: 'draft', proposal_id: null });
           expect(await launchOf(fourth.id)).toBeUndefined();
           // A launch of another account counts too (the org's cap counts every account), in the days it covers.
-          const first2 =await approvedPlan(elsewhere, { dailyBudget: '150000', startOn: inDays(40), endOn: inDays(41) });
+          const first2 = await approvedPlan(elsewhere, { dailyBudget: '150000', startOn: inDays(40), endOn: inDays(41) });
           expect(first2.answer.status).toBe(200);
           const sameDays = await saved(owner, account, plan({ name: 'Trùng ngày với tài khoản khác', dailyBudget: '100000', startOn: inDays(40), endOn: inDays(41) }));
           expect(await submit(owner, sameDays.id)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
@@ -1683,14 +1683,20 @@ suite('ads on PostgreSQL (#2217)', () => {
           // The kill switch blocks launches and releases what had not started.
           expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
           expect(await launchOf(onB.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'launches_blocked' });
+          // Disconnecting an account releases its queued launches too, so a plan approved before cannot start after a reconnect.
+          const d = await ready('Ngắt kết nối');
+          const onD = await approvedPlan(d, { name: 'Trên D' });
+          expect(onD.answer.status).toBe(200);
+          expect(await callAs(adminAccount, 'ads/disconnectAccount', { adAccountId: d, idempotencyKey: key() })).toMatchObject({ status: 200 });
+          expect(await launchOf(onD.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'account_off' });
           // Switching writing off cancels the queued launches of every account.
           const c = await ready('Tắt cả tổ chức');
           const onC = await approvedPlan(c, { name: 'Trên C' });
           expect(onC.answer.status).toBe(200);
           expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
           expect(await launchOf(onC.draft.id)).toMatchObject({ state: 'cancelled', commit_until: null, stop_reason: 'switch_off' });
-          const audits = await row<{ detail: { launchesCancelled?: number } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('ads.write.disable', 'ads.pause_all', 'ads.account.disable_write') AND outcome = 'ok' ORDER BY id DESC LIMIT 3`, [orgId]);
-          expect(audits.map((x) => x.detail.launchesCancelled)).toEqual([1, 1, 1]);
+          const audits = await row<{ detail: { launchesCancelled?: number } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('ads.write.disable', 'ads.pause_all', 'ads.account.disable_write', 'ads.account.disconnect') AND outcome = 'ok' ORDER BY id DESC LIMIT 4`, [orgId]);
+          expect(audits.map((x) => x.detail.launchesCancelled)).toEqual([1, 1, 1, 1]);
         });
 
         it('keeps a launch’s commitment when a cap is lowered after the approval, and judges the next plan against the lowered cap and what is committed', async () => {
