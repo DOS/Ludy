@@ -74,6 +74,24 @@ describe('the sandbox ad writer', () => {
     await expect(sandboxAdWriter.verify(login.secret, { externalAccountId: 'sbxads-ffffffffffffffff' })).rejects.toMatchObject({ kind: 'permission', code: 'ACCOUNT_NOT_REACHED' });
   });
 
+  it('revokes nothing at any platform (there is none), keeps to its own secret and reaches no host', async () => {
+    const fetchSpy = vi.fn(() => {
+      throw new Error('a host was reached');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      const login = sandboxWriteLogin({ externalAccountId: READ_ACCOUNT, currency: 'VND' });
+      expect(await sandboxAdWriter.revokeToken(login.secret)).toEqual({ how: 'sandbox' });
+      // The reader's secret and a garbled one are refused as everywhere in this writer, so a wrong secret never counts as a revoke.
+      const reader = sandboxAdPlatform().connect({ displayName: 'a' });
+      await expect(sandboxAdWriter.revokeToken(reader.secret)).rejects.toMatchObject({ kind: 'token_expired', code: 'BAD_SECRET' });
+      await expect(sandboxAdWriter.revokeToken('nope')).rejects.toMatchObject({ kind: 'token_expired', code: 'BAD_SECRET' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('works next to the reader: the account id is the read connection\'s, and the reader never opens the writer\'s secret', async () => {
     const reader = sandboxAdPlatform();
     const read = reader.connect({ displayName: 'a', currency: 'USD' });

@@ -52,6 +52,8 @@ const FINANCE_SCREENS = {
     { path: 'vat' },
     { path: 'portal-invoices' },
     { path: 'customers' },
+    // The overdue customers and the reminder mails a person sends (#2488).
+    { path: 'payment-reminders' },
     { path: 'vendors' },
     // The Vietnamese quick guide (issue #310), linked from the empty Inbox; it walks through finance screens.
     { path: 'guide', app: 'accounting' },
@@ -66,6 +68,7 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'tax', path: 'vat', label: 'vat' },
     { app: 'accounting', group: 'tax', path: 'portal-invoices', label: 'portalList' },
     { app: 'accounting', group: 'parties', path: 'customers', label: 'customers' },
+    { app: 'accounting', group: 'parties', path: 'payment-reminders', label: 'paymentReminders' },
     { app: 'accounting', group: 'parties', path: 'vendors', label: 'vendors' },
   ],
 } as const satisfies ModuleScreens;

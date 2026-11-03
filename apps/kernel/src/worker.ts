@@ -53,6 +53,7 @@ import { withJobLogContext } from './log.ts';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
 import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
@@ -61,7 +62,7 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
-import type { AdPlatform } from '@crove/ad-platform';
+import type { AdPlatform, AdRevoker } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -337,6 +338,8 @@ const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
 const ADS_SYNC_CRON = '10 * * * *';
+// The revoke at the platform of a closed ads connection's token (#2296, W2-1): every minute, since the first retry waits a minute (ads-revoke.ts).
+const ADS_REVOKE_CRON = '* * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -395,6 +398,9 @@ export interface WorkerDeps {
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
+    // The one call of an ad platform's writer that removes the app's permissions at the platform (#2296, W2-1), by the provider id of the connection whose
+    // token is held: the narrowed view, never the writer. The revoke sweep alone uses it, with the sealed copy it opens.
+    adRevokers?: Readonly<Record<string, AdRevoker>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -1138,6 +1144,20 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await dropCron(QUEUES.adsSync);
   }
 
+  // The revoke at the platform of a closed ads connection's token (#2296, W2-1): a sweep with no data, every minute, whether or not a platform is
+  // configured: with no revoker or no credential key the copies wait (nothing is recorded, so a configuration fix restores the revoke) and the seventh day ends them.
+  if (ads) {
+    await boss.work(QUEUES.adsRevoke, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runAdsRevoke({ runtime: deps.runtime, workerDb: deps.workerDb, broker: deps.channels?.broker, revokers: deps.channels?.adRevokers ?? {} });
+      if (done.expired + done.closed + done.tried > 0) console.log(`[ads-revoke] ${done.tried} tried, ${done.done} done, ${done.closed} closed (member left), ${done.expired} past their age`);
+    });
+    // retryLimit 0: the policy retries (backoff in the database, each try counted when the copy is opened), never the queue.
+    await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsRevoke);
+  }
+
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
   // deployment's; the offline sandbox's reach nothing.
   const conversationPublishers = deps.channels?.publishers;
@@ -1269,6 +1289,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
     await aiBudgetSweep();
+    // The sealed copies of closed ads connections' tokens past their seven days or their ten tries (#2296, W2-1): wiped here too, by a sweep with no
+    // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
+    // Whether or not the ads module is installed: the hold is a trigger of the database, so a copy can be made with the module switched off, and it must not
+    // outlive its seven days for that reason.
+    const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+      console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
+      return { rows: [] as Array<{ n: number }> };
+    });
+    if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 

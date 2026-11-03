@@ -462,7 +462,9 @@ describe('the words of the screen', () => {
       expect(messages.oauth.writeConnected).toContain('{list}');
       expect(messages.oauth.writeFailed).toContain('{list}');
     }
-    // The platform keeps the permission until it is removed there: said plainly, with where to remove it.
+    // Ludy removes the permission at the platform from a sealed copy of the token, seven days at most; if it cannot, the person removes it: said plainly, with where.
+    expect(en.ads.write.platformNote).toContain('removes the app’s permission at Meta by itself');
+    expect(en.ads.write.platformNote).toContain('seven days at most');
     expect(en.ads.write.platformNote).toContain('Facebook settings (Settings, Business integrations)');
     expect(en.ads.write.platformNote).toContain('Meta still honours the permission');
     expect(en.ads.write.platformNote).toContain('a read-only reconnect works only after you have');

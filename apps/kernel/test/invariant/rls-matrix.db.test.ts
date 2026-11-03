@@ -39,7 +39,7 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
-  // The sealed copy of a closed ads connection's token (W2-1, #2296; pending): read only by the revoke worker through a definer.
+  // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
   'crove_ads.ad_token_seal',
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
@@ -56,8 +56,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_ads.ad_token_revoke',
-  'crove_ads.ad_token_seal',
+  'crove_finance.collection_setting',
+  'crove_finance.customer_collection',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -430,8 +430,8 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // The revoke at the platform of a closed ads connection's token (W2-1, #2296; pending): its state, count and next try, never the token (that is in
-  // crove_ads.ad_token_seal, definer-only). Written by the system context and definers alone: no tenant role inserts, updates or deletes a row.
+  // The revoke at the platform of a closed ads connection's token (W2-1, #2296): its state, count and next try, never the token (that is in
+  // crove_ads.ad_token_seal, definer-only). Written by definers alone (the system's command calls one): no tenant role inserts, updates or deletes a row.
   'crove_ads.ad_token_revoke': {
     systemWritesOnly: 'only the system context and the revoke definers write the state of a revoke (#2296); a member context is refused',
     make: (o) => {
@@ -442,7 +442,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
-  // The sealed copy of that token (W2-1, #2296; pending): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
+  // The sealed copy of that token (W2-1, #2296): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
   'crove_ads.ad_token_seal': {
     make: (o) => {
       const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
@@ -622,6 +622,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1399: a learned account rule. An org-wide keyword rule names no vendor and no source document.
   'crove_finance.categorization_rule': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), match_kind: 'keyword', match_text: `rls matrix ${tag()}`, debit_account: '6422' } }),
+  },
+  // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
+  // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
+  'crove_finance.collection_setting': {
+    update: { set: 'terms_days = terms_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // #2488: what the org set for one customer: its own payment terms, and a date until which no reminder is drafted for it. One row per customer (UNIQUE
+  // (org_id, party_id)), so each row seeds a customer of its own. Tenant roles update the two values and who set them (a column grant).
+  'crove_finance.customer_collection': {
+    update: { set: 'paused_until = paused_until' },
+    noInsertControl: 'one row per customer (UNIQUE (org_id, party_id)); the members who may send reminders write it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix customer ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: party, terms_days: 45 },
+      };
+    },
   },
   // Monthly depreciation and allocation of the register (#919): append-only, one row per asset and month, naming the
   // journal entry that posted it. Tenant roles read and insert; nothing updates or deletes a line.

@@ -92,7 +92,6 @@ const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }
 // be on main first; while it is listed here, an exception that matches nothing is not stale. Remove the key once the
 // PR is merged. One key per line, sorted, with a trailing comma.
 const PENDING_EXCEPTIONS = new Set<string>([
-  'crove_ads.ad_token_seal',
   // 'crove_schema.table_name',
 ]);
 

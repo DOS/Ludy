@@ -31,16 +31,13 @@ const suite = ADMIN ? describe : describe.skip;
 // Every bytea column named like an envelope in a crove_ schema, by name: a new store of that shape is named here on purpose, in a reviewed change. It does
 // not find a sealed value under another name or type; the review of a new table and the RLS matrix (MACHINERY lists the definer-only tables, whose
 // grants it proves) are the other half.
-const SEALED_STORES = ['crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
+// crove_ads.ad_token_seal is the copy a closed ads connection keeps for at most seven days, to revoke the permissions at the platform (#2296, ADR-0025's
+// amendment of 2026-11-03): its behaviour is pinned by invariant/ads-token-seal.db.test.ts and ads-token-seal-source.test.ts, which replaced the dated
+// allowance the step before it carried.
+const SEALED_STORES = ['crove_ads.ad_token_seal.envelope', 'crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
-// present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then.
-const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {
-  'crove_ads.ad_token_seal.envelope': {
-    issue: '#2296',
-    expires: '2026-12-31',
-    reason: 'a closed ads connection keeps a sealed token for at most seven days, to revoke the permissions at the platform and pause what was launched (ADR-0025 amendment, ADR-0043 point 4)',
-  },
-};
+// present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then. None is open.
+const SEALED_ALLOWANCES: Readonly<Record<string, { issue: string; expires: string; reason: string }>> = {};
 
 suite('channel credentials on PostgreSQL (ADR-0025)', () => {
   const dbName = `crove_test_channels_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;

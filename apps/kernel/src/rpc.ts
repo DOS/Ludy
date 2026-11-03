@@ -4,7 +4,7 @@ import { RPCHandler } from '@orpc/server/fetch';
 import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOUNTS_PER_GRANT, calendarBinding, contract, isAdProviderId, isAdWriteProviderId, vietnamToday } from '@crove/kernel-contract';
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -45,6 +45,7 @@ import { sql } from 'kysely';
 import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, type BriefResult } from '@crove/agent';
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
+import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -303,6 +304,9 @@ export function createRpcHandler(
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
+  // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
+  // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
+  const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -2106,6 +2110,24 @@ export function createRpcHandler(
       ),
       remove: os.bankPartyRules.remove.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
+      ),
+    },
+    paymentReminders: {
+      list: os.paymentReminders.list.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminders.list', input ?? {}, { actor, orgId })),
+      ),
+      draft: os.paymentReminders.draft.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminder.draft', input, { actor, orgId })),
+      ),
+      send: os.paymentReminders.send.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => runtime.execute('finance.payment_reminder.send', input, { actor, orgId })),
+      ),
+      // The wording is asked of the model outside any transaction, from the facts the draft read in the member's own one (their legal entities only).
+      wording: os.paymentReminders.wording.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const draft = await runtime.query<PaymentReminderDraft>('finance.payment_reminder.draft', { partyId: input.partyId, ...(input.legalEntityId ? { legalEntityId: input.legalEntityId } : {}) }, { actor, orgId });
+          return wordReminder(reminderAi, orgId, actor.userId, { level: draft.level, lang: draft.lang, org: draft.org }, input.hint);
+        }),
       ),
     },
     accountRules: {

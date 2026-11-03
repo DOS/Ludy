@@ -257,8 +257,17 @@ export const adsAccountErase = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
-    // The account's write connection goes with it (the platform asked for the person's data to be deleted): closed, its sealed token dropped.
-    await closeWriteConnections(ctx, { adAccountId: input.adAccountId });
+    // The account's write connection goes with it (the platform asked for the person's data to be deleted): closed, its sealed token dropped. The request is
+    // the read grantor's: a write connection granted by the same person is theirs and has nothing to revoke (they removed the app), but one granted by
+    // another person (or with no grantor recorded) is closed under its own reason and its revoke at the platform is held.
+    const account = await ctx.trx
+      .selectFrom('crove_ads.ad_account')
+      .select(['granted_by_hash', 'write_granted_by_hash'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.adAccountId)
+      .executeTakeFirst();
+    const sameGrantor = account?.write_granted_by_hash != null && account.write_granted_by_hash === account.granted_by_hash;
+    await closeWriteConnections(ctx, { adAccountId: input.adAccountId, otherGrantor: !sameGrantor });
     const done = await deleteHistory(ctx, input.adAccountId, true, ctx.now.toISOString().slice(0, 10));
     ctx.audit({ adAccountId: input.adAccountId, days: done.days, runs: done.runs, source: 'platform_deletion' });
     return { adAccountId: input.adAccountId, ...done };

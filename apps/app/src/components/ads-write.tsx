@@ -63,7 +63,7 @@ export function AdsWriteCard({
   const root = useTranslations();
   const f = useFormat();
   const owner = role === 'owner';
-  const state = useQuery(orpc.ads.writeState.queryOptions());
+  const state = useWriteState();
   const requested = async () => (toast(t('requestedToast')), refresh());
   // Asking for a change is R1: it makes a proposal in the Inbox and changes nothing, so it needs no second factor.
   const enable = useMutation(orpc.ads.requestChange.mutationOptions({ onSuccess: requested }));
@@ -73,7 +73,7 @@ export function AdsWriteCard({
   const pauseAll = useMutation(orpc.ads.pauseAll.mutationOptions({ onSuccess: async () => (toast(t('pausedToast')), refresh()) }));
   if (state.error) return <ErrorText>{errorMessage(state.error)}</ErrorText>;
   if (!state.data) return null;
-  const { writeEnabled, launchesBlocked, caps, pending } = state.data;
+  const { writeEnabled, launchesBlocked, caps, pending, tokenRevokes } = state.data;
   const capOf = (scope: 'org' | 'account', adAccountId: string | null, period: 'daily' | 'monthly') => caps.find((c) => capKey(c) === capKey({ scope, adAccountId, period }));
   const orgCapCurrency = caps.find((c) => c.scope === 'org')?.currency ?? 'VND';
   // A request of the same kind that already waits for approval: the card says so instead of offering to ask again.
@@ -81,6 +81,7 @@ export function AdsWriteCard({
   const waitingForAccount = (adAccountId: string) => pending.some((p) => p.change.change === 'account_enable' && p.change.adAccountId.toLowerCase() === adAccountId.toLowerCase());
   return (
     <Card className="block space-y-5 p-4">
+      {tokenRevokes.length > 0 && <TokenRevokes items={tokenRevokes} />}
       <section aria-labelledby="ads-write-title" className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h2 id="ads-write-title" className="text-base font-semibold text-foreground">
@@ -204,6 +205,48 @@ export function AdsWriteCard({
         {owner && <CapForm owner={owner} accounts={accounts} caps={caps} pending={pending} orgCurrency={orgCapCurrency} />}
       </section>
     </Card>
+  );
+}
+
+// The write state of the org. The sweep that removes a closed connection's permission runs in the worker and sends no stream hint, so while one is still
+// being tried the screen asks again.
+function useWriteState() {
+  return useQuery({ ...orpc.ads.writeState.queryOptions(), refetchInterval: (query) => (query.state.data?.tokenRevokes.some((r) => r.state === 'pending') ? 60_000 : false) });
+}
+
+// The same notice for a screen with no ad account (the last one was erased after a disconnect): the card above is not drawn there, and a person told nothing
+// would not know to remove the app by hand. Nothing is drawn when there is nothing to say (the query is the owners' and admins').
+export function AdsRevokeNotice() {
+  const items = useWriteState().data?.tokenRevokes ?? [];
+  if (items.length === 0) return null;
+  return (
+    <Card className="block p-4">
+      <TokenRevokes items={items} />
+    </Card>
+  );
+}
+
+// The removal of the app's permission at the platform after a connection that runs ads was closed (W2-1, #2296): still being tried (an encrypted copy of
+// the token is held for seven days at most, for that alone), or given up, when the person removes the app in the platform's settings.
+function TokenRevokes({ items }: { items: AdsWriteState['tokenRevokes'] }) {
+  const t = useTranslations('ads.write');
+  const f = useFormat();
+  return (
+    <section aria-labelledby="ads-revoke-title" className="space-y-2">
+      <h3 id="ads-revoke-title" className="text-sm font-semibold text-foreground">
+        {t('revokeTitle')}
+      </h3>
+      <ul className="space-y-1 text-sm text-muted-foreground">
+        {items.map((item) => {
+          const account = item.accountName ?? t('revokeAccountFallback');
+          // The offline practice connection holds nothing at Meta: its own wording, so nobody is told to remove an app there.
+          const practice = item.provider === 'sandboxwrite_ads';
+          const given = practice ? t('revokeGaveUpSandbox', { account }) : t('revokeGaveUp', { account });
+          const trying = { account, attempts: String(item.attempts), when: item.nextAttemptAt ? f.dateTime(item.nextAttemptAt) : '' };
+          return <li key={item.id}>{item.state === 'gave_up' ? given : practice ? t('revokePendingSandbox', trying) : t('revokePending', trying)}</li>;
+        })}
+      </ul>
+    </section>
   );
 }
 

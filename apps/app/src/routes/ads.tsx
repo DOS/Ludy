@@ -23,7 +23,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
-import { AdsWriteCard } from '../components/ads-write.tsx';
+import { AdsRevokeNotice, AdsWriteCard } from '../components/ads-write.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -925,7 +925,11 @@ export function AdsPage() {
           <TableSkeleton columns={4} />
         </div>
       ) : list.length === 0 || !account ? (
-        <AdsEmpty canManage={canManage} sandbox={sandbox} meta={metaOffered ? { slug } : undefined} entities={entities.data ?? []} onConnected={connected} />
+        <div className="space-y-8">
+          {/* A permission still being removed at the platform stays on screen when the last ad account is gone (disconnect, then erase). */}
+          {canManage && <AdsRevokeNotice />}
+          <AdsEmpty canManage={canManage} sandbox={sandbox} meta={metaOffered ? { slug } : undefined} entities={entities.data ?? []} onConnected={connected} />
+        </div>
       ) : (
         <div className="space-y-8">
           {adding && (
