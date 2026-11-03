@@ -136,6 +136,23 @@ describe('the offline e-invoice provider', () => {
     expect(await quick.issue(secret, request('dddddddd-dddd-4ddd-8ddd-dddddddddddd'))).toMatchObject({ state: 'issued' });
   });
 
+  it('answers a repeat that arrives while the first waits with the same invoice, never a second number', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { provider, control } = createSandboxEInvoiceProvider({ wait: () => gate });
+    control.script('slow');
+    const key = '11111111-2222-4333-8444-555555555555';
+    const first = provider.issue(secret, request(key));
+    const second = provider.issue(secret, request(key));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    expect(b).toEqual(a);
+    expect(a).toMatchObject({ state: 'issued', number: '0000001' });
+    expect(await provider.issue(secret, request('66666666-7777-4888-8999-000000000000'))).toMatchObject({ number: '0000002' });
+  });
+
   it('adjusts and replaces with the original in the XML, as new invoices', async () => {
     const { provider } = createSandboxEInvoiceProvider();
     const original = await provider.issue(secret, request('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'));

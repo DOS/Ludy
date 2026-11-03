@@ -274,12 +274,69 @@ suite('sales e-invoice drafts (#2500)', () => {
     expect(await changed(o.member, 'UPDATE crove_finance.einvoice_series SET description = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'mô tả'])).toBe(0);
     await refused(o.owner, 'UPDATE crove_finance.einvoice_series SET symbol = $3 WHERE org_id = $1 AND id = $2', [o.orgId, series?.id, 'C26TXX'], 'permission denied');
     // Once the job has moved the draft on, a member can neither edit it, nor its lines, nor delete either (the system context, the job, can).
-    await asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'pending' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]);
+    await asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-test' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]);
     await refused(o.member, 'UPDATE crove_finance.einvoice_draft SET buyer_name = $3 WHERE org_id = $1 AND id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
     await refused(o.member, 'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
     await refused(o.member, 'UPDATE crove_finance.einvoice_draft_line SET description = $3 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, 'z'], 'EINVOICE_NOT_DRAFT');
     await refused(o.member, 'DELETE FROM crove_finance.einvoice_draft_line WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
     await refused(o.member, "INSERT INTO crove_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES ($1, $2, 9, 'x', 1, 1, 1, '10%', 0)", [o.orgId, saved.id], 'EINVOICE_NOT_DRAFT');
+    // A line cannot be moved out of the sent draft into another draft of the entity (the guard looks at the draft it leaves as well as the one it goes to).
+    const target = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null));
+    await refused(o.member, 'UPDATE crove_finance.einvoice_draft_line SET draft_id = $3, line_no = 50 WHERE org_id = $1 AND draft_id = $2', [o.orgId, saved.id, target.id], 'EINVOICE_NOT_DRAFT');
+    // A person cannot choose a draft's key, and nobody gets an issued or pending draft without the provider's reference.
+    const chosen = randomUUID();
+    const made = await inContext(o.member, async (c) => (await c.query<{ idempotency_key: string }>("INSERT INTO crove_finance.einvoice_draft (org_id, idempotency_key, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 0, 0, 0) RETURNING idempotency_key", [o.orgId, chosen])).rows[0]);
+    expect(made?.idempotency_key).not.toBe(chosen);
+    await expect(admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      await c.query("UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = NULL WHERE org_id = $1 AND id = $2", [o.orgId, target.id]);
+    })).rejects.toMatchObject({ code: '23514' });
+  });
+
+  it('lets an owner remove the member who made a draft the job has moved on, and the party a draft names', async () => {
+    const o = await org();
+    const [series] = (await sync(o)).series;
+    const saved = await execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null), o.member);
+    await asJob(o, "UPDATE crove_finance.einvoice_draft SET state = 'pending', provider_ref = 'sbx-test' WHERE org_id = $1 AND id = $2", [o.orgId, saved.id]);
+    await execute(o, 'kernel.member.remove', { userId: o.member });
+    expect(await admin(async (c) => (await c.query('SELECT created_by, state FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, saved.id])).rows[0])).toEqual({ created_by: null, state: 'pending' });
+  });
+
+  it('refuses amounts the database cannot hold, in words, and saves the same series reads from two syncs once', async () => {
+    const o = await org();
+    const [series] = (await sync(o)).series;
+    await expect(
+      execute(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { lines: [{ description: 'Quá lớn', unit: null, quantity: '999999999999', unitPrice: '999999999999', vatRate: '10%' }] })),
+    ).rejects.toMatchObject({ code: 'EINVOICE_TOTAL_TOO_LARGE' });
+    const p = await org();
+    const both = await Promise.all([sync(p), sync(p, null)]);
+    expect(both.map((r) => r.added).sort()).toEqual([0, 2]);
+    const rows = await query<Series[]>(p, 'finance.einvoice_series.list', {});
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((s) => s.isDefault)).toHaveLength(1);
+  });
+
+  it('writes a tax code in its written form, keeps no buyer details on a consumer and lists the drafts of one entity', async () => {
+    const o = await org();
+    const branch = await admin(async (c) => (await c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh danh sách', 'branch', $2) RETURNING id`, [o.orgId, o.owner])).rows[0]?.id as string);
+    const [series] = (await sync(o)).series;
+    const [branchSeries] = (await sync(o, branch)).series;
+    // A branch code typed as 13 digits is kept with its dash (the shape a provider takes), a spaced code without its spaces.
+    const branchCode = `${VALID_TAX_CODE}001`;
+    const saved = await execute<Draft & { buyer: { taxCode: string | null } }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'business', partyId: null, taxCode: branchCode, name: 'Chi nhánh mua', address: '2 Phố Thử', email: null } }));
+    expect(saved.buyer.taxCode).toBe(`${VALID_TAX_CODE}-001`);
+    expect(saved.issues).toEqual([]);
+    const spaced = await execute<Draft & { buyer: { taxCode: string | null } }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'business', partyId: null, taxCode: ` ${VALID_TAX_CODE.slice(0, 4)} ${VALID_TAX_CODE.slice(4)} `, name: 'Công ty có dấu cách', address: '3 Phố Thử', email: null } }));
+    expect(spaced.buyer.taxCode).toBe(VALID_TAX_CODE);
+    // A consumer carries nothing of what the form held before the kind was chosen.
+    const consumer = await execute<Draft & { buyer: Record<string, unknown> }>(o, 'finance.einvoice_draft.save', form(series?.id ?? null, { buyer: { kind: 'consumer', partyId: null, taxCode: VALID_TAX_CODE, name: 'Không nên lưu', address: 'x', email: 'x@y.test' } }));
+    expect(consumer.buyer).toMatchObject({ kind: 'consumer', taxCode: null, name: null, address: null, email: null });
+    // A draft of the branch is not on the main entity's list, and the other way round.
+    const onBranch = await execute<Draft>(o, 'finance.einvoice_draft.save', form(branchSeries?.id ?? null, { legalEntityId: branch }));
+    const ids = async (entity: string | undefined) => (await query<Array<{ id: string }>>(o, 'finance.einvoice_draft.list', entity ? { legalEntityId: entity } : {})).map((d) => d.id).sort();
+    expect(await ids(branch)).toEqual([onBranch.id]);
+    expect(await ids(series?.legalEntityId)).toEqual([saved.id, spaced.id, consumer.id].sort());
+    expect(await ids(undefined)).toEqual([saved.id, spaced.id, consumer.id, onBranch.id].sort());
   });
 
   it('audits ids and counts only, never the buyer', async () => {

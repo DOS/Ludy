@@ -53,7 +53,11 @@ const orNull = (value: string): string | null => (value.trim() === '' ? null : v
 const toInput = (s: FormState): EInvoiceDraftForm => ({
   date: s.date,
   seriesId: s.seriesId === '' ? null : s.seriesId,
-  buyer: { kind: s.buyer.kind, partyId: s.buyer.partyId, taxCode: orNull(s.buyer.taxCode), name: orNull(s.buyer.name), address: orNull(s.buyer.address), email: orNull(s.buyer.email) },
+  // A sale to a consumer carries no buyer details: what the form held before the kind was chosen is not sent.
+  buyer:
+    s.buyer.kind === 'consumer'
+      ? { kind: 'consumer', partyId: null, taxCode: null, name: null, address: null, email: null }
+      : { kind: s.buyer.kind, partyId: s.buyer.partyId, taxCode: orNull(s.buyer.taxCode), name: orNull(s.buyer.name), address: orNull(s.buyer.address), email: orNull(s.buyer.email) },
   lines: s.lines.map((l) => ({ description: l.description, unit: orNull(l.unit), quantity: l.quantity.trim(), unitPrice: l.unitPrice.trim(), vatRate: l.vatRate })),
 });
 
@@ -244,7 +248,7 @@ export function SalesInvoicesPage() {
   const canSync = org.data?.role === 'owner' || org.data?.role === 'admin';
   const status = useQuery(orpc.einvoice.status.queryOptions());
   const seriesQuery = useQuery(orpc.einvoice.series.list.queryOptions());
-  const drafts = useQuery(orpc.einvoice.drafts.list.queryOptions());
+  const drafts = useQuery({ ...orpc.einvoice.drafts.list.queryOptions({ input: { legalEntityId: entity.legalEntityId } }), enabled: entity.ready });
   const [editing, setEditing] = useState<FormState | null>(null);
   const sync = useMutation({ mutationFn: () => client.einvoice.series.sync({ legalEntityId: entity.legalEntityId ?? null, provider: 'sandbox' }), onSuccess: refresh });
   const remove = useMutation({ mutationFn: (draftId: string) => client.einvoice.drafts.delete({ draftId }), onSuccess: refresh });

@@ -1587,7 +1587,8 @@ export const contract = {
       sync: oc.input(zEInvoiceSeriesSync).output(zEInvoiceSeriesSynced),
     },
     drafts: {
-      list: oc.output(z.array(zEInvoiceDraftSummary)),
+      // The drafts of one legal entity, or of every entity the caller may see when none is named.
+      list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(z.array(zEInvoiceDraftSummary)),
       get: oc.input(z.object({ draftId: zId })).output(zEInvoiceDraft),
       // The live check of the form as it stands: the computed lines, the totals and the issues, nothing stored.
       check: oc.input(zEInvoiceDraftCheckInput).output(zEInvoiceDraftCheck),

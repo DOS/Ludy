@@ -7359,6 +7359,7 @@ export const vi = {
       EINVOICE_SERIES_ENTITY: 'Ký hiệu hóa đơn này thuộc về pháp nhân khác. Hãy chọn ký hiệu của pháp nhân đang làm việc.',
       EINVOICE_ENTITY_FIXED: 'Bản nháp thuộc về một pháp nhân và không đổi sang pháp nhân khác được.',
       EINVOICE_DRAFT_INVALID: 'Bản nháp có giá trị không hợp lệ. Hãy kiểm tra lại các trường.',
+      EINVOICE_TOTAL_TOO_LARGE: 'Số tiền của hóa đơn quá lớn. Hãy kiểm tra số lượng và đơn giá.',
       RULE_TEXT_TOO_SHORT: 'Từ khóa cần có ít nhất hai chữ cái hoặc chữ số.',
       RULE_EXISTS: 'Đã có quy tắc cho từ khóa này. Hãy xóa quy tắc cũ trước nếu muốn đổi tài khoản.',
       RULE_NOT_FOUND: 'Không tìm thấy quy tắc này; có thể đã có người xóa. Hãy tải lại trang.',

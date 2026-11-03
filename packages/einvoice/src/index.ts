@@ -272,13 +272,27 @@ export function createSandboxEInvoiceProvider(options: SandboxOptions = {}): { p
       ? { state: 'issued', ref: stored.ref, number: stored.number, signedAt: stored.signedAt, taxAuthorityCode: stored.taxAuthorityCode }
       : { state: 'pending', ref: stored.ref };
 
+  // A call being worked on, by key: a second call with the same key while the first waits (the `slow` behavior) is the same invoice, answered with the first's answer.
+  const inflight = new Map<string, Promise<EInvoiceOutcome>>();
+
   async function submit(secret: string, step: 'issue' | 'adjust' | 'replace', request: EInvoiceRequest): Promise<EInvoiceOutcome> {
     checkSecret(secret);
     calls.push(`${step}:${request.key}`);
-    const behavior = queue.shift() ?? 'ok';
-    // The same key is the same invoice: the provider dedupes on it, as the real ones that have such a field do.
+    // The same key is the same invoice: the provider dedupes on it, as the real ones that have such a field do. A repeat takes no scripted behavior.
     const existing = byKey.get(request.key);
     if (existing) return outcome(existing);
+    const running = inflight.get(request.key);
+    if (running) return running;
+    const run = work(request, queue.shift() ?? 'ok');
+    inflight.set(request.key, run);
+    try {
+      return await run;
+    } finally {
+      inflight.delete(request.key);
+    }
+  }
+
+  async function work(request: EInvoiceRequest, behavior: SandboxBehavior): Promise<EInvoiceOutcome> {
     if (!SANDBOX_TEMPLATES.some((t) => t.templateNo === request.templateNo && t.symbol === request.symbol)) return { state: 'rejected', ref: null, code: 'series_unknown' };
     if (behavior === 'reject') return { state: 'rejected', ref: null, code: 'rejected_by_tax_authority' };
     if (behavior === 'slow') await wait(control.slowMs);

@@ -85,7 +85,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.einvoice_draft (
   buyer_kind text NOT NULL CHECK (buyer_kind IN ('business', 'individual', 'consumer')),
   -- A customer of the org, when the buyer was picked from them; a removed party leaves the typed details.
   buyer_party_id uuid,
-  buyer_tax_code text CHECK (buyer_tax_code IS NULL OR buyer_tax_code ~ '^([0-9]{10}(-[0-9]{3})?|[0-9]{12})$'),
+  -- Its shape is the check's business (a draft may hold a tax code that does not pass yet); the database keeps only its length.
+  buyer_tax_code text CHECK (buyer_tax_code IS NULL OR char_length(buyer_tax_code) BETWEEN 1 AND 20),
   buyer_name text CHECK (buyer_name IS NULL OR char_length(buyer_name) BETWEEN 1 AND 400),
   buyer_address text CHECK (buyer_address IS NULL OR char_length(buyer_address) BETWEEN 1 AND 500),
   buyer_email text CHECK (buyer_email IS NULL OR char_length(buyer_email) BETWEEN 3 AND 254),
@@ -101,6 +102,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.einvoice_draft (
   updated_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
   PRIMARY KEY (org_id, id),
   CONSTRAINT einvoice_draft_total_check CHECK (total = subtotal + vat_amount),
+  -- Once the provider has accepted the invoice it has a reference.
+  CONSTRAINT einvoice_draft_ref_check CHECK (state NOT IN ('pending', 'issued') OR provider_ref IS NOT NULL),
   CONSTRAINT einvoice_draft_key_uq UNIQUE (org_id, idempotency_key),
   -- Backs the lines' composite key.
   CONSTRAINT einvoice_draft_entity_id_uq UNIQUE (org_id, legal_entity_id, id),
@@ -140,18 +143,40 @@ CREATE POLICY einvoice_draft_delete ON crove_finance.einvoice_draft AS RESTRICTI
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_draft.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- A non-system writer edits a draft and nothing else: it cannot change the state, the key or the provider's reference, and it
--- cannot touch or delete a draft that has left `draft` (the issue job, a system context, moves it on). Runs as the writer.
+-- The state machine of a draft, kept in the database (ADR-0044 point 4):
+--   - a non-system writer (a person) edits a draft and nothing else: it cannot choose the key (an insert gets a fresh one), change the state, the key or the
+--     provider's reference, and it cannot touch or delete a draft that has left `draft`;
+--   - the system context (the issue job, a later step) moves a draft on, but never rewrites its key and never brings a draft back to `draft` unless the provider
+--     rejected it (then a new key goes with it: a rejected invoice's key is never reused);
+--   - the deletion of a member or of a party the draft names only empties `created_by` or `buyer_party_id` (the foreign keys' own action), whatever the
+--     state, so removing a member never fails on a draft that was sent.
+-- Runs as the writer.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_draft_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  IF TG_OP = 'UPDATE'
+     AND pg_catalog.to_jsonb(NEW) - ARRAY['created_by', 'buyer_party_id'] = pg_catalog.to_jsonb(OLD) - ARRAY['created_by', 'buyer_party_id']
+     AND (NEW.created_by IS NULL OR NEW.created_by IS NOT DISTINCT FROM OLD.created_by)
+     AND (NEW.buyer_party_id IS NULL OR NEW.buyer_party_id IS NOT DISTINCT FROM OLD.buyer_party_id) THEN
+    RETURN NEW;
+  END IF;
   IF (SELECT crove_kernel.ctx_actor_type()) = 'system' THEN
+    IF TG_OP = 'UPDATE' THEN
+      IF NEW.state = 'draft' AND OLD.state <> 'draft' AND OLD.state <> 'rejected' THEN
+        RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+      END IF;
+      IF NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key AND NOT (NEW.state = 'draft' AND OLD.state = 'rejected') THEN
+        RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+      END IF;
+    END IF;
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   END IF;
   IF TG_OP = 'INSERT' THEN
     IF NEW.state <> 'draft' OR NEW.provider_ref IS NOT NULL THEN
       RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
     END IF;
+    -- The key is the database's, never the writer's.
+    NEW.idempotency_key := pg_catalog.gen_random_uuid();
     RETURN NEW;
   END IF;
   IF OLD.state <> 'draft' THEN
@@ -165,8 +190,7 @@ BEGIN
   END IF;
   RETURN OLD;
 END $$;
-REVOKE ALL ON FUNCTION crove_finance.einvoice_draft_guard() FROM PUBLIC, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_finance.einvoice_draft_guard() TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_finance.einvoice_draft_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS einvoice_draft_guard ON crove_finance.einvoice_draft;
 CREATE TRIGGER einvoice_draft_guard BEFORE INSERT OR UPDATE OR DELETE ON crove_finance.einvoice_draft
   FOR EACH ROW EXECUTE FUNCTION crove_finance.einvoice_draft_guard();
@@ -227,17 +251,21 @@ BEGIN
   IF (SELECT crove_kernel.ctx_actor_type()) = 'system' THEN
     RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
   END IF;
-  SELECT d.state INTO v_state FROM crove_finance.einvoice_draft d
-  WHERE d.org_id = CASE WHEN TG_OP = 'DELETE' THEN OLD.org_id ELSE NEW.org_id END
-    AND d.id = CASE WHEN TG_OP = 'DELETE' THEN OLD.draft_id ELSE NEW.draft_id END;
-  -- A line whose draft is gone (the cascade of a draft's own delete) or not visible is not for this guard to judge.
-  IF v_state IS NOT NULL AND v_state <> 'draft' THEN
-    RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
-  END IF;
+  -- The draft a line is in now (OLD on an update or a delete) and the one it is going to (NEW on an insert or an update): a line of a draft that has left
+  -- `draft` can neither be changed nor be moved to another draft, and no line can be added to one that has.
+  FOR v_state IN
+    SELECT d.state FROM crove_finance.einvoice_draft d
+    WHERE d.org_id = CASE WHEN TG_OP = 'INSERT' THEN NEW.org_id ELSE OLD.org_id END
+      AND d.id IN (CASE WHEN TG_OP = 'INSERT' THEN NEW.draft_id ELSE OLD.draft_id END, CASE WHEN TG_OP = 'DELETE' THEN OLD.draft_id ELSE NEW.draft_id END)
+  LOOP
+    -- A line whose draft is gone (the cascade of a draft's own delete) or not visible is not for this guard to judge.
+    IF v_state <> 'draft' THEN
+      RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
+    END IF;
+  END LOOP;
   RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END $$;
-REVOKE ALL ON FUNCTION crove_finance.einvoice_draft_line_guard() FROM PUBLIC, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_finance.einvoice_draft_line_guard() TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_finance.einvoice_draft_line_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS einvoice_draft_line_guard ON crove_finance.einvoice_draft_line;
 CREATE TRIGGER einvoice_draft_line_guard BEFORE INSERT OR UPDATE OR DELETE ON crove_finance.einvoice_draft_line
   FOR EACH ROW EXECUTE FUNCTION crove_finance.einvoice_draft_line_guard();

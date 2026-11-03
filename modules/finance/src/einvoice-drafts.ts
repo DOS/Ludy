@@ -13,12 +13,13 @@
 // The database holds the same rules (state guard, entity of the series, total = subtotal + VAT); the checks here come first so the
 // refusal says what to do.
 import { randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
 import { z } from 'zod';
 import { SANDBOX_EINVOICE_SECRET, createSandboxEInvoiceProvider } from '@crove/einvoice';
 import { zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceSeriesSync, zId, type EInvoiceDraft, type EInvoiceDraftCheck, type EInvoiceDraftLine, type EInvoiceDraftSummary, type EInvoiceSeries, type EInvoiceSeriesSynced } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
-import { money } from '@crove/l10n-vn';
+import { money, parseTaxCode } from '@crove/l10n-vn';
 import { checkDraft, computeDraft, type ComputedDraft, type DraftInput } from './domain/einvoice-draft.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -62,25 +63,28 @@ export const einvoiceSeriesSync = defineCommand({
   access: MANAGERS,
   handler: async (ctx, input): Promise<EInvoiceSeriesSynced> => {
     const entity = await resolveLegalEntity(ctx, input.legalEntityId);
+    // Two syncs of one entity wait for each other, so neither adds a row the other already did nor a second default.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.einvoice_series:${ctx.orgId}:${entity}`}, 0))`.execute(ctx.trx);
     const { provider } = createSandboxEInvoiceProvider();
     const templates = await provider.listTemplates(SANDBOX_EINVOICE_SECRET);
+    // The default is the entity's, whatever provider holds it: only the first series an entity ever gets is made the default.
     const existing = await ctx.trx
       .selectFrom('crove_finance.einvoice_series')
-      .select(['template_no', 'symbol', 'is_default'])
+      .select(['provider', 'template_no', 'symbol', 'is_default'])
       .where('org_id', '=', ctx.orgId)
       .where('legal_entity_id', '=', entity)
-      .where('provider', '=', input.provider)
       .execute();
-    const hasDefault = existing.some((r) => r.is_default);
-    const known = new Set(existing.map((r) => `${r.template_no}/${r.symbol}`));
+    let hasDefault = existing.some((r) => r.is_default);
+    const known = new Set(existing.filter((r) => r.provider === input.provider).map((r) => `${r.template_no}/${r.symbol}`));
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     let added = 0;
     for (const template of templates) {
       if (known.has(`${template.templateNo}/${template.symbol}`)) continue;
       await ctx.trx
         .insertInto('crove_finance.einvoice_series')
-        .values({ org_id: ctx.orgId, legal_entity_id: entity, provider: input.provider, template_no: template.templateNo, symbol: template.symbol, description: template.description, is_default: !hasDefault && added === 0 && existing.length === 0, created_by: userId })
+        .values({ org_id: ctx.orgId, legal_entity_id: entity, provider: input.provider, template_no: template.templateNo, symbol: template.symbol, description: template.description, is_default: !hasDefault, created_by: userId })
         .execute();
+      hasDefault = true;
       added += 1;
     }
     ctx.audit({ legalEntityId: entity, provider: input.provider, added });
@@ -88,31 +92,25 @@ export const einvoiceSeriesSync = defineCommand({
   },
 });
 
-async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
-  const row = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft')
-    .selectAll()
-    .where('org_id', '=', ctx.orgId)
-    .where('id', '=', id)
-    .executeTakeFirst();
-  if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
-  const lineRows = await ctx.trx
-    .selectFrom('crove_finance.einvoice_draft_line')
-    .selectAll()
-    .where('org_id', '=', ctx.orgId)
-    .where('draft_id', '=', id)
-    .orderBy('line_no')
-    .execute();
-  const lines: EInvoiceDraftLine[] = lineRows.map((l) => ({
-    lineNo: l.line_no,
-    description: l.description,
-    unit: l.unit,
-    quantity: plain(l.quantity),
-    unitPrice: plain(l.unit_price),
-    amount: plain(l.amount),
-    vatRate: l.vat_rate,
-    vatAmount: plain(l.vat_amount),
-  }));
+const selectDrafts = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_draft').selectAll().where('org_id', '=', ctx.orgId);
+const selectLines = (ctx: Ctx) => ctx.trx.selectFrom('crove_finance.einvoice_draft_line').selectAll().where('org_id', '=', ctx.orgId);
+type DraftRow = Awaited<ReturnType<ReturnType<typeof selectDrafts>['execute']>>[number];
+type LineRow = Awaited<ReturnType<ReturnType<typeof selectLines>['execute']>>[number];
+
+// A draft as the API gives it, from its row and its line rows: the amounts as the API writes them, and the checks run on what is stored.
+function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string): EInvoiceDraft {
+  const lines: EInvoiceDraftLine[] = [...lineRows]
+    .sort((x, y) => x.line_no - y.line_no)
+    .map((l) => ({
+      lineNo: l.line_no,
+      description: l.description,
+      unit: l.unit,
+      quantity: plain(l.quantity),
+      unitPrice: plain(l.unit_price),
+      amount: plain(l.amount),
+      vatRate: l.vat_rate,
+      vatAmount: plain(l.vat_amount),
+    }));
   const input: DraftInput = {
     date: row.invoice_date,
     currency: row.currency,
@@ -139,26 +137,28 @@ async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceD
   };
 }
 
+async function loadDraft(ctx: Ctx, id: string, today: string): Promise<EInvoiceDraft> {
+  const row = await selectDrafts(ctx).where('id', '=', id).executeTakeFirst();
+  if (!row) throw new DomainError('EINVOICE_DRAFT_NOT_FOUND', 404, 'Không tìm thấy bản nháp hóa đơn');
+  return buildDraft(row, await selectLines(ctx).where('draft_id', '=', id).execute(), today);
+}
+
 export const einvoiceDraftList = defineQuery({
   name: 'finance.einvoice_draft.list',
-  input: z.object({}),
+  // The entity on screen; left out, every draft the caller may see.
+  input: z.object({ legalEntityId: zId.optional() }),
   access: ALL,
-  handler: async (ctx): Promise<EInvoiceDraftSummary[]> => {
+  handler: async (ctx, input): Promise<EInvoiceDraftSummary[]> => {
     const today = await databaseToday(ctx.trx);
-    const rows = await ctx.trx
-      .selectFrom('crove_finance.einvoice_draft')
-      .select(['id', 'state', 'invoice_date', 'buyer_name', 'total'])
-      .where('org_id', '=', ctx.orgId)
-      .orderBy('invoice_date', 'desc')
-      .orderBy('id', 'desc')
-      .limit(200)
-      .execute();
-    const out: EInvoiceDraftSummary[] = [];
-    for (const row of rows) {
-      const draft = await loadDraft(ctx, row.id, today);
-      out.push({ id: row.id, state: row.state, date: row.invoice_date, buyerName: row.buyer_name, total: plain(row.total), issueCount: draft.issues.length });
-    }
-    return out;
+    let list = selectDrafts(ctx);
+    if (input.legalEntityId) list = list.where('legal_entity_id', '=', input.legalEntityId);
+    const rows = await list.orderBy('invoice_date', 'desc').orderBy('id', 'desc').limit(200).execute();
+    // The lines of all of them in one read.
+    const lines = rows.length === 0 ? [] : await selectLines(ctx).where('draft_id', 'in', rows.map((r) => r.id)).execute();
+    return rows.map((row) => {
+      const draft = buildDraft(row, lines.filter((l) => l.draft_id === row.id), today);
+      return { id: row.id, state: row.state, date: row.invoice_date, buyerName: row.buyer_name, total: plain(row.total), issueCount: draft.issues.length };
+    });
   },
 });
 
@@ -190,11 +190,20 @@ export const einvoiceDraftCheck = defineQuery({
 
 function toDraftInput(input: Pick<z.infer<typeof zEInvoiceDraftSave>, 'date' | 'seriesId' | 'buyer' | 'lines'>): DraftInput {
   const blank = (value: string | null): string | null => (value && value.trim() !== '' ? value.trim() : null);
+  // A tax code that reads as one is kept in its written form (spaces and dots out, a branch code with its dash); one that does not is kept as typed, for the checks to report.
+  const taxCode = (value: string | null): string | null => {
+    const text = blank(value);
+    return text === null ? null : (parseTaxCode(text)?.normalized ?? text);
+  };
+  // A sale to a consumer carries no buyer details, whatever the form still held from before the kind was chosen.
+  const consumer = input.buyer.kind === 'consumer';
   return {
     date: input.date,
     currency: 'VND',
     seriesId: input.seriesId,
-    buyer: { kind: input.buyer.kind, taxCode: blank(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email) },
+    buyer: consumer
+      ? { kind: input.buyer.kind, taxCode: null, name: null, address: null, email: null }
+      : { kind: input.buyer.kind, taxCode: taxCode(input.buyer.taxCode), name: blank(input.buyer.name), address: blank(input.buyer.address), email: blank(input.buyer.email) },
     lines: input.lines.map((l) => ({ description: l.description.trim(), unit: blank(l.unit), quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
 }
@@ -212,10 +221,14 @@ export const einvoiceDraftSave = defineCommand({
     const today = await databaseToday(ctx.trx);
     const draft = toDraftInput(input);
     const computed = computeDraft(draft.lines);
+    // The amounts the database can hold (20 digits with 4 decimals): a sum above 15 digits is refused here with its own words, it is no draft.
+    if ([computed.subtotal, computed.vatAmount, computed.total, ...computed.lines.flatMap((l) => [l.amount, l.vatAmount])].some((v) => money(v).abs().toFixed(0).length > 15)) {
+      throw new DomainError('EINVOICE_TOTAL_TOO_LARGE', 422, 'Số tiền của hóa đơn quá lớn');
+    }
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
 
     // The party, when the buyer was picked from the org's customers: it must be one of the org's.
-    if (input.buyer.partyId) {
+    if (input.buyer.partyId && draft.buyer.kind !== 'consumer') {
       const party = await ctx.trx.selectFrom('crove_kernel.party').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.buyer.partyId).executeTakeFirst();
       if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy khách hàng này');
     }
@@ -255,7 +268,7 @@ export const einvoiceDraftSave = defineCommand({
       invoice_date: draft.date,
       currency: draft.currency,
       buyer_kind: draft.buyer.kind,
-      buyer_party_id: input.buyer.partyId,
+      buyer_party_id: draft.buyer.kind === 'consumer' ? null : input.buyer.partyId,
       buyer_tax_code: draft.buyer.taxCode,
       buyer_name: draft.buyer.name,
       buyer_address: draft.buyer.address,

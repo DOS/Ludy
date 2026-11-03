@@ -2144,7 +2144,7 @@ export function createRpcHandler(
         ),
       },
       drafts: {
-        list: os.einvoice.drafts.list.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.list', {}, { actor, orgId }))),
+        list: os.einvoice.drafts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.list', input ?? {}, { actor, orgId }))),
         get: os.einvoice.drafts.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.get', input, { actor, orgId }))),
         check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
         save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),

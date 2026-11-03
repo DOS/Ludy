@@ -7362,6 +7362,7 @@ export const en = {
       EINVOICE_SERIES_ENTITY: 'This invoice series belongs to another legal entity. Choose a series of the entity you are working in.',
       EINVOICE_ENTITY_FIXED: 'A draft belongs to one legal entity and cannot move to another.',
       EINVOICE_DRAFT_INVALID: 'The draft has a value that is not valid. Check the fields again.',
+      EINVOICE_TOTAL_TOO_LARGE: 'The amounts of the invoice are too large. Check the quantities and prices.',
       RULE_TEXT_TOO_SHORT: 'A keyword needs at least two letters or digits.',
       RULE_EXISTS: 'There is already a rule for this keyword. Remove the old rule first to change its account.',
       RULE_NOT_FOUND: 'Rule not found; someone may have removed it. Reload the page.',
