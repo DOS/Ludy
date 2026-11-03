@@ -143,16 +143,21 @@ CREATE POLICY einvoice_draft_delete ON crove_finance.einvoice_draft AS RESTRICTI
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_draft.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- The state machine of a draft, kept in the database (ADR-0044 point 4):
---   - a non-system writer (a person) edits a draft and nothing else: it cannot choose the key (an insert gets a fresh one), change the state, the key or the
---     provider's reference, and it cannot touch or delete a draft that has left `draft`;
---   - the system context (the issue job, a later step) moves a draft on, but never rewrites its key and never brings a draft back to `draft` unless the provider
---     rejected it (then a new key goes with it: a rejected invoice's key is never reused);
---   - the deletion of a member or of a party the draft names only empties `created_by` or `buyer_party_id` (the foreign keys' own action), whatever the
---     state, so removing a member never fails on a draft that was sent.
--- Runs as the writer.
+-- The state machine of a draft, kept in the database (ADR-0044 point 4). Runs as the writer.
+--   A person (any non-system writer) edits a draft and nothing else: it cannot choose the key (an insert gets a fresh one), change the state, the key or the
+--   provider's reference, and it cannot touch or delete a draft that has left `draft`.
+--   The system context (the issue job, a later step) moves a draft along these transitions and no others, each raising EINVOICE_STATE otherwise:
+--     draft -> submitting; submitting -> pending, issued, rejected or failed; pending -> issued, rejected or failed; failed -> submitting (the same key);
+--     rejected -> draft (a new key and no provider reference: a rejected invoice's key is never reused).
+--   `issued` is terminal. Once a draft has left `draft` its content (series, date, buyer, amounts) is frozen for the system context too: a transition changes
+--   only the state, the provider's reference (set once, from empty) and, on rejected -> draft, the key. A system insert is a `draft` with no reference.
+--   Whoever the writer is, a draft that has left `draft` is deleted only by the org's purge.
+--   The foreign keys' own action (a member or a party removed) only empties `created_by` or `buyer_party_id`, whatever the state and the writer.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_draft_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_system boolean := (SELECT crove_kernel.ctx_actor_type()) = 'system';
+  v_move text;
 BEGIN
   IF TG_OP = 'UPDATE'
      AND pg_catalog.to_jsonb(NEW) - ARRAY['created_by', 'buyer_party_id'] = pg_catalog.to_jsonb(OLD) - ARRAY['created_by', 'buyer_party_id']
@@ -160,35 +165,85 @@ BEGIN
      AND (NEW.buyer_party_id IS NULL OR NEW.buyer_party_id IS NOT DISTINCT FROM OLD.buyer_party_id) THEN
     RETURN NEW;
   END IF;
-  IF (SELECT crove_kernel.ctx_actor_type()) = 'system' THEN
-    IF TG_OP = 'UPDATE' THEN
-      IF NEW.state = 'draft' AND OLD.state <> 'draft' AND OLD.state <> 'rejected' THEN
-        RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
-      END IF;
-      IF NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key AND NOT (NEW.state = 'draft' AND OLD.state = 'rejected') THEN
-        RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+
+  IF TG_OP = 'DELETE' THEN
+    IF OLD.state = 'draft' THEN
+      RETURN OLD;
+    END IF;
+    -- The org's purge, and only it (the checks of crove_kernel.purge_append_only_guard): the role that owns org_purge, the transaction-local mark it sets
+    -- around these deletes, the worker login in the org's system context, the org offboarding. Nested, so every other caller meets only the catalog checks.
+    IF (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = CURRENT_USER) = (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_kernel.org_purge(integer)'::pg_catalog.regprocedure)
+       AND pg_catalog.current_setting('crove.org_purge', true) = OLD.org_id::text THEN
+      IF pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
+         AND crove_kernel.ctx_actor_type() = 'system'
+         AND crove_kernel.ctx_org_id() = OLD.org_id
+         AND EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = OLD.org_id AND t.status = 'offboarding') THEN
+        RETURN OLD;
       END IF;
     END IF;
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    RAISE EXCEPTION '%', CASE WHEN v_system THEN 'EINVOICE_STATE' ELSE 'EINVOICE_NOT_DRAFT' END USING ERRCODE = '42501';
   END IF;
+
   IF TG_OP = 'INSERT' THEN
     IF NEW.state <> 'draft' OR NEW.provider_ref IS NOT NULL THEN
-      RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
+      RAISE EXCEPTION '%', CASE WHEN v_system THEN 'EINVOICE_STATE' ELSE 'EINVOICE_NOT_DRAFT' END USING ERRCODE = '42501';
     END IF;
-    -- The key is the database's, never the writer's.
-    NEW.idempotency_key := pg_catalog.gen_random_uuid();
+    -- The key is the database's, never a person's.
+    IF NOT v_system THEN
+      NEW.idempotency_key := pg_catalog.gen_random_uuid();
+    END IF;
     RETURN NEW;
   END IF;
-  IF OLD.state <> 'draft' THEN
-    RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
-  END IF;
-  IF TG_OP = 'UPDATE' THEN
+
+  -- An update.
+  IF NOT v_system THEN
+    IF OLD.state <> 'draft' THEN
+      RAISE EXCEPTION 'EINVOICE_NOT_DRAFT' USING ERRCODE = '42501';
+    END IF;
     IF NEW.state IS DISTINCT FROM OLD.state OR NEW.provider_ref IS DISTINCT FROM OLD.provider_ref OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key THEN
       RAISE EXCEPTION 'EINVOICE_FIELD_LOCKED' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
   END IF;
-  RETURN OLD;
+
+  IF OLD.state = 'issued' THEN
+    RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.state = OLD.state THEN
+    -- No move. A draft is edited (its key and reference stay); anything else changes nothing but the time it was touched.
+    IF OLD.state = 'draft' THEN
+      IF NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.provider_ref IS DISTINCT FROM OLD.provider_ref THEN
+        RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+      END IF;
+    ELSIF pg_catalog.to_jsonb(NEW) - 'updated_at' <> pg_catalog.to_jsonb(OLD) - 'updated_at' THEN
+      RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+    END IF;
+    RETURN NEW;
+  END IF;
+  v_move := OLD.state || '>' || NEW.state;
+  IF v_move NOT IN ('draft>submitting', 'submitting>pending', 'submitting>issued', 'submitting>rejected', 'submitting>failed', 'pending>issued', 'pending>rejected', 'pending>failed',
+                    'failed>submitting', 'rejected>draft') THEN
+    RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+  END IF;
+  -- The content stays as it was.
+  IF pg_catalog.to_jsonb(NEW) - ARRAY['state', 'provider_ref', 'idempotency_key', 'updated_at'] <> pg_catalog.to_jsonb(OLD) - ARRAY['state', 'provider_ref', 'idempotency_key', 'updated_at'] THEN
+    RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+  END IF;
+  IF v_move = 'rejected>draft' THEN
+    -- A fresh key and an empty reference.
+    IF NEW.idempotency_key = OLD.idempotency_key OR NEW.provider_ref IS NOT NULL THEN
+      RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    -- The same key, and a reference that is only ever set from empty.
+    IF NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR (OLD.provider_ref IS NOT NULL AND NEW.provider_ref IS DISTINCT FROM OLD.provider_ref) THEN
+      RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+    END IF;
+    IF v_move = 'draft>submitting' AND NEW.provider_ref IS NOT NULL THEN
+      RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_finance.einvoice_draft_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS einvoice_draft_guard ON crove_finance.einvoice_draft;
@@ -217,6 +272,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.einvoice_draft_line (
   CONSTRAINT einvoice_draft_line_draft_fk FOREIGN KEY (org_id, legal_entity_id, draft_id) REFERENCES crove_finance.einvoice_draft (org_id, legal_entity_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS einvoice_draft_line_entity_idx ON crove_finance.einvoice_draft_line (legal_entity_id, org_id);
+-- The foreign key to the draft (G3 fk-index).
+CREATE INDEX IF NOT EXISTS einvoice_draft_line_draft_idx ON crove_finance.einvoice_draft_line (org_id, legal_entity_id, draft_id);
 SELECT crove_kernel.apply_tenant_rls('crove_finance.einvoice_draft_line');
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.einvoice_draft_line;
 CREATE TRIGGER b_legal_entity BEFORE INSERT OR UPDATE OF legal_entity_id, draft_id ON crove_finance.einvoice_draft_line
@@ -241,15 +298,25 @@ CREATE POLICY einvoice_draft_line_delete ON crove_finance.einvoice_draft_line AS
   USING ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = einvoice_draft_line.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- A line is written only while its draft is a draft (the issue job, a system context, is not held to it). Runs as the writer, which
--- reads the draft through its own policies.
+-- A line is written only while its draft is a draft, whoever writes it, the system context included (the issue job changes the draft's state, never its lines); a
+-- line of a draft that has left `draft` is deleted only by the org's purge. Runs as the writer, which reads the draft through its own policies.
 CREATE OR REPLACE FUNCTION crove_finance.einvoice_draft_line_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_state text;
 BEGIN
-  IF (SELECT crove_kernel.ctx_actor_type()) = 'system' THEN
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+  IF TG_OP = 'DELETE' THEN
+    -- The org's purge, and only it (the checks of crove_kernel.purge_append_only_guard): the role that owns org_purge, the transaction-local mark it sets
+    -- around these deletes, the worker login in the org's system context, the org offboarding. Nested, so every other caller meets only the catalog checks.
+    IF (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = CURRENT_USER) = (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_kernel.org_purge(integer)'::pg_catalog.regprocedure)
+       AND pg_catalog.current_setting('crove.org_purge', true) = OLD.org_id::text THEN
+      IF pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
+         AND crove_kernel.ctx_actor_type() = 'system'
+         AND crove_kernel.ctx_org_id() = OLD.org_id
+         AND EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = OLD.org_id AND t.status = 'offboarding') THEN
+        RETURN OLD;
+      END IF;
+    END IF;
   END IF;
   -- The draft a line is in now (OLD on an update or a delete) and the one it is going to (NEW on an insert or an update): a line of a draft that has left
   -- `draft` can neither be changed nor be moved to another draft, and no line can be added to one that has.

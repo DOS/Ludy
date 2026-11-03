@@ -128,6 +128,20 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-001', '1121')`, [org.orgId, feedConnection]);
       // The number of a bank account (#2183), recorded without a bank feed: a working row, deleted with the org's others.
       await c.query(`INSERT INTO crove_finance.bank_account_number (org_id, bank_account, account_number) VALUES ($1, '1121', '0123456789')`, [org.orgId]);
+      // A sales e-invoice (#2500): a series, and a draft with two lines. The issue job's move on is made below, in a system context: the guards of a draft and its
+      // lines let one that has left `draft` go only with the org.
+      const einvoiceSeries = (await c.query<{ id: string }>(`INSERT INTO crove_finance.einvoice_series (org_id, provider, template_no, symbol, is_default) VALUES ($1, 'sandbox', '1', 'C26TSB', true) RETURNING id`, [org.orgId])).rows[0]?.id;
+      const einvoiceDraft = (
+        await c.query<{ id: string }>(
+          `INSERT INTO crove_finance.einvoice_draft (org_id, series_id, invoice_date, buyer_kind, subtotal, vat_amount, total) VALUES ($1, $2, current_date, 'consumer', 300000, 30000, 330000) RETURNING id`,
+          [org.orgId, einvoiceSeries],
+        )
+      ).rows[0]?.id;
+      await c.query(
+        `INSERT INTO crove_finance.einvoice_draft_line (org_id, draft_id, line_no, description, quantity, unit_price, amount, vat_rate, vat_amount) VALUES
+           ($1, $2, 1, 'Hàng A', 1, 100000, 100000, '10%', 10000), ($1, $2, 2, 'Hàng B', 2, 100000, 200000, '10%', 20000)`,
+        [org.orgId, einvoiceDraft],
+      );
       // An approved Social post (append-only approval, #1032): its approval, variant, post and channel connection.
       const connection = randomUUID();
       await c.query(
@@ -216,8 +230,22 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await c.query(`INSERT INTO crove_notes.link (org_id, note_id, target_type, target_id, party_id, created_by) VALUES ($1, $2, 'kernel.party', $3, $3, $4)`, [org.orgId, privateNote, stray, owner]);
       // A member's own to-do (#1673), made from the private note: deleted too, before the note it names.
       await c.query(`INSERT INTO crove_notes.todo (org_id, owner_user_id, title, sort_key, source_note_id) VALUES ($1, $2, 'Việc riêng', 'V', $3)`, [org.orgId, member, privateNote]);
-      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey };
+      return { stray, position, parent, pinned, free, ledgerParty, imageKey, pendingKey, einvoiceDraft };
     });
+    // The issue job's own path: a worker login in the org's system context moves the draft to issued, with the guards on.
+    const job = await workerPool.connect();
+    try {
+      await job.query('BEGIN');
+      await job.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
+      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'submitting' WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge' WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await job.query('COMMIT');
+    } catch (error) {
+      await job.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      job.release();
+    }
     return { org, owner, ownerEmail, member, booked, loose, partyEmail, proposalId, ...ids };
   }
 
@@ -371,8 +399,9 @@ suite('org purge on PostgreSQL (#1024)', () => {
 
     const after = await snapshot(s.org.orgId);
     // Kept whole: the books, the audit and outbox streams, inbound addresses.
-    // Bank feed accounts (#2044) are working rows, deleted with the connections they map.
-    for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && t !== 'crove_finance.vendor_account_rule' && t !== 'crove_finance.bank_feed_account' && t !== 'crove_finance.bank_account_number')) {
+    // Bank feed accounts (#2044) are working rows, deleted with the connections they map; so are the sales e-invoice series, drafts and lines (#2500).
+    const workingRows = new Set(['crove_finance.vendor_account_rule', 'crove_finance.bank_feed_account', 'crove_finance.bank_account_number', 'crove_finance.einvoice_series', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_draft_line']);
+    for (const table of Object.keys(before).filter((t) => t.startsWith('crove_finance.') && !workingRows.has(t))) {
       expect([table, after[table]]).toEqual([table, before[table]]);
     }
     expect(after['crove_finance.purchase_document']).toBe(1);
@@ -407,7 +436,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(await admin(async (c) => (await c.query('SELECT id FROM crove_kernel.proposal WHERE org_id = $1', [s.org.orgId])).rows)).toEqual([{ id: s.proposalId }]);
     // The task comment and the post approval are deleted (#1032), and so is what they used to pin: the commented task,
     // its parent and assignee position, the approved variant, its post and channel connection.
-    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection']) {
+    for (const table of ['crove_kernel.task_comment', 'crove_kernel.task', 'crove_kernel.position', 'crove_social.post_approval', 'crove_social.post_variant', 'crove_social.post', 'crove_kernel.channel_connection', 'crove_finance.einvoice_draft_line', 'crove_finance.einvoice_draft', 'crove_finance.einvoice_series']) {
       expect([table, before[table]]).not.toEqual([table, 0]);
       expect([table, after[table] ?? 0]).toEqual([table, 0]);
     }
@@ -576,18 +605,25 @@ suite('org purge on PostgreSQL (#1024)', () => {
     }
   });
 
-  // The append-only guard of task comments and post approvals lets a DELETE through only inside org_purge (#1032): the
-  // worker login in the system context of an offboarding org, with the purge's mark forged for that org, deletes and
-  // updates nothing by itself.
-  it('refuses the worker its own deletes of task comments and post approvals, the purge mark forged', async () => {
+  // The append-only guard of task comments and post approvals lets a DELETE through only inside org_purge (#1032), and so do the guards of a sales e-invoice
+  // draft that has left `draft` and of its lines (#2500): the worker login in the system context of an offboarding org, with the purge's mark forged for that
+  // org, deletes and updates nothing by itself.
+  it('refuses the worker its own deletes of task comments, post approvals and sent e-invoice drafts, the purge mark forged', async () => {
     const s = await seed('Công ty Giả dấu');
     await offboard(s.org.orgId);
     const login = new URL(adminUrl);
     login.username = 'crove_worker';
     login.password = 'test-worker-pw';
-    const before = { comments: await count('crove_kernel.task_comment', s.org.orgId), approvals: await count('crove_social.post_approval', s.org.orgId) };
+    const before = {
+      comments: await count('crove_kernel.task_comment', s.org.orgId),
+      approvals: await count('crove_social.post_approval', s.org.orgId),
+      drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
+      draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
+    };
     expect(before.comments).toBeGreaterThan(0);
     expect(before.approvals).toBeGreaterThan(0);
+    expect(before.drafts).toBe(1);
+    expect(before.draftLines).toBe(2);
     const client = new pg.Client({ connectionString: login.toString() });
     await client.connect();
     try {
@@ -596,6 +632,10 @@ suite('org purge on PostgreSQL (#1024)', () => {
         'DELETE FROM crove_social.post_approval WHERE org_id = $1',
         "UPDATE crove_kernel.task_comment SET body = 'x' WHERE org_id = $1",
         "UPDATE crove_social.post_approval SET comment = 'x' WHERE org_id = $1",
+        'DELETE FROM crove_finance.einvoice_draft_line WHERE org_id = $1',
+        'DELETE FROM crove_finance.einvoice_draft WHERE org_id = $1',
+        "UPDATE crove_finance.einvoice_draft SET state = 'draft', idempotency_key = gen_random_uuid() WHERE org_id = $1",
+        "UPDATE crove_finance.einvoice_draft_line SET description = 'x' WHERE org_id = $1",
       ]) {
         await client.query('BEGIN');
         try {
@@ -606,7 +646,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
             (e: Error) => e.message,
           );
           // Refused by the guard, or by the worker's grants or row policies before it: never a row changed.
-          expect([statement, outcome]).toEqual([statement, expect.stringMatching(/append-only|permission denied|^0 row\(s\)$/)]);
+          expect([statement, outcome]).toEqual([statement, expect.stringMatching(/append-only|permission denied|EINVOICE_STATE|EINVOICE_NOT_DRAFT|^0 row\(s\)$/)]);
         } finally {
           await client.query('ROLLBACK');
         }
@@ -614,7 +654,13 @@ suite('org purge on PostgreSQL (#1024)', () => {
     } finally {
       await client.end();
     }
-    expect({ comments: await count('crove_kernel.task_comment', s.org.orgId), approvals: await count('crove_social.post_approval', s.org.orgId) }).toEqual(before);
+    expect({
+      comments: await count('crove_kernel.task_comment', s.org.orgId),
+      approvals: await count('crove_social.post_approval', s.org.orgId),
+      drafts: await count('crove_finance.einvoice_draft', s.org.orgId),
+      draftLines: await count('crove_finance.einvoice_draft_line', s.org.orgId),
+    }).toEqual(before);
+    expect(await one('SELECT state, provider_ref FROM crove_finance.einvoice_draft WHERE org_id = $1', [s.org.orgId])).toEqual({ state: 'issued', provider_ref: 'sbx-purge' });
   });
 
   it('leaves a held blob in place and reports it', async () => {

@@ -115,7 +115,7 @@ function buildDraft(row: DraftRow, lineRows: readonly LineRow[], today: string):
     date: row.invoice_date,
     currency: row.currency,
     seriesId: row.series_id,
-    buyer: { kind: row.buyer_kind as DraftInput['buyer']['kind'], taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
+    buyer: { kind: row.buyer_kind, taxCode: row.buyer_tax_code, name: row.buyer_name, address: row.buyer_address, email: row.buyer_email },
     lines: lines.map((l) => ({ description: l.description, unit: l.unit, quantity: l.quantity, unitPrice: l.unitPrice, vatRate: l.vatRate })),
   };
   const computed: ComputedDraft = { lines: lines.map((l) => ({ ...l })), subtotal: plain(row.subtotal), vatAmount: plain(row.vat_amount), total: plain(row.total) };
