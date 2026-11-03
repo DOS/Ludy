@@ -441,6 +441,20 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // The sealed copy of that token (W2-1, #2296; pending): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
+  'crove_ads.ad_token_seal': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      const revoke = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_token_revoke', values: { org_id: o.id, id: revoke, connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' } },
+        ],
+        row: { org_id: o.id, revoke_id: revoke, key_id: 'rls-matrix', envelope: '\\x00' },
+      };
+    },
+  },
   // #1318: a visitor's booking of an event type, holding an event on the host's calendar.
   'crove_crm.booking': {
     make: (o) => {

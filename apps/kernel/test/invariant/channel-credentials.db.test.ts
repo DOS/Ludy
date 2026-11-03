@@ -9,7 +9,7 @@
 //   permission) is closed, the ads module may keep a sealed copy of its token for at most seven days, only so the worker
 //   can revoke the person's permissions at the platform and pause what was launched; the copy sits in the definer-only
 //   table crove_ads.ad_token_seal, no role reads it, and it is wiped when the revoke worked, after ten attempts or seven
-//   days, and by the org's purge. This file names every table that holds a sealed envelope and accepts that one until its
+//   days, and by the org's purge. This file names every table with an envelope column and accepts that one until its
 //   expiry date; the change that adds the table (W2-1) replaces the allowance with the tests that pin its behaviour.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md). Set
 // CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
@@ -28,8 +28,9 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
 const suite = ADMIN ? describe : describe.skip;
 
-// Every column of a tenant schema that holds a sealed envelope, by name: a new store of a sealed token is named here on purpose, in a reviewed change,
-// and each one is a table no Crove role can read (the MACHINERY list of the RLS matrix proves the grants).
+// Every bytea column named like an envelope in a crove_ schema, by name: a new store of that shape is named here on purpose, in a reviewed change. It does
+// not find a sealed value under another name or type; the review of a new table and the RLS matrix (MACHINERY lists the definer-only tables, whose
+// grants it proves) are the other half.
 const SEALED_STORES = ['crove_kernel.calendar_credential.envelope', 'crove_kernel.credential.envelope', 'crove_social.chat_alert_target.envelope'];
 // Stores that are allowed until a date, each with the issue and the reason. The test accepts the store being absent (the table lands in a later change) or
 // present, and fails on the day after `expires` (yyyy-mm-dd), so the allowance is replaced by pinned tests or removed before then.
@@ -189,7 +190,7 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
     expect(rows).toEqual([]);
   });
 
-  it('names every table that holds a sealed envelope, and accepts a dated allowance for one that may outlive a disconnect', async () => {
+  it('names every table with an envelope column, and accepts a dated allowance for one that may outlive a disconnect', async () => {
     const { rows } = await admin((c) =>
       c.query<{ col: string }>(
         `SELECT n.nspname || '.' || c.relname || '.' || a.attname AS col
@@ -202,12 +203,15 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
       ),
     );
     const today = new Date().toISOString().slice(0, 10);
+    const found = rows.map((r) => r.col);
     for (const [column, { issue, expires, reason }] of Object.entries(SEALED_ALLOWANCES)) {
       expect(issue, column).toMatch(/^#\d+$/);
       expect(reason.length, column).toBeGreaterThan(20);
-      expect(/^\d{4}-\d{2}-\d{2}$/.test(expires) && today <= expires, `the allowance of ${column} expired on ${expires} (${issue}): pin the behaviour in tests and remove it, or extend it by an owner decision`).toBe(true);
+      expect(expires, column).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      // An allowance that has run out fails only where the store exists: a table that is not there holds nothing, and the change that removes or
+      // extends the allowance can then still pass this file.
+      if (found.includes(column)) expect(today <= expires, `the allowance of ${column} expired on ${expires} (${issue}): pin the behaviour in tests and remove it, or extend it by an owner decision`).toBe(true);
     }
-    const found = rows.map((r) => r.col);
     // Nothing but the named stores and an allowed one that exists; an allowed one that does not exist yet is accepted.
     expect(found.filter((col) => !SEALED_STORES.includes(col) && !(col in SEALED_ALLOWANCES))).toEqual([]);
     expect(SEALED_STORES.filter((col) => !found.includes(col))).toEqual([]);
@@ -222,7 +226,7 @@ suite('channel credentials on PostgreSQL (ADR-0025)', () => {
         c.query<{ role: string; op: string }>(
           `SELECT r AS role, p AS op FROM unnest(ARRAY['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader']) r,
                   unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE']) p
-           WHERE has_table_privilege(r, $1::regclass, p)`,
+           WHERE has_table_privilege(r, $1::regclass, p) OR (p IN ('SELECT', 'INSERT', 'UPDATE') AND has_any_column_privilege(r, $1::regclass, p))`,
           [`${schema}.${table}`],
         ),
       );
