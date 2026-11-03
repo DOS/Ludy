@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2295, ads W1b): the org purge deletes the org's ad_campaign_request too. Idempotent; applied files stay untouched.
--- This is the body of 20261121140000 (the newest) with crove_ads.ad_campaign_request added to the first list, before crove_ads.ad_campaign_draft, with its signature,
+-- This is the body of 20261121170000 (the newest) with crove_ads.ad_campaign_request added to the first list, before crove_ads.ad_campaign_draft, with its signature,
 -- owner, grants and every list and step it had.
 SET LOCAL lock_timeout = '2s';
 
@@ -31,7 +31,7 @@ DECLARE
   v_kernel_first text[] := ARRAY[
     'crove_kernel.saved_reply', 'crove_kernel.conversation_setting', 'crove_kernel.member_availability', 'crove_kernel.conversation_composing', 'crove_kernel.conversation_draft', 'crove_kernel.conversation_note', 'crove_kernel.conversation_read', 'crove_kernel.conversation_attachment', 'crove_kernel.conversation_message', 'crove_kernel.conversation', 'crove_kernel.conversation_identity', 'crove_kernel.channel_access',
     'crove_ads.ad_flag_setting', 'crove_ads.ad_campaign_request', 'crove_ads.ad_campaign_draft', 'crove_ads.ad_spend_cap', 'crove_ads.ad_org_setting', 'crove_ads.ad_sync_run', 'crove_ads.ad_spend_day', 'crove_ads.ad_account',
-    'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
+    'crove_kernel.today_mail', 'crove_kernel.saved_view', 'crove_notes.link', 'crove_notes.todo', 'crove_notes.note',
     'crove_kernel.activity', 'crove_kernel.agent_wakeup', 'crove_kernel.extraction',
     'crove_kernel.inbound_message', 'crove_kernel.notification', 'crove_kernel.notification_mute', 'crove_kernel.inbox_item',
     'crove_kernel.mail_event', 'crove_kernel.mail_suppression', 'crove_kernel.mail_message',

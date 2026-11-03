@@ -75,7 +75,7 @@ export const QUEUES = {
   conversationsReply: 'kernel-conversation-reply',
   // Created by the conversation drafts migration (20261119200000): Vy's draft of a reply to a customer's message, ids only in its data (#2310).
   conversationsDraft: 'kernel-conversation-draft',
-  // Created by the campaign request migration (20261121160000): the AI coworker's draft of an ad campaign, ids only in its data (#2295, W1b).
+  // Created by the campaign request migration (20261121180000): the AI coworker's draft of an ad campaign, ids only in its data (#2295, W1b).
   adsCampaignDraft: 'ads-campaign-draft',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
