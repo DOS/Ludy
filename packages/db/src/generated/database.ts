@@ -17,6 +17,7 @@ export interface CroveAdsSchema {
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
+  'crove_ads.ad_launch': AdsAdLaunchTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
@@ -288,6 +289,34 @@ export interface AdsAdFlagSettingTable {
   cpr_min_history_days: number | null;
   set_by: string | null;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_ads.ad_launch */
+export interface AdsAdLaunchTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  draft_id: ColumnType<string, string, NotGranted>;
+  proposal_id: ColumnType<string, string, NotGranted>;
+  plan_hash: ColumnType<string, string, NotGranted>;
+  tag: ColumnType<string | null, never, NotGranted>;
+  state: Generated<string>;
+  attempt: Generated<number>;
+  step: string | null;
+  currency: ColumnType<string, string, NotGranted>;
+  daily_budget: ColumnType<string, string, NotGranted>;
+  start_on: ColumnType<string, string, NotGranted>;
+  end_on: ColumnType<string, string, NotGranted>;
+  amount: ColumnType<string, string, NotGranted>;
+  commit_until: string | null;
+  stop_reason: string | null;
+  created_by: ColumnType<string, string, NotGranted>;
+  updated_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
 }
 
 /** crove_ads.ad_org_setting */

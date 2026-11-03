@@ -19,10 +19,12 @@ import {
   zId,
   type AdsCampaignDraftView,
   type AdsCampaignPlanDraft,
+  type AdsLaunchView,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { canonicalJson, completePlan, flightDays, maxSpendOf, planHash, validatePlan, type PlanContext } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
+import { cancelQueuedLaunches, launchesOfDrafts, lockedLaunch, queueLaunch, refuseOverCaps } from './launch-ledger.ts';
 import { currentSetting, lockedSetting, onlyApproved, refuseOpenRequest } from './write.ts';
 
 const DRAFTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -158,7 +160,7 @@ async function pendingProposal(ctx: Db, draftId: string): Promise<string | null>
 }
 
 type ViewCache = Map<string, { account: Awaited<ReturnType<typeof accountOf>>; base: ContextBase }>;
-async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now: Date, cache: ViewCache = new Map()): Promise<AdsCampaignDraftView> {
+async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now: Date, cache: ViewCache = new Map(), launch: AdsLaunchView | null = null): Promise<AdsCampaignDraftView> {
   let known = cache.get(row.ad_account_id);
   if (!known) {
     const account = await accountOf(ctx, row.ad_account_id);
@@ -186,6 +188,8 @@ async function viewOf(ctx: Db & Pick<CommandContext, 'role'>, row: DraftRow, now
     // A draft that is over (approved or discarded) is judged no more.
     issues: row.status === 'draft' ? issues : [],
     pendingProposalId: row.status === 'draft' ? await pendingProposal(ctx, row.id) : null,
+    // The ledger row of an approved draft: its commitment against the caps and where it stands.
+    launch,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -326,13 +330,17 @@ export const adsCampaignPrepareLaunch = defineCommand({
     // The account row is held while this reads it, so a switch-off of the account at the same moment is seen or waits (it changes the row under its lock).
     const account = await accountOf(ctx, row.ad_account_id, true);
     const draft = planOf(row);
-    const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now));
+    const base = await contextBase(ctx, account.id);
+    const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now, base));
     const plan = completePlan(draft);
     if (!plan) throw new DomainError('ADS_DRAFT_INCOMPLETE', 422, 'Bản nháp chưa đủ thông tin để gửi duyệt', { issues: checked.issues.filter((i) => i.severity === 'error') });
     const errors = checked.issues.filter((i) => i.severity === 'error');
     if (errors.length > 0 || checked.maxSpend === null || checked.days === null || account.currency === null) {
       throw new DomainError('ADS_DRAFT_INVALID', 422, `Bản nháp chưa hợp lệ: ${errors.map((e) => e.code).join(', ')}`, { issues: errors });
     }
+    // An early warning (W2-2): the plan with every launch that still commits against the caps, under the org's lock this request holds. The approval runs the
+    // same check again, and that one is the authoritative one.
+    await refuseOverCaps(ctx, { adAccountId: account.id, currency: account.currency, dailyBudget: plan.dailyBudget, startOn: plan.startOn, endOn: plan.endOn }, base.caps);
     return {
       kind: ADS_CAMPAIGN_LAUNCH_KIND,
       command: ADS_CAMPAIGN_LAUNCH_COMMAND,
@@ -367,7 +375,7 @@ export const adsCampaignLaunch = defineCommand({
   access: 'proposal',
   proposalKind: ADS_CAMPAIGN_LAUNCH_KIND,
   target: (input) => ({ type: 'ads.ad_account', id: input.payload.adAccountId }),
-  handler: async (ctx, { payload }): Promise<{ draftId: string; approved: true; maxSpend: string; currency: string }> => {
+  handler: async (ctx, { payload }): Promise<{ draftId: string; launchId: string; approved: true; maxSpend: string; currency: string }> => {
     if (!ctx.proposalId) throw onlyApproved();
     if (ctx.actor.type !== 'user') throw onlyApproved();
     // The org's lock, as the caps and the switches are changed under it: what is checked below is what stands when the draft is approved.
@@ -397,14 +405,55 @@ export const adsCampaignLaunch = defineCommand({
     ) {
       throw new DomainError('ADS_DRAFT_CHANGED', 409, 'Bản nháp đã thay đổi từ lúc đề xuất này được tạo; hãy tạo đề xuất mới');
     }
-    const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now));
+    const base = await contextBase(ctx, account.id);
+    const checked = validatePlan(draft, await planContext(ctx, account, row.page_connection_id, ctx.now, base));
     const errors = checked.issues.filter((i) => i.severity === 'error');
     if (errors.length > 0 || checked.maxSpend === null || checked.maxSpend !== payload.amount || checked.days !== payload.days || account.currency !== payload.currency) {
       throw new DomainError('ADS_DRAFT_INVALID', 409, `Bản nháp không còn hợp lệ: ${errors.map((e) => e.code).join(', ') || 'amount'}`, { issues: errors });
     }
+    // The authoritative cap check (W2-2), under the org's lock taken above and held to the end of this transaction, which also writes the commitment: the plan
+    // with every launch that still commits (the plan alone was judged just above). Two launches approved together queue on the lock, and the second sees the
+    // first's commitment.
+    const window = { adAccountId: account.id, currency: account.currency, dailyBudget: plan.dailyBudget, startOn: plan.startOn, endOn: plan.endOn };
+    await refuseOverCaps(ctx, window, base.caps);
     await ctx.trx.updateTable('crove_ads.ad_campaign_draft').set({ status: 'approved' }).where('org_id', '=', ctx.orgId).where('id', '=', row.id).execute();
-    ctx.audit({ draftId: row.id, adAccountId: account.id, maxSpend: payload.amount, currency: payload.currency, days: payload.days, planHash: payload.planHash, revision: row.revision });
-    return { draftId: row.id, approved: true, maxSpend: payload.amount, currency: payload.currency };
+    // The ledger row: the plan's commitment, queued. The database accepts it only here, inside this approved execution (crove_ads.launch_guard); nothing
+    // launches it yet (W2-3's writer does, W2-4 makes the stop real).
+    const launch = await queueLaunch(ctx, {
+      draftId: row.id,
+      adAccountId: account.id,
+      legalEntityId: account.legalEntityId,
+      proposalId: ctx.proposalId,
+      planHash: payload.planHash,
+      currency: account.currency,
+      dailyBudget: plan.dailyBudget,
+      startOn: plan.startOn,
+      endOn: plan.endOn,
+      amount: payload.amount,
+      approverId: ctx.actor.userId,
+    });
+    ctx.audit({ draftId: row.id, launchId: launch.id, adAccountId: account.id, maxSpend: payload.amount, currency: payload.currency, days: payload.days, planHash: payload.planHash, revision: row.revision });
+    return { draftId: row.id, launchId: launch.id, approved: true, maxSpend: payload.amount, currency: payload.currency };
+  },
+});
+
+// Cancels a launch that has not started: its commitment against the caps is released at once and the draft stays approved (a new plan is a new draft and a new
+// approval). Only a queued launch: one the writer has started is stopped by the stop commands of W2-4. It reduces what may be spent, so it is an owner's or an
+// admin's own (no proposal), and it takes the org's lock like the approvals, so a cancel and an approval queue.
+export const adsLaunchCancel = defineCommand({
+  name: 'ads.launch.cancel',
+  input: z.strictObject({ launchId: zId }),
+  risk: 'R2',
+  sideEffect: 'external',
+  access: MANAGERS,
+  handler: async (ctx, input): Promise<{ launchId: string; released: string }> => {
+    await lockedSetting(ctx);
+    const launch = await lockedLaunch(ctx, input.launchId.toLowerCase());
+    if (launch.state !== 'queued') throw new DomainError('ADS_LAUNCH_NOT_QUEUED', 409, 'Lần chạy này đã bắt đầu hoặc đã kết thúc nên không hủy được nữa');
+    const cancelled = await cancelQueuedLaunches(ctx, 'cancelled', launch.ad_account_id, launch.id);
+    if (cancelled !== 1) throw new DomainError('ADS_LAUNCH_NOT_QUEUED', 409, 'Lần chạy này đã bắt đầu hoặc đã kết thúc nên không hủy được nữa');
+    ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, draftId: launch.draft_id, amount: launch.amount, currency: launch.currency, cancelled: true });
+    return { launchId: launch.id, released: launch.amount };
   },
 });
 
@@ -420,8 +469,9 @@ export const adsCampaignDrafts = defineQuery({
     const list = await rows(ctx, { ...(input.adAccountId ? { adAccountId: input.adAccountId.toLowerCase() } : {}), notDiscarded: true }).limit(100).execute();
     const cache: ViewCache = new Map();
     const now = new Date();
+    const launches = await launchesOfDrafts(ctx, list.filter((r) => r.status === 'approved').map((r) => r.id));
     const views: AdsCampaignDraftView[] = [];
-    for (const row of list) views.push(await viewOf(ctx, row, now, cache));
+    for (const row of list) views.push(await viewOf(ctx, row, now, cache, launches.get(row.id) ?? null));
     return views;
   },
 });
@@ -433,9 +483,10 @@ export const adsCampaignDraft = defineQuery({
   handler: async (ctx: QueryContext, input): Promise<AdsCampaignDraftView> => {
     const [row] = await rows(ctx, { id: input.draftId.toLowerCase() }).execute();
     if (!row) throw draftMissing();
-    return viewOf(ctx, row, new Date());
+    const launches = row.status === 'approved' ? await launchesOfDrafts(ctx, [row.id]) : new Map<string, AdsLaunchView>();
+    return viewOf(ctx, row, new Date(), new Map(), launches.get(row.id) ?? null);
   },
 });
 
-export const campaignCommands = [adsCampaignDraftSave, adsCampaignDraftDiscard, adsCampaignPrepareLaunch, adsCampaignLaunch];
+export const campaignCommands = [adsCampaignDraftSave, adsCampaignDraftDiscard, adsCampaignPrepareLaunch, adsCampaignLaunch, adsLaunchCancel];
 export const campaignQueries = [adsCampaignDrafts, adsCampaignDraft];

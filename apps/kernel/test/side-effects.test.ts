@@ -193,8 +193,12 @@ describe('the risk of the commands of running ads (#2294)', () => {
     }
   });
 
+  it('keeps the cancel of a launch that has not started (W2-2, #2296) an R2 command of owners and admins: it only releases what a plan holds against the caps', () => {
+    expect(byName().get('ads.launch.cancel')).toMatchObject({ risk: 'R2', sideEffect: 'external', access: ['owner', 'admin'] });
+  });
+
   it('lets no agent run any of them', () => {
-    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write']) {
+    for (const name of [...OPENING, ...PREPARERS, 'ads.write.disable', 'ads.account.disable_write', 'ads.pause_all', 'ads.cap.lower', 'ads.account.link_write', 'ads.account.disconnect', 'ads.account.forget_write', 'ads.launch.cancel']) {
       expect(byName().get(name)?.agent, name).toBeUndefined();
     }
   });
