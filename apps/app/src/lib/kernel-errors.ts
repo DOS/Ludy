@@ -374,6 +374,10 @@ export const KERNEL_ERROR_CODES = [
   'EINVOICE_SERIES_ENTITY',
   'EINVOICE_ENTITY_FIXED',
   'EINVOICE_DRAFT_INVALID',
+  // The reminders' pause (#2488).
+  'PAUSE_DATE_INVALID',
+  'PAUSE_TOO_LONG',
+  'PARTY_CHANGING',
   // MISA item and warehouse codes of stock accounts (#1398).
   'NOT_STOCK_ACCOUNT',
   'MISA_CODE_CONFLICT',

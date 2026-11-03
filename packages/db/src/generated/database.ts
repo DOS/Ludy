@@ -47,6 +47,8 @@ export interface CroveFinanceSchema {
   'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
   'crove_finance.chart': FinanceChartTable;
   'crove_finance.chart_account': FinanceChartAccountTable;
+  'crove_finance.collection_setting': FinanceCollectionSettingTable;
+  'crove_finance.customer_collection': FinanceCustomerCollectionTable;
   'crove_finance.depreciation_line': FinanceDepreciationLineTable;
   'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
   'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
@@ -665,6 +667,29 @@ export interface FinanceChartTable {
   regime: ColumnType<string, NotGranted, NotGranted>;
   version: ColumnType<string, NotGranted, NotGranted>;
   name: ColumnType<string, NotGranted, NotGranted>;
+}
+
+/** crove_finance.collection_setting */
+export interface FinanceCollectionSettingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  terms_days: Generated<number>;
+  weekly_item: Generated<boolean>;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_finance.customer_collection */
+export interface FinanceCustomerCollectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  party_id: ColumnType<string, string, NotGranted>;
+  terms_days: number | null;
+  paused_until: string | null;
+  set_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_finance.depreciation_line */
