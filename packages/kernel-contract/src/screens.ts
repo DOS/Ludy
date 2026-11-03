@@ -48,6 +48,8 @@ const FINANCE_SCREENS = {
     { path: 'vouchers' },
     // The drafts of the sales e-invoices a business will issue (#2500).
     { path: 'sales-invoices' },
+    // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
+    { path: 'stock' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
@@ -65,6 +67,7 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
     { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
+    { app: 'accounting', group: 'books', path: 'stock', label: 'stock' },
     { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
     { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
     { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },

@@ -2249,6 +2249,23 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
       },
     },
+    stock: {
+      items: {
+        list: os.stock.items.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_item.list', input ?? {}, { actor, orgId }))),
+        save: os.stock.items.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.save', input, { actor, orgId }))),
+        setActive: os.stock.items.setActive.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.set_active', input, { actor, orgId }))),
+      },
+      aliases: {
+        teach: os.stock.aliases.teach.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.teach', input, { actor, orgId }))),
+        forget: os.stock.aliases.forget.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.forget', input, { actor, orgId }))),
+      },
+      moves: {
+        list: os.stock.moves.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_move.list', input, { actor, orgId }))),
+        reverse: os.stock.moves.reverse.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_move.reverse', input, { actor, orgId }))),
+      },
+      unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.stock.assign.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.assign', input, { actor, orgId }))),
+    },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.categorization_rules.list', input ?? {}, { actor, orgId })),
