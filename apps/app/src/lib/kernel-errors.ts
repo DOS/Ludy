@@ -256,6 +256,7 @@ export const KERNEL_ERROR_CODES = [
   'CUSTOMER_EMAIL_REQUIRED',
   'ALREADY_REMINDED',
   'PAY_TO_NOT_FOUND',
+  'CUSTOMER_PAUSED',
   'REMINDER_INVALID',
   // Non-cash payment marks on input invoices (#917).
   'NOT_FLAGGED',

@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
+import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
@@ -1574,6 +1574,18 @@ export const contract = {
     // language and the sender's name, never a fact of the books, and its text is refused when it holds a figure or a link. Any refusal leaves words null and the
     // screen on the fixed template words.
     wording: oc.input(zPaymentReminderWordingAsk).output(zPaymentReminderWording),
+    // The org's terms and weekly switch (#2488, slice 3): get for every role, set for owners and admins (R1, audited). The terms date the invoices of every customer
+    // that has none of its own; the weekly switch only adds a "Hôm nay cần bạn" item, it drafts and sends nothing.
+    settings: {
+      get: oc.output(zCollectionSetting),
+      set: oc.input(zCollectionSetting).output(zCollectionSetting),
+    },
+    // One customer's own terms (null: the org's) and its pause (the last day with no reminder; null: not paused): get for every role, set for owners, admins and
+    // members (R1, audited). The settings sit on the kept party of a duplicate group. PARTY_NOT_FOUND (404), PAUSE_DATE_INVALID and PAUSE_TOO_LONG (422).
+    customer: {
+      get: oc.input(z.object({ partyId: zId })).output(zCustomerCollection),
+      set: oc.input(zCustomerCollectionSet).output(zCustomerCollection),
+    },
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
