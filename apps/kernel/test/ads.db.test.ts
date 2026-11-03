@@ -1513,6 +1513,29 @@ suite('ads on PostgreSQL (#2217)', () => {
           expect((await approve(adminAccount, asked)).status).toBe(200);
         });
 
+        it('carries the AI taint of a draft to the request and holds it to the approval: who wrote the plan and which fields the AI coworker drafted', async () => {
+          const account = await ready('Dấu AI');
+          const body = plan({ name: 'Do đồng nghiệp AI soạn' });
+          // A draft the system wrote (origin ai, the fields it drafted named), inserted as the database owner: the draft job's command does the same in the system context.
+          const [made] = await row<{ id: string }>(
+            `INSERT INTO crove_ads.ad_campaign_draft (org_id, ad_account_id, name, objective, daily_budget, start_on, end_on, targeting, link_url, variants, origin, ai_fields, max_spend, created_by)
+             VALUES ($1, $2, $3, 'traffic', $4, $5, $6, $7::jsonb, $8, $9::jsonb, 'ai', ARRAY['name', 'targeting', 'variants'], $10, $11) RETURNING id`,
+            [orgId, account, body.name, body.dailyBudget, body.startOn, body.endOn, JSON.stringify(body.targeting), body.linkUrl, JSON.stringify(body.variants), '700000', member.userId],
+          );
+          const id = made?.id as string;
+          const asked = proposalId(await submit(owner, id));
+          // The request names who wrote the plan and what the AI coworker drafted, for the approval card; a human's draft says none.
+          const payload = async (proposal: string) => (await row<{ payload: { origin: string; aiFields: string[] } }>(`SELECT payload FROM crove_kernel.proposal WHERE org_id = $1 AND id = $2`, [orgId, proposal]))[0]?.payload;
+          expect(await payload(asked)).toMatchObject({ origin: 'ai', aiFields: ['name', 'targeting', 'variants'] });
+          // The card reads it too: ads.proposal.change names the origin and the fields, for the Inbox card to say the plan is AI-written.
+          expect((await callAs(owner, 'ads/proposal', { id: asked })).body).toMatchObject({ change: { change: 'campaign_launch', draftId: id, origin: 'ai', aiFields: ['name', 'targeting', 'variants'] } });
+          const human = await saved(owner, account, plan({ name: 'Của người' }));
+          expect(await payload(proposalId(await submit(owner, human.id)))).toMatchObject({ origin: 'human', aiFields: [] });
+          // The draft is frozen while the request waits, so the taint at the approval is the taint on the card: the approval goes through.
+          expect((await approve(adminAccount, asked)).status).toBe(200);
+          expect(await draftRow(id)).toMatchObject({ status: 'approved' });
+        });
+
         it('keeps the drafts of another org out, and answers for an account of the org only', async () => {
           const account = await ready('Hai tổ chức');
           const mine = await saved(owner, account, plan());

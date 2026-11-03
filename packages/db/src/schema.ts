@@ -847,9 +847,20 @@ export type AdsAdCampaignDraftTable = Refine<
   }
 >;
 
+// A request to the AI coworker for a campaign draft (#2295, W1b): waiting, written (a draft exists) or none (a code says why).
+export const AD_REQUEST_STATES = ['requested', 'written', 'none'] as const;
+export type AdsAdCampaignRequestTable = Refine<
+  G.AdsAdCampaignRequestTable,
+  {
+    objective: (typeof AD_OBJECTIVES)[number];
+    state: Generated<(typeof AD_REQUEST_STATES)[number]>;
+  }
+>;
+
 type Refined = Tables<{
   'crove_ads.ad_account': AdsAdAccountTable;
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
+  'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;

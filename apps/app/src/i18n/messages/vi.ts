@@ -1673,6 +1673,17 @@ export const vi = {
       capFromTo: 'Từ {previous} thành {amount}.',
       campaignLaunch: 'Duyệt kế hoạch chiến dịch “{name}” trên {account}.',
       campaignLaunchDetail: 'Nếu sau này được chạy, có thể chi tối đa {amount} trong {days, plural, other {# ngày}}, mỗi ngày {daily}. Duyệt chỉ đánh dấu kế hoạch là đã duyệt: chưa gửi gì lên nền tảng.',
+      campaignAi: 'Do đồng nghiệp AI soạn: {fields}. Hãy đọc như mọi nội dung bạn không tự viết.',
+      campaignAiEdited: 'Ban đầu do đồng nghiệp AI soạn; một người đã sửa mọi trường mà AI soạn.',
+      aiField: {
+        name: 'tên',
+        dailyBudget: 'ngân sách mỗi ngày',
+        startOn: 'ngày bắt đầu',
+        endOn: 'ngày kết thúc',
+        targeting: 'đối tượng',
+        linkUrl: 'đường dẫn',
+        variants: 'nội dung quảng cáo',
+      },
     },
     // The spend flags (#2378): worked out from the stored figures with fixed rules and no model; a flag changes nothing.
     flags: {
@@ -6900,6 +6911,8 @@ export const vi = {
       ADS_DRAFT_INVALID: 'Bản nháp chưa qua các bước kiểm tra (ngân sách, ngày chạy, hạn mức hoặc việc chạy quảng cáo). Xem danh sách việc cần sửa.',
       ADS_DRAFT_CHANGED: 'Bản nháp đã thay đổi từ lúc đề nghị này được tạo. Hãy từ chối đề nghị và tạo đề nghị mới.',
       ADS_DRAFT_STALE: 'Có người đã lưu bản nháp này từ lúc bạn mở nó. Hãy tải lại rồi sửa tiếp.',
+      ADS_DRAFT_REQUEST_NOT_FOUND: 'Không tìm thấy yêu cầu soạn nháp này.',
+      ADS_DRAFT_REQUEST_OPEN: 'Bạn đang có một yêu cầu soạn nháp chờ trả lời. Chờ xong rồi nhờ tiếp.',
       ADS_CURRENCY_CHANGED: 'Nền tảng báo một đơn vị tiền khác với đơn vị đã ghi cho tài khoản này nên số liệu chưa được ghi',
       ACCOUNT_CODE_TAKEN: 'Mã tài khoản này đã có trong hệ thống tài khoản',
       ACCOUNT_HAS_SUB_ACCOUNTS: 'Tài khoản còn tài khoản con đang dùng; hãy ngừng dùng chúng trước',
@@ -7266,10 +7279,14 @@ export const vi = {
       campaign: {
         draft: 'Xem một bản nháp chiến dịch',
         draft_discard: 'Bỏ một bản nháp chiến dịch',
+        draft_record: 'Ghi bản nháp chiến dịch do đồng nghiệp AI soạn',
+        draft_request: 'Nhờ đồng nghiệp AI soạn nháp một chiến dịch',
         draft_save: 'Lưu một bản nháp chiến dịch',
+        draft_source: 'Đọc thông tin đồng nghiệp AI cần để soạn nháp chiến dịch',
         drafts: 'Xem các bản nháp chiến dịch của một tài khoản quảng cáo',
         launch: 'Chạy chiến dịch đã soạn (đề nghị đã duyệt)',
         prepare_launch: 'Đề nghị duyệt để chạy chiến dịch đã soạn',
+        requests: 'Xem các yêu cầu soạn nháp chiến dịch',
       },
       cap: {
         lower: 'Giảm hạn mức chi tiêu quảng cáo',

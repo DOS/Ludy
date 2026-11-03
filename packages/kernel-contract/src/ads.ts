@@ -209,6 +209,9 @@ export const zAdsChange = z.discriminatedUnion('change', [
     currency: zCurrency,
     days: z.number().int(),
     plan: zAdsCampaignPlan,
+    // Who wrote the plan and which fields the AI coworker drafted and nobody has changed since: AI output is tainted, and the card says it (DESIGN.md 2).
+    origin: z.enum(['human', 'ai']),
+    aiFields: z.array(z.string().max(64)),
   }),
 ]);
 export type AdsChange = z.infer<typeof zAdsChange>;

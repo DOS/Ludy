@@ -28,6 +28,9 @@ export const adsManifest = defineModule({
         'page_connection_id', 'source_post_id', 'media_file_id', 'variants', 'origin', 'ai_fields', 'max_spend', 'proposal_id', 'approved_at', 'created_by', 'updated_by',
         'created_at', 'updated_at',
       ]),
+      // A member's request to the AI coworker for a campaign draft (W1b, #2295): the member's brief (their own words about what to promote, never a
+      // customer's, so internal), the state and, when there is no draft, the code that says why.
+      ad_campaign_request: columns(['org_id', 'id', 'ad_account_id', 'legal_entity_id', 'objective', 'brief', 'source_post_id', 'state', 'code', 'draft_id', 'requested_by', 'requested_at', 'settled_at']),
       // The org's thresholds of the spend flags (#2378): org-wide, no legal entity; a NULL threshold is the default.
       ad_flag_setting: columns(['org_id', 'id', 'pace_min_days', 'day_factor', 'cpr_factor', 'cpr_min_results', 'cpr_min_history_days', 'set_by', 'updated_at']),
       // The org's switches of running ads (ADR-0043, #2294): org-wide, no legal entity.
@@ -49,8 +52,12 @@ export const adsManifest = defineModule({
   // It owns no permission: access comes from the base role (owners and admins connect and configure, members refresh,
   // everyone who reads an entity reads its accounts).
   permissions: [],
-  // Its entity (#1656): the ad account, which every command that changes it names as its audit target.
-  entities: [{ type: 'ads.ad_account', table: 'ad_account', legalEntityScoped: true, audit: 'command' }],
+  // Its entities (#1656): the ad account, which every command that changes it names as its audit target, and the request to the AI coworker for a
+  // campaign draft (W1b), which the job's answer names.
+  entities: [
+    { type: 'ads.ad_account', table: 'ad_account', legalEntityScoped: true, audit: 'command' },
+    { type: 'ads.ad_campaign_request', table: 'ad_campaign_request', legalEntityScoped: true, audit: 'command' },
+  ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.ads,
 });
