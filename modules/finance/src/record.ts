@@ -51,12 +51,15 @@ export function invoiceJournal(direction: DocumentDirection, lines: ProposedLine
 export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['seller'], direction: DocumentDirection): Promise<string> {
   const taxCode = parseTaxCode(ref.taxCode)?.normalized ?? null;
   const name = ref.name.trim() || (direction === 'sale' ? 'Khách hàng chưa rõ tên' : 'Nhà cung cấp chưa rõ tên');
+  // The party found is locked for share until this transaction ends: a journal line of an opening balance names it without a foreign key, so without the lock
+  // a change of its kind (#2438, kernel.party.update checks that nothing points at the party) could commit between that check and the line.
   const existing = taxCode
     ? await ctx.trx
         .selectFrom('crove_kernel.party')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', '=', taxCode)
+        .forShare()
         .executeTakeFirst()
     : await ctx.trx
         .selectFrom('crove_kernel.party')
@@ -64,6 +67,7 @@ export async function upsertParty(ctx: CommandContext, ref: PurchaseProposal['se
         .where('org_id', '=', ctx.orgId)
         .where('tax_code', 'is', null)
         .where((eb) => eb(eb.fn('lower', ['name']), '=', name.toLowerCase()))
+        .forShare()
         .executeTakeFirst();
   if (existing) return existing.id;
   // A member limited to some legal entities may not see a company the org already knows under this tax code (#1280):

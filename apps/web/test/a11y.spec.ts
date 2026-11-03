@@ -12,7 +12,7 @@ const STRUCTURE_RULES = ['landmark-one-main', 'region', 'landmark-unique', 'page
 
 // The home page and every app page (content/site.ts APP_PAGES), each in both languages at the same address (#2360):
 // the English visit is one whose cookie says so, what the header toggle sets.
-const PAGES = ['/', '/ke-toan', '/crm', '/notes'].flatMap((path) => [
+const PAGES = ['/', '/ke-toan', '/engage', '/notes'].flatMap((path) => [
   { path, lang: 'vi' as const },
   { path, lang: 'en' as const },
 ]);

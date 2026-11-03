@@ -9,18 +9,18 @@ import { describe, expect, it } from 'vitest';
 import sitemap from '../src/app/sitemap';
 import { accountingEn } from '../src/content/accounting-en';
 import { accountingVi } from '../src/content/accounting-vi';
-import { crmEn } from '../src/content/crm-en';
-import { crmVi } from '../src/content/crm-vi';
 import type { AppPageCopy } from '../src/content/app-page';
 import { en } from '../src/content/en';
+import { engageEn } from '../src/content/engage-en';
+import { engageVi } from '../src/content/engage-vi';
 import { notesEn } from '../src/content/notes-en';
 import { notesVi } from '../src/content/notes-vi';
-import { APP_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
+import { APP_PAGES, RETIRED_PAGES, SITE_URL, type AppPageKey } from '../src/content/site';
 import { vi } from '../src/content/vi';
 
 const COPY: Record<AppPageKey, { vi: AppPageCopy; en: AppPageCopy }> = {
   accounting: { vi: accountingVi, en: accountingEn },
-  crm: { vi: crmVi, en: crmEn },
+  engage: { vi: engageVi, en: engageEn },
   notes: { vi: notesVi, en: notesEn },
 };
 const KEYS = Object.keys(APP_PAGES) as AppPageKey[];
@@ -41,6 +41,15 @@ describe('app pages', () => {
         expect(existsSync(join(dir, 'page.tsx')), `${path} page`).toBe(true);
         expect(existsSync(join(dir, 'opengraph-image.tsx')), `${path} opengraph-image`).toBe(true);
       }
+    }
+  });
+
+  it('keep every retired address pointing at a live page, and out of the sitemap', () => {
+    const live = new Set<string>(KEYS.map((key) => APP_PAGES[key].path));
+    for (const [from, to] of Object.entries(RETIRED_PAGES)) {
+      expect(live.has(to), `${from} leads to ${to}`).toBe(true);
+      expect(live.has(from), `${from} is retired`).toBe(false);
+      expect(sitemap().map((entry) => entry.url)).not.toContain(`${SITE_URL}${from}`);
     }
   });
 

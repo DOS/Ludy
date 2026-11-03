@@ -159,8 +159,12 @@ const NOTES_SCREENS = {
 // after the posts (#2435). Its module's own entry, so the item shows only where the deployment runs the module; with Social off the app
 // still shows, with this item alone.
 const ADS_SCREENS = {
-  routes: [{ path: 'ads' }],
-  nav: [{ app: 'social', group: 'marketing', path: 'ads', label: 'ads' }],
+  routes: [{ path: 'ads' }, { path: 'ads/campaigns' }],
+  nav: [
+    { app: 'social', group: 'marketing', path: 'ads', label: 'ads' },
+    // The campaign builder (W1c, #2295): drafts, the AI coworker's drafts and the requests for approval; an item of its own, after the figures.
+    { app: 'social', group: 'marketing', path: 'ads/campaigns', label: 'adsCampaigns' },
+  ],
 } as const satisfies ModuleScreens;
 
 export const MODULE_SCREENS = {

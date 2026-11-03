@@ -3,21 +3,21 @@
 // a person's panel shows the company and a picker to link or change it; a company's panel lists its people, each with a way to remove
 // them, and a picker to add one. The pickers search the same list the screens show (search without Vietnamese marks, through the phone
 // key), by kind; the server decides every rule (a person works at one company, never a merged one) and its reason shows here.
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
-import type { Contact, FilterAst } from '@crove/kernel-contract';
+import { CONTACT_PAGE_MAX, type Contact, type FilterAst } from '@crove/kernel-contract';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { ErrorText } from './ui.tsx';
 import { refreshParties } from './party-edit.tsx';
-import { errorMessage, orpc } from '../lib/api.ts';
+import { client, errorMessage, orpc } from '../lib/api.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 
 // The most results a picker shows: a person types more to narrow them.
 const PICK_LIMIT = 8;
 const SEARCH_PAUSE_MS = 300;
-// The most people a company's panel lists; the line under it says when there are more.
+// The people a company's panel loads at a time; the button under them loads the next page while there is one.
 const PEOPLE_LIMIT = 50;
 
 // The picker unmounts when it closes, so focus would fall to the page: it goes back to the button that opened it.
@@ -31,14 +31,32 @@ function useFocusBackOnClose(open: boolean) {
   return trigger;
 }
 
-// A search over the parties of one kind: the people (not the ones the company already has) or the companies.
-function PartyPicker({ kind, label, exclude, onPick, onCancel }: { kind: 'person' | 'organization'; label: string; exclude?: (c: Contact) => boolean; onPick: (c: Contact) => void; onCancel: () => void }) {
+// A search over the parties of one kind: the people (not the ones the company already has) or the companies. `reserve` is how many results `exclude` may take
+// away: that many more are asked for, so a full set of people who already work at the company does not read as "no match". `busy`: a link is being saved, and a
+// second click would send the same version again.
+function PartyPicker({
+  kind,
+  label,
+  exclude,
+  reserve = 0,
+  busy = false,
+  onPick,
+  onCancel,
+}: {
+  kind: 'person' | 'organization';
+  label: string;
+  exclude?: (c: Contact) => boolean;
+  reserve?: number;
+  busy?: boolean;
+  onPick: (c: Contact) => void;
+  onCancel: () => void;
+}) {
   const t = useTranslations('contacts.company');
   const [text, setText] = useState('');
   const term = useDebounced(text.trim(), SEARCH_PAUSE_MS);
   const filters: FilterAst = { v: 1, all: [{ field: 'kind', op: 'is', value: kind }, ...(term ? [{ field: 'search', op: 'contains' as const, value: term }] : [])] };
-  const found = useQuery(orpc.crm.contacts.list.queryOptions({ input: { filters, limit: PICK_LIMIT } }));
-  const items = (found.data?.items ?? []).filter((c) => !exclude?.(c));
+  const found = useQuery(orpc.crm.contacts.list.queryOptions({ input: { filters, limit: Math.min(PICK_LIMIT + reserve, CONTACT_PAGE_MAX) } }));
+  const items = (found.data?.items ?? []).filter((c) => !exclude?.(c)).slice(0, PICK_LIMIT);
   return (
     <div className="space-y-2 rounded-lg border p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -57,7 +75,7 @@ function PartyPicker({ kind, label, exclude, onPick, onCancel }: { kind: 'person
           <ul className="flex flex-wrap gap-2">
             {items.map((c) => (
               <li key={c.id}>
-                <Button type="button" variant="outline" size="sm" aria-label={t('pick', { name: c.name })} onClick={() => onPick(c)}>
+                <Button type="button" variant="outline" size="sm" disabled={busy} aria-label={t('pick', { name: c.name })} onClick={() => onPick(c)}>
                   {c.name}
                 </Button>
               </li>
@@ -94,7 +112,7 @@ export function PersonCompany({ person, canEdit }: { person: Contact; canEdit: b
           </>
         )}
       </div>
-      {picking && <PartyPicker kind="organization" label={t('search')} exclude={(c) => c.id === person.company?.id} onPick={(c) => link(c.id)} onCancel={() => setPicking(false)} />}
+      {picking && <PartyPicker kind="organization" label={t('search')} exclude={(c) => c.id === person.company?.id} reserve={1} busy={set.isPending} onPick={(c) => link(c.id)} onCancel={() => setPicking(false)} />}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
     </div>
   );
@@ -105,9 +123,15 @@ export function CompanyPeople({ company, canEdit }: { company: Contact; canEdit:
   const t = useTranslations('contacts.company');
   const [adding, setAdding] = useState(false);
   const trigger = useFocusBackOnClose(adding);
-  const people = useQuery(orpc.crm.contacts.list.queryOptions({ input: { filters: { v: 1, all: [{ field: 'company', op: 'is', value: company.id }] }, limit: PEOPLE_LIMIT } }));
+  // Every page of the people who work here, so the one at the 51st place can be unlinked too. The key sits under the contacts' own, so a link anywhere refreshes it.
+  const people = useInfiniteQuery({
+    queryKey: [...orpc.crm.contacts.key(), 'company-people', company.id],
+    queryFn: ({ pageParam }) => client.crm.contacts.list({ filters: { v: 1, all: [{ field: 'company', op: 'is', value: company.id }] }, limit: PEOPLE_LIMIT, ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.next ?? undefined,
+  });
   const set = useMutation(orpc.parties.setCompany.mutationOptions({ onSuccess: () => { setAdding(false); refreshParties(); } }));
-  const items = people.data?.items ?? [];
+  const items = people.data?.pages.flatMap((page) => page.items) ?? [];
   return (
     <div className="space-y-2" data-testid="company-people">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -137,8 +161,12 @@ export function CompanyPeople({ company, canEdit }: { company: Contact; canEdit:
           ))}
         </ul>
       )}
-      {company.peopleCount > items.length && items.length >= PEOPLE_LIMIT && <p className="text-xs text-muted-foreground">{t('peopleMore', { shown: items.length, total: company.peopleCount })}</p>}
-      {adding && <PartyPicker kind="person" label={t('searchPerson')} exclude={(c) => items.some((p) => p.id === c.id)} onPick={(p) => set.mutate({ partyId: p.id, companyId: company.id, version: p.version })} onCancel={() => setAdding(false)} />}
+      {people.hasNextPage && (
+        <Button type="button" variant="outline" size="sm" loading={people.isFetchingNextPage} onClick={() => void people.fetchNextPage()}>
+          {t('peopleLoadMore', { shown: items.length, total: company.peopleCount })}
+        </Button>
+      )}
+      {adding && <PartyPicker kind="person" label={t('searchPerson')} exclude={(c) => items.some((p) => p.id === c.id)} reserve={items.length} busy={set.isPending} onPick={(p) => set.mutate({ partyId: p.id, companyId: company.id, version: p.version })} onCancel={() => setAdding(false)} />}
       {set.error && <ErrorText>{errorMessage(set.error)}</ErrorText>}
     </div>
   );

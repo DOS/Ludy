@@ -39,18 +39,21 @@ export interface BusyInterval {
 // refused: the provider will not serve this grant any more (revoked or expired), the member reconnects; failed: it did
 // not answer well (a quota, an outage), the next sync tries again.
 export type CalendarBusyResult = { busy: BusyInterval[] } | { refused: string } | { failed: string };
-// What one write to the provider came to: ok; gone (the event is not there: the member deleted it, or it never was);
+// What one write to the provider came to: ok (for an event that asked for a conference, with `meetUrl`: the join link the provider made, or null when the event was
+// written without one, the provider having refused or not finished it: the booking's Meet then failed); gone (the event is not there: the member deleted it, or it never was);
 // refused (the token is dead: renew it once, then expire the connection); scope (the grant lacks the events permission);
 // failed (a quota, an outage: the next sweep tries again).
 // `transient` marks a failure that says nothing about the event (the network, a server error, a rate or quota limit): the
 // worker leaves the rest of the batch for the next sweep and does not count it against the event.
-export type CalendarWriteResult = { ok: true } | { gone: true } | { refused: string } | { scope: true } | { failed: string; transient?: true };
+export type CalendarWriteResult = { ok: true; meetUrl?: string | null } | { gone: true } | { refused: string } | { scope: true } | { failed: string; transient?: true };
 export interface CalendarEventWrite {
   // The provider event id, chosen by the kernel and the same on every try, so a retry cannot make a second event.
   externalId: string;
   summary: string;
   startsAt: string;
   endsAt: string;
+  // Ask the provider to make a conference for the event, a Google Meet (C7, #1375): the answer carries its join link.
+  conference?: boolean;
 }
 export interface CalendarAuthorizeInput extends AuthorizeInput {
   // Also ask for the permission to write events (a member who turns write-back on).
@@ -75,7 +78,7 @@ export interface CalendarAdapter {
   // revoked=false names why nothing was revoked (the secret holds no token).
   revoke(secret: string): Promise<{ revoked: true } | { revoked: false; reason: string } | { failed: string }>;
   // Write-back: make the booking's event exist as given (insert, or change it when it is there), and take it away. Both
-  // idempotent by the event's id.
+  // idempotent by the event's id; a conference asked for is made once, by a request named after the event's id.
   writeEvent(secret: string, event: CalendarEventWrite): Promise<CalendarWriteResult>;
   removeEvent(secret: string, externalId: string): Promise<CalendarWriteResult>;
 }
@@ -120,18 +123,35 @@ const expiryOf = (a: TokenAnswer, now = Date.now()) => {
   return new Date(now + (Number.isFinite(seconds) && seconds > 0 ? seconds : 3600) * 1000);
 };
 
+// A Google Meet join link, and nothing else (the booking's own check says the same).
+const MEET_URL = /^https:\/\/meet\.google\.com\/(lookup\/)?[a-z0-9-]{3,64}$/;
+// How many times a conference that Google has not finished is looked at again, and how long between looks.
+const MEET_LOOKS = 2;
+const MEET_LOOK_MS = 800;
+
+// The join link of an event as Google answered it: the hangoutLink, else the video entry point of its conference data. Null when there is none, or it is
+// not a Meet address. `pending`: Google has the request and has not finished it.
+function meetOf(event: Record<string, unknown>): { url: string | null; pending: boolean } {
+  const data = event.conferenceData as { entryPoints?: Array<{ entryPointType?: unknown; uri?: unknown }>; createRequest?: { status?: { statusCode?: unknown } } } | undefined;
+  const candidates = [event.hangoutLink, ...(data?.entryPoints ?? []).filter((p) => p?.entryPointType === 'video').map((p) => p.uri)];
+  const url = candidates.find((u): u is string => typeof u === 'string' && MEET_URL.test(u)) ?? null;
+  return { url, pending: url === null && data?.createRequest?.status?.statusCode === 'pending' };
+}
+
 export class GoogleCalendarAdapter implements CalendarAdapter {
   readonly provider = 'google' as const;
   readonly oauthProvider = 'google_calendar' as const;
   readonly pkce = true;
   private readonly fetch: Fetch;
   private readonly app: GoogleCalendarAppConfig;
+  private readonly sleep: (ms: number) => Promise<void>;
 
-  constructor(app: GoogleCalendarAppConfig, fetchImpl?: Fetch) {
+  constructor(app: GoogleCalendarAppConfig, fetchImpl?: Fetch, options: { sleep?: (ms: number) => Promise<void> } = {}) {
     if (!app.clientId) throw new Error('missing Google client id');
     if (!app.clientSecret) throw new Error('missing Google client secret');
     this.app = app;
     this.fetch = allowlistedFetch(GOOGLE_CALENDAR_HOSTS, fetchImpl);
+    this.sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   }
 
   authorizeUrl(input: CalendarAuthorizeInput): string {
@@ -219,21 +239,46 @@ export class GoogleCalendarAdapter implements CalendarAdapter {
   // Inserts the event under the id the kernel chose; Google answers 409 for an id it already has (a retry, or an event it
   // keeps after it was deleted), and the event is then changed to be as given and confirmed again (which also brings a
   // deleted one back). A 404 or 410 on that change means it is gone for good.
+  //
+  // A conference asked for (C7, #1375) is made inside the same call (conferenceDataVersion=1 and a createRequest of the type hangoutsMeet, whose requestId is
+  // the event's id, so asking again for the same event never makes a second Meet). The answer's join link is the result's `meetUrl`; a request Google has
+  // not finished is looked at again a couple of times. A 400 on the insert means Google would not make a conference (an account that cannot host Meet): the
+  // event is then written without one and `meetUrl` is null, so the booking carries on with its fixed link.
   async writeEvent(secret: string, event: CalendarEventWrite): Promise<CalendarWriteResult> {
     const s = googleCalendarSecretOf(secret);
     if (!s) return { refused: 'NO_ACCESS_TOKEN' };
     // private and opaque: people the member shares their calendar with see a busy block, never the visitor's name.
-    const body = { summary: event.summary, visibility: 'private', transparency: 'opaque', start: { dateTime: event.startsAt, timeZone: 'UTC' }, end: { dateTime: event.endsAt, timeZone: 'UTC' } };
+    const plain = { summary: event.summary, visibility: 'private', transparency: 'opaque', start: { dateTime: event.startsAt, timeZone: 'UTC' }, end: { dateTime: event.endsAt, timeZone: 'UTC' } };
+    const conference = event.conference === true;
+    const body = conference ? { ...plain, conferenceData: { createRequest: { requestId: event.externalId, conferenceSolutionKey: { type: 'hangoutsMeet' } } } } : plain;
+    const query = conference ? '?conferenceDataVersion=1' : '';
     const base = 'https://www.googleapis.com/calendar/v3/calendars/primary/events';
+    const itemUrl = `${base}/${encodeURIComponent(event.externalId)}`;
+    const result = async (answer: Record<string, unknown>): Promise<CalendarWriteResult> => {
+      if (!conference) return { ok: true };
+      let seen = meetOf(answer);
+      for (let look = 0; seen.pending && look < MEET_LOOKS; look++) {
+        await this.sleep(MEET_LOOK_MS);
+        try {
+          seen = meetOf(await this.call('GET', `${itemUrl}?conferenceDataVersion=1`, s.accessToken));
+        } catch {
+          break;
+        }
+      }
+      return { ok: true, meetUrl: seen.url };
+    };
     try {
-      await this.call('POST', base, s.accessToken, { id: event.externalId, ...body });
-      return { ok: true };
+      return await result(await this.call('POST', `${base}${query}`, s.accessToken, { id: event.externalId, ...body }));
     } catch (error) {
-      if (!(error instanceof GoogleCalendarError) || error.status !== 409) return this.writeFailure(error);
+      if (!(error instanceof GoogleCalendarError)) return this.writeFailure(error);
+      if (error.status === 400 && conference) {
+        const written = await this.writeEvent(secret, { ...event, conference: false });
+        return 'ok' in written ? { ok: true, meetUrl: null } : written;
+      }
+      if (error.status !== 409) return this.writeFailure(error);
     }
     try {
-      await this.call('PATCH', `${base}/${encodeURIComponent(event.externalId)}`, s.accessToken, { ...body, status: 'confirmed' });
-      return { ok: true };
+      return await result(await this.call('PATCH', `${itemUrl}${query}`, s.accessToken, { ...body, status: 'confirmed' }));
     } catch (error) {
       if (error instanceof GoogleCalendarError && (error.status === 404 || error.status === 410)) return { gone: true };
       return this.writeFailure(error);

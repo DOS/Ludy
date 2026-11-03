@@ -765,6 +765,9 @@ export interface WriteBackAction {
   summary: string | null;
   startsAt: string | null;
   endsAt: string | null;
+  // For an upsert: the event asks the provider to make a conference (a Google Meet) for it (C7, #1375). The fingerprint does not include it: a
+  // conference is asked for when an event is first written, and the outcome is the booking's (crm.booking.meeting_settle).
+  conference: boolean;
   // The fingerprint the link keeps after the call (a delete keeps 'deleted').
   hash: string;
 }
@@ -786,7 +789,23 @@ export const calendarWriteBackPlan = defineQuery({
       .executeTakeFirst();
     if (!conn || conn.status !== 'active' || !conn.write_back || !conn.scopes.includes(GOOGLE_CALENDAR_EVENTS_SCOPE)) return { actions: [] };
     const since = new Date(Date.now() - WRITE_BACK_BACK_MS);
-    type PlanEvent = { id: string; starts_at: Date | string; ends_at: Date | string; title: string | null; status: string };
+    // A host with two Google connections that write back has the event written to both, but only one asks for the Meet (C7, #1375): the one connected first, so a
+    // booking has one join link and the one the booking records is the one its event holds.
+    const meetConnection = await ctx.trx
+      .selectFrom('crove_kernel.calendar_connection')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('user_id', '=', conn.user_id)
+      .where('provider', '=', 'google')
+      .where('status', '=', 'active')
+      .where('write_back', '=', true)
+      .where(sql<boolean>`scopes @> ARRAY[${GOOGLE_CALENDAR_EVENTS_SCOPE}]::text[]`)
+      .orderBy('connected_at')
+      .orderBy('id')
+      .limit(1)
+      .executeTakeFirst();
+    const asksForMeet = meetConnection?.id === input.connectionId;
+    type PlanEvent = { id: string; starts_at: Date | string; ends_at: Date | string; title: string | null; status: string; conference: boolean };
     type PlanLink = { event_id: string; external_id: string; state: string; synced_hash: string; attempts: number };
     const actions: WriteBackAction[] = [];
     const linksOf = async (ids: string[]): Promise<Map<string, PlanLink>> => {
@@ -815,14 +834,18 @@ export const calendarWriteBackPlan = defineQuery({
         const link = links.get(e.id);
         const externalId = link?.external_id ?? writeBackEventId(ctx.orgId, e.id, input.connectionId);
         if (e.status === 'cancelled') {
-          if (deleteNeeded(link, window)) actions.push({ eventId: e.id, externalId, kind: 'delete', summary: null, startsAt: null, endsAt: null, hash: DELETED_HASH });
+          if (deleteNeeded(link, window)) actions.push({ eventId: e.id, externalId, kind: 'delete', summary: null, startsAt: null, endsAt: null, conference: false, hash: DELETED_HASH });
           continue;
         }
         if (!window) continue;
         const hash = writeBackHash(new Date(e.starts_at), new Date(e.ends_at), e.title);
         const unchanged = link !== undefined && link.synced_hash === hash;
-        if (unchanged && (link.state === 'written' || link.state === 'removed' || link.attempts >= CALENDAR_LINK_MAX_ATTEMPTS)) continue;
-        actions.push({ eventId: e.id, externalId, kind: 'upsert', summary: e.title ?? 'Lịch hẹn', startsAt: new Date(e.starts_at).toISOString(), endsAt: new Date(e.ends_at).toISOString(), hash });
+        // An event that still asks for a conference from this connection is written again, whatever its link says: the connection may have become the elected one after it wrote
+        // the event without (the first one went away), or Google had not finished the Meet. The request names the event, so a repeat makes no second Meet, and the settle clears the
+        // flag (a settled booking is never asked again).
+        const wantsMeet = e.conference && asksForMeet;
+        if (unchanged && !wantsMeet && (link.state === 'written' || link.state === 'removed' || link.attempts >= CALENDAR_LINK_MAX_ATTEMPTS)) continue;
+        actions.push({ eventId: e.id, externalId, kind: 'upsert', summary: e.title ?? 'Lịch hẹn', startsAt: new Date(e.starts_at).toISOString(), endsAt: new Date(e.ends_at).toISOString(), conference: e.conference && asksForMeet, hash });
       }
     };
     // The member's booking events of the last day and ahead, in pages by (start, id), until the plan is full: an event that
@@ -832,7 +855,7 @@ export const calendarWriteBackPlan = defineQuery({
       const after: { startsAt: Date; id: string } | null = cursor;
       const events: PlanEvent[] = await ctx.trx
         .selectFrom('crove_kernel.calendar_event')
-        .select(['id', 'starts_at', 'ends_at', 'title', 'status'])
+        .select(['id', 'starts_at', 'ends_at', 'title', 'status', 'conference'])
         .where('org_id', '=', ctx.orgId)
         .where('user_id', '=', conn.user_id)
         .where('kind', '=', 'booking')
@@ -854,7 +877,7 @@ export const calendarWriteBackPlan = defineQuery({
       const owed = await ctx.trx
         .selectFrom('crove_kernel.calendar_event_link as l')
         .innerJoin('crove_kernel.calendar_event as e', (join) => join.onRef('e.org_id', '=', 'l.org_id').onRef('e.id', '=', 'l.event_id'))
-        .select(['e.id', 'e.starts_at', 'e.ends_at', 'e.title', 'e.status'])
+        .select(['e.id', 'e.starts_at', 'e.ends_at', 'e.title', 'e.status', 'e.conference'])
         .where('l.org_id', '=', ctx.orgId)
         .where('l.connection_id', '=', input.connectionId)
         .where('e.status', '=', 'cancelled')

@@ -43,6 +43,8 @@ const SMALL_REGIONS: Readonly<Record<string, number>> = {
   'routes/settings.tsx': 1,
   // The portal's captcha image, in its box.
   'components/portal-sync.tsx': 1,
+  // A draft request the AI coworker has not answered yet, in its row beside the words that say so.
+  'components/ads-campaign-ask.tsx': 1,
 };
 
 // A spinner that is a component's whole return, or a line of its own (the whole branch of a loading ternary).

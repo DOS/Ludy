@@ -306,7 +306,7 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
   const call = (a: WriteBackAction, secret: string) =>
     a.kind === 'delete' || a.summary === null || a.startsAt === null || a.endsAt === null
       ? b.adapter.removeEvent(secret, a.externalId)
-      : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt });
+      : b.adapter.writeEvent(secret, { externalId: a.externalId, summary: a.summary, startsAt: a.startsAt, endsAt: a.endsAt, ...(a.conference ? { conference: true } : {}) });
   const record = (a: WriteBackAction, state: 'written' | 'removed' | 'error', error: string) =>
     b.runtime.execute(
       'kernel.calendar.link.record',
@@ -360,6 +360,18 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
       continue;
     }
     forbiddenRun = 0;
+    // A booking that asked for a Google Meet (C7, #1375): the event is written, so the booking learns the outcome now, the join link or that there is none. Before
+    // the record below: a crash between the two repeats the write (it makes no second Meet), and the settle of a booking that is no longer pending does nothing.
+    // A settle that fails must not stall the write-back (the event is written, and an event that asks for a conference skips the attempt cap of its link):
+    // the error is named in the log, never quoted, the event is recorded as written below, and the booking learns its outcome from the delayed crm-booking-meet job
+    // within minutes. The settle is the crm module's command: with crm off there is no booking to tell.
+    if (a.kind === 'upsert' && a.conference && 'ok' in result && b.runtime.installed('crm')) {
+      try {
+        await b.runtime.execute('crm.booking.meeting_settle', { calendarEventId: a.eventId, url: result.meetUrl ?? null }, b.options);
+      } catch (error: unknown) {
+        console.error('[calendar-sync] settling the Meet of a booking failed', error instanceof Error ? error.name : typeof error);
+      }
+    }
     const written = 'ok' in result || 'gone' in result;
     // gone: the member deleted the event by hand (an upsert) or it was not there (a delete): either way it stays gone
     // until its booking changes.
@@ -371,20 +383,26 @@ async function writeBackBatch(b: WriteBackBatch): Promise<CalendarSyncOutcome | 
 
 // A booking confirmed, moved or cancelled (#2124): the events of every write-back connection of its org are made to match
 // at once, from a job the outbox relay queues, instead of waiting for the next sweep. It never renews a token or expires a
-// connection: a token that is about to run out, or that the provider refuses, is left to the sweep, which does both.
-export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: CalendarWriteBackJob): Promise<{ connections: number; ran: number; busy: number }> {
+// connection: a token that is about to run out, or that the provider refuses, is left to the sweep, which does both. Such a connection is counted as
+// `expiring`, so the worker can ask for a sweep at once (a booking's Google Meet, C7, is made by this write and must not wait for the next one).
+export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: CalendarWriteBackJob): Promise<{ connections: number; ran: number; busy: number; expiring: number }> {
   const options = { actor: ACTOR, orgId: job.orgId };
   const now = deps.now ?? (() => new Date());
   const ids = await deps.runtime.query<string[]>('kernel.calendar.writeback_connections', {}, options);
   let ran = 0;
   let busy = 0;
+  let expiring = 0;
   for (const connectionId of ids) {
     try {
       const state = await deps.runtime.query<{ status: string; provider: string; expiresAt: string | null; updatedAt: string; writeBack?: boolean } | null>('kernel.calendar.connection_state', { connectionId }, options);
       if (!state || state.status !== 'active' || !state.writeBack) continue;
       const adapter = adapterFor(deps.adapters, state.provider);
       // A token that would run out during the batch is renewed by the sweep, which comes within 15 minutes.
-      if (!adapter || state.expiresAt === null || Date.parse(state.expiresAt) - now().getTime() < REFRESH_AHEAD_MS) continue;
+      if (!adapter) continue;
+      if (state.expiresAt === null || Date.parse(state.expiresAt) - now().getTime() < REFRESH_AHEAD_MS) {
+        expiring += 1;
+        continue;
+      }
       const sealed = await deps.runtime.query<SealedCalendarCredential>('kernel.calendar.credential', { connectionId }, options);
       const again = await deps.runtime.query<{ status: string; updatedAt: string } | null>('kernel.calendar.connection_state', { connectionId }, options);
       if (!again || again.status !== 'active' || again.updatedAt !== state.updatedAt) continue;
@@ -401,7 +419,7 @@ export async function runCalendarWriteBack(deps: CalendarSyncDeps, job: Calendar
   }
   // busy: connections the sweep or another job was working on; the caller retries the job, so a booking that committed after
   // their plan was read is still written.
-  return { connections: ids.length, ran, busy };
+  return { connections: ids.length, ran, busy, expiring };
 }
 export interface CalendarSweepDeps {
   runtime: Runtime;
