@@ -10,7 +10,7 @@
 // never a name.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId, zTermsDays } from '@crove/kernel-contract';
+import { zCustomerCollectionSet, zId, zTermsDays } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
 
@@ -102,13 +102,14 @@ export const customerCollectionGet = defineQuery({
 export const customerCollectionSet = defineCommand({
   name: 'finance.customer_collection.set',
   // pausedUntil: the last day with no reminder (YYYY-MM-DD), or null.
-  input: z.object({ partyId: zId, termsDays: zTermsDays.nullable(), pausedUntil: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable() }),
+  // Only what is named changes: a field left out keeps its value (so lifting a pause does not overwrite terms someone changed meanwhile).
+  input: zCustomerCollectionSet,
   risk: 'R1',
   sideEffect: 'internal',
   access: EDITORS,
   target: (input) => ({ type: 'finance.customer_collection', id: input.partyId }),
   handler: async (ctx, input): Promise<CustomerCollection> => {
-    if (input.pausedUntil !== null) {
+    if (input.pausedUntil !== undefined && input.pausedUntil !== null) {
       const when = Date.parse(`${input.pausedUntil}T00:00:00Z`);
       // Not before 2000: a date PostgreSQL cannot hold (year 0) is refused here, not by the database.
       if (!Number.isFinite(when) || new Date(when).toISOString().slice(0, 10) !== input.pausedUntil || input.pausedUntil < '2000-01-01') throw new DomainError('PAUSE_DATE_INVALID', 422, 'Ngày tạm dừng không hợp lệ');
@@ -117,17 +118,19 @@ export const customerCollectionSet = defineCommand({
     const kept = await keptParty(ctx, input.partyId);
     const before = await readCustomer(ctx, kept);
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-    if (input.termsDays === null && input.pausedUntil === null && before.termsDays === null && before.pausedUntil === null) {
+    const termsDays = input.termsDays === undefined ? before.termsDays : input.termsDays;
+    const pausedUntil = input.pausedUntil === undefined ? before.pausedUntil : input.pausedUntil;
+    if (termsDays === null && pausedUntil === null && before.termsDays === null && before.pausedUntil === null) {
       // Nothing to keep and nothing kept: no row is made for a customer with no setting.
       ctx.audit({ partyId: kept, termsDays: null, pausedUntil: null, changed: false });
       return before;
     }
     await ctx.trx
       .insertInto('crove_finance.customer_collection')
-      .values({ org_id: ctx.orgId, party_id: kept, terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId })
-      .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: input.termsDays, paused_until: input.pausedUntil, set_by: userId, updated_at: ctx.now }))
+      .values({ org_id: ctx.orgId, party_id: kept, terms_days: termsDays, paused_until: pausedUntil, set_by: userId })
+      .onConflict((oc) => oc.columns(['org_id', 'party_id']).doUpdateSet({ terms_days: termsDays, paused_until: pausedUntil, set_by: userId, updated_at: ctx.now }))
       .execute();
-    ctx.audit({ partyId: kept, termsDays: input.termsDays, previousTermsDays: before.termsDays, pausedUntil: input.pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
+    ctx.audit({ partyId: kept, termsDays, previousTermsDays: before.termsDays, pausedUntil, previousPausedUntil: before.pausedUntil, changed: true });
     return readCustomer(ctx, kept);
   },
 });

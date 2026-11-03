@@ -38,6 +38,8 @@ interface Edit {
 // How the send of one draft ended.
 type Outcome = { state: 'sent' } | { state: 'suppressed' } | { state: 'error'; error: unknown; repeat: boolean };
 
+// The answers of a draft that is no longer one: the customer was paused, or owes nothing overdue now.
+const GONE = ['CUSTOMER_PAUSED', 'NOTHING_OVERDUE'];
 const errorCode = (error: unknown): string | null => {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' ? code : null;
@@ -209,7 +211,8 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
   const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [sending, setSending] = useState(false);
 
-  const drafts = results.flatMap((r) => (r.data ? [r.data] : []));
+  // A draft whose last read was refused (a customer paused since, nothing overdue any more) is no draft to send, whatever it held before.
+  const drafts = results.flatMap((r) => (r.data && !r.isError ? [r.data] : []));
   const failed = results.find((r) => r.error);
   const pending = drafts.filter((d) => d.email !== null && !skipped.has(d.partyId) && outcomes[d.partyId]?.state !== 'sent' && outcomes[d.partyId]?.state !== 'suppressed');
 
@@ -223,7 +226,7 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
         ...(legalEntityId ? { legalEntityId } : {}),
         level: draft.level,
         total: draft.total,
-        invoiceIds: draft.invoices.map((i) => i.id),
+        invoiceKey: draft.invoiceKey,
         subject: words.subject,
         greeting: words.greeting,
         lead: words.lead,
@@ -266,7 +269,7 @@ function Review({ ids, legalEntityId, onClose }: { ids: string[]; legalEntityId:
         </div>
       </div>
       <p className="text-xs text-subtle-foreground">{t('nothingAutomatic')}</p>
-      {failed?.error && <ErrorText>{errorMessage(failed.error)}</ErrorText>}
+      {failed?.error && (GONE.includes(errorCode(failed.error) ?? '') ? <p className="text-sm text-muted-foreground">{t('draftGone')}</p> : <ErrorText>{errorMessage(failed.error)}</ErrorText>)}
       {results.some((r) => r.isPending) && <TableSkeleton columns={4} rows={2} />}
       {drafts.map((draft) => (
         <DraftCard
@@ -402,7 +405,7 @@ function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
       <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className="space-y-1">
           <Label htmlFor={`${id}-terms`}>{t('customer.terms')}</Label>
-          <Input id={`${id}-terms`} type="number" inputMode="numeric" min={1} max={365} placeholder={String(draft.termsDays)} value={terms} aria-invalid={!valid} onChange={(e) => setTerms(e.target.value)} />
+          <Input id={`${id}-terms`} type="number" inputMode="numeric" min={1} max={365} placeholder={String(draft.orgTermsDays)} value={terms} aria-invalid={!valid} onChange={(e) => setTerms(e.target.value)} />
           <p className="text-xs text-subtle-foreground">{t('customer.termsHint')}</p>
         </div>
         <div className="space-y-1">
@@ -416,7 +419,7 @@ function CustomerSettings({ draft }: { draft: PaymentReminderDraft }) {
           variant="outline"
           size="sm"
           loading={save.isPending}
-          disabled={!valid}
+          disabled={!valid || (until !== '' && until < vietnamToday())}
           onClick={() => save.mutate({ partyId: draft.partyId, termsDays: days, pausedUntil: until === '' ? null : until })}
           data-testid="reminder-customer-save"
         >
@@ -449,7 +452,7 @@ function PausedCustomers({ paused, currency, canEdit }: { paused: PausedCustomer
               <p className="mt-1 text-xs text-subtle-foreground">{t('paused.until', { date: f.date(c.pausedUntil), total: f.money(c.total, currency) })}</p>
             </div>
             {canEdit && (
-              <Button variant="outline" size="sm" loading={resume.isPending && resume.variables?.partyId === c.partyId} onClick={() => resume.mutate({ partyId: c.partyId, termsDays: c.ownTermsDays, pausedUntil: null })} aria-label={t('paused.resumeOf', { name: c.name })}>
+              <Button variant="outline" size="sm" loading={resume.isPending && resume.variables?.partyId === c.partyId} onClick={() => resume.mutate({ partyId: c.partyId, pausedUntil: null })} aria-label={t('paused.resumeOf', { name: c.name })}>
                 {t('paused.resume')}
               </Button>
             )}

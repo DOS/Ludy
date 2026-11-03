@@ -653,6 +653,7 @@ export const en = {
       resume: 'Lift the pause',
       resumeOf: 'Lift the pause for {name}',
     },
+    draftGone: 'This customer is no longer in the list to remind (paused, or nothing overdue any more).',
     reviewTitle: 'Messages ready to send',
     close: 'Close',
     send: 'Send {count, plural, one {# message} other {# messages}}',

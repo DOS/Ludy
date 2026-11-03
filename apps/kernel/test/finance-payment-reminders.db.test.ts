@@ -57,24 +57,24 @@ suite('customer payment reminders (#2488)', () => {
   const customer = async (o: Org, name: string, email: string | null) => (await execute<{ partyId: string }>(o, 'kernel.party.create', { kind: 'organization', name, ...(email ? { email } : {}) })).partyId;
 
   // A sales invoice with its entry (Dr 131, Cr 511), written the way finance.purchase.record writes one, in one transaction.
-  async function sale(o: Org, party: string, number: string, date: string, total: string, adjusts?: { number: string; date: string }): Promise<string> {
+  async function sale(o: Org, party: string, number: string, date: string, total: string, adjusts?: { number: string; date: string }, entity: string = o.entity): Promise<string> {
     return admin(async (c) => {
       const doc = randomUUID();
       await c.query('BEGIN');
       await c.query(
         `INSERT INTO crove_finance.purchase_document (org_id, id, party_id, invoice_series, invoice_number, invoice_date, currency, subtotal, vat_amount, total, direction, legal_entity_id, correction_kind, corrected_series, corrected_number, corrected_date)
          VALUES ($1, $2, $3, 'C26TAA', $4, $5, 'VND', $6, 0, $6, 'sale', $7, $8, $9, $10, $11)`,
-        [o.orgId, doc, party, number, date, total, o.entity, adjusts ? 'adjustment' : null, adjusts ? 'C26TAA' : null, adjusts?.number ?? null, adjusts?.date ?? null],
+        [o.orgId, doc, party, number, date, total, entity, adjusts ? 'adjustment' : null, adjusts ? 'C26TAA' : null, adjusts?.number ?? null, adjusts?.date ?? null],
       );
       const entry = randomUUID();
       await c.query(
         `INSERT INTO crove_finance.journal_entry (org_id, id, entry_date, description, source_type, source_id, legal_entity_id) VALUES ($1, $2, $3, $4, 'finance.purchase_document', $5, $6)`,
-        [o.orgId, entry, date, `HĐ bán ${number}`, doc, o.entity],
+        [o.orgId, entry, date, `HĐ bán ${number}`, doc, entity],
       );
       await c.query(
         `INSERT INTO crove_finance.journal_line (org_id, entry_id, line_no, account_code, debit, credit, party_id, legal_entity_id)
          VALUES ($1, $2, 1, '131', $3, 0, $4, $5), ($1, $2, 2, '511', 0, $3, NULL, $5)`,
-        [o.orgId, entry, total, party, o.entity],
+        [o.orgId, entry, total, party, entity],
       );
       await c.query('COMMIT');
       return doc;
@@ -108,7 +108,7 @@ suite('customer payment reminders (#2488)', () => {
     partyId: d.partyId,
     level: d.level,
     total: d.total,
-    invoiceIds: d.invoices.map((i) => i.id),
+    invoiceKey: d.invoiceKey,
     subject: d.words.subject,
     greeting: d.words.greeting,
     lead: d.words.lead,
@@ -435,5 +435,78 @@ suite('customer payment reminders (#2488)', () => {
     expect((await items()).length).toBe(1);
     await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: false });
     expect(await items()).toEqual([]);
+  });
+
+  it('lifts a pause without touching the terms, and a pause survives the party being merged into another', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Bị Gộp', 'bg@bigop.test');
+    const kept = await customer(o, 'Công ty Giữ Lại Hai', 'gl@giulai.test');
+    await sale(o, p, '1', dated(7), '400000');
+    const until = addDays(TODAY, 20);
+    await execute(o, 'finance.customer_collection.set', { partyId: p, termsDays: 25, pausedUntil: until });
+    // Lifting names the pause only: the terms stay 25.
+    await execute(o, 'finance.customer_collection.set', { partyId: p, pausedUntil: null });
+    expect(await query(o, 'finance.customer_collection.get', { partyId: p })).toMatchObject({ termsDays: 25, pausedUntil: null });
+    // Pause again, then merge the party into another: its row stays on it, and the kept party still has none; the pause holds for the group.
+    await execute(o, 'finance.customer_collection.set', { partyId: p, pausedUntil: until });
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, p, kept]));
+    const after = await list(o);
+    expect(after.customers).toEqual([]);
+    expect(after.paused.map((x) => [x.partyId, x.pausedUntil])).toEqual([[kept, until]]);
+    await expect(draft(o, kept)).rejects.toMatchObject({ code: 'CUSTOMER_PAUSED' });
+  });
+
+  it('keeps a reminder sent for one legal entity from counting for another, in the history, the repeat rule and the weekly item', async () => {
+    const o = await org();
+    const branch = (await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Chi nhánh Nhắc nợ', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id as string;
+    const p = await customer(o, 'Công ty Hai Pháp Nhân', 'hpn@haiphapnhan.test');
+    await sale(o, p, '1', dated(5), '500000');
+    await sale(o, p, '2', dated(6), '700000', undefined, branch);
+    const inEntity = (entity: string) => query<PaymentReminderList>(o, 'finance.payment_reminders.list', { legalEntityId: entity });
+    const draftIn = (entity: string) => query<PaymentReminderDraft>(o, 'finance.payment_reminder.draft', { partyId: p, legalEntityId: entity });
+    await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: true });
+    const weekly = async () => (await query<Array<{ id: string; count?: number; title: { key: string } }>>(o, 'finance.today', {})).filter((i) => i.title.key === 'financeRemindersDue');
+    expect((await weekly()).map((i) => i.count)).toEqual([1, 1]);
+    const a = await draftIn(o.entity);
+    await execute(o, 'finance.payment_reminder.send', { ...sendInput(a), legalEntityId: o.entity });
+    // The branch's invoices were not reminded: it still has no last reminder, the repeat rule does not ask, and its item stays.
+    expect((await inEntity(o.entity)).customers[0]?.lastReminder).toMatchObject({ level: 1 });
+    expect((await inEntity(branch)).customers[0]?.lastReminder).toBeNull();
+    expect((await weekly()).map((i) => i.count)).toEqual([1]);
+    const b = await draftIn(branch);
+    expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', { ...sendInput(b), legalEntityId: branch })).status).toBe('queued');
+    expect(await weekly()).toEqual([]);
+    // Each mail is about one entity, and the same level for the same entity within three days still asks.
+    await expect(execute(o, 'finance.payment_reminder.send', { ...sendInput(a), legalEntityId: o.entity })).rejects.toMatchObject({ code: 'ALREADY_REMINDED' });
+    expect((await mails(o, p)).map((m) => (m.payload as { legalEntityId?: string }).legalEntityId).sort()).toEqual([o.entity, branch].sort());
+  });
+
+  it('holds a send to the due dates the person read: a change of terms between the draft and the send is stale', async () => {
+    const o = await org();
+    const p = await customer(o, 'Công ty Đổi Kỳ Hạn', 'dkh@doikyhan.test');
+    await sale(o, p, '1', dated(20), '800000');
+    const d = await draft(o, p);
+    await execute(o, 'finance.collection_setting.set', { termsDays: 31, weeklyItem: false });
+    // Still overdue, same level, same total, same invoice: only the due date moved.
+    expect(await draft(o, p)).toMatchObject({ level: d.level, total: d.total });
+    await expect(execute(o, 'finance.payment_reminder.send', sendInput(d))).rejects.toMatchObject({ code: 'STALE_REMINDER' });
+    expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(await draft(o, p)))).status).toBe('queued');
+  });
+
+  it('counts in the weekly item only customers a reminder can reach, and takes a blocked address as dealt with', async () => {
+    const o = await org();
+    const noEmail = await customer(o, 'Công ty Không Email', null);
+    const blocked = await customer(o, 'Công ty Bị Chặn', 'chan@bichan.test');
+    const fine = await customer(o, 'Công ty Gửi Được', 'duoc@guiduoc.test');
+    for (const [i, p] of [noEmail, blocked, fine].entries()) await sale(o, p, String(i + 1), dated(4), '300000');
+    await execute(o, 'finance.collection_setting.set', { termsDays: 30, weeklyItem: true });
+    const count = async () => (await query<Array<{ count?: number; title: { key: string } }>>(o, 'finance.today', {})).find((i) => i.title.key === 'financeRemindersDue')?.count ?? 0;
+    expect(await count()).toBe(2);
+    // The blocked address refuses the mail (suppressed): it is dealt with this week, and the item falls to the one customer left.
+    await execute(o, 'kernel.mail.suppression.add', { email: 'chan@bichan.test', scope: 'all' });
+    expect((await execute<PaymentReminderSent>(o, 'finance.payment_reminder.send', sendInput(await draft(o, blocked)))).status).toBe('suppressed');
+    expect(await count()).toBe(1);
+    await execute(o, 'finance.payment_reminder.send', sendInput(await draft(o, fine)));
+    expect(await count()).toBe(0);
   });
 });

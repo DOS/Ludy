@@ -651,6 +651,7 @@ export const vi = {
       resume: 'Bỏ tạm dừng',
       resumeOf: 'Bỏ tạm dừng nhắc {name}',
     },
+    draftGone: 'Khách hàng này không còn trong danh sách cần nhắc (đã tạm dừng hoặc không còn hóa đơn quá hạn).',
     reviewTitle: 'Thư nhắc đã soạn',
     close: 'Đóng',
     send: '{count, plural, other {Gửi # thư}}',
