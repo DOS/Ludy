@@ -44,6 +44,18 @@ export const adsManifest = defineModule({
       ad_sync_run: columns([
         'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'status', 'window_from', 'window_to', 'rows_written', 'error_kind', 'error_code', 'retry_at', 'started_at', 'finished_at',
       ]),
+      // The revoke at the platform of the token of a closed ads connection (W2-1, #2296): ids, states, counts and error codes, org-wide, no legal entity.
+      // grantor_hash: a keyed hash of the platform user who granted the connection, as in ad_account, which the revoke checks before it cuts a grant another live
+      // connection of the same person needs; never the platform's id of the person.
+      ad_token_revoke: columns(
+        [
+          'org_id', 'id', 'connection_id', 'ad_account_id', 'provider', 'external_account_id', 'kind', 'reason', 'connected_by', 'state', 'how_done', 'give_up', 'attempts', 'next_attempt_at',
+          'last_error_kind', 'last_error_code', 'created_at', 'settled_at',
+        ],
+        { grantor_hash: 'pii' },
+      ),
+      // The sealed copy of that token, kept at most 7 days and opened by the revoke worker alone: definer-only machinery, no grant to any role.
+      ad_token_seal: columns(['org_id', 'revoke_id', 'key_id', 'sealed_at', 'lease_until', 'lease_token'], { envelope: 'sensitive' }),
       // Meta's data deletion requests (plan section 9): a global machinery table, no org_id and nothing about an org; only the
       // definers touch it. user_hash is the keyed hash of the Meta user who asked, never the id.
       deletion_request: columns(['code', 'requested_at', 'completed_at', 'accounts', 'next_attempt_at'], { user_hash: 'pii' }),

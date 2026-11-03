@@ -70,7 +70,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { MetaAdsConnector, MetaWriteConnector, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { MetaAdsConnector, MetaWriteConnector, adPlatforms, adRevokers, type AdPlatform, type AdRevoker } from '@crove/ad-platform';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -307,6 +307,20 @@ export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META
   return adPlatforms({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+  });
+}
+
+// The one call of an ad platform's writer that removes the app's permissions at the platform, by the provider id of the connection whose token is held (#2296,
+// W2-1, ADR-0043 point 4): the narrowed view the revoke sweep is given, never the writer. A write token is proved with the secret of the write app and a read
+// token that holds a spend permission with the secret of the read ads app, each the app that issued it.
+export function adRevokersOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdRevoker>> {
+  return adRevokers({
+    sandbox: config.ADS_SANDBOX === 'true',
+    meta: {
+      ...(config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_ADS_APP_SECRET ? { readAppSecret: config.CHANNEL_META_ADS_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}),
+    },
   });
 }
 
@@ -587,7 +601,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
+            channels: { broker: resolved.broker, conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

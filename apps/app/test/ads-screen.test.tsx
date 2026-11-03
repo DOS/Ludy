@@ -359,7 +359,7 @@ describe('a paused ad account (#2219)', () => {
 
 describe('running ads: the stops, the requests, the switches and the caps (#2294, W0a)', () => {
   const at2 = '2026-11-02T03:00:00.000Z';
-  const stateOf = (over: Partial<AdsWriteState> = {}): AdsWriteState => ({ writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], ...over });
+  const stateOf = (over: Partial<AdsWriteState> = {}): AdsWriteState => ({ writeEnabled: false, launchesBlocked: false, updatedAt: null, caps: [], pending: [], tokenRevokes: [], ...over });
   const card = (state: AdsWriteState, role: 'owner' | 'admin', accounts: AdAccountView[] = [account()]) => {
     client.current.setQueryData(['ads', 'writeState'], state);
     return render(<AdsWriteCard role={role} accounts={accounts} slug="shop" />);
