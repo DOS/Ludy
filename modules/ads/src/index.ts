@@ -8,6 +8,7 @@ import { summaryQueries } from './summary.ts';
 import { syncCommands, syncQueries } from './sync.ts';
 import { todayQueries } from './today.ts';
 import { writeCommands, writeQueries } from './write.ts';
+import { tokenRevokeCommands } from './token-revoke-commands.ts';
 import { writeConnectionCommands, writeConnectionQueries } from './write-connection.ts';
 
 export * from './accounts.ts';
@@ -23,6 +24,6 @@ export * from './sync.ts';
 export * from './today.ts';
 export * from './write.ts';
 
-export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...campaignRequestCommands];
+export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...campaignRequestCommands];
 export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...campaignQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries];
 export { adsManifest } from './manifest.ts';

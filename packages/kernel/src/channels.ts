@@ -11,7 +11,7 @@
 //   crove_worker alone), and only while the member who connected the account is still in the org.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { zId } from '@crove/kernel-contract';
+import { isAdWriteProviderId, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
@@ -215,6 +215,45 @@ export const channelRevokeByPlatform = defineCommand({
     }
     await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
     return { connectionId: input.connectionId, status: 'revoked' as const };
+  },
+});
+
+// An ads write connection whose connector is no longer an owner or admin of the org (removed, demoted or disabled), closed by the revoke sweep as the
+// system (ads W2-1, #2296): its token can no longer be used (credential_get refuses it), so it would sit in Ludy for ever while the person's permission at
+// the platform stays valid. Closing it drops the credential, which the ads module's trigger on that table copies into the sealed holding of the revoke, in
+// the same transaction; the revoke runs from there. Only ads write connections are closed this way, and only while the connector is gone, as the
+// database says under the row's lock (channel_connector_gone): a connector who is still an owner or admin leaves the connection as it is.
+export const channelCloseOrphan = defineCommand({
+  name: 'kernel.channel.close_orphan',
+  input: z.strictObject({ connectionId: zId }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: 'system',
+  target: (input) => ({ type: 'kernel.channel_connection', id: input.connectionId }),
+  handler: async (ctx, input) => {
+    if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ tiến trình hệ thống mới thực hiện được việc này');
+    const row = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['status', 'provider'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!row) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kênh đã kết nối này');
+    if (!isAdWriteProviderId(row.provider)) throw new DomainError('CHANNEL_NOT_ORPHAN', 409, 'Chỉ kết nối chạy quảng cáo mới đóng được theo cách này');
+    if (row.status === 'revoked') return { connectionId: input.connectionId, closed: false };
+    const { rows } = await sql<{ gone: boolean }>`SELECT crove_kernel.channel_connector_gone(${input.connectionId}::uuid) AS gone`.execute(ctx.trx);
+    if (rows[0]?.gone !== true) return { connectionId: input.connectionId, closed: false };
+    await ctx.trx
+      .updateTable('crove_kernel.channel_connection')
+      .set({ status: 'revoked', status_reason: 'member_left', updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.connectionId)
+      .execute();
+    await ctx.emit('kernel.channel.disconnected', { connection_id: input.connectionId, provider: row.provider });
+    await sql`SELECT crove_kernel.credential_drop(${input.connectionId}::uuid)`.execute(ctx.trx).catch(credentialError);
+    ctx.audit({ connection_id: input.connectionId, provider: row.provider });
+    return { connectionId: input.connectionId, closed: true };
   },
 });
 
@@ -438,5 +477,5 @@ export const channelCredential = defineQuery({
   },
 });
 
-export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
+export const channelCommands = [channelConnect, channelDisconnect, channelMarkExpired, channelRevokeByPlatform, channelCloseOrphan, channelOAuthBegin, channelOAuthConsume, channelRefresh, channelReseal];
 export const channelQueries = [channelsList, channelCredential];

@@ -21,6 +21,7 @@ export interface CroveAdsSchema {
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;
+  'crove_ads.ad_token_revoke': AdsAdTokenRevokeTable;
 }
 
 export interface CroveCrmSchema {
@@ -342,6 +343,27 @@ export interface AdsAdSyncRunTable {
   retry_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   started_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   finished_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_ads.ad_token_revoke */
+export interface AdsAdTokenRevokeTable {
+  org_id: ColumnType<string, NotGranted, NotGranted>;
+  id: ColumnType<string, NotGranted, NotGranted>;
+  connection_id: ColumnType<string, NotGranted, NotGranted>;
+  ad_account_id: ColumnType<string | null, NotGranted, NotGranted>;
+  provider: ColumnType<string, NotGranted, NotGranted>;
+  external_account_id: ColumnType<string, NotGranted, NotGranted>;
+  kind: ColumnType<string, NotGranted, NotGranted>;
+  reason: ColumnType<string, NotGranted, NotGranted>;
+  state: ColumnType<string, NotGranted, NotGranted>;
+  how_done: ColumnType<string | null, NotGranted, NotGranted>;
+  give_up: ColumnType<string | null, NotGranted, NotGranted>;
+  attempts: ColumnType<number, NotGranted, NotGranted>;
+  next_attempt_at: ColumnType<Date | null, NotGranted, NotGranted>;
+  last_error_kind: ColumnType<string | null, NotGranted, NotGranted>;
+  last_error_code: ColumnType<string | null, NotGranted, NotGranted>;
+  created_at: ColumnType<Date, NotGranted, NotGranted>;
+  settled_at: ColumnType<Date | null, NotGranted, NotGranted>;
 }
 
 /** crove_crm.booking_feed */

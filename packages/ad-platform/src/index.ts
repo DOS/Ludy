@@ -17,6 +17,7 @@ export * from './meta.ts';
 export * from './meta-write-connector.ts';
 export * from './meta-write.ts';
 export * from './sandbox-write.ts';
+export * from './revokers.ts';
 export * from './writer.ts';
 
 // The provider ids a channel connection of an ad account names. `sandbox_ads` is the offline sandbox, `meta_ads` is Meta

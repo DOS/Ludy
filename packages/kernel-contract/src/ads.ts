@@ -248,6 +248,25 @@ export const zAdsCapView = z.object({
 });
 export type AdsCapView = z.infer<typeof zAdsCapView>;
 
+// The removal of the app's permissions at the platform after a connection that runs ads was closed (W2-1, #2296, ADR-0043 point 4): still being tried
+// ("pending": Ludy holds a sealed copy of the token for that alone, for at most 7 days) or given up ("gave_up": the copy is gone and the person removes the
+// app in the platform's settings by hand). Ids, states and counts; never a token.
+export const zAdsTokenRevokeView = z.object({
+  id: zId,
+  adAccountId: zId.nullable(),
+  accountName: z.string().nullable(),
+  provider: z.string(),
+  externalAccountId: z.string(),
+  kind: z.enum(['write', 'read_spend']),
+  state: z.enum(['pending', 'gave_up']),
+  giveUp: z.enum(['attempts', 'age']).nullable(),
+  attempts: z.number().int(),
+  nextAttemptAt: z.string().nullable(),
+  lastErrorKind: z.enum(['rate_limited', 'transient', 'permission', 'bad_request', 'unknown']).nullable(),
+  createdAt: z.string(),
+});
+export type AdsTokenRevokeView = z.infer<typeof zAdsTokenRevokeView>;
+
 // The switches of running ads and the current caps (owners and admins read them).
 export const zAdsWriteState = z.object({
   writeEnabled: z.boolean(),
@@ -256,6 +275,8 @@ export const zAdsWriteState = z.object({
   caps: z.array(zAdsCapView),
   // The requests waiting in the Inbox for approval, newest first (the card says so and links to them).
   pending: z.array(z.object({ proposalId: zId, change: zAdsChange, requestedAt: z.string() })),
+  // The removals of the app's permissions at the platform still being tried, and the ones given up in the last 30 days, newest first.
+  tokenRevokes: z.array(zAdsTokenRevokeView),
 });
 export type AdsWriteState = z.infer<typeof zAdsWriteState>;
 

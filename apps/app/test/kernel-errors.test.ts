@@ -39,6 +39,9 @@ const NOT_SHOWN: Record<string, string> = {
   ORG_PURGE_BLOB_FAILED: 'operator',
   // The worker's bring-in of posts published outside Crove (#1054): its system commands alone raise it.
   EXTERNAL_POST_NOT_FOUND: 'worker',
+  // The revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's system commands alone raise these.
+  ADS_REVOKE_NOT_FOUND: 'worker',
+  CHANNEL_NOT_ORPHAN: 'worker',
   // A bank feed's batch (ADR-0039, #2044): finance.bank.ingest is a system command the feed job runs.
   BANK_FEED_INVALID: 'worker',
   // A late sync's page (#2044 part 2b): only the worker's record_pull raises it.

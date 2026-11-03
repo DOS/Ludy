@@ -8,9 +8,10 @@
 // - ads.account.disconnect (owner, admin): closes the read connection of an account and its write connection, dropping both sealed
 //   tokens, and turns its flag off.
 // - closeWriteConnections: what the switch-off commands (ads.write.disable, ads.account.disable_write) and the removal of an account
-//   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The platform's own copy of the
-//   token is revoked by the write queue of W2, which cannot merge without it; until then the owner is told to remove the app in the
-//   platform's settings.
+//   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The permission at the platform is
+//   removed by the revoke sweep (W2-1, apps/kernel/src/ads-revoke.ts): the database copies the sealed token into a holding of its own, for
+//   seven days at most, in the transaction that drops the credential (the trigger crove_ads.token_hold, so whatever path drops it is
+//   covered, this file's closers included); where the sweep cannot remove it, the Ads screen tells the owner to remove the app by hand.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
@@ -69,7 +70,7 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
 //   at Meta may never have reached Ludy at all (a switch-off between the dialog and its callback, an expired state, a failed
 //   exchange, a closed tab), so the close fails safe: every reading connection of that platform is closed, the ones of people who
 //   never granted it come back with one reconnect, and the person who did must first remove the app in the platform's settings (the
-//   at-platform revoke is W2's). A write connection's row stays after it is closed or its account is removed, so the evidence does
+//   revoke of W2-1 covers a write token and a read token whose recorded scopes hold the permission, and not these). A write connection's row stays after it is closed or its account is removed, so the evidence does
 //   not go with the account; a switch that was on is evidence enough by itself, since the owner could have consented while it was.
 // It is the caller who closes them: the kernel's disconnect.
 const SHARED_APP_WRITE_PROVIDERS = AD_WRITE_PROVIDERS.filter((provider) => provider !== 'sandboxwrite_ads');
