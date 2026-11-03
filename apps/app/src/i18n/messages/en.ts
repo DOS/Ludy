@@ -7669,7 +7669,9 @@ export const en = {
       flag_settings_set: 'Set the thresholds of the spend flags',
       flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
       launch: {
+        begin: 'Decide the next platform call of an approved ad launch',
         cancel: 'Cancel a launch that has not started and release its amount',
+        record: 'Record the result of one platform call of an ad launch',
       },
       launches: {
         prepare_unblock: 'Ask to open ad launches again',

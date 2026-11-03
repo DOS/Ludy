@@ -82,6 +82,9 @@ export const QUEUES = {
   // Created by the token revoke migration (20261122050000): a sweep on a schedule with no data at all, that removes at the platform the permissions of a
   // closed ads connection's token from its sealed copy, the copy being opened by a worker-only definer (#2296, W2-1).
   adsRevoke: 'ads-revoke',
+  // Created by the launch writer migration (20261122110000): one approved launch, ids only (the org and the launch), run by the relay's event ads.launch.queued and
+  // by the sweep's re-queue; it creates the plan's objects at the platform, every one paused (#2296, W2-3).
+  adsLaunch: 'ads-launch',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -172,6 +175,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   [QUEUES.adsCampaignDraft]: ['provider:ai'],
   // The one revoking call of the ad platform's writer (DELETE /me/permissions), through the narrowed `channels.adRevokers`: nothing else is reachable.
   [QUEUES.adsRevoke]: ['provider:ad_platform'],
+  // The calls of a launch of the ad platform's writer (create a campaign, an ad set, a creative and an ad, every one paused; find them by their tag; resolve the
+  // names of regions and interests), through the narrowed `channels.adWriters`: nothing that changes a status, revokes or deletes is reachable.
+  [QUEUES.adsLaunch]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

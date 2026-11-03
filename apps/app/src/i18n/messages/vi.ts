@@ -7666,7 +7666,9 @@ export const vi = {
       flag_settings_set: 'Đặt các ngưỡng của cảnh báo chi tiêu',
       flags: 'Xem các cảnh báo tốc độ chi tiêu và chi phí cho mỗi kết quả của tài khoản quảng cáo',
       launch: {
+        begin: 'Quyết định lần gọi tiếp theo của một lần chạy quảng cáo đã duyệt',
         cancel: 'Hủy một lần chạy chưa bắt đầu và trả lại số tiền của nó',
+        record: 'Ghi kết quả một lần gọi nền tảng của lần chạy quảng cáo',
       },
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',

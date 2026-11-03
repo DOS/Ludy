@@ -413,6 +413,45 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // What a launch created at the platform (W2-3, #2296): one row per object of a launch (campaign, ad set, creative, ad) with the platform's id and the name
+  // that carries the launch's tag, written by the launch job's record step alone. The entity is the account's (b_legal_entity, the composite foreign key);
+  // tenant roles update the status columns only (a column grant), so the update probes assign the configured status to itself.
+  'crove_ads.ad_object': {
+    update: { set: 'configured_status = configured_status' },
+    noInsertControl: "only the system inserts an object, in the launch job's record step, for a launch that is running; every other context of the org is refused by its guard (the W2-3 tests cover it)",
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix object', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, slot: 'campaign', level: 'campaign', external_id: `rls-${randomUUID()}`, name: 'RLS matrix object ludy:0000000000' },
+      };
+    },
+  },
   // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
   // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
   // switch to itself.

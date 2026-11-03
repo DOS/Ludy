@@ -879,6 +879,18 @@ export type AdsAdLaunchTable = Refine<
   }
 >;
 
+// What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
+// database's guard holds who writes it.
+export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
+export const AD_OBJECT_STATUSES = ['paused', 'archived'] as const;
+export type AdsAdObjectTable = Refine<
+  G.AdsAdObjectTable,
+  {
+    level: (typeof AD_OBJECT_LEVELS)[number];
+    configured_status: Generated<(typeof AD_OBJECT_STATUSES)[number]>;
+  }
+>;
+
 // The revoke at the platform of a closed ads connection's token (#2296, W2-1): which token it was, where the obligation stands, how it ended or why it gave
 // up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
 export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
@@ -902,6 +914,7 @@ type Refined = Tables<{
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;

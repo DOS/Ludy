@@ -319,6 +319,10 @@ const schema = z.object({
   // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
   ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
+  // Whether the worker may create the objects of an approved campaign at Meta (#2296, W2-3: a campaign, an ad set, a creative and an ad, every one PAUSED; nothing
+  // un-pauses). Off by default: with it off a launch on a Meta account stays queued, untouched. It is for the owner's own live check on a stack the owner runs;
+  // a public deployment refuses it until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are on main.
+  ADS_LIVE_LAUNCH: z.enum(['true', 'false']).default('false'),
   // Bluesky (S9): accounts connect with an app password, no app of the deployment's own is needed. On unless false.
   CHANNEL_BLUESKY: z.enum(['true', 'false']).default('true'),
   // Telegram channels (#747): a bot the shop makes with @BotFather posts to its channel; no app of the deployment's own is
@@ -780,6 +784,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // compose falls back to ADS_SANDBOX=true, so a public deployment that runs the ads module must set it to false.
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
+    }
+    // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
+    // the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. Turning it on in production is a step the owner approves.
+    if (config.ADS_LIVE_LAUNCH === 'true') {
+      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only and a public deployment refuses it until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false');
     }
     // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
     // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A

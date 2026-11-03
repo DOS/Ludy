@@ -53,6 +53,7 @@ import { withJobLogContext } from './log.ts';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
@@ -62,7 +63,7 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
-import type { AdPlatform, AdRevoker } from '@crove/ad-platform';
+import type { AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -340,6 +341,8 @@ const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 const ADS_SYNC_CRON = '10 * * * *';
 // The revoke at the platform of a closed ads connection's token (#2296, W2-1): every minute, since the first retry waits a minute (ads-revoke.ts).
 const ADS_REVOKE_CRON = '* * * * *';
+// The sweep that queues a waiting launch again (#2296, W2-3): the relay does it at once when a launch is approved, this is the safety net.
+const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -401,6 +404,10 @@ export interface WorkerDeps {
     // The one call of an ad platform's writer that removes the app's permissions at the platform (#2296, W2-1), by the provider id of the connection whose
     // token is held: the narrowed view, never the writer. The revoke sweep alone uses it, with the sealed copy it opens.
     adRevokers?: Readonly<Record<string, AdRevoker>>;
+    // The calls of a launch of an ad platform's writer (#2296, W2-3), by the provider id of the write connection: a frozen view with the creates (every object
+    // paused), the find by tag and the resolution of targeting names, never the writer. The launch job alone uses it, with the credential it opens. A provider
+    // without one has its launches left queued, untouched (Meta's is built only where ADS_LIVE_LAUNCH is on).
+    adWriters?: Readonly<Record<string, LaunchWriter>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -1156,6 +1163,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsRevoke);
+  }
+
+  // The launch of an approved campaign at the ad platform (#2296, W2-3): ids only in the job (the org and the launch), queued by the relay below when the approval
+  // wrote ads.launch.queued, and again by a sweep every ten minutes for a launch whose event or job was lost (crove_ads.launch_requeue writes the same event for
+  // the providers this worker has a writer for; the job's begin decides what is due). The writers are the deployment's: the sandbox's offline one, and Meta's
+  // only where ADS_LIVE_LAUNCH is on; a provider without one has its launches left queued, untouched. Every object the job creates is paused.
+  const adWriters = deps.channels?.adWriters;
+  if (ads && adWriters && adsBroker && Object.keys(adWriters).length > 0) {
+    await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-launch] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsLaunch({ runtime: deps.runtime, broker: adsBroker, writers: adWriters }, job.data);
+      console.log(`[ads-launch] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsLaunch, ADS_LAUNCH_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsLaunch);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -2044,6 +2072,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.adsSync, { orgId: row.org_id, connectionId } satisfies AdsSyncJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.adsSync, connectionId),
                   retryLimit: ADS_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An approved launch (#2296, W2-3): the job creates the plan's objects at the platform, every one paused, and records their ids; ids only in the job. A
+              // deployment with no writer leaves the launch queued, untouched.
+              if (ads && deps.channels?.adWriters && Object.keys(deps.channels.adWriters).length > 0 && row.type === 'ads.launch.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsLaunch, { orgId: row.org_id, launchId } satisfies AdsLaunchJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsLaunch, launchId),
+                  retryLimit: 2,
                   retryDelay: 30,
                   retryBackoff: true,
                 });
