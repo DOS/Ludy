@@ -51,6 +51,21 @@ describe('amount', () => {
     expect(amountCheck('0', usual)).toBeNull();
   });
 
+  it('words the same rule for a payment, naming the party and its payments, with a subject param', () => {
+    const earlier = ['1000000', '1000000', '1000000', '1000000', '1000000'];
+    const high = amountCheck('4000000', earlier, 'payment');
+    expect(high).toMatchObject({ id: 'anomaly_amount', code: 'anomaly_amount.unusual', status: 'warn', params: { subject: 'payment', direction: 'high', usual: '1000000', count: '5' } });
+    expect(high?.message).toContain('số tiền chi 4000000 đ cao gấp 4.0 lần mức thường chi cho đối tượng này');
+    expect(amountCheck('300000', earlier, 'payment')?.message).toContain('chỉ bằng 30% mức thường chi');
+    // The invoice wording and params are unchanged: no subject param.
+    expect(amountCheck('4000000', earlier)?.params).not.toHaveProperty('subject');
+    expect(amountCheck('2900000', earlier, 'payment')).toBeNull();
+    // Exactly three times and exactly a third are flagged for a payment as for an invoice; a hair inside is not.
+    expect(amountCheck('3000000', earlier, 'payment')?.params).toMatchObject({ direction: 'high' });
+    expect(amountCheck('333333.33', ['1000000', '1000000', '1000000', '1000000', '1000000'], 'payment')?.params).toMatchObject({ direction: 'low' });
+    expect(amountCheck('333334', earlier, 'payment')).toBeNull();
+  });
+
   it('ignores earlier totals that are not amounts', () => {
     expect(amountCheck('9000000', ['x', 'y', '', '0', '-5'])).toBeNull();
   });

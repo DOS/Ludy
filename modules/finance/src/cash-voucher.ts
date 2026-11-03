@@ -51,6 +51,7 @@ import {
   voucherTotal,
   type VoucherProblem,
 } from './domain/cash-voucher.ts';
+import { HISTORY_WINDOW, amountCheck } from './domain/anomaly.ts';
 import { postNewEntry } from './ledger.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { latestRevision } from './source-entry.ts';
@@ -105,6 +106,30 @@ async function verifiedMatch(ctx: CommandContext, line: StoredBankLine, partyId:
   return { kind: 'suggested', reason: suggested.reason, ...(invoice ? { invoice } : {}) };
 }
 
+// The amounts of the party's last payment vouchers in force (cash payments and bank debits, not reversed) in one legal
+// entity, newest first: what its next payment is compared with (#2419). Only the voucher's own entity, whoever asks: a
+// caller who reads several entities must not put another entity's payments into a flag the first entity's members read.
+async function paymentHistory(ctx: QueryContext, partyId: string, legalEntityId: string): Promise<string[]> {
+  const { rows } = await sql<{ amount: string }>`
+    SELECT v.amount::text AS amount
+    FROM crove_finance.cash_voucher v
+    JOIN crove_finance.journal_entry j ON j.org_id = v.org_id AND j.source_id = v.id AND j.source_type = ${VOUCHER_SOURCE} AND j.reverses_entry_id IS NULL AND ${latestRevision('j')}
+    WHERE v.org_id = ${ctx.orgId} AND v.legal_entity_id = ${legalEntityId} AND v.party_id = ${partyId} AND v.voucher_type IN ('cash_payment', 'bank_debit')
+      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_entry r WHERE r.org_id = j.org_id AND r.reverses_entry_id = j.id)
+    ORDER BY v.voucher_date DESC, v.id DESC
+    LIMIT ${HISTORY_WINDOW}`.execute(ctx.trx);
+  return rows.map((r) => r.amount);
+}
+
+// The warnings of a voucher when it is asked for (#2419): a payment far from what the party is usually paid. A receipt, a
+// voucher with no party and a party with fewer earlier payments than the rule needs raise none. Judged once, when the
+// voucher is asked for: payments posted after that, and payments with no party, are not part of it.
+async function voucherChecks(ctx: QueryContext, type: VoucherType, partyId: string | null, total: string, legalEntityId: string) {
+  if (partyId === null || (type !== 'cash_payment' && type !== 'bank_debit')) return [];
+  const flag = amountCheck(total, await paymentHistory(ctx, partyId, legalEntityId), 'payment');
+  return flag ? [flag] : [];
+}
+
 export const prepareVoucher = defineCommand({
   name: 'finance.voucher.prepare',
   input: zCashVoucherRequest,
@@ -133,6 +158,7 @@ export const prepareVoucher = defineCommand({
       legalEntityId = await resolveLegalEntity(ctx, input.legalEntityId);
     }
     const party = partyId ? await findParty(ctx, partyId, false) : null;
+    const checks = await voucherChecks(ctx, input.type, partyId, voucherTotal(input.lines), legalEntityId);
     const built: CashVoucherProposal = {
       type: input.type,
       date: input.date,
@@ -142,6 +168,7 @@ export const prepareVoucher = defineCommand({
       description: input.description.trim(),
       lines: input.lines.map((l) => ({ account: l.account, amount: l.amount, ...(l.memo?.trim() ? { memo: l.memo.trim() } : {}) })),
       total: voucherTotal(input.lines),
+      ...(checks.length > 0 ? { checks } : {}),
       ...(input.bankLineId ? { bankLineId: input.bankLineId } : {}),
       ...(matchedBy ? { matchedBy } : {}),
       legalEntityId,

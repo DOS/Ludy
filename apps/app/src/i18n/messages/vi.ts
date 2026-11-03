@@ -2577,6 +2577,7 @@ export const vi = {
       approving: 'Đang duyệt lô {done, number} trên {total, number}',
       doneApproved: 'Đã lập {asked, number} đề xuất; đã duyệt và ghi sổ {approved, number}.',
       doneAsked: 'Đã lập {asked, number} đề xuất; mỗi chứng từ chờ người có quyền duyệt trong Hộp thư.',
+      aloneOnly: 'Chứng từ này có cảnh báo (số tiền chi bất thường) nên phải duyệt riêng: hãy mở và duyệt nó từng cái một. Nó vẫn đang chờ trong Hộp thư.',
       secondApprover: 'Chính sách duyệt của tổ chức cần một người khác duyệt (hoặc bạn không có quyền duyệt). Các chứng từ bị từ chối chưa được ghi sổ và đang chờ trong Hộp thư.',
       refused: '{count, number} chứng từ chưa được ghi sổ:',
       proposal: 'Đề xuất',
@@ -6598,6 +6599,8 @@ export const vi = {
     anomaly_amount: {
       high: 'Cảnh báo: số tiền {total} cao gấp {ratio} lần mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo từ 3 lần).',
       low: 'Cảnh báo: số tiền {total} chỉ bằng {percent}% mức thường của nhà cung cấp này ({usual}, trung vị của {count} hóa đơn gần nhất; cảnh báo khi dưới một phần ba).',
+      highPayment: 'Cảnh báo: số tiền chi {total} cao gấp {ratio} lần mức thường chi cho đối tượng này ({usual}, trung vị của {count} lần chi gần nhất; cảnh báo từ 3 lần).',
+      lowPayment: 'Cảnh báo: số tiền chi {total} chỉ bằng {percent}% mức thường chi cho đối tượng này ({usual}, trung vị của {count} lần chi gần nhất; cảnh báo khi dưới một phần ba).',
     },
     anomaly_price: { jump: 'Cảnh báo: đơn giá "{item}" tăng {percent}% so với mức thường ({usual}, trung vị tối đa 3 hóa đơn trước), lên {current}; cảnh báo từ 25%.' },
     accounts: {

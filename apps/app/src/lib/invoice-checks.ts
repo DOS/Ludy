@@ -9,6 +9,13 @@ export function isInvoiceCheckCode(code: string | undefined): code is InvoiceChe
   return code !== undefined && (INVOICE_CHECK_CODES as readonly string[]).includes(code);
 }
 
+// The unusual-amount sentence of an invoice (#2380), or of a payment voucher (#2419), which says payments.
+function amountSentence(t: Translate, p: Record<string, string>, money: (amount: string) => string): string {
+  const values = { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '', ratio: p.ratio ?? '', percent: p.percent ?? '' };
+  if (p.subject === 'payment') return t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.lowPayment' : 'invoiceChecks.anomaly_amount.highPayment', values);
+  return t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', values);
+}
+
 // format.money formats an amount parameter (a decimal string) for the reader's locale, and format.date a date parameter
 // (ISO) as dd/mm/yyyy (DESIGN.md §5.5, #1332).
 export function invoiceCheckMessage(check: Check, t: Translate, format: { money: (amount: string) => string; date: (date: string) => string }): string {
@@ -49,9 +56,8 @@ export function invoiceCheckMessage(check: Check, t: Translate, format: { money:
     case 'anomaly_bank.changed':
       return has('previous', 'current') ? t('invoiceChecks.anomaly_bank.changed', { previous: p.previous ?? '', current: p.current ?? '' }) : check.message;
     case 'anomaly_amount.unusual':
-      return has('total', 'usual', 'count')
-        ? t(p.direction === 'low' ? 'invoiceChecks.anomaly_amount.low' : 'invoiceChecks.anomaly_amount.high', { total: money(p.total ?? ''), usual: money(p.usual ?? ''), count: p.count ?? '', ratio: p.ratio ?? '', percent: p.percent ?? '' })
-        : check.message;
+      if (!has('total', 'usual', 'count')) return check.message;
+      return amountSentence(t, p, money);
     case 'anomaly_price.jump':
       return has('item', 'usual', 'current', 'percent')
         ? t('invoiceChecks.anomaly_price.jump', { item: p.item ?? '', usual: money(p.usual ?? ''), current: money(p.current ?? ''), percent: p.percent ?? '' })
