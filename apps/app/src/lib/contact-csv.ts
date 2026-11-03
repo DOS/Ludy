@@ -5,7 +5,7 @@
 import { IMPORT_MAX_ROWS, type ImportRowInput } from '@crove/kernel-contract';
 import type { SheetRows } from './xlsx.ts';
 
-export const IMPORT_FIELDS = ['name', 'kind', 'taxCode', 'email', 'phone', 'address'] as const;
+export const IMPORT_FIELDS = ['name', 'kind', 'taxCode', 'email', 'phone', 'address', 'company'] as const;
 export type ImportField = (typeof IMPORT_FIELDS)[number];
 // Most bytes of a file the screen reads (the server takes 2,000 rows).
 export const IMPORT_MAX_BYTES = 5 * 1024 * 1024;
@@ -126,21 +126,35 @@ export function foldHeader(text: string): string {
     .trim();
 }
 
+// A header that names a person or a customer; a file with one of these puts the company of each row in the Company column (#2438).
+const PERSON_NAME_HEADERS: readonly string[] = ['ten', 'ho ten', 'ho va ten', 'name', 'full name', 'ten khach hang', 'khach hang', 'customer', 'contact'];
+// A header that names a company: the Name of a file with nothing else naming a row (a list of companies), the Company of a file that also names its people.
+const COMPANY_HEADERS: readonly string[] = ['ten cong ty', 'cong ty', 'company', 'company name', 'don vi', 'ten don vi', 'to chuc', 'organization', 'organisation', 'employer', 'noi lam viec', 'cong ty lam viec'];
+
 const ALIASES: Record<ImportField, readonly string[]> = {
-  name: ['ten', 'ho ten', 'ho va ten', 'name', 'full name', 'ten khach hang', 'khach hang', 'ten cong ty', 'cong ty', 'company', 'company name', 'customer', 'contact'],
+  name: [...PERSON_NAME_HEADERS, ...COMPANY_HEADERS],
   kind: ['loai', 'loai khach hang', 'phan loai', 'kind', 'type', 'loai cong ty hay ca nhan', 'kind company or person'],
   taxCode: ['mst', 'ma so thue', 'ma so thue mst', 'tax code', 'tax id', 'tax', 'vat', 'vat id'],
   email: ['email', 'e mail', 'mail', 'thu dien tu', 'dia chi email'],
   phone: ['dien thoai', 'so dien thoai', 'sdt', 'phone', 'mobile', 'tel', 'di dong', 'phone number'],
   address: ['dia chi', 'address', 'dia chi cong ty'],
+  company: COMPANY_HEADERS,
 };
 
 // The field each header names, by index, or null: a field is taken by the first header that names it.
 export function guessMapping(header: readonly string[]): (ImportField | null)[] {
+  const folded = header.map(foldHeader);
+  // A file that has a column naming a person: that one is the Name wherever it stands, and a column naming a company is the Company of each row.
+  // A file with no such column is a list of companies: its company column is the Name, as before.
+  const peopleFile = folded.some((h) => PERSON_NAME_HEADERS.includes(h));
   const taken = new Set<ImportField>();
-  return header.map((h) => {
-    const folded = foldHeader(h);
-    const field = IMPORT_FIELDS.find((f) => !taken.has(f) && ALIASES[f].includes(folded));
+  return folded.map((h) => {
+    const field = IMPORT_FIELDS.find((f) => {
+      if (taken.has(f) || !ALIASES[f].includes(h)) return false;
+      if (f === 'name') return peopleFile ? PERSON_NAME_HEADERS.includes(h) : true;
+      if (f === 'company') return peopleFile;
+      return true;
+    });
     if (field) taken.add(field);
     return field ?? null;
   });
@@ -160,7 +174,7 @@ export function mappedRows(rows: readonly string[][], mapping: readonly (ImportF
       const lost = field === 'phone' ? /^(?:\d{9}|[2-8]\d{9})$/.test(text) : field === 'taxCode' ? /^\d{9}$/.test(text) : false;
       return lost ? `0${text}` : text;
     };
-    return { kind: pick('kind') || null, name: pick('name'), taxCode: pick('taxCode') || null, email: pick('email') || null, phone: pick('phone') || null, address: pick('address') || null };
+    return { kind: pick('kind') || null, name: pick('name'), taxCode: pick('taxCode') || null, email: pick('email') || null, phone: pick('phone') || null, address: pick('address') || null, company: pick('company') || null };
   });
 }
 

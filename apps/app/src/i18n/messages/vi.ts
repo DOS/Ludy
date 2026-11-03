@@ -840,7 +840,15 @@ export const vi = {
       nameRequired: 'Hãy chọn một cột là Tên.',
       next: 'Xem trước',
     },
-    field: { name: 'Tên', kind: 'Loại (công ty hay cá nhân)', taxCode: 'Mã số thuế', email: 'Email', phone: 'Điện thoại', address: 'Địa chỉ' },
+    field: { name: 'Tên', kind: 'Loại (công ty hay cá nhân)', taxCode: 'Mã số thuế', email: 'Email', phone: 'Điện thoại', address: 'Địa chỉ', company: 'Công ty' },
+    // What the Công ty cell of a person's row came to (#2438).
+    company: {
+      matched: 'Gắn với {name}',
+      new: 'Công ty chưa có trong danh sách',
+      unknown_tax_code: 'Chưa có công ty nào có mã số thuế này; không gắn',
+      ambiguous: 'Có hai công ty trùng tên; không gắn',
+      none: 'Không đọc được tên công ty; không gắn',
+    },
     preview: {
       hint: 'Chưa có gì được ghi vào danh sách liên hệ. Xem kỹ rồi bấm Nhập.',
       counts: 'Số dòng theo kết quả',
@@ -855,6 +863,7 @@ export const vi = {
       more: 'Xem thêm dòng',
       duplicates: 'Dòng trùng với liên hệ đã có thì:',
       import: 'Nhập {count} liên hệ mới',
+      createCompanies: 'Tạo {count} công ty mới có trong tệp và gắn người liên hệ vào đó. Không chọn thì những người này vẫn được nhập, chỉ chưa gắn công ty.',
     },
     outcome: { all: 'Tất cả', new: 'Mới', duplicate: 'Trùng', conflict: 'Xung đột', invalid: 'Lỗi' },
     choice: { skip: 'Bỏ qua, giữ nguyên liên hệ đã có', fill_empty: 'Chỉ điền vào chỗ còn trống của liên hệ đã có, không ghi đè' },
@@ -872,6 +881,7 @@ export const vi = {
     },
     done: {
       result: 'Đã nhập {created} liên hệ mới, bổ sung {updated}, bỏ qua {skipped} dòng.',
+      companies: 'Đã gắn công ty cho {linked} người, tạo {made} công ty mới.',
       download: 'Tải {count} dòng chưa nhập',
       reasonColumn: 'Lý do chưa nhập',
       expired: 'Lần nhập này đã quá 7 ngày nên đã bị xóa, chưa có liên hệ nào được thêm. Hãy chọn tệp lại.',

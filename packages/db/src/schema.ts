@@ -733,11 +733,16 @@ export type CrmDealNextStepTable = Refine<
 export const IMPORT_BATCH_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
 export const IMPORT_ON_DUPLICATE_CHOICES = ['skip', 'fill_empty'] as const;
 export const IMPORT_ROW_OUTCOMES = ['new', 'duplicate', 'conflict', 'invalid'] as const;
+// What the company cell of a staged person's row came to (#2438).
+export const IMPORT_ROW_COMPANY_STATES = ['none', 'matched', 'new', 'unknown_tax_code', 'ambiguous'] as const;
 export type CrmImportBatchTable = Refine<
   G.CrmImportBatchTable,
   { status: Generated<(typeof IMPORT_BATCH_STATUSES)[number]>; on_duplicate: Generated<(typeof IMPORT_ON_DUPLICATE_CHOICES)[number]> }
 >;
-export type CrmImportRowTable = Refine<G.CrmImportRowTable, { kind: Generated<(typeof PARTY_KINDS)[number]>; outcome: (typeof IMPORT_ROW_OUTCOMES)[number] }>;
+export type CrmImportRowTable = Refine<
+  G.CrmImportRowTable,
+  { kind: Generated<(typeof PARTY_KINDS)[number]>; outcome: (typeof IMPORT_ROW_OUTCOMES)[number]; company_state: Generated<(typeof IMPORT_ROW_COMPANY_STATES)[number]> }
+>;
 // The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
 export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;

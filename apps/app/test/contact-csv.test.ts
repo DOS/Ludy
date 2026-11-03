@@ -42,14 +42,32 @@ describe('guessMapping', () => {
   it('gives a field to the first header that names it only', () => {
     expect(guessMapping(['Tên', 'Tên khách hàng', 'SĐT'])).toEqual(['name', null, 'phone']);
   });
+
+  it('reads a company column as the Company of a file that names its people, and as the Name of a file that is a list of companies (#2438)', () => {
+    expect(guessMapping(['Họ tên', 'Công ty', 'Email'])).toEqual(['name', 'company', 'email']);
+    // The people column wins wherever it stands.
+    expect(guessMapping(['Công ty', 'Họ và tên', 'SĐT'])).toEqual(['company', 'name', 'phone']);
+    expect(guessMapping(['Name', 'Company', 'Tax code'])).toEqual(['name', 'company', 'taxCode']);
+    expect(guessMapping(['Tên', 'Tên công ty'])).toEqual(['name', 'company']);
+    // A list of companies has no column for people: its company column is the Name, as it always was.
+    expect(guessMapping(['Tên công ty', 'MST', 'Email'])).toEqual(['name', 'taxCode', 'email']);
+    expect(guessMapping(['Công ty', 'Email'])).toEqual(['name', 'email']);
+  });
 });
 
 describe('mappedRows', () => {
   it('takes the mapped cells, trimmed, and leaves the rest empty', () => {
     const rows = [[' An ', 'an@khach.test', '0912 345 678', 'bỏ'], ['Bình', '', '', '']];
     expect(mappedRows(rows, ['name', 'email', 'phone', null])).toEqual([
-      { kind: null, name: 'An', taxCode: null, email: 'an@khach.test', phone: '0912 345 678', address: null },
-      { kind: null, name: 'Bình', taxCode: null, email: null, phone: null, address: null },
+      { kind: null, name: 'An', taxCode: null, email: 'an@khach.test', phone: '0912 345 678', address: null, company: null },
+      { kind: null, name: 'Bình', taxCode: null, email: null, phone: null, address: null, company: null },
+    ]);
+  });
+
+  it('carries the company cell, trimmed, and leaves an empty one null (#2438)', () => {
+    expect(mappedRows([['An', ' Công ty ABC '], ['Bình', '']], ['name', 'company'])).toEqual([
+      { kind: null, name: 'An', taxCode: null, email: null, phone: null, address: null, company: 'Công ty ABC' },
+      { kind: null, name: 'Bình', taxCode: null, email: null, phone: null, address: null, company: null },
     ]);
   });
 });

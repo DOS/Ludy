@@ -842,7 +842,15 @@ export const en = {
       nameRequired: 'Choose a column for the Name.',
       next: 'Preview',
     },
-    field: { name: 'Name', kind: 'Kind (company or person)', taxCode: 'Tax code', email: 'Email', phone: 'Phone', address: 'Address' },
+    field: { name: 'Name', kind: 'Kind (company or person)', taxCode: 'Tax code', email: 'Email', phone: 'Phone', address: 'Address', company: 'Company' },
+    // What the Company cell of a person's row came to (#2438).
+    company: {
+      matched: 'Linked to {name}',
+      new: 'A company not in the list yet',
+      unknown_tax_code: 'No company has this tax code; not linked',
+      ambiguous: 'Two companies share this name; not linked',
+      none: 'No usable company name; not linked',
+    },
     preview: {
       hint: 'Nothing has been written to the contacts yet. Look it over, then press Import.',
       counts: 'Rows by result',
@@ -857,6 +865,7 @@ export const en = {
       more: 'Show more rows',
       duplicates: 'A row that matches a contact already there:',
       import: 'Import {count} new contacts',
+      createCompanies: 'Create the {count} new companies the file names and link the people to them. Left unticked, these people are still imported, with no company yet.',
     },
     outcome: { all: 'All', new: 'New', duplicate: 'Duplicate', conflict: 'Conflict', invalid: 'Invalid' },
     choice: { skip: 'Skip it and leave the contact as it is', fill_empty: 'Fill in only what the contact is missing, never overwrite' },
@@ -874,6 +883,7 @@ export const en = {
     },
     done: {
       result: 'Imported {created} new contacts, filled in {updated}, skipped {skipped} rows.',
+      companies: 'Linked {linked} people to a company, made {made} new companies.',
       download: 'Download the {count} rows not imported',
       reasonColumn: 'Why not imported',
       expired: 'This import was more than 7 days old and was deleted; no contact was added. Choose the file again.',
