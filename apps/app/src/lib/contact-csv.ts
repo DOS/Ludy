@@ -171,7 +171,7 @@ export function mappedRows(rows: readonly string[][], mapping: readonly (ImportF
       // (028 3812 3456 is stored as 2838123456). A 12-digit number is left alone: it can be an individual's tax code, which is
       // the citizen ID, with no zero to lose. Nothing else is touched.
       if (at < 0 || numeric?.[r]?.[at] !== true) return text;
-      const lost = field === 'phone' ? /^(?:\d{9}|[2-8]\d{9})$/.test(text) : field === 'taxCode' ? /^\d{9}$/.test(text) : false;
+      const lost = field === 'phone' ? /^(?:\d{9}|[2-8]\d{9})$/.test(text) : field === 'taxCode' || field === 'company' ? /^\d{9}$/.test(text) : false;
       return lost ? `0${text}` : text;
     };
     return { kind: pick('kind') || null, name: pick('name'), taxCode: pick('taxCode') || null, email: pick('email') || null, phone: pick('phone') || null, address: pick('address') || null, company: pick('company') || null };

@@ -64,6 +64,12 @@ describe('mappedRows', () => {
     ]);
   });
 
+  it('puts back the zero a spreadsheet took from a company tax code of nine digits, and from nothing else in that column (#2438)', () => {
+    const rows = [['An', '301234567'], ['Bình', '301234567'], ['Chi', 'Công ty 123456789']];
+    const numeric = [[false, true], [false, false], [false, false]];
+    expect(mappedRows(rows, ['name', 'company'], numeric).map((r) => r.company)).toEqual(['0301234567', '301234567', 'Công ty 123456789']);
+  });
+
   it('carries the company cell, trimmed, and leaves an empty one null (#2438)', () => {
     expect(mappedRows([['An', ' Công ty ABC '], ['Bình', '']], ['name', 'company'])).toEqual([
       { kind: null, name: 'An', taxCode: null, email: null, phone: null, address: null, company: 'Công ty ABC' },

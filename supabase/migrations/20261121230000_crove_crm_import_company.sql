@@ -4,7 +4,8 @@
 -- (kernel.party.company_id, 20261121180000). Idempotent; applied files stay untouched. No table is added.
 --
 -- crove_crm.import_row    company_name   the cell as the file had it (personal data like the rest of the row: a person's workplace), cut to the column;
---                         company_state  none (no cell, or nothing usable in it), matched (an existing company), new (a name the org does not have),
+--                         company_state  none (no cell, a row of a company, or nothing usable in it), matched (an existing company, the one kept when it
+--                                        was merged), new (a name the org does not have), in_file (a company that is a new row of the same file),
 --                                        unknown_tax_code (a tax code no company has) or ambiguous (two companies of that name);
 --                         company_party_id  the company a matched row names (the party kept, never one merged into another); set to NULL if that
 --                                        company is deleted (the org purge), as match_party_id is.
@@ -14,7 +15,7 @@ SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_crm.import_row
   ADD COLUMN IF NOT EXISTS company_name text CHECK (company_name IS NULL OR pg_catalog.length(company_name) <= 1000),
-  ADD COLUMN IF NOT EXISTS company_state text NOT NULL DEFAULT 'none' CHECK (company_state IN ('none', 'matched', 'new', 'unknown_tax_code', 'ambiguous')),
+  ADD COLUMN IF NOT EXISTS company_state text NOT NULL DEFAULT 'none' CHECK (company_state IN ('none', 'matched', 'new', 'in_file', 'unknown_tax_code', 'ambiguous')),
   ADD COLUMN IF NOT EXISTS company_party_id uuid;
 
 DO $$

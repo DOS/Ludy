@@ -59,8 +59,16 @@ export function ContactImportPage() {
   const [createCompanies, setCreateCompanies] = useState(false);
   const [done, setDone] = useState<ImportCommitted | null>(null);
   const reasonText = (reason: ImportReason | null) => (reason ? t(`reason.${reason}`) : '');
-  const companyText = (company: NonNullable<ImportPreview['rows'][number]['company']>) =>
-    company.state === 'matched' && company.match ? t('company.matched', { name: company.match.name }) : t(`company.${company.state as Exclude<ImportCompanyState, 'matched'>}`);
+  // What the preview promises about a row's company: only a new row is imported by default, a duplicate takes a company only when the person chooses to
+  // fill in what it lacks, and a conflict or an invalid row takes none.
+  const companyText = (r: ImportPreview['rows'][number]): string | null => {
+    const company = r.company;
+    if (!company || r.outcome === 'invalid' || r.outcome === 'conflict') return null;
+    if (r.outcome === 'duplicate') return company.state === 'matched' && company.match ? t('company.duplicateMatched', { name: company.match.name }) : null;
+    if (r.kind === 'organization') return t('company.ofCompany');
+    if (company.state === 'matched') return company.match ? t('company.matched', { name: company.match.name }) : t('company.gone');
+    return t(`company.${company.state as Exclude<ImportCompanyState, 'matched'>}`);
+  };
 
   const stage = useMutation(
     orpc.crm.contactImport.stage.mutationOptions({
@@ -164,6 +172,8 @@ export function ContactImportPage() {
   const rows = outcome === 'all' ? [...(staged?.rows ?? []), ...more] : [...(page.data?.rows ?? []), ...more];
   const hasMore = moreHas ?? (outcome === 'all' ? staged?.more : page.data?.more) ?? false;
   const counts = staged?.batch;
+  // The first few companies the file would make, from the rows on the screen, so the person ticks the box knowing which.
+  const newCompanyNames = [...new Set(rows.flatMap((r) => (r.outcome === 'new' && r.kind === 'person' && r.company?.state === 'new' ? [r.company.name] : [])))].slice(0, 5);
 
   return (
     <>
@@ -258,12 +268,15 @@ export function ContactImportPage() {
             {rows.map((r) => (
               <TableRow key={r.rowNo} data-testid="import-row">
                 <TableCell className="px-4 text-sm tabular-nums">{r.rowNo}</TableCell>
-                <TableCell className="px-4 text-sm">{r.name}</TableCell>
+                <TableCell className="px-4 text-sm">
+                  {r.name}
+                  <p className="text-xs text-muted-foreground">{t(`preview.kindOf.${r.kind}`)}</p>
+                </TableCell>
                 <TableCell className="px-4 text-sm" data-testid="import-company">
                   {r.company && (
                     <>
                       {r.company.name}
-                      <p className="text-xs text-muted-foreground">{companyText(r.company)}</p>
+                      {companyText(r) && <p className="text-xs text-muted-foreground">{companyText(r)}</p>}
                     </>
                   )}
                 </TableCell>
@@ -297,7 +310,15 @@ export function ContactImportPage() {
           {counts.newCompanies > 0 && (
             <label className="flex items-start gap-2 text-sm">
               <input type="checkbox" className="mt-1" checked={createCompanies} onChange={(e) => setCreateCompanies(e.target.checked)} />
-              <span>{t('preview.createCompanies', { count: String(counts.newCompanies) })}</span>
+              <span>
+                {t('preview.createCompanies', { count: String(counts.newCompanies) })}
+                {newCompanyNames.length > 0 && (
+                  <span className="block text-xs text-muted-foreground">
+                    {newCompanyNames.join(', ')}
+                    {counts.newCompanies > newCompanyNames.length ? ', …' : ''}
+                  </span>
+                )}
+              </span>
             </label>
           )}
           {(commit.error || cancel.error) && <ErrorText>{errorMessage(commit.error ?? cancel.error)}</ErrorText>}

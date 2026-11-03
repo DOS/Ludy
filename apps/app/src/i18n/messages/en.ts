@@ -847,9 +847,13 @@ export const en = {
     company: {
       matched: 'Linked to {name}',
       new: 'A company not in the list yet',
+      in_file: 'This company is another row of the file; linked on import',
       unknown_tax_code: 'No company has this tax code; not linked',
       ambiguous: 'Two companies share this name; not linked',
       none: 'No usable company name; not linked',
+      gone: 'This company is no longer in the list; not linked',
+      ofCompany: 'This row is a company, so it has no company; this column is ignored',
+      duplicateMatched: 'Linked to {name} if you choose to fill in what is missing',
     },
     preview: {
       hint: 'Nothing has been written to the contacts yet. Look it over, then press Import.',
@@ -862,6 +866,7 @@ export const en = {
       row: 'Row',
       result: 'Result',
       matches: 'Matches {name}',
+      kindOf: { organization: 'Company', person: 'Person' },
       more: 'Show more rows',
       duplicates: 'A row that matches a contact already there:',
       import: 'Import {count} new contacts',

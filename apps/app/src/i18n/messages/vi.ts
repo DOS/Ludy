@@ -845,9 +845,13 @@ export const vi = {
     company: {
       matched: 'Gắn với {name}',
       new: 'Công ty chưa có trong danh sách',
+      in_file: 'Công ty này là một dòng khác của tệp; gắn khi nhập',
       unknown_tax_code: 'Chưa có công ty nào có mã số thuế này; không gắn',
       ambiguous: 'Có hai công ty trùng tên; không gắn',
       none: 'Không đọc được tên công ty; không gắn',
+      gone: 'Công ty này không còn trong danh sách; không gắn',
+      ofCompany: 'Dòng này là một công ty nên không có công ty; bỏ qua cột này',
+      duplicateMatched: 'Gắn với {name} nếu bạn chọn điền vào chỗ còn trống',
     },
     preview: {
       hint: 'Chưa có gì được ghi vào danh sách liên hệ. Xem kỹ rồi bấm Nhập.',
@@ -860,6 +864,7 @@ export const vi = {
       row: 'Dòng',
       result: 'Kết quả',
       matches: 'Trùng với {name}',
+      kindOf: { organization: 'Công ty', person: 'Cá nhân' },
       more: 'Xem thêm dòng',
       duplicates: 'Dòng trùng với liên hệ đã có thì:',
       import: 'Nhập {count} liên hệ mới',

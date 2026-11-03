@@ -61,8 +61,10 @@ interface Candidate {
   email: string | null;
   phone: string | null;
   address: string | null;
-  // The company cell of a person's row, trimmed (null for a company's row or an empty cell).
+  // The company cell of a person's row as a name a party can store (null for a company's row, an empty cell or one that cannot be stored), and the cell as
+  // read for the preview (any row; cut to the column).
   company: string | null;
+  companyRaw: string | null;
 }
 
 interface Existing {
@@ -164,7 +166,7 @@ function classify(rows: readonly Candidate[], existing: readonly Existing[]): Ma
 }
 
 // What a company cell came to: its state, the company it names when it matched (the party kept), and a key that makes two cells naming
-// the same company one (the folded name, or the tax code).
+// the same company one ("tax:" and the tax code, or "name:" and the folded name).
 interface CompanyVerdict {
   state: ImportCompanyState;
   partyId: string | null;
@@ -180,50 +182,87 @@ const companyTaxCode = (cell: string): string | null => {
   return tax !== null && /^\d{10}(-\d{3})?$/.test(tax) ? tax : null;
 };
 
-// Resolves the cells against the org's companies in two queries: by tax code (a company merged into another answers as the one kept), and by
-// name folded as the search folds it, so "Công ty Á Châu" and "cong ty a chau" are one. A name that two companies share is ambiguous: no
-// link is guessed.
-async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells: readonly string[]): Promise<Map<string, CompanyVerdict>> {
+// What a spreadsheet cell holds when a person has no company: read as a name it would make a company called "N/A" or "Tự do".
+const NOT_A_COMPANY = new Set(['n a', 'na', 'none', 'null', 'khong', 'khong co', 'chua co', 'tu do', 'tu doanh', 'ca nhan', 'khac', 'freelance', 'freelancer', 'nghi viec', 'thoi viec']);
+
+// The cell as a company name a party can store (one line, within the length, no control character), or null: a cell that cannot be stored is
+// never looked up (a NUL would fail the whole query) and never made into a company.
+function usableCompany(cell: string | null): string | null {
+  if (cell === null) return null;
+  const checked = checkPartyFields({ name: cell });
+  return checked.ok ? checked.fields.name : null;
+}
+
+// The text folded as the search folds it (marks, case and punctuation away), for every distinct text: the one folding, in SQL, for the cells
+// and the names they are compared with.
+async function foldAll(ctx: Pick<QueryContext, 'trx'>, texts: readonly string[]): Promise<Map<string, string>> {
+  const unique = [...new Set(texts)];
+  if (unique.length === 0) return new Map();
+  const { rows } = await sql<{ text: string; key: string }>`SELECT c.text, crove_kernel.search_fold(c.text) AS key FROM pg_catalog.unnest(${unique}::text[]) AS c (text)`.execute(ctx.trx);
+  return new Map(rows.map((r) => [r.text, r.key]));
+}
+
+// A company the file itself makes (a new row of kind company), so that a person's cell naming it is linked to it and no second one is made.
+interface FileCompany {
+  name: string;
+  taxCode: string | null;
+}
+
+// Resolves the cells against the org's companies in two queries: by tax code, and by name folded as the search folds it, so "Công ty Á Châu"
+// and "cong ty a chau" are one. A company merged into another answers as the one kept (by tax code and by name alike), and a kept party that
+// is no company is none. A name that two companies share is ambiguous: no link is guessed. A cell with no match that names a company of the
+// file's own new rows is `in_file`.
+async function resolveCompanies(ctx: Pick<QueryContext, 'trx' | 'orgId'>, cells: readonly string[], fileCompanies: readonly FileCompany[]): Promise<Map<string, CompanyVerdict>> {
   const out = new Map<string, CompanyVerdict>();
-  const unique = [...new Set(cells)];
+  const unique = [...new Set(cells.flatMap((c) => usableCompany(c) ?? []))];
   const taxOf = new Map(unique.flatMap((c) => {
     const tax = companyTaxCode(c);
     return tax === null ? [] : [[c, tax] as const];
   }));
-  const names = unique.filter((c) => !taxOf.has(c));
+  // Digits, spaces, dots and hyphens only, nine digits or more: a tax code or an ID in the wrong shape, never a company's name.
+  const numberLike = (c: string) => /^[\d\s.-]+$/.test(c) && c.replace(/\D/g, '').length >= 9;
+  const names = unique.filter((c) => !taxOf.has(c) && !numberLike(c));
+  for (const c of unique) if (!taxOf.has(c) && numberLike(c)) out.set(c, { state: 'unknown_tax_code', partyId: null, partyName: null, key: null });
+  const fileTaxes = new Set(fileCompanies.flatMap((f) => (f.taxCode === null ? [] : [`tax:${f.taxCode}`])));
+  const fileNameKeys = await foldAll(ctx, fileCompanies.map((f) => f.name));
+  const fileNames = new Set([...fileNameKeys.values()].filter((k) => k !== '').map((k) => `name:${k}`));
   if (taxOf.size > 0) {
     const taxes = [...new Set(taxOf.values())];
     const { rows } = await sql<{ tax_code: string; id: string; name: string }>`
       SELECT p.tax_code, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
       FROM crove_kernel.party p
       LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
-      WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.tax_code = ANY(${taxes}::text[])`.execute(ctx.trx);
+      WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.tax_code = ANY(${taxes}::text[]) AND coalesce(k.kind, p.kind) = 'organization'`.execute(ctx.trx);
     const byTax = new Map(rows.map((r) => [r.tax_code, r]));
     for (const [cell, tax] of taxOf) {
       const hit = byTax.get(tax);
-      out.set(cell, hit ? { state: 'matched', partyId: hit.id, partyName: hit.name, key: tax } : { state: 'unknown_tax_code', partyId: null, partyName: null, key: tax });
+      const key = `tax:${tax}`;
+      out.set(cell, hit ? { state: 'matched', partyId: hit.id, partyName: hit.name, key } : { state: fileTaxes.has(key) ? 'in_file' : 'unknown_tax_code', partyId: null, partyName: null, key });
     }
   }
   if (names.length > 0) {
-    const { rows: folded } = await sql<{ cell: string; key: string }>`
-      SELECT c.cell, crove_kernel.search_fold(c.cell) AS key FROM pg_catalog.unnest(${names}::text[]) AS c (cell)`.execute(ctx.trx);
-    const keyOf = new Map(folded.map((f) => [f.cell, f.key]));
-    const keys = [...new Set(folded.map((f) => f.key).filter((k) => k !== ''))];
+    const keyOf = await foldAll(ctx, names);
+    const keys = [...new Set([...keyOf.values()].filter((k) => k !== ''))];
     const { rows: found } = keys.length === 0
       ? { rows: [] as { key: string; id: string; name: string }[] }
       : await sql<{ key: string; id: string; name: string }>`
-          SELECT crove_kernel.search_fold(p.name) AS key, p.id, p.name FROM crove_kernel.party p
-          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND p.duplicate_of IS NULL AND crove_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
-    const byKey = new Map<string, { id: string; name: string }[]>();
-    for (const f of found) byKey.set(f.key, [...(byKey.get(f.key) ?? []), { id: f.id, name: f.name }]);
+          SELECT crove_kernel.search_fold(p.name) AS key, coalesce(k.id, p.id) AS id, coalesce(k.name, p.name) AS name
+          FROM crove_kernel.party p
+          LEFT JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.duplicate_of
+          WHERE p.org_id = ${ctx.orgId}::uuid AND p.kind = 'organization' AND coalesce(k.kind, p.kind) = 'organization' AND crove_kernel.search_fold(p.name) = ANY(${keys}::text[])`.execute(ctx.trx);
+    const byKey = new Map<string, Map<string, string>>();
+    for (const f of found) byKey.set(f.key, (byKey.get(f.key) ?? new Map<string, string>()).set(f.id, f.name));
     for (const cell of names) {
-      const key = keyOf.get(cell) ?? '';
-      if (key === '') {
+      const folded = keyOf.get(cell) ?? '';
+      if (folded === '' || NOT_A_COMPANY.has(folded)) {
         out.set(cell, NO_COMPANY);
         continue;
       }
-      const hits = byKey.get(key) ?? [];
-      out.set(cell, hits.length === 1 ? { state: 'matched', partyId: hits[0]?.id ?? null, partyName: hits[0]?.name ?? null, key } : hits.length > 1 ? { state: 'ambiguous', partyId: null, partyName: null, key } : { state: 'new', partyId: null, partyName: null, key });
+      const key = `name:${folded}`;
+      const hits = [...(byKey.get(folded) ?? new Map<string, string>()).entries()];
+      if (hits.length === 1) out.set(cell, { state: 'matched', partyId: hits[0]?.[0] ?? null, partyName: hits[0]?.[1] ?? null, key });
+      else if (hits.length > 1) out.set(cell, { state: 'ambiguous', partyId: null, partyName: null, key });
+      else out.set(cell, { state: fileNames.has(key) ? 'in_file' : 'new', partyId: null, partyName: null, key });
     }
   }
   return out;
@@ -323,11 +362,14 @@ export const importStage = defineCommand({
       }
       const f = checked.fields;
       const kind = kindOf(raw.kind, f.taxCode);
+      const companyCell = cell(raw.company ?? null);
       // Only a person works at a company: a company's row has none.
-      candidates.push({ rowNo, kind, name: f.name, taxCode: f.taxCode, email: f.email, phone: f.phone, address: f.address, company: kind === 'person' ? cell(raw.company ?? null) : null });
+      candidates.push({ rowNo, kind, name: f.name, taxCode: f.taxCode, email: f.email, phone: f.phone, address: f.address, company: kind === 'person' ? usableCompany(companyCell) : null, companyRaw: clip(companyCell, 1000) });
     });
     const verdicts = classify(candidates, await existingFor(ctx, candidates));
-    const companies = await resolveCompanies(ctx, candidates.flatMap((c) => (c.company === null ? [] : [c.company])));
+    // The companies the file makes itself: its new rows of kind company. A person's cell naming one is linked to it, and no second one is made.
+    const fileCompanies = candidates.filter((c) => c.kind === 'organization' && verdicts.get(c.rowNo)?.outcome === 'new').map((c) => ({ name: c.name, taxCode: c.taxCode }));
+    const companies = await resolveCompanies(ctx, candidates.flatMap((c) => (c.company === null ? [] : [c.company])), fileCompanies);
     const companyOf = (c: Candidate): CompanyVerdict => (c.company === null ? NO_COMPANY : (companies.get(c.company) ?? NO_COMPANY));
     const batch = await ctx.trx
       .insertInto('crove_crm.import_batch')
@@ -351,7 +393,7 @@ export const importStage = defineCommand({
           outcome: v.outcome,
           reason: v.reason,
           match_party_id: v.matchId,
-          company_name: clip(c.company, 1000),
+          company_name: c.companyRaw,
           company_state: company.state,
           company_party_id: company.partyId,
         };
@@ -424,7 +466,7 @@ async function previewOf(ctx: Pick<QueryContext, 'trx' | 'orgId' | 'actor' | 'ro
     reason: r.reason as ImportReason | null,
     match: r.match_party_id && r.match_name !== null ? { partyId: r.match_party_id, name: r.match_name } : null,
     company:
-      r.company_name === null || r.kind !== 'person'
+      r.company_name === null
         ? null
         : { name: r.company_name, state: r.company_state as ImportCompanyState, match: r.company_party_id && r.company_match_name !== null ? { partyId: r.company_party_id, name: r.company_match_name } : null },
   }));
@@ -505,19 +547,20 @@ export const importCommit = defineCommand({
     const staged = (
       await ctx.trx
         .selectFrom('crove_crm.import_row')
-        .select(['row_no', 'kind', 'name', 'tax_code', 'email', 'phone', 'address', 'outcome', 'reason', 'company_name'])
+        .select(['row_no', 'kind', 'name', 'tax_code', 'email', 'phone', 'address', 'outcome', 'reason', 'company_name', 'company_state'])
         .where('org_id', '=', ctx.orgId)
         .where('batch_id', '=', batch.id)
         .orderBy('row_no')
         .execute()
-    ).map((r): StagedRow => ({ rowNo: r.row_no, kind: r.kind, name: r.name, taxCode: r.tax_code, email: r.email, phone: r.phone, address: r.address, company: r.kind === 'person' ? r.company_name : null, outcome: r.outcome as ImportOutcome, reason: r.reason as ImportReason | null }));
+    ).map((r): StagedRow => ({ rowNo: r.row_no, kind: r.kind, name: r.name, taxCode: r.tax_code, email: r.email, phone: r.phone, address: r.address, company: r.kind === 'person' && r.company_state !== 'none' ? usableCompany(r.company_name) : null, companyRaw: r.company_name, outcome: r.outcome as ImportOutcome, reason: r.reason as ImportReason | null }));
     // The parties may have changed since the preview: every row that was not invalid is judged again.
     const live = staged.filter((s) => s.outcome !== 'invalid');
     const existing = await existingFor(ctx, live);
     const verdicts = classify(live, existing);
     // The companies are read again too: the matched one may have been merged or renamed, a new one may exist now. Every company a row will be linked
     // to is locked (shared, in id order) before the first link, so a merge of it waits for this commit instead of failing it at the table's guard.
-    const companies = await resolveCompanies(ctx, live.flatMap((s) => (s.company === null ? [] : [s.company])));
+    const fileCompanies = live.filter((c) => c.kind === 'organization' && verdicts.get(c.rowNo)?.outcome === 'new').map((c) => ({ name: c.name, taxCode: c.taxCode }));
+    const companies = await resolveCompanies(ctx, live.flatMap((s) => (s.company === null ? [] : [s.company])), fileCompanies);
     const matchedIds = [...new Set([...companies.values()].flatMap((c) => (c.partyId === null ? [] : [c.partyId])))].sort();
     const stillCompanies = new Set(
       matchedIds.length === 0
@@ -540,23 +583,25 @@ export const importCommit = defineCommand({
       const verdict = c.company === null ? undefined : companies.get(c.company);
       return verdict?.state === 'matched' && verdict.partyId !== null && stillCompanies.has(verdict.partyId) ? verdict.partyId : null;
     };
+    // The companies this commit made, by the key of the cells that name them: the new rows of kind company of the file (by tax code and by folded name,
+    // made first), and, when the person said so, a company made for a name no row of the file and no party has.
     const madeCompanies = new Map<string, string>();
+    const fileNameKeys = await foldAll(ctx, fileCompanies.map((f) => f.name));
     let createdCompanies = 0;
     let linked = 0;
-    // The company for a new row: the existing one, or (createCompanies) the one this commit made for the same name before, or one made now.
+    // The company for a new row: the existing one, or the one the file makes, or (createCompanies) the one this commit made for the same name before, or one made now.
     const companyForNewRow = async (c: Candidate): Promise<string | null> => {
       const existingId = existingCompanyOf(c);
       if (existingId !== null) return existingId;
       const verdict = c.company === null ? undefined : companies.get(c.company);
+      if (verdict?.state === 'in_file' && verdict.key !== null) return madeCompanies.get(verdict.key) ?? null;
       if (!input.createCompanies || c.company === null || verdict?.state !== 'new' || verdict.key === null) return null;
       const made = madeCompanies.get(verdict.key);
       if (made !== undefined) return made;
-      const checked = checkPartyFields({ name: c.company, taxCode: null, email: null, phone: null, address: null });
-      if (!checked.ok) return null;
       const id = randomUUID();
       await ctx.trx
         .insertInto('crove_kernel.party')
-        .values({ id, org_id: ctx.orgId, kind: 'organization', name: checked.fields.name, tax_code: null, address: null, email: null, phone: null, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
+        .values({ id, org_id: ctx.orgId, kind: 'organization', name: c.company, tax_code: null, address: null, email: null, phone: null, source_trust: 'external', created_at: ctx.now, updated_at: ctx.now })
         .execute();
       madeCompanies.set(verdict.key, id);
       createdCompanies++;
@@ -573,7 +618,9 @@ export const importCommit = defineCommand({
     const taken = { email: new Set<string>(), phone: new Set<string>() };
     // The fields each filled party got, by name, for the audit row.
     const filled: { partyId: string; fields: string[] }[] = [];
-    for (const c of live) {
+    // The companies of the file go first, so a person's row that names one finds it made, wherever it stands in the file.
+    const ordered = [...live.filter((c) => c.kind === 'organization'), ...live.filter((c) => c.kind !== 'organization')];
+    for (const c of ordered) {
       const v = verdicts.get(c.rowNo) as Verdict;
       if (v.outcome === 'new') {
         const id = randomUUID();
@@ -589,12 +636,18 @@ export const importCommit = defineCommand({
           continue;
         }
         created++;
+        if (c.kind === 'organization') {
+          if (c.taxCode !== null) madeCompanies.set(`tax:${c.taxCode}`, id);
+          const folded = fileNameKeys.get(c.name) ?? '';
+          if (folded !== '' && !madeCompanies.has(`name:${folded}`)) madeCompanies.set(`name:${folded}`, id);
+        }
         // The company comes after the person is in: a person whose tax code was taken since the preview makes no company. The row was made in this
         // transaction, so its version stays 1 (the guard of company_id checks the company).
         const companyId = c.kind === 'person' ? await companyForNewRow(c) : null;
         if (companyId !== null) {
           await ctx.trx.updateTable('crove_kernel.party').set({ company_id: companyId }).where('org_id', '=', ctx.orgId).where('id', '=', id).execute();
           linked++;
+          await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
         }
         if (c.email) taken.email.add(c.email.toLowerCase());
         const pk = phoneKey(c.phone);
@@ -641,6 +694,7 @@ export const importCommit = defineCommand({
             if ('company_id' in set) {
               fields.push('company');
               linked++;
+              await ctx.activity('kernel.party', set.company_id as string, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
             }
             if (filled.length < FILLED_AUDIT_MAX) filled.push({ partyId: locked.id, fields });
             // What this party holds now is taken for the rest of the commit: a later row never fills it into a second party.

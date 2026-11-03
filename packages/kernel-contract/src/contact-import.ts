@@ -17,8 +17,9 @@ export type ImportOnDuplicate = (typeof IMPORT_ON_DUPLICATE)[number];
 export const IMPORT_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];
 // What the company cell of a person's row came to (#2438): matched an existing company, names one the org does not have (made on
-// commit only when the person says so), names a tax code no company has, names two companies alike, or there is nothing to use.
-export const IMPORT_COMPANY_STATES = ['none', 'matched', 'new', 'unknown_tax_code', 'ambiguous'] as const;
+// commit only when the person says so), names a company that is a row of the same file (made with it), names a tax code no company has, names two
+// companies alike, or there is nothing to use.
+export const IMPORT_COMPANY_STATES = ['none', 'matched', 'new', 'in_file', 'unknown_tax_code', 'ambiguous'] as const;
 export type ImportCompanyState = (typeof IMPORT_COMPANY_STATES)[number];
 
 // Why a row is not a new party: a code, never a value from the file.

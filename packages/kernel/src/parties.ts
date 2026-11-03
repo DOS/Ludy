@@ -88,7 +88,7 @@ export function checkPartyFields(input: PartyFieldsInput): PartyFieldsCheck {
 }
 
 // Whether anything points at a party: a document or a voucher or a ledger line of the books, a vendor or categorization rule, a deal, a booking, a person who works at
-// it, a party merged into it, or a contact thread. A note linked to the party and a staged import match do not hold the kind: neither reads it. The database test lists
+// it, a party merged into it, or a contact thread. A note linked to the party and a staged import match (of a duplicate or of a company) do not hold the kind: none reads it, and the commit reads the party again under a lock. The database test lists
 // every foreign key to party, so a table added later has to be put on one side or the other.
 // A party nothing points at may change its kind (#2438: a party made by an invoice is a company by default, and a person fixes it in one click); one that is pointed at
 // keeps it, so no record changes meaning under the books. The other modules' tables are read, never written (as personal-data.ts reads them).
