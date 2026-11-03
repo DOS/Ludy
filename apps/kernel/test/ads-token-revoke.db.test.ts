@@ -467,6 +467,23 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await expect(worker.execute('ads.token_revoke.record', { revokeId: row?.id, leaseToken: ours?.lease_token, outcome }, { actor: SYSTEM, orgId })).resolves.toMatchObject({ recorded: false });
   });
 
+  it('holds the revoke of a write grant that is another person’s when the platform asks to erase an account, and none for the requester’s own grant', async () => {
+    await switchOn();
+    const REQUESTER = 'e'.repeat(64);
+    // The requester granted both the reading and the writing: they removed the app, so there is nothing to revoke and nothing is held.
+    const own = await makeAccount('sbxads-erase-own', REQUESTER);
+    const ownWrite = await connectWrite(owner, 'sbxads-erase-own', own.adAccountId, REQUESTER);
+    await worker.execute('ads.account.erase', { adAccountId: own.adAccountId }, { actor: SYSTEM, orgId });
+    expect((await status(ownWrite))?.status_reason).toBe('platform_deletion');
+    expect(await obligation(ownWrite)).toBeUndefined();
+    // Another person granted the writing: the request is not theirs, so the connection is closed under its own reason and its revoke is held.
+    const other = await makeAccount('sbxads-erase-other', REQUESTER);
+    const otherWrite = await connectWrite(owner, 'sbxads-erase-other', other.adAccountId, 'f'.repeat(64));
+    await worker.execute('ads.account.erase', { adAccountId: other.adAccountId }, { actor: SYSTEM, orgId });
+    expect((await status(otherWrite))?.status_reason).toBe('account_erased');
+    expect(await obligation(otherWrite)).toMatchObject({ state: 'pending', kind: 'write', reason: 'account_erased', seals: '1', credentials: '0' });
+  });
+
   it('shows the screen only to owners and admins, and nothing about a settled obligation that worked', async () => {
     const state = (await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState;
     expect(state.tokenRevokes.every((r) => r.state === 'pending' || r.state === 'gave_up')).toBe(true);

@@ -30,7 +30,7 @@ const notFound = () => new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tì
 // attached, so one whose attaching was refused or never ran (a crash, a deploy) is still found, by its provider, and so is the one of an
 // account, by the provider of its twin and its platform account. Switching writing off leaves no spend-capable token behind that no
 // account refers to. `except` spares the connection that was just attached.
-export async function closeWriteConnections(ctx: CommandContext, scope: { adAccountId?: string; except?: string }): Promise<number> {
+export async function closeWriteConnections(ctx: CommandContext, scope: { adAccountId?: string; except?: string; otherGrantor?: boolean }): Promise<number> {
   let query = ctx.trx.selectFrom('crove_kernel.channel_connection as c').select('c.id').where('c.org_id', '=', ctx.orgId).where('c.status', '<>', 'revoked').orderBy('c.id');
   if (scope.adAccountId) {
     const account = await ctx.trx
@@ -54,7 +54,9 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
   if (scope.except) query = query.where('c.id', '<>', scope.except);
   const open = await query.execute();
   const command = ctx.actor.type === 'system' ? 'kernel.channel.revoke_by_platform' : 'kernel.channel.disconnect';
-  for (const row of open) await ctx.run(command, { connectionId: row.id });
+  // The platform's deletion request closes a write connection as the person's own (the person removed the app: nothing to revoke), unless the write grant is
+  // another person's: then it is closed under its own reason and the revoke at the platform is held for it (`otherGrantor`, set by the erasure).
+  for (const row of open) await ctx.run(command, { connectionId: row.id, ...(command === 'kernel.channel.revoke_by_platform' && scope.otherGrantor ? { reason: 'account_erased' } : {}) });
   return open.length;
 }
 

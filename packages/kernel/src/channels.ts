@@ -187,7 +187,9 @@ export const channelMarkExpired = defineCommand({
 // per connection; one already closed only has its credential dropped again.
 export const channelRevokeByPlatform = defineCommand({
   name: 'kernel.channel.revoke_by_platform',
-  input: z.strictObject({ connectionId: zId }),
+  // `reason` 'account_erased' is for the erasure of an ad account whose write grant is another person's than the requester's: the platform's deletion request
+  // is not that person's, so the connection is closed under its own reason and the revoke at the platform is held for it (ads W2-1, #2296).
+  input: z.strictObject({ connectionId: zId, reason: z.literal('account_erased').optional() }),
   risk: 'R1',
   sideEffect: 'internal',
   access: 'system',
@@ -207,7 +209,7 @@ export const channelRevokeByPlatform = defineCommand({
         .updateTable('crove_kernel.channel_connection')
         // The ad account's name and the permissions its token held go with the token: what a revoked connection keeps is its
         // platform id and the time it closed.
-        .set({ status: 'revoked', status_reason: 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
+        .set({ status: 'revoked', status_reason: input.reason ?? 'platform_deletion', display_name: 'Deleted', scopes: [], updated_at: ctx.now })
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.connectionId)
         .execute();

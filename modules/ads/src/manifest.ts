@@ -49,7 +49,7 @@ export const adsManifest = defineModule({
       // connection of the same person needs; never the platform's id of the person.
       ad_token_revoke: columns(
         [
-          'org_id', 'id', 'connection_id', 'ad_account_id', 'provider', 'external_account_id', 'kind', 'reason', 'state', 'how_done', 'give_up', 'attempts', 'next_attempt_at',
+          'org_id', 'id', 'connection_id', 'ad_account_id', 'provider', 'external_account_id', 'kind', 'reason', 'connected_by', 'state', 'how_done', 'give_up', 'attempts', 'next_attempt_at',
           'last_error_kind', 'last_error_code', 'created_at', 'settled_at',
         ],
         { grantor_hash: 'pii' },

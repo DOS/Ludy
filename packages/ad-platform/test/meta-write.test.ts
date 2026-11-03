@@ -90,6 +90,13 @@ describe('MetaAdWriter.revokeToken', () => {
     }
   });
 
+  it('keeps an error of the deployment a counted failure even when it carries a session subcode', async () => {
+    for (const [body, kind] of [[metaError(400, 100, 463), 'bad_request'], [metaError(403, 200, 467), 'permission'], [metaError(400, 100, 458), 'bad_request']] as const) {
+      const error = await rejection(writer([body]).writer.revokeToken(SECRET));
+      expect(error.kind).toBe(kind);
+    }
+  });
+
   it('sends nothing but a DELETE to /me/permissions whatever Meta answers: no other path, method or parameter', async () => {
     const answers = [{ body: { success: true } }, metaError(400, 190, 458), metaError(400, 190, 463), metaError(500, 2), metaError(400, 4), metaError(400, 100), { body: {} }, new Error('down')];
     for (const answer of answers) {

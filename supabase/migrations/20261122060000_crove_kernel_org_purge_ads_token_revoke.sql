@@ -2,8 +2,9 @@
 -- Crove kernel (issue #2296, ads W2-1): the org purge deletes the sealed copies of closed ads tokens and the revoke state at once, before the ad accounts
 -- and the connections they name. Idempotent; applied files stay untouched.
 -- This is the body of 20261121210000 (the newest) with crove_ads.ad_token_seal and crove_ads.ad_token_revoke added to the first list, in front of
--- crove_ads.ad_account (the seal first: it references the obligation), with its signature, owner, grants and every list and step it had. The credential
--- table's own delete, later in the same list, fires no hold: the org is not active while it is purged.
+-- crove_ads.ad_account (the seal first: it references the obligation), with its signature, owner, grants and every list and step it had, and one new step
+-- right after the refusal checks: the purge marks its transaction (crove.org_purge_hold), so the credential table's own delete, later in the same list, makes
+-- no copy for the hold (an org in offboarding does hold when its owner disconnects an ads connection; the purge wipes what is left).
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.org_purge(p_min_days integer)
@@ -78,6 +79,10 @@ BEGIN
     RETURN NEXT;
     RETURN;
   END IF;
+
+  -- The purge marks its transaction for the ads hold: the credentials it drops below hold no copy (a copy made now would have to be deleted again), while an
+  -- org in offboarding does hold when its owner disconnects an ads connection, so the revoke runs before the purge wipes what is left (#2296).
+  PERFORM pg_catalog.set_config('crove.org_purge_hold', v_org::text, true);
 
   -- The append-only working rows (#1032): task comments and Social post approvals. Their append_only_row trigger
   -- (purge_append_only_guard) lets a DELETE through only from this function, for the org it purges, under this

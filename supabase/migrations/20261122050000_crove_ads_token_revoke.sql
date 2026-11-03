@@ -25,13 +25,16 @@
 --                             switch-off, an account's disconnect, a link that was refused, the system closing the connection of a member who left, a cascade)
 --                             copies the envelope into the seal first, in the same statement, so a live credential is never copied, and opens the obligation,
 --                             once per connection (a unique index). It skips every provider outside the list above, a platform's own data deletion (the
---                             person already removed the app), a read connection whose recorded scopes hold no spend permission, and an org that is not active
---                             (it takes the tenant row FOR SHARE, in the purge's lock order, so a close racing the purge either finishes first and the purge
---                             wipes it, or finds the org closed and holds nothing). An UPDATE of the credential (a reseal during a key rotation) holds nothing.
+--                             person already removed the app; the erasure of an account whose write grant is another person's closes it as account_erased, which
+--                             holds), a read connection whose recorded scopes hold no spend permission, a closed org, and the purge itself (it marks its
+--                             transaction). An org in offboarding still holds, so a disconnect in that window is revoked before the purge wipes what is left.
+--                             The tenant row is taken FOR SHARE, in the purge's lock order, so a close racing the purge either finishes first and the purge
+--                             wipes it, or finds the org closed and holds nothing. An UPDATE of the credential (a reseal during a key rotation) holds nothing.
 --
 -- crove_ads.token_reconnected an AFTER INSERT trigger on crove_kernel.credential: a credential sealed for a new ads connection of an account whose earlier
---                             connection has a pending revoke cancels that revoke (done, how reconnected) and wipes its copy in the same transaction, since
---                             Meta's permission belongs to the person and the app and the revoke would cut the grant the person has just given again.
+--                             connection has a pending revoke, made by the same member, cancels that revoke (done, how reconnected) and wipes its copy in the same
+--                             transaction, since Meta's permission belongs to the person and the app and the revoke would cut the grant the person has just
+--                             given again; another member's connection leaves the first member's revoke to go on.
 --                             (Not on UPDATE: a reseal of the key during a rotation updates the row and is no reconnect.)
 --
 -- crove_ads.ad_token_revoke_guard   holds the row whatever path reaches it: born pending with no tries; its identity never changes; a settled obligation
@@ -72,6 +75,10 @@ CREATE TABLE IF NOT EXISTS crove_ads.ad_token_revoke (
   -- The keyed hash of the platform user who granted the connection (the account's recorded one), when it is known: the revoke is per person and app, so it
   -- is not called while another live connection of the same hash needs the grant. Never the platform's id of the person.
   grantor_hash text CHECK (grantor_hash IS NULL OR pg_catalog.length(grantor_hash) BETWEEN 8 AND 200),
+  -- The member who connected it (the connection row's own): a connection of the same account made again by the same member cancels the revoke, one made by
+  -- another member does not (the first person's grant at the platform is theirs), and with no grantor known it says whether the same member has another live
+  -- connection that the revoke would cut.
+  connected_by uuid,
   state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'done', 'gave_up')),
   how_done text CHECK (how_done IN ('revoked', 'already_invalid', 'sandbox', 'shared_grant', 'reconnected')),
   give_up text CHECK (give_up IN ('attempts', 'age', 'unrevocable')),
@@ -132,9 +139,9 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  IF (NEW.org_id, NEW.id, NEW.connection_id, NEW.ad_account_id, NEW.provider, NEW.external_account_id, NEW.kind, NEW.reason, NEW.grantor_hash, NEW.created_at)
-     IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.connection_id, OLD.ad_account_id, OLD.provider, OLD.external_account_id, OLD.kind, OLD.reason, OLD.grantor_hash, OLD.created_at) THEN
-    RAISE EXCEPTION 'ADS_REVOKE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'an obligation keeps its connection, its token kind, its reason and its grantor';
+  IF (NEW.org_id, NEW.id, NEW.connection_id, NEW.ad_account_id, NEW.provider, NEW.external_account_id, NEW.kind, NEW.reason, NEW.grantor_hash, NEW.connected_by, NEW.created_at)
+     IS DISTINCT FROM (OLD.org_id, OLD.id, OLD.connection_id, OLD.ad_account_id, OLD.provider, OLD.external_account_id, OLD.kind, OLD.reason, OLD.grantor_hash, OLD.connected_by, OLD.created_at) THEN
+    RAISE EXCEPTION 'ADS_REVOKE_FORBIDDEN' USING ERRCODE = '42501', DETAIL = 'an obligation keeps its connection, its token kind, its reason, its grantor and its connector';
   END IF;
   IF NEW IS NOT DISTINCT FROM OLD THEN
     RETURN NEW;
@@ -179,7 +186,7 @@ ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guar
 
 -- The hold itself, for the two triggers below (no grant to any role): copies one credential into the seal and opens the obligation, once per connection.
 CREATE OR REPLACE FUNCTION crove_ads.token_hold_row(
-  p_org uuid, p_connection uuid, p_key_id text, p_envelope bytea, p_provider text, p_external text, p_scopes text[], p_status_reason text
+  p_org uuid, p_connection uuid, p_key_id text, p_envelope bytea, p_provider text, p_external text, p_scopes text[], p_status_reason text, p_connected_by uuid
 ) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
@@ -201,9 +208,14 @@ BEGIN
   IF p_status_reason IS NOT DISTINCT FROM 'platform_deletion' THEN
     RETURN;
   END IF;
-  -- An org being closed: the purge wipes. The tenant row is taken FOR SHARE, the lock the purge's FOR UPDATE waits for, in the purge's order (the write
-  -- fence first, then the row), so a close racing the purge finishes first, and the purge then deletes what it held, or finds the org closed and holds nothing.
-  PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = p_org AND t.status = 'active' FOR SHARE;
+  -- The purge itself holds nothing (it deletes the copy and the state of the org, which it marks for the length of its transaction), and neither does a
+  -- closed org. An org in offboarding still holds: the owner may disconnect in that window and the revoke runs before the purge wipes what is left. The
+  -- tenant row is taken FOR SHARE, the lock the purge's FOR UPDATE waits for, in the purge's order (the write fence first, then the row), so a close racing
+  -- the purge finishes first, and the purge then deletes what it held, or finds the org closed and holds nothing.
+  IF pg_catalog.current_setting('crove.org_purge_hold', true) IS NOT DISTINCT FROM p_org::text THEN
+    RETURN;
+  END IF;
+  PERFORM 1 FROM crove_kernel.tenant t WHERE t.org_id = p_org AND t.status IN ('active', 'offboarding') FOR SHARE;
   IF NOT FOUND THEN
     RETURN;
   END IF;
@@ -211,20 +223,20 @@ BEGIN
     WHEN 'write' THEN (SELECT a.write_granted_by_hash FROM crove_ads.ad_account a WHERE a.org_id = p_org AND a.write_connection_id = p_connection ORDER BY a.id LIMIT 1)
     ELSE (SELECT a.granted_by_hash FROM crove_ads.ad_account a WHERE a.org_id = p_org AND a.channel_connection_id = p_connection ORDER BY a.id LIMIT 1)
   END;
-  INSERT INTO crove_ads.ad_token_revoke AS r (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash)
+  INSERT INTO crove_ads.ad_token_revoke AS r (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
   VALUES (
     p_org, p_connection,
     (SELECT a.id FROM crove_ads.ad_account a WHERE a.org_id = p_org AND (a.write_connection_id = p_connection OR a.channel_connection_id = p_connection) ORDER BY a.id LIMIT 1),
     p_provider, p_external, v_kind,
     CASE WHEN p_status_reason ~ '^[a-z][a-z_]{1,39}$' THEN p_status_reason ELSE 'other' END,
-    v_grantor)
+    v_grantor, p_connected_by)
   ON CONFLICT (org_id, connection_id) DO NOTHING
   RETURNING r.id INTO v_revoke;
   IF v_revoke IS NOT NULL THEN
     INSERT INTO crove_ads.ad_token_seal (org_id, revoke_id, key_id, envelope) VALUES (p_org, v_revoke, p_key_id, p_envelope);
   END IF;
 END $$;
-REVOKE ALL ON FUNCTION crove_ads.token_hold_row(uuid, uuid, text, bytea, text, text, text[], text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+REVOKE ALL ON FUNCTION crove_ads.token_hold_row(uuid, uuid, text, bytea, text, text, text[], text, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 
 -- The credential is dropped: the hold, in the statement that drops it.
 CREATE OR REPLACE FUNCTION crove_ads.token_hold() RETURNS trigger
@@ -235,7 +247,7 @@ BEGIN
   SELECT c.* INTO v_connection FROM crove_kernel.channel_connection c WHERE c.org_id = OLD.org_id AND c.id = OLD.connection_id;
   -- The connection row is already gone when this is the cascade of its deletion: token_hold_connection held the copy before it went.
   IF FOUND THEN
-    PERFORM crove_ads.token_hold_row(OLD.org_id, OLD.connection_id, OLD.key_id, OLD.envelope, v_connection.provider, v_connection.external_account_id, v_connection.scopes, v_connection.status_reason);
+    PERFORM crove_ads.token_hold_row(OLD.org_id, OLD.connection_id, OLD.key_id, OLD.envelope, v_connection.provider, v_connection.external_account_id, v_connection.scopes, v_connection.status_reason, v_connection.connected_by);
   END IF;
   RETURN OLD;
 END $$;
@@ -254,7 +266,7 @@ DECLARE
 BEGIN
   SELECT k.* INTO v_credential FROM crove_kernel.credential k WHERE k.org_id = OLD.org_id AND k.connection_id = OLD.id;
   IF FOUND THEN
-    PERFORM crove_ads.token_hold_row(OLD.org_id, OLD.id, v_credential.key_id, v_credential.envelope, OLD.provider, OLD.external_account_id, OLD.scopes, OLD.status_reason);
+    PERFORM crove_ads.token_hold_row(OLD.org_id, OLD.id, v_credential.key_id, v_credential.envelope, OLD.provider, OLD.external_account_id, OLD.scopes, OLD.status_reason, OLD.connected_by);
   END IF;
   RETURN OLD;
 END $$;
@@ -271,13 +283,16 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_provider text;
   v_external text;
+  v_by uuid;
 BEGIN
-  SELECT c.provider, c.external_account_id INTO v_provider, v_external FROM crove_kernel.channel_connection c WHERE c.org_id = NEW.org_id AND c.id = NEW.connection_id;
+  SELECT c.provider, c.external_account_id, c.connected_by INTO v_provider, v_external, v_by FROM crove_kernel.channel_connection c WHERE c.org_id = NEW.org_id AND c.id = NEW.connection_id;
   IF NOT FOUND OR v_provider NOT IN ('metawrite_ads', 'sandboxwrite_ads', 'meta_ads') THEN
     RETURN NEW;
   END IF;
+  -- Only the same member's: a connection made again by another member leaves the first member's grant at the platform standing, so their revoke goes on.
   UPDATE crove_ads.ad_token_revoke r SET state = 'done', how_done = 'reconnected', next_attempt_at = NULL
-  WHERE r.org_id = NEW.org_id AND r.state = 'pending' AND r.provider = v_provider AND r.external_account_id = v_external AND r.connection_id <> NEW.connection_id;
+  WHERE r.org_id = NEW.org_id AND r.state = 'pending' AND r.provider = v_provider AND r.external_account_id = v_external AND r.connection_id <> NEW.connection_id
+    AND r.connected_by IS NOT NULL AND r.connected_by = v_by;
   RETURN NEW;
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.token_reconnected() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -297,10 +312,13 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
+  -- A try that was opened and not answered yet (its token is set and the open's ten minutes have not passed) is left to answer: ending it as "revoke by
+  -- hand" while the call that removes the grant is in flight would tell the person to do what has been done. Past its ten minutes it is settled.
   UPDATE crove_ads.ad_token_revoke r SET state = 'gave_up', give_up = 'age'
   WHERE r.state = 'pending'
     AND (r.created_at <= pg_catalog.now() - pg_catalog.make_interval(days => 7)
-         OR EXISTS (SELECT 1 FROM crove_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id AND s.sealed_at <= pg_catalog.now() - pg_catalog.make_interval(days => 7)));
+         OR EXISTS (SELECT 1 FROM crove_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id AND s.sealed_at <= pg_catalog.now() - pg_catalog.make_interval(days => 7)))
+    AND NOT EXISTS (SELECT 1 FROM crove_ads.ad_token_seal s WHERE s.org_id = r.org_id AND s.revoke_id = r.id AND s.lease_token IS NOT NULL AND r.next_attempt_at > pg_catalog.now());
   GET DIAGNOSTICS v_age = ROW_COUNT;
   UPDATE crove_ads.ad_token_revoke r SET state = 'gave_up', give_up = 'attempts'
   WHERE r.state = 'pending' AND r.attempts >= 10 AND r.next_attempt_at <= pg_catalog.now()
@@ -341,13 +359,26 @@ LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp A
 DECLARE
   v_hash text;
   v_connection uuid;
+  v_provider text;
+  v_by uuid;
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
-  SELECT r.grantor_hash, r.connection_id INTO v_hash, v_connection FROM crove_ads.ad_token_revoke r WHERE r.org_id = p_org AND r.id = p_revoke AND r.state = 'pending';
-  IF NOT FOUND OR v_hash IS NULL THEN
+  SELECT r.grantor_hash, r.connection_id, r.provider, r.connected_by INTO v_hash, v_connection, v_provider, v_by
+  FROM crove_ads.ad_token_revoke r WHERE r.org_id = p_org AND r.id = p_revoke AND r.state = 'pending';
+  IF NOT FOUND THEN
     RETURN false;
+  END IF;
+  -- No grantor recorded (a connection that was made and never linked, as a refused link leaves one): the person is unknown, so the same member's other live
+  -- connection of the same provider, in any org, is taken to be theirs, and the call that would cut it is not made. The cost: the grant of a closed connection
+  -- of that member can stay until their other connection is closed in its turn.
+  IF v_hash IS NULL THEN
+    RETURN v_by IS NOT NULL AND EXISTS (
+      SELECT 1 FROM crove_kernel.channel_connection c
+      JOIN crove_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active'
+      WHERE c.provider = v_provider AND c.status = 'active' AND c.connected_by = v_by AND NOT (c.org_id = p_org AND c.id = v_connection)
+    );
   END IF;
   RETURN EXISTS (
     SELECT 1 FROM crove_ads.ad_account a
@@ -395,7 +426,8 @@ END $$;
 
 -- Records the outcome of one try (worker login only), with the claim's token: the policy computes it (modules/ads/src/token-revoke.ts), the guard holds it to
 -- the rules. The tries were counted when the copy was opened, so the count is not moved here. A token that is not the claim's current one (a run that stalled
--- past its lease, claimed again by a newer run, or answered already) is refused: ADS_REVOKE_STALE. It also settles what is past its age or its tries.
+-- past its lease, claimed again by a newer run, or answered already) is refused: ADS_REVOKE_STALE. It touches this obligation only (the sweeps settle what
+-- is past its age or its tries, across orgs, and a command in one org's context does not).
 CREATE OR REPLACE FUNCTION crove_ads.token_revoke_settle(
   p_org uuid, p_id uuid, p_token uuid, p_state text, p_next timestamptz, p_how text, p_give_up text, p_error_kind text, p_error_code text
 ) RETURNS void
@@ -403,6 +435,11 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  -- The obligation first, then its copy: the order the open, the guard, the reconnect and the sweeps lock them in (no cycle between them).
+  PERFORM 1 FROM crove_ads.ad_token_revoke r WHERE r.org_id = p_org AND r.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ADS_REVOKE_NOT_FOUND' USING ERRCODE = 'P0002';
   END IF;
   PERFORM 1 FROM crove_ads.ad_token_seal s WHERE s.org_id = p_org AND s.revoke_id = p_id AND p_token IS NOT NULL AND s.lease_token = p_token FOR UPDATE;
   IF NOT FOUND THEN
@@ -417,7 +454,6 @@ BEGIN
   END IF;
   -- Still pending: the claim is spent, so the same token cannot record twice (a settled obligation has no copy any more).
   UPDATE crove_ads.ad_token_seal s SET lease_token = NULL, lease_until = NULL WHERE s.org_id = p_org AND s.revoke_id = p_id;
-  PERFORM crove_ads.token_revoke_expire();
 END $$;
 
 -- The active write connections whose connector is no longer an owner or admin of the org (removed, demoted or disabled), after a key, in key order

@@ -90,7 +90,13 @@ export class MetaAdWriter implements AdWriter {
       // of the deployment (a wrong app secret or proof: code 100, or 200) is none of these and is never read as a 190.
       if (error instanceof GraphError && error.code === 190 && error.subcode === 458) return { how: 'already_invalid' };
       if (error instanceof GraphError && error.code === 190) throw new AdPlatformError('token_expired', `190_${error.subcode ?? 0}`);
-      throw metaAdsError(error, this.now);
+      const mapped = metaAdsError(error, this.now);
+      // The shared mapper reads the session subcodes (458 to 467) as an expired token whatever the code; here only a 190 or a 102 says so, and an error of
+      // the deployment that happens to carry such a subcode (code 100 or 200) stays a counted failure of its own kind.
+      if (mapped.kind === 'token_expired' && error instanceof GraphError && error.code !== 102) {
+        throw new AdPlatformError(error.code === 100 ? 'bad_request' : error.code !== undefined && error.code >= 200 && error.code <= 299 ? 'permission' : 'unknown', error.code === undefined ? undefined : String(error.code));
+      }
+      throw mapped;
     }
   }
 }

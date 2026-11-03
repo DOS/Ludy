@@ -46,7 +46,7 @@ const WORKER_ONLY = [
 const NOBODY = [
   'crove_ads.token_hold()',
   'crove_ads.token_hold_connection()',
-  'crove_ads.token_hold_row(uuid,uuid,text,bytea,text,text,text[],text)',
+  'crove_ads.token_hold_row(uuid,uuid,text,bytea,text,text,text[],text,uuid)',
   'crove_ads.token_reconnected()',
   'crove_ads.ad_token_revoke_guard()',
 ];
@@ -383,17 +383,28 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     const deleted = await connection(org, { provider: 'metawrite_ads' });
     await close(org, deleted.id, 'platform_deletion');
     for (const none of [read.id, sandboxRead.id, social.id, google.id, deleted.id]) expect(await obligations(org.orgId, none), none).toEqual([]);
-    const closing = await makeOrg();
-    const inactive = await connection(closing, { provider: 'metawrite_ads' });
-    await admin(async (c) => {
-      await c.query('BEGIN');
-      await c.query('SET LOCAL session_replication_role = replica');
-      await c.query(`UPDATE crove_kernel.tenant SET status = 'offboarding' WHERE org_id = $1`, [closing.orgId]);
-      await c.query('COMMIT');
-    });
-    await close(closing, inactive.id);
-    expect(await obligations(closing.orgId)).toEqual([]);
-    expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1', [closing.orgId])).toEqual([]);
+    // A closed org holds nothing; an org in offboarding still holds (its owner may disconnect in that window; the purge wipes what is left).
+    const closed = await makeOrg();
+    const inClosed = await connection(closed, { provider: 'metawrite_ads' });
+    const leaving = await makeOrg();
+    const inLeaving = await connection(leaving, { provider: 'metawrite_ads' });
+    for (const [org, status] of [[closed, 'closed'], [leaving, 'offboarding']] as const) {
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query(`UPDATE crove_kernel.tenant SET status = $2 WHERE org_id = $1`, [org.orgId, status]);
+        await c.query('COMMIT');
+      });
+    }
+    await close(closed, inClosed.id);
+    await close(leaving, inLeaving.id);
+    expect(await obligations(closed.orgId)).toEqual([]);
+    expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1', [closed.orgId])).toEqual([]);
+    expect((await obligations(leaving.orgId, inLeaving.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+    // The erasure of an account closed under its own reason holds (the platform's deletion request was another person's), the request's own grant does not.
+    const erased = await connection(org, { provider: 'metawrite_ads' });
+    await close(org, erased.id, 'account_erased');
+    expect((await obligations(org.orgId, erased.id))[0]).toMatchObject({ kind: 'write', reason: 'account_erased', seals: '1' });
   });
 
   it('records the grantor of the connection on the obligation, from the account that was linked to it, and none when none is recorded', async () => {
@@ -407,6 +418,8 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     const unlinked = await connection(org, { provider: 'metawrite_ads' });
     await close(org, unlinked.id);
     expect((await obligations(org.orgId, unlinked.id))[0]?.grantor_hash).toBeNull();
+    // Whoever connected it is recorded, whatever the grantor.
+    expect((await rows<{ connected_by: string | null }>('SELECT connected_by FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [org.orgId, unlinked.id]))[0]?.connected_by).toBe(org.userId);
   });
 
   it('keeps an obligation to what it was born as: pending, with no tries, and never another connection, kind, reason or grantor', async () => {
@@ -506,6 +519,42 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     expect(await state(oldCopy.org.orgId)).toEqual([{ state: 'gave_up', give_up: 'age', attempts: 0, next: null, seals: '0' }]);
     expect(await state(lapsed.org.orgId)).toEqual([{ state: 'gave_up', give_up: 'attempts', attempts: 10, next: null, seals: '0' }]);
     expect(await state(young.org.orgId)).toEqual([expect.objectContaining({ state: 'pending', seals: '1' })]);
+
+    // A try that was opened and is not answered yet is left to answer, even past its age (the call that removes the grant may be in flight); once the open's
+    // ten minutes have passed it is settled.
+    const inFlight = await held();
+    await dueNow(inFlight.revoke);
+    await openAsWorker(inFlight.org.orgId, inFlight.revoke);
+    await admin(async (c) => {
+      await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+      try {
+        await c.query(`UPDATE crove_ads.ad_token_revoke SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2`, [inFlight.org.orgId, inFlight.revoke]);
+      } finally {
+        await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+      }
+    });
+    await workerSql('SELECT crove_ads.token_revoke_expire()');
+    expect(await state(inFlight.org.orgId)).toEqual([expect.objectContaining({ state: 'pending', attempts: 1, seals: '1' })]);
+    await owner(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() - interval '1 minute' WHERE org_id = $1 AND id = $2`, [inFlight.org.orgId, inFlight.revoke]);
+    await workerSql('SELECT crove_ads.token_revoke_expire()');
+    expect(await state(inFlight.org.orgId)).toEqual([{ state: 'gave_up', give_up: 'age', attempts: 1, next: null, seals: '0' }]);
+  });
+
+  it('records the answer of one obligation without touching any other: the settle does not sweep other orgs', async () => {
+    const answered = await held();
+    const overdue = await held();
+    await admin(async (c) => {
+      await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+      try {
+        await c.query(`UPDATE crove_ads.ad_token_revoke SET created_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2`, [overdue.org.orgId, overdue.revoke]);
+      } finally {
+        await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+      }
+    });
+    const opened = await openAsWorker(answered.org.orgId, answered.revoke);
+    await workerSql("SELECT crove_ads.token_revoke_settle($1::uuid, $2::uuid, $3::uuid, 'pending', now() + interval '1 minute', NULL, NULL, NULL, NULL)", [answered.org.orgId, answered.revoke, opened.token]);
+    // The other org's overdue obligation is still there for the sweep to settle: a command in one org's context never rewrites another's rows.
+    expect((await obligations(overdue.org.orgId))[0]).toMatchObject({ state: 'pending', seals: '1' });
   });
 
   it('claims a due obligation once: a second claim within the lease finds it taken, a claim is not a try, and a lapsed lease is taken again with a new token', async () => {
@@ -675,6 +724,13 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     expect((await obligations(org.orgId, first.id))[0]).toMatchObject({ state: 'done', how_done: 'reconnected', seals: '0' });
     expect((await obligations(org.orgId, otherAccount.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
     expect((await obligations(org.orgId, otherProvider.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+    // Another member's connection of the account does not cancel the first member's revoke: the first member's grant at the platform stands.
+    const second = await upsertIdentity(createDb(pool), { issuer: 'test', subject: `second-${randomUUID().slice(0, 8)}`, email: `second-${randomUUID().slice(0, 8)}@seal.test`, name: null });
+    const theirs = await connection(org, { provider: 'metawrite_ads', external: 'act_950' });
+    await close(org, theirs.id);
+    expect((await obligations(org.orgId, theirs.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+    await connection({ orgId: org.orgId, userId: second }, { provider: 'metawrite_ads', external: 'act_950' });
+    expect((await obligations(org.orgId, theirs.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
   });
 
   it('says whether another live connection of the same grantor needs the grant, as a boolean and nothing else, across orgs', async () => {
@@ -714,6 +770,15 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     await close(mine, unlinked.id);
     const [none] = await obligations(mine.orgId, unlinked.id);
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);
+    // With no grantor recorded the person is unknown: the same member's other live connection of the same provider, in any org, is taken to be theirs, and the
+    // call that would cut it is not made; once it is closed (or if it is another member's) the call is made.
+    const theirOrg = await makeOrg();
+    const sameMember = await connection({ orgId: theirOrg.orgId, userId: mine.userId }, { provider: 'metawrite_ads', external: 'act_600' });
+    expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(true);
+    await close(theirOrg, sameMember.id);
+    expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);
+    await connection(theirOrg, { provider: 'metawrite_ads', external: 'act_601' });
+    expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, randomUUID()]))[0]?.shared).toBe(false);
   });
 
@@ -747,11 +812,16 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
       await offboard(org);
       return { org, conn };
     }
-    // 1. The org is already out of service: a close holds nothing.
+    // 1. The org is in offboarding: a close still holds, and the purge that follows deletes it and holds nothing for the credentials it drops.
     {
       const { org, conn } = await offboardingOrg();
+      const other = await connection(org, { provider: 'metawrite_ads' });
       await close(org, conn.id);
+      expect((await obligations(org.orgId, conn.id))[0]).toMatchObject({ state: 'pending', seals: '1' });
+      await expect(purgeOrg(worker, 30, { ref: org.orgId, reason: 'test' })).resolves.toMatchObject({ kind: 'purged', orgId: org.orgId });
       expect(await obligations(org.orgId)).toEqual([]);
+      expect(await rows('SELECT 1 FROM crove_ads.ad_token_seal WHERE org_id = $1', [org.orgId])).toEqual([]);
+      expect(await rows('SELECT 1 FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [org.orgId, other.id])).toEqual([]);
     }
     // 2. A close that began while the org was active and is not committed holds the org's row (FOR SHARE, taken by the hold): the staff step that takes the
     // org out of service waits for it, so the close finishes first, its copy exists, and the purge that follows deletes it.
