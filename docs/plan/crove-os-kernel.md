@@ -1986,7 +1986,7 @@ Detailed plan, steps and open decisions: [email.md](email.md); architecture: [AD
 
 ### Meeting Notes (6 weeks estimated, added to the roadmap 2026-10-21 per Decision 19; reference: Otter, Fireflies, tl;dv, Google Meet notes)
 
-Not started. A detailed plan and an ADR come before the first PR; until then this section is the scope.
+Not started. A detailed plan and an ADR come before the first PR; until then this section is the scope. Proposed 2026-11-03, not yet approved by the owner: [meetings.md](meetings.md) and [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md).
 
 **Kernel additions:** none required to start. Audio is a `file` (a new upload purpose); transcription and summaries go through the provider-agnostic AI layer with its budgets and kill switches (§4.12); action items become `kernel.task` rows through proposals; follow-up mail uses the Email pipeline (Decision 18).
 
