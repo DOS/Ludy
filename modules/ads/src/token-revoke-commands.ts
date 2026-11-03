@@ -84,7 +84,8 @@ export const adsTokenRevokeRecord = defineCommand({
 });
 
 // What the Ads screen shows of the obligations (owners and admins): the open ones, and the ones that gave up in the last 30 days (the person is told to
-// remove the app by hand). Read through the tenant role, which has SELECT on the state table and no grant at all on the sealed copy.
+// remove the app by hand), each kind with a limit of its own so that a crowd of one cannot push the other off the card. Read through the tenant role,
+// which has SELECT on the state table and no grant at all on the sealed copy.
 export async function tokenRevokeViews(ctx: { trx: CommandContext['trx']; orgId: string }): Promise<AdsTokenRevokeView[]> {
   const { rows } = await sql<{
     id: string;
@@ -100,12 +101,20 @@ export async function tokenRevokeViews(ctx: { trx: CommandContext['trx']; orgId:
     last_error_kind: AdsTokenRevokeView['lastErrorKind'];
     created_at: Date;
   }>`
-    SELECT r.id, r.ad_account_id, a.name AS account_name, r.provider, r.external_account_id, r.kind, r.state, r.give_up, r.attempts, r.next_attempt_at, r.last_error_kind, r.created_at
-    FROM crove_ads.ad_token_revoke r
-    LEFT JOIN crove_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
-    WHERE r.org_id = ${ctx.orgId}::uuid AND (r.state = 'pending' OR (r.state = 'gave_up' AND r.settled_at > pg_catalog.now() - pg_catalog.make_interval(days => 30)))
-    ORDER BY r.created_at DESC, r.id DESC
-    LIMIT 50`.execute(ctx.trx);
+    (SELECT r.id, r.ad_account_id, a.name AS account_name, r.provider, r.external_account_id, r.kind, r.state, r.give_up, r.attempts, r.next_attempt_at, r.last_error_kind, r.created_at
+     FROM crove_ads.ad_token_revoke r
+     LEFT JOIN crove_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
+     WHERE r.org_id = ${ctx.orgId}::uuid AND r.state = 'pending'
+     ORDER BY r.created_at DESC, r.id DESC
+     LIMIT 50)
+    UNION ALL
+    (SELECT r.id, r.ad_account_id, a.name AS account_name, r.provider, r.external_account_id, r.kind, r.state, r.give_up, r.attempts, r.next_attempt_at, r.last_error_kind, r.created_at
+     FROM crove_ads.ad_token_revoke r
+     LEFT JOIN crove_ads.ad_account a ON a.org_id = r.org_id AND a.id = r.ad_account_id
+     WHERE r.org_id = ${ctx.orgId}::uuid AND r.state = 'gave_up' AND r.settled_at > pg_catalog.now() - pg_catalog.make_interval(days => 30)
+     ORDER BY r.created_at DESC, r.id DESC
+     LIMIT 50)
+    ORDER BY created_at DESC, id DESC`.execute(ctx.trx);
   return rows.map((r) => ({
     id: r.id,
     adAccountId: r.ad_account_id,

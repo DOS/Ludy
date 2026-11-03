@@ -1692,11 +1692,13 @@ export const vi = {
       disableClosesConnections: 'Mọi kết nối có thể chạy quảng cáo cũng bị đóng, và {brand} gỡ quyền của ứng dụng ở nền tảng; mã truy cập chỉ được giữ dạng mã hóa tối đa 7 ngày để làm việc đó.',
       // Said wherever such a connection is closed: the permission at the platform is removed by {brand} from a sealed copy of the token, kept 7 days at most.
       platformNote:
-        '{brand} tự gỡ quyền của ứng dụng ở Meta trong ít phút sau khi đóng kết nối, và chỉ giữ bản mã hóa của mã truy cập tối đa 7 ngày để làm việc đó. Nếu không gỡ được, màn hình này sẽ báo và bạn gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp, và muốn kết nối lại chỉ để đọc thì cũng phải gỡ trước.',
+        '{brand} tự gỡ quyền của ứng dụng ở Meta, trong ít phút sau khi đóng kết nối nếu Meta phản hồi ngay, và chậm hơn nếu Meta chậm, gián đoạn hoặc giới hạn yêu cầu; chỉ giữ bản mã hóa của mã truy cập tối đa 7 ngày để làm việc đó. Nếu không gỡ được, màn hình này sẽ báo và bạn gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp, và muốn kết nối lại chỉ để đọc thì cũng phải gỡ trước.',
       // The removal of the permission at the platform, as the screen shows it while it is tried and after it gave up (W2-1, #2296).
       revokeTitle: 'Gỡ quyền của ứng dụng ở nền tảng',
       revokePending: 'Đang gỡ quyền của ứng dụng {brand} ở Meta cho {account}. Đã thử {attempts} lần, lần tới lúc {when}. Bản mã hóa của mã truy cập được giữ tối đa 7 ngày chỉ để việc này, rồi bị xóa.',
       revokeGaveUp: 'Chưa gỡ được quyền của ứng dụng {brand} ở Meta cho {account}, và {brand} đã xóa mã truy cập. Hãy gỡ ứng dụng của {brand} trong phần cài đặt Facebook (Cài đặt, Tích hợp doanh nghiệp); cho tới khi gỡ, Meta vẫn công nhận quyền đã cấp.',
+      revokePendingSandbox: 'Đang gỡ quyền của kết nối thử nghiệm cho {account}. Đã thử {attempts} lần, lần tới lúc {when}. Bản mã hóa của mã truy cập thử nghiệm được giữ tối đa 7 ngày chỉ để việc này, rồi bị xóa.',
+      revokeGaveUpSandbox: 'Chưa gỡ được quyền của kết nối thử nghiệm cho {account}, và {brand} đã xóa mã truy cập. Đây là kết nối thử nghiệm: không còn gì ở nền tảng nào để gỡ.',
       revokeAccountFallback: 'một tài khoản quảng cáo',
       caps: 'Hạn mức chi tiêu',
       capsHint: 'Chưa có hạn mức theo ngày và theo tháng thì chưa chạy được quảng cáo nào. Mỗi hạn mức có loại tiền riêng. Đặt hoặc tăng hạn mức là một đề xuất cần người duyệt; chủ sở hữu giảm hạn mức thì có hiệu lực ngay.',

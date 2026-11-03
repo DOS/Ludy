@@ -1694,11 +1694,13 @@ export const en = {
       readsClosedToast: 'Closed the Meta connections that read figures ({count}), because their token could also change campaigns. Connect them again for reading; whoever granted the permission to run ads removes the app in Facebook first.',
       // Said wherever such a connection is closed: the permission at the platform is removed by {brand} from a sealed copy of the token, kept 7 days at most.
       platformNote:
-        '{brand} removes the app’s permission at Meta by itself within minutes of the close, keeping an encrypted copy of the token for seven days at most for that alone. If it cannot, this screen says so and you remove {brand}’s app in your Facebook settings (Settings, Business integrations); until it is removed Meta still honours the permission, and a read-only reconnect works only after you have.',
+        '{brand} removes the app’s permission at Meta by itself, within minutes of the close when Meta answers at once and later when Meta is slow, unavailable or limiting requests, keeping an encrypted copy of the token for seven days at most for that alone. If it cannot, this screen says so and you remove {brand}’s app in your Facebook settings (Settings, Business integrations); until it is removed Meta still honours the permission, and a read-only reconnect works only after you have.',
       // The removal of the permission at the platform, as the screen shows it while it is tried and after it gave up (W2-1, #2296).
       revokeTitle: 'Removing the app’s permission at the platform',
       revokePending: 'Removing {brand}’s app permission at Meta for {account}. Tried {attempts} time(s), next try at {when}. An encrypted copy of the token is kept for seven days at most for this alone, then deleted.',
       revokeGaveUp: 'Could not remove {brand}’s app permission at Meta for {account}, and {brand} has deleted the token. Remove {brand}’s app in your Facebook settings (Settings, Business integrations); until you do, Meta still honours the permission.',
+      revokePendingSandbox: 'Removing the practice connection’s permission for {account}. Tried {attempts} time(s), next try at {when}. An encrypted copy of the practice token is kept for seven days at most for this alone, then deleted.',
+      revokeGaveUpSandbox: 'Could not remove the practice connection’s permission for {account}, and {brand} has deleted the token. It is a practice connection: nothing is left at any platform to remove.',
       revokeAccountFallback: 'an ad account',
       caps: 'Spend caps',
       capsHint: 'With no daily and no monthly cap set, no ad can run. Each cap has its own currency. Setting or raising a cap is a proposal that needs a person to approve it; an owner can lower one at once.',

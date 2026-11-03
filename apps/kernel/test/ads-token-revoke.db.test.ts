@@ -530,6 +530,28 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     await expect(app.query('ads.write.state', {}, { actor: asUser(viewer), orgId })).rejects.toMatchObject({ status: 403 });
   });
 
+  it('limits the open obligations and the ones that gave up separately, so many of one cannot push the other off the screen', async () => {
+    const before = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes;
+    const gaveUp = before.filter((r) => r.state === 'gave_up').map((r) => r.id);
+    expect(gaveUp.length).toBeGreaterThan(0);
+    // Fifty-one newer open obligations (made as the table owner; they have no copy, so no sweep touches them), then removed again.
+    const made: string[] = [];
+    try {
+      for (let i = 0; i < 51; i++) {
+        const [row] = await rows<{ id: string }>(
+          `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, provider, external_account_id, kind, reason) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'write', 'other') RETURNING id`,
+          [orgId, randomUUID(), `sbxads-crowd-${i}`],
+        );
+        made.push(row?.id as string);
+      }
+      const after = ((await app.query('ads.write.state', {}, { actor: asUser(owner), orgId })) as AdsWriteState).tokenRevokes;
+      expect(after.filter((r) => r.state === 'pending')).toHaveLength(50);
+      expect(after.filter((r) => r.state === 'gave_up').map((r) => r.id).sort()).toEqual([...gaveUp].sort());
+    } finally {
+      for (const id of made) await admin((c) => c.query('DELETE FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND id = $2', [orgId, id]));
+    }
+  });
+
   it('records ids, states and codes only: no token and no envelope in an audit row, an event, an idempotency key or a job', async () => {
     const audit = await rows<{ command: string; detail: unknown; input_sha256: string }>(`SELECT command, detail, input_sha256 FROM crove_kernel.audit_event WHERE org_id = $1 ORDER BY occurred_at`, [orgId]);
     expect(audit.some((a) => a.command === 'ads.token_revoke.record')).toBe(true);

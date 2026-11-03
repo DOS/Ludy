@@ -769,6 +769,17 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
       await c.query('COMMIT');
     });
     expect(await shared()).toBe(false);
+    // A live connection whose connector can no longer use it (disabled, or no longer an owner or admin of its org) needs nothing: credential_get refuses it, so
+    // it can call nothing at the platform, and the grant is revoked with the closed one (a read connection stays "active" until a sync finds it out).
+    const leaver = await makeOrg();
+    const leaverConn = await connection(leaver, { provider: 'meta_ads', external: 'act_504' });
+    await account(leaver, leaverConn.id, 'meta_ads', 'act_504', HASH);
+    expect(await shared()).toBe(true);
+    await owner('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [leaver.userId]);
+    expect(await shared()).toBe(false);
+    await owner('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [leaver.userId]);
+    expect(await shared()).toBe(true);
+    await close(leaver, leaverConn.id);
     // Its own connection never counts, and an obligation whose grantor is not known is never shared; a settled or unknown obligation answers false.
     const unlinked = await connection(mine, { provider: 'metawrite_ads' });
     await close(mine, unlinked.id);
@@ -777,7 +788,14 @@ suite('the sealed copy of a closed ads connection token (#2296, W2-1)', () => {
     // With no grantor recorded the person is unknown: the same member's other live connection of the same provider, in any org, is taken to be theirs, and the
     // call that would cut it is not made; once it is closed (or if it is another member's) the call is made.
     const theirOrg = await makeOrg();
+    // The same member is an admin of the other org too (a connection of someone who is not a member of its org is not one that is usable).
+    await owner(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'admin')`, [theirOrg.orgId, mine.userId]);
     const sameMember = await connection({ orgId: theirOrg.orgId, userId: mine.userId }, { provider: 'metawrite_ads', external: 'act_600' });
+    expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(true);
+    // Disabled, the member cannot use it any more: the call is made.
+    await owner('UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1', [mine.userId]);
+    expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);
+    await owner('UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1', [mine.userId]);
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(true);
     await close(theirOrg, sameMember.id);
     expect((await workerSql<{ shared: boolean }>('SELECT crove_ads.token_grant_shared($1::uuid, $2::uuid) AS shared', [mine.orgId, none?.id]))[0]?.shared).toBe(false);

@@ -389,14 +389,20 @@ BEGIN
       SELECT 1 FROM crove_kernel.channel_connection c
       JOIN crove_kernel.tenant t ON t.org_id = c.org_id AND t.status = 'active'
       WHERE c.provider = v_provider AND c.status = 'active' AND c.connected_by = v_by AND NOT (c.org_id = p_org AND c.id = v_connection)
+        AND EXISTS (SELECT 1 FROM crove_kernel.tenant_member m JOIN crove_kernel.user_account u ON u.id = m.user_id
+                    WHERE m.org_id = c.org_id AND m.user_id = c.connected_by AND m.role IN ('owner', 'admin') AND u.disabled_at IS NULL)
     );
   END IF;
+  -- A live connection whose connector has left the org, lost the admin role or been disabled is not one that needs the grant: credential_get refuses it, so it
+  -- can call nothing at the platform (the sweep closes the write ones; a read one stays "active" until a sync finds it out).
   RETURN EXISTS (
     SELECT 1 FROM crove_ads.ad_account a
     JOIN crove_kernel.tenant t ON t.org_id = a.org_id AND t.status = 'active'
     JOIN crove_kernel.channel_connection c ON c.org_id = a.org_id AND c.status = 'active'
     WHERE ((a.granted_by_hash = v_hash AND c.id = a.channel_connection_id) OR (a.write_granted_by_hash = v_hash AND c.id = a.write_connection_id))
       AND NOT (a.org_id = p_org AND c.id = v_connection)
+      AND EXISTS (SELECT 1 FROM crove_kernel.tenant_member m JOIN crove_kernel.user_account u ON u.id = m.user_id
+                    WHERE m.org_id = c.org_id AND m.user_id = c.connected_by AND m.role IN ('owner', 'admin') AND u.disabled_at IS NULL)
   );
 END $$;
 
