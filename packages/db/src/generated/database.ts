@@ -1606,6 +1606,7 @@ export interface KernelPartyTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   search: ColumnType<string | null, never, never>;
   duplicate_of: string | null;
+  company_id: string | null;
 }
 
 /** crove_kernel.position */

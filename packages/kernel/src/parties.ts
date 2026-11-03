@@ -300,6 +300,59 @@ export const unmarkDuplicate = defineCommand({
   },
 });
 
+// The company a person works at (#2438, CRM-Q5): the person's `company_id`, set, changed or cleared by one command, from the person's page or the company's. A
+// person works at one company of the org; the company is an organization that is not merged into another (a merged one is replaced by the party kept). The table
+// holds the same rules for every writer (party_company_person, party_company_guard); the command checks them first under row locks so each refusal says why.
+// The editor sends the person's version, as kernel.party.update: a person saved by someone else meanwhile is refused. Owners, admins and members (R1); no agent.
+// The audit row and the timeline sentences name no one: ids only.
+export const setPartyCompany = defineCommand({
+  name: 'kernel.party.set_company',
+  input: z.object({ partyId: zId, companyId: zId.nullable(), version: z.number().int().min(1) }),
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: ['owner', 'admin', 'member'],
+  handler: async (ctx, { partyId, companyId, version }) => {
+    if (companyId === partyId) throw new DomainError('SAME_PARTY', 422, 'Một người liên hệ không thể thuộc về chính mình');
+    // The person and the company, locked in id order, so two links of the same pair wait for each other instead of deadlocking. A company of another org is not
+    // visible to this one (row-level security): it reads as not found.
+    const rows = await ctx.trx
+      .selectFrom('crove_kernel.party')
+      .select(['id', 'kind', 'duplicate_of', 'company_id', 'version'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', 'in', companyId === null ? [partyId] : [partyId, companyId])
+      .orderBy('id')
+      .forUpdate()
+      .execute();
+    const person = rows.find((r) => r.id === partyId);
+    if (!person) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy đối tác');
+    if (person.version !== version) {
+      throw new DomainError('PARTY_CHANGED', 409, 'Thông tin này vừa được người khác sửa; hãy mở lại rồi sửa tiếp', { version: person.version });
+    }
+    if (person.kind !== 'person') throw new DomainError('PARTY_NOT_PERSON', 422, 'Chỉ người liên hệ mới thuộc về một công ty');
+    if (companyId !== null) {
+      const company = rows.find((r) => r.id === companyId);
+      if (!company) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy công ty');
+      if (company.kind !== 'organization') throw new DomainError('PARTY_COMPANY_NOT_ORGANIZATION', 422, 'Công ty phải là một đối tác loại công ty, không phải một người');
+      if (company.duplicate_of !== null) {
+        throw new DomainError('PARTY_IS_DUPLICATE', 422, 'Công ty này đã được gộp vào công ty khác; hãy chọn công ty được giữ lại', { keepId: company.duplicate_of });
+      }
+    }
+    if (person.company_id === companyId) return { partyId, version: person.version };
+    const updated = await ctx.trx
+      .updateTable('crove_kernel.party')
+      .set({ company_id: companyId, version: person.version + 1, updated_at: ctx.now })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', partyId)
+      .returning('version')
+      .executeTakeFirstOrThrow();
+    ctx.audit({ partyId, companyId, previousCompanyId: person.company_id });
+    await ctx.activity('kernel.party', partyId, companyId === null ? 'party.company_cleared' : 'party.company_set', companyId === null ? 'Bỏ liên kết với công ty' : 'Gắn với một công ty');
+    if (companyId !== null) await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
+    if (person.company_id !== null) await ctx.activity('kernel.party', person.company_id, 'party.person_unlinked', 'Một người liên hệ không còn làm việc tại đây');
+    return { partyId, version: updated.version };
+  },
+});
+
 // Duplicate hints (#887): pairs of parties that look like one, for a person to mark. Reasons: the tax codes of one
 // enterprise (the same 10 digits, one of them a branch), the same phone, or names alike once folded (marks, case and
 // punctuation away) and stripped of the legal form ("Công ty TNHH", "CP", ...), compared by character trigrams. Only
@@ -523,5 +576,5 @@ export const linkPartyForTaxCode = defineCommand({
   },
 });
 
-export const partyCommands = [createParty, updateParty, markDuplicate, unmarkDuplicate, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
+export const partyCommands = [createParty, updateParty, markDuplicate, unmarkDuplicate, setPartyCompany, linkPartyEntity, unlinkPartyEntity, linkPartyForTaxCode];
 export const partyQueries = [duplicateHintsQuery];

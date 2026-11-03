@@ -1411,6 +1411,9 @@ export const contract = {
     // under it; nothing is deleted. unmarkDuplicate undoes it.
     markDuplicate: oc.input(z.object({ partyId: zId, keepId: zId })).output(z.object({ partyId: zId, keepId: zId })),
     unmarkDuplicate: oc.input(z.object({ partyId: zId })).output(z.object({ partyId: zId })),
+    // Owners, admins and members (R1, #2438): the company a person works at, set, changed or cleared (companyId null), from the version the editor read. The company
+    // is an organization of the org that is not merged into another; only a person has one.
+    setCompany: oc.input(z.object({ partyId: zId, companyId: zId.nullable(), version: z.number().int().min(1) })).output(z.object({ partyId: zId, version: z.number().int() })),
     // Every role (K4, #2228): what happened to a contact, oldest first (fixed text, never a name or contact detail).
     timeline: oc.input(z.object({ partyId: zId })).output(zTimeline),
     // Owners, admins and members: pairs of parties that look like duplicates, strongest first.

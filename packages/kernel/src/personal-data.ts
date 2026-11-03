@@ -512,7 +512,8 @@ export const personalDataErase = defineCommand({
           email: null,
           phone: null,
           address: null,
-          ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME } : {}),
+          // An erased party is no one any more: the company a person worked at (#2438) goes with the name; a documented party keeps its place in the books.
+          ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME, company_id: null } : {}),
           version: eb('version', '+', 1),
           updated_at: ctx.now,
         }))
