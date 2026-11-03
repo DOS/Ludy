@@ -16,6 +16,11 @@ export const IMPORT_ON_DUPLICATE = ['skip', 'fill_empty'] as const;
 export type ImportOnDuplicate = (typeof IMPORT_ON_DUPLICATE)[number];
 export const IMPORT_STATUSES = ['staged', 'committed', 'cancelled', 'expired'] as const;
 export type ImportStatus = (typeof IMPORT_STATUSES)[number];
+// What the company cell of a person's row came to (#2438): matched an existing company, names one the org does not have (made on
+// commit only when the person says so), names a company that is a row of the same file (made with it), names a tax code no company has, names two
+// companies alike, or there is nothing to use.
+export const IMPORT_COMPANY_STATES = ['none', 'matched', 'new', 'in_file', 'unknown_tax_code', 'ambiguous'] as const;
+export type ImportCompanyState = (typeof IMPORT_COMPANY_STATES)[number];
 
 // Why a row is not a new party: a code, never a value from the file.
 export const IMPORT_REASONS = [
@@ -42,6 +47,8 @@ export const zImportRowInput = z.strictObject({
   email: zCell(1000),
   phone: zCell(200),
   address: zCell(2000),
+  // The company the person works at, as the file wrote it: a name, or the company's tax code (#2438).
+  company: zCell(1000).optional(),
 });
 export type ImportRowInput = z.infer<typeof zImportRowInput>;
 
@@ -52,7 +59,8 @@ export const zImportStage = z.strictObject({
 export type ImportStage = z.infer<typeof zImportStage>;
 
 export const zImportRef = z.strictObject({ batchId: zId });
-export const zImportCommit = z.strictObject({ batchId: zId, onDuplicate: z.enum(IMPORT_ON_DUPLICATE) });
+// createCompanies: make the companies the file names that the org does not have (the preview counts them); without it those people are imported with no company.
+export const zImportCommit = z.strictObject({ batchId: zId, onDuplicate: z.enum(IMPORT_ON_DUPLICATE), createCompanies: z.boolean().default(false) });
 export const zImportPreviewQuery = z.strictObject({
   batchId: zId,
   outcome: z.enum(IMPORT_OUTCOMES).optional(),
@@ -73,6 +81,10 @@ export interface ImportBatch {
   invalidRows: number;
   createdRows: number;
   updatedRows: number;
+  // The companies the new rows name that the org does not have yet (a commit with createCompanies makes them), and what the commit did.
+  newCompanies: number;
+  createdCompanies: number;
+  linkedRows: number;
   createdAt: string;
   decidedAt: string | null;
 }
@@ -89,6 +101,8 @@ export interface ImportPreviewRow {
   reason: ImportReason | null;
   // The existing party a duplicate matched.
   match: { partyId: string; name: string } | null;
+  // The company cell of a person's row (null for a company's row or an empty cell) and what it came to.
+  company: { name: string; state: ImportCompanyState; match: { partyId: string; name: string } | null } | null;
 }
 
 export interface ImportPreview {
@@ -117,6 +131,9 @@ export const zImportBatch = z.object({
   invalidRows: z.number().int(),
   createdRows: z.number().int(),
   updatedRows: z.number().int(),
+  newCompanies: z.number().int(),
+  createdCompanies: z.number().int(),
+  linkedRows: z.number().int(),
   createdAt: zIso,
   decidedAt: zIso.nullable(),
 });
@@ -134,6 +151,7 @@ export const zImportPreview = z.object({
       outcome: z.enum(IMPORT_OUTCOMES),
       reason: z.enum(IMPORT_REASONS).nullable(),
       match: z.object({ partyId: zId, name: z.string() }).nullable(),
+      company: z.object({ name: z.string(), state: z.enum(IMPORT_COMPANY_STATES), match: z.object({ partyId: zId, name: z.string() }).nullable() }).nullable(),
     }),
   ),
   more: z.boolean(),

@@ -596,7 +596,9 @@ export const personalDataErase = defineCommand({
           new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
           duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
           conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
-          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid')
+          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
+          new_companies = (SELECT count(DISTINCT crove_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+                           WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
         WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
     }
     for (const r of staged) {
