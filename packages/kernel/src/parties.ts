@@ -98,6 +98,7 @@ export const PARTY_KIND_HOLDERS = [
   ['crove_finance.journal_line', 'party_id'],
   ['crove_finance.vendor_account_rule', 'party_id'],
   ['crove_finance.categorization_rule', 'vendor_party_id'],
+  ['crove_finance.bank_party_rule', 'party_id'],
   ['crove_crm.deal', 'party_id'],
   ['crove_crm.booking', 'party_id'],
   ['crove_kernel.conversation_identity', 'party_id'],
@@ -159,11 +160,12 @@ export const updateParty = defineCommand({
     const kind = input.kind ?? before.kind;
     if (kind !== before.kind) {
       if (before.company_id !== null) throw new DomainError('PARTY_HAS_COMPANY', 422, 'Hãy bỏ liên kết với công ty của người này trước khi đổi loại');
-      // The check reads the books as the member, and the restrictive entity policies of the books hide the rows of another entity from a member limited to one:
-      // only a member who sees every entity can say that nothing points at the party.
+      // The check reads the books and the threads as the member. The restrictive entity policies of the books hide the rows of another entity from a member limited
+      // to one, and a private message is read by owners and admins only (a member's channel limit hides more): only an owner or an admin who sees every entity can say
+      // that nothing points at the party.
       const { rows: scope } = await sql<{ every: boolean }>`SELECT ${seesEveryEntity} AS every`.execute(ctx.trx);
-      if (scope[0]?.every !== true) {
-        throw new DomainError('PARTY_KIND_SCOPE', 403, 'Bạn chỉ xem được sổ sách của một phần pháp nhân nên không đổi được loại đối tác; hãy nhờ chủ doanh nghiệp hoặc quản trị viên');
+      if ((ctx.role !== 'owner' && ctx.role !== 'admin') || scope[0]?.every !== true) {
+        throw new DomainError('PARTY_KIND_SCOPE', 403, 'Chỉ chủ doanh nghiệp hoặc quản trị viên, những người xem được mọi sổ sách và hội thoại, mới đổi được loại đối tác');
       }
       if (await partyPointedAt(ctx, before.id)) {
         throw new DomainError('PARTY_KIND_LOCKED', 422, 'Đối tác này đã có chứng từ, quy tắc kế toán, cơ hội, lịch hẹn, hội thoại hay người liên hệ gắn vào nên không đổi loại được');
@@ -382,6 +384,10 @@ export const setPartyCompany = defineCommand({
       throw new DomainError('PARTY_CHANGED', 409, 'Thông tin này vừa được người khác sửa; hãy mở lại rồi sửa tiếp', { version: person.version });
     }
     if (person.kind !== 'person') throw new DomainError('PARTY_NOT_PERSON', 422, 'Chỉ người liên hệ mới thuộc về một công ty');
+    // A person merged into another is hidden from the lists and the counts: a new link would never show. (Clearing a link they already had stays allowed.)
+    if (companyId !== null && person.duplicate_of !== null) {
+      throw new DomainError('PARTY_IS_DUPLICATE', 422, 'Người liên hệ này đã được gộp vào liên hệ khác; hãy chọn liên hệ được giữ lại', { keepId: person.duplicate_of });
+    }
     if (companyId !== null) {
       const company = rows.find((r) => r.id === companyId);
       if (!company) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy công ty');
@@ -401,7 +407,11 @@ export const setPartyCompany = defineCommand({
     ctx.audit({ partyId, companyId, previousCompanyId: person.company_id });
     await ctx.activity('kernel.party', partyId, companyId === null ? 'party.company_cleared' : 'party.company_set', companyId === null ? 'Bỏ liên kết với công ty' : 'Gắn với một công ty');
     if (companyId !== null) await ctx.activity('kernel.party', companyId, 'party.person_linked', 'Có thêm một người liên hệ làm việc tại đây');
-    if (person.company_id !== null) await ctx.activity('kernel.party', person.company_id, 'party.person_unlinked', 'Một người liên hệ không còn làm việc tại đây');
+    if (person.company_id !== null) {
+      // The company the person worked at may have been merged since: the departure is on the company kept, where the counts and the lists put the person.
+      const left = await ctx.trx.selectFrom('crove_kernel.party').select(['id', 'duplicate_of']).where('org_id', '=', ctx.orgId).where('id', '=', person.company_id).executeTakeFirst();
+      await ctx.activity('kernel.party', left?.duplicate_of ?? person.company_id, 'party.person_unlinked', 'Một người liên hệ không còn làm việc tại đây');
+    }
     return { partyId, version: updated.version };
   },
 });

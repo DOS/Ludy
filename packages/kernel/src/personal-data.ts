@@ -524,12 +524,15 @@ export const personalDataErase = defineCommand({
         .execute();
       // The people who worked at a forgotten company are not left pointing at the placeholder name.
       if (forget) {
-        await ctx.trx
+        // The matched parties count their own link in the loop; the others are counted here.
+        const unlinked = await ctx.trx
           .updateTable('crove_kernel.party')
           .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
           .where('org_id', '=', ctx.orgId)
           .where('company_id', '=', party.id)
-          .execute();
+          .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
+          .executeTakeFirst();
+        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
       }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
