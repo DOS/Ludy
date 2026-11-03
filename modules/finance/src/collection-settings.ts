@@ -56,12 +56,24 @@ async function keptParty(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: stri
   return row.kept;
 }
 
+// What a duplicate group has set. The row sits on the kept party; a party marked as a duplicate afterwards may still hold its own (nothing moves it), so every party of the
+// group is read: the kept party's row wins, else the row whose pause runs longest, so a pause or terms set before a merge are not hidden by it.
+async function groupRow(ctx: Pick<QueryContext, 'trx' | 'orgId'>, kept: string): Promise<{ terms_days: number | null; paused_until: string | null } | undefined> {
+  const rows = await ctx.trx
+    .selectFrom('crove_finance.customer_collection as c')
+    .innerJoin('crove_kernel.party as x', (join) => join.onRef('x.org_id', '=', 'c.org_id').onRef('x.id', '=', 'c.party_id'))
+    .select(['c.party_id', 'c.terms_days', 'c.paused_until'])
+    .where('c.org_id', '=', ctx.orgId)
+    .where(sql<boolean>`coalesce(x.duplicate_of, x.id) = ${kept}`)
+    .execute();
+  const own = rows.find((r) => r.party_id === kept);
+  if (own) return own;
+  return rows.reduce<(typeof rows)[number] | undefined>((best, r) => (!best || (r.paused_until ?? '') > (best.paused_until ?? '') ? r : best), undefined);
+}
+
 async function readCustomer(ctx: Pick<QueryContext, 'trx' | 'orgId'>, partyId: string): Promise<CustomerCollection> {
   const kept = await keptParty(ctx, partyId);
-  const [row, setting] = await Promise.all([
-    ctx.trx.selectFrom('crove_finance.customer_collection').select(['terms_days', 'paused_until']).where('org_id', '=', ctx.orgId).where('party_id', '=', kept).executeTakeFirst(),
-    readCollectionSetting(ctx),
-  ]);
+  const [row, setting] = await Promise.all([groupRow(ctx, kept), readCollectionSetting(ctx)]);
   const termsDays = row?.terms_days ?? null;
   return { partyId: kept, termsDays, effectiveTermsDays: termsDays ?? setting.termsDays, pausedUntil: row?.paused_until ?? null };
 }
@@ -81,6 +93,8 @@ export const collectionSettingSet = defineCommand({
   sideEffect: 'internal',
   access: MANAGERS,
   handler: async (ctx, input): Promise<CollectionSetting> => {
+    // Two writers of the org's one row wait for each other, so the audit row of the second names what the first left, not what it read before.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.collection_setting:${ctx.orgId}`}, 0))`.execute(ctx.trx);
     const before = await readCollectionSetting(ctx);
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     await ctx.trx
@@ -116,11 +130,13 @@ export const customerCollectionSet = defineCommand({
       if (when - ctx.now.getTime() > PAUSE_MAX_DAYS * DAY_MS) throw new DomainError('PAUSE_TOO_LONG', 422, `Chỉ tạm dừng nhắc tối đa ${PAUSE_MAX_DAYS} ngày kể từ hôm nay`);
     }
     const kept = await keptParty(ctx, input.partyId);
+    // One writer per customer at a time, the first set of a customer included (no row to lock yet): the audit row names the values the previous writer left.
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.customer_collection:${ctx.orgId}:${kept}`}, 0))`.execute(ctx.trx);
     const before = await readCustomer(ctx, kept);
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-    if (input.termsDays === null && input.pausedUntil === null && before.termsDays === null && before.pausedUntil === null) {
-      // Nothing to keep and nothing kept: no row is made for a customer with no setting.
-      ctx.audit({ partyId: kept, termsDays: null, pausedUntil: null, changed: false });
+    // Nothing to keep and nothing kept, or the same values again: no row is made or touched (who set it and when stay as they were).
+    if (input.termsDays === before.termsDays && input.pausedUntil === before.pausedUntil) {
+      ctx.audit({ partyId: kept, termsDays: input.termsDays, pausedUntil: input.pausedUntil, changed: false });
       return before;
     }
     await ctx.trx

@@ -250,4 +250,45 @@ suite('payment reminder settings (#2488)', () => {
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.customer_collection WHERE org_id = $1', [o.orgId])).rowCount)).toBe(0);
     expect(await admin(async (c) => (await c.query('SELECT 1 FROM crove_finance.collection_setting WHERE org_id = $1', [o.orgId])).rowCount)).toBe(1);
   });
+
+  it('reads the settings a party held before it was merged, writes only on the kept party, audits "changed" only when something changed, and serializes two writers', async () => {
+    const o = await org();
+    const kept = await customer(o, 'Công ty Giữ Lại Ba');
+    const dup = await customer(o, 'Công ty Trùng Ba');
+    const until = daysFromNow(15);
+    await execute(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 40, pausedUntil: until });
+    await admin((c) => c.query('UPDATE crove_kernel.party SET duplicate_of = $3 WHERE org_id = $1 AND id = $2', [o.orgId, dup, kept]));
+    // The row stayed on the duplicate; the group still shows it, from either party.
+    for (const who of [kept, dup]) expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: who })).toEqual({ partyId: kept, termsDays: 40, effectiveTermsDays: 40, pausedUntil: until });
+    // A set through the duplicate writes the kept party's row, which then wins.
+    await execute(o, 'finance.customer_collection.set', { partyId: dup, termsDays: 10, pausedUntil: null });
+    expect(await query<Customer>(o, 'finance.customer_collection.get', { partyId: kept })).toMatchObject({ termsDays: 10, pausedUntil: null });
+    // The same values again change nothing: audited as unchanged, and the row keeps who set it and when.
+    const before = await admin(async (c) => (await c.query('SELECT updated_at::text AS at FROM crove_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0]);
+    await execute(o, 'finance.customer_collection.set', { partyId: kept, termsDays: 10, pausedUntil: null }, o.member);
+    expect(await admin(async (c) => (await c.query('SELECT updated_at::text AS at, set_by FROM crove_finance.customer_collection WHERE org_id = $1 AND party_id = $2', [o.orgId, kept])).rows[0])).toMatchObject({ at: before?.at, set_by: o.owner });
+    const audit = await auditOf(o, 'finance.customer_collection.set');
+    expect(audit.map((a) => a.changed)).toEqual([true, true, false]);
+    // Two writers at once: each audit row names what the other left (one chain, never two writers reading the same old value).
+    const fresh = await customer(o, 'Công ty Hai Người Ghi');
+    await Promise.all([
+      execute(o, 'finance.customer_collection.set', { partyId: fresh, termsDays: 11, pausedUntil: null }),
+      execute(o, 'finance.customer_collection.set', { partyId: fresh, termsDays: 12, pausedUntil: null }, o.admin),
+    ]);
+    const chain = (await auditOf(o, 'finance.customer_collection.set')).filter((a) => a.partyId === fresh);
+    expect(chain).toHaveLength(2);
+    // (The audit rows are stamped when each transaction starts, not in the order the lock let them write: find the first writer by its previous value.)
+    const first = chain.find((a) => a.previousTermsDays === null);
+    const second = chain.find((a) => a !== first);
+    expect(first).toBeDefined();
+    expect(second?.previousTermsDays).toBe(first?.termsDays);
+    await Promise.all([
+      execute(o, 'finance.collection_setting.set', { termsDays: 21, weeklyItem: false }),
+      execute(o, 'finance.collection_setting.set', { termsDays: 22, weeklyItem: false }, o.admin),
+    ]);
+    const orgChain = await auditOf(o, 'finance.collection_setting.set');
+    const firstOrg = orgChain.find((a) => a.previousTermsDays === 30);
+    expect(firstOrg).toBeDefined();
+    expect(orgChain.find((a) => a !== firstOrg)?.previousTermsDays).toBe(firstOrg?.termsDays);
+  });
 });
