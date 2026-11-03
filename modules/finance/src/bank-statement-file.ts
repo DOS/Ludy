@@ -24,7 +24,7 @@ import type { MemberRole } from '@crove/db';
 import { BANK_IMPORT_MAX_ROWS, STAGED_STATEMENT_MAX_BYTES, STATEMENT_LINES_SHOWN, statementAmountText, zBankStatementRow, zId, zStatementSummary, type BankImportResult, type BankStatementRow, type StatementLines } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { Decimal } from '@crove/l10n-vn';
-import { maskAccountNumber } from './account-number.ts';
+import { mappedAccounts, maskAccountNumber } from './account-number.ts';
 import { importStatement, previewStatement } from './bank.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
@@ -67,19 +67,7 @@ type Place = { kind: 'none' } | { kind: 'ambiguous' } | { kind: 'one'; bankAccou
 // the bank account itself (#2183, the way without a bank feed). The same account named by both is one place; two
 // different accounts are ambiguous, and nothing is staged against a guess.
 async function mappedPlace(ctx: QueryContext, accountNumber: string): Promise<Place> {
-  const fed = await ctx.trx
-    .selectFrom('crove_finance.bank_feed_account')
-    .select(['bank_account', 'legal_entity_id'])
-    .where('org_id', '=', ctx.orgId)
-    .where(sql<boolean>`pg_catalog.regexp_replace(external_account_id, '[^0-9]', '', 'g') = ${accountNumber}`)
-    .execute();
-  const recorded = await ctx.trx
-    .selectFrom('crove_finance.bank_account_number')
-    .select(['bank_account', 'legal_entity_id'])
-    .where('org_id', '=', ctx.orgId)
-    .where('account_number', '=', accountNumber)
-    .execute();
-  const places = new Map([...fed, ...recorded].map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
+  const places = new Map((await mappedAccounts(ctx, accountNumber)).map((m) => [`${m.legal_entity_id}|${m.bank_account}`, m]));
   if (places.size > 1) return { kind: 'ambiguous' };
   const [place] = [...places.values()];
   return place ? { kind: 'one', bankAccount: place.bank_account, legalEntityId: place.legal_entity_id } : { kind: 'none' };

@@ -20,6 +20,7 @@ import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { VOUCHER_SOURCE } from './domain/cash-voucher.ts';
 import { bankLineKey } from './domain/bank-rule-key.ts';
+import { mappedAccounts } from './account-number.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -71,9 +72,10 @@ export async function learnFromVoucher(
   };
   const key = bankLineKey(input.description);
   const text = key === null ? undefined : await write('text', key);
-  // The org's own account numbers say nothing about the other side (a bank prints the holder's own account for fees and interest).
+  // The org's own account numbers (a bank feed mapping or a number recorded on a bank account) say nothing about the other side (a bank
+  // prints the holder's own account for fees and interest).
   const own = input.counterpartyAccount
-    ? (await sql<{ n: string }>`SELECT 1 AS n FROM crove_finance.bank_account_number WHERE org_id = ${ctx.orgId} AND account_number = ${input.counterpartyAccount}`.execute(ctx.trx)).rows.length > 0
+    ? (await mappedAccounts(ctx, input.counterpartyAccount)).length > 0
     : true;
   const account = input.counterpartyAccount && !own ? await write('account', input.counterpartyAccount) : undefined;
   return text || account ? { ...(text ? { text } : {}), ...(account ? { account } : {}) } : null;

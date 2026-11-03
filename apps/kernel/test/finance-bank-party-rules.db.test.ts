@@ -431,4 +431,37 @@ suite('learned bank line rules (#2402)', () => {
       await admin(async (c) => (await c.query<{ convalidated: boolean }>(`SELECT convalidated FROM pg_constraint WHERE conname = 'bank_line_counterparty_account_digits'`)).rows[0]?.convalidated),
     ).toBe(true);
   });
+
+  it('never learns a number a bank feed maps either: the feed account\'s digits are the org\'s own', async () => {
+    const connection = randomUUID();
+    const lambda = randomUUID();
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'bank_sandbox', $3, 'Ngân hàng', $4)`, [org.orgId, connection, `feed-${connection}`, ownerId]);
+      await c.query(`INSERT INTO crove_finance.bank_feed_account (org_id, channel_connection_id, external_account_id, bank_account) VALUES ($1, $2, 'SBX-3344556677', '1121')`, [org.orgId, connection]);
+      await c.query(`INSERT INTO crove_kernel.party (org_id, id, name) VALUES ($1, $2, 'Công ty Lambda Trade')`, [org.orgId, lambda]);
+    });
+    expect((await importLines(org.slug, member, [row('29/11/2026', '950.000', 'RF9', 'GD 31', '3344 5566 77')], 'sao-ke-lambda.xlsx')).status).toBe(200);
+    await refresh();
+    await matchByHand('RF9', '2026-11-29', lambda, '950000', { kind: 'manual' });
+    expect((await rules()).some((r) => r.party_id === lambda)).toBe(false);
+  });
+
+  it('finds a bank line by its counterparty account number, from 8 to 20 digits, kept as the books\' evidence', async () => {
+    expect(
+      (
+        await importLines(
+          org.slug,
+          member,
+          [row('30/11/2026', '960.000', 'RD1', 'GD 41', '0011 2233 4466'), row('30/11/2026', '970.000', 'RD2', 'GD 42', '1234 5678 9012 3456 78')],
+          'sao-ke-tim.xlsx',
+        )
+      ).status,
+    ).toBe(200);
+    const actor = { type: 'user' as const, userId: ownerId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    for (const [value, ref] of [['001122334466', 'RD1'], ['0011 2233 4466', 'RD1'], ['123456789012345678', 'RD2'], ['1234 5678 9012 3456 78', 'RD2']] as const) {
+      const found = await runtime.execute<{ matches: Array<{ column: string; handling: string; row: { bank_ref?: string } }> }>('kernel.personal_data.find', { value }, { actor, orgId: org.orgId });
+      const hit = found.matches.find((m) => m.column === 'crove_finance.bank_line.counterparty_account');
+      expect(hit, value).toMatchObject({ handling: 'keep_legal', row: { bank_ref: ref } });
+    }
+  });
 });

@@ -209,7 +209,7 @@ export const PERSONAL_DATA_COLUMNS = {
   'crove_finance.bank_line.counterparty_account': {
     kind: 'account_number',
     handling: 'keep_legal',
-    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
+    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). Found by a code of 8 to 20 digits: an account of 6 or 7 digits cannot be searched, since such a short value would also match amounts in free text. The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
   },
   'crove_finance.journal_line.memo': {
     kind: 'free_text',
@@ -266,10 +266,11 @@ export function personalDataProbe(value: string): Probe | null {
   const trimmed = value.trim();
   if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
   // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
-  // digits, or 13 with a branch suffix) or a national ID (12 digits).
-  if (/^[+(\d][\d\s().-]{7,24}$/.test(trimmed)) {
+  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
+  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
+  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
     const digits = trimmed.replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 15) return { kind: 'digits', digits };
+    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
   }
   return null;
 }
