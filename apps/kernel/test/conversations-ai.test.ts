@@ -24,6 +24,8 @@ function setup(reader: Partial<ConversationReader> | null, options: { budget?: D
           calls.ranks.push([name, [...names]]);
           return reader.rank ? reader.rank(name, names, onUsage) : names.map((_, i) => i);
         },
+        // The company ranking (#2438) has its own tests, in contact-company-ai.test.ts.
+        rankCompanies: async (name, label, names, onUsage) => (reader.rankCompanies ? reader.rankCompanies(name, label, names, onUsage) : names.map((_, i) => i)),
       }
     : null;
   const ai: ConversationAi = { reader: full, intentBudget: options.budget ?? new DraftBudget(), contactBudget: options.budget ?? new DraftBudget(), cache: new IntentCache(options.now) };

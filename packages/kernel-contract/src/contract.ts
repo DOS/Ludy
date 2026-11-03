@@ -191,6 +191,7 @@ import {
 } from './schemas.ts';
 import { zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
+import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import {
@@ -521,6 +522,8 @@ export const contract = {
     // Filter AST of the `crm.party` scope (a saved view stores the same), a page at a time. Every role reads.
     contacts: {
       list: oc.input(zContactList).output(zContactPage),
+      // The companies a person may work at (#2438): the sales coworker's suggestion, read only; a person links one with a click.
+      companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
     },
     // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
     // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every

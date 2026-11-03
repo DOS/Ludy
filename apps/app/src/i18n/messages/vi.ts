@@ -991,6 +991,10 @@ export const vi = {
       searchPerson: 'Tìm người liên hệ theo tên hoặc điện thoại',
       unlink: 'Bỏ liên kết: {name}',
       peopleLoadMore: 'Xem thêm người liên hệ ({shown, number} trên {total, number})',
+      suggested: '{sales} gợi ý công ty',
+      reason: { tax_code: 'Mã số thuế này có trong hội thoại của người này', email_domain: 'Cùng tên miền email', name: 'Tên miền email giống tên công ty' },
+      linkThis: 'Gắn với {name}',
+      linkShort: 'Gắn',
       pick: 'Chọn {name}',
       noMatch: 'Không có kết quả',
       cancel: 'Hủy',
@@ -1252,7 +1256,7 @@ export const vi = {
     },
     autoDraft: {
       label: 'Cho {sales} đọc hội thoại của khách để soạn nháp và gợi ý',
-      hint: 'Tin nhắn của khách và tên liên hệ được gửi tới dịch vụ AI của hệ thống để tự soạn nháp khi có hội thoại mới, gợi ý ý định và gợi ý liên hệ. Tắt nếu bạn không muốn; bản nháp bạn tự nhờ thì vẫn có.',
+      hint: 'Tin nhắn của khách và tên liên hệ được gửi tới dịch vụ AI của hệ thống để tự soạn nháp khi có hội thoại mới, gợi ý ý định, gợi ý liên hệ và gợi ý công ty một người liên hệ làm việc (tên các liên hệ và công ty của bạn được gửi đi để làm việc này). Tắt nếu bạn không muốn; bản nháp bạn tự nhờ thì vẫn có.',
     },
     retention: {
       title: 'Thời gian lưu hội thoại',
@@ -4027,6 +4031,7 @@ export const vi = {
       conversation_draft: 'Soạn nháp trả lời khách',
       conversation_intent: 'Đọc lời khách để gợi ý ý định',
       conversation_contact_rank: 'Xếp các liên hệ có thể là khách này',
+      crm_company_rank: 'Xếp các công ty mà một người liên hệ có thể làm việc',
       kernel_unattributed: 'Chưa gán tính năng (trước khi có đồng hồ)',
     },
   },
@@ -7649,6 +7654,7 @@ export const vi = {
         revoke_for_member: 'Thu hồi địa chỉ đăng ký lịch hẹn của thành viên đã mất quyền',
       },
       contact: {
+        company_candidates: 'Tìm các công ty một người liên hệ có thể làm việc',
         list: 'Xem danh sách liên hệ',
       },
       deal: {
