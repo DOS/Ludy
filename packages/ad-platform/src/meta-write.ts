@@ -128,8 +128,10 @@ function createdId(answer: { id?: unknown }): { externalId: string } {
 // The targeting spec as Meta's ad set takes it [U]: countries and regions by key, the age range, the gender (omitted for all), the interests by
 // id, and Advantage+ audience off so the audience is the one the approver saw. Placements are left automatic.
 function targetingOf(spec: AdTargetingSpec): Record<string, unknown> {
+  // An audience is somewhere: a region alone is that region, never its country as well.
+  if (spec.countries.length === 0 && spec.regions.length === 0) throw new AdPlatformError('bad_request', 'NO_LOCATION');
   return {
-    geo_locations: { countries: [...spec.countries], ...(spec.regions.length > 0 ? { regions: spec.regions.map((r) => ({ key: r.key })) } : {}) },
+    geo_locations: { ...(spec.countries.length > 0 ? { countries: [...spec.countries] } : {}), ...(spec.regions.length > 0 ? { regions: spec.regions.map((r) => ({ key: r.key })) } : {}) },
     age_min: spec.ageMin,
     age_max: spec.ageMax,
     ...(spec.gender === 'all' ? {} : { genders: [spec.gender === 'male' ? 1 : 2] }),

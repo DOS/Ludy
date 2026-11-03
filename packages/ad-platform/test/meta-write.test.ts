@@ -196,6 +196,16 @@ describe('the creating calls', () => {
     expect(json(calls[0], 'targeting')).toEqual({ geo_locations: { countries: ['VN'] }, age_min: 22, age_max: 45, targeting_automation: { advantage_audience: 0 } });
   });
 
+  it('target a region alone as that region (never its country as well), and refuse an audience that is nowhere', async () => {
+    const { writer: w, calls } = writer([{ body: { id: '120202' } }]);
+    await w.createAdSet(SECRET, ACCOUNT, { ...AD_SET, targeting: { ...TARGETING, countries: [] } });
+    expect((json(calls[0], 'targeting').geo_locations as Record<string, unknown>)).toEqual({ regions: [{ key: '4242' }] });
+    const none = writer([]);
+    const error = await rejection(none.writer.createAdSet(SECRET, ACCOUNT, { ...AD_SET, targeting: { ...TARGETING, countries: [], regions: [] } }));
+    expect([error.kind, error.code]).toEqual(['bad_request', 'NO_LOCATION']);
+    expect(none.calls).toHaveLength(0);
+  });
+
   it('make a creative that runs as the Page, with the text, the headline, the link and the button', async () => {
     const { writer: w, calls } = writer([{ body: { id: '120203' } }]);
     await w.createCreative(SECRET, ACCOUNT, { name: 'Khai trương [ludy:7f3a9c21:v1]', pageId: '5551', message: 'Mời bạn ghé thử.', headline: 'Khai trương', linkUrl: 'https://example.com/khai-truong', callToAction: 'learn_more' });
