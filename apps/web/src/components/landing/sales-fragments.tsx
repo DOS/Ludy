@@ -3,25 +3,25 @@ import { Bot, CalendarCheck, CalendarDays } from 'lucide-react';
 import type { Dictionary } from '../../content/vi';
 import { Chip, toneOf } from './ui';
 
-type Crm = Dictionary['modules']['crm'];
+type Sales = Dictionary['modules']['sales'];
 
-// The pieces of Ludy CRM's booking side, drawn from the real screens with the sample company's data: the public page a
-// client picks a time on, the booking that reaches the host, the host's connected calendar, and the sales coworker's suggestion for a
-// client's message. Used by the home page's Ludy CRM card and by the Ludy CRM page.
-export function BookingSlots({ crm }: { crm: Crm }) {
+// The pieces of the booking side of Ludy Engage's Customers & Sales group, drawn from the real screens with the sample
+// company's data: the public page a client picks a time on, the booking that reaches the host, the host's connected
+// calendar, and the sales coworker's suggestion for a client's message. Used by the Ludy Engage page.
+export function BookingSlots({ sales }: { sales: Sales }) {
   return (
     <figure className="min-w-0 rounded-md border border-line bg-bg p-3">
       <figcaption>
-        <div className="text-sm font-semibold">{crm.pageTitle}</div>
-        <div className="text-xs text-subtle">{crm.pageSub}</div>
+        <div className="text-sm font-semibold">{sales.pageTitle}</div>
+        <div className="text-xs text-subtle">{sales.pageSub}</div>
       </figcaption>
-      <div className="mt-3 text-xs text-subtle">{crm.slotsLabel}</div>
+      <div className="mt-3 text-xs text-subtle">{sales.slotsLabel}</div>
       <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {crm.days.map((day) => (
+        {sales.days.map((day) => (
           <li key={day.label} className="flex min-w-0 flex-col gap-1.5">
             <span className="text-[11px] text-subtle">{day.label}</span>
             {day.slots.length === 0 ? (
-              <span className="rounded-sm border border-dashed border-line px-1.5 py-1 text-center text-[11px] text-subtle">{crm.noSlots}</span>
+              <span className="rounded-sm border border-dashed border-line px-1.5 py-1 text-center text-[11px] text-subtle">{sales.noSlots}</span>
             ) : (
               day.slots.map((slot) => {
                 const picked = 'picked' in day && day.picked === slot;
@@ -31,7 +31,7 @@ export function BookingSlots({ crm }: { crm: Crm }) {
                     className={`num rounded-sm border px-1.5 py-1 text-center text-xs ${picked ? 'border-accent bg-accent text-accent-fg' : 'border-line bg-surface'}`}
                   >
                     {slot}
-                    {picked ? <span className="sr-only">, {crm.pickedLabel}</span> : null}
+                    {picked ? <span className="sr-only">, {sales.pickedLabel}</span> : null}
                   </span>
                 );
               })
@@ -43,33 +43,33 @@ export function BookingSlots({ crm }: { crm: Crm }) {
   );
 }
 
-export function BookingConfirmed({ crm }: { crm: Crm }) {
+export function BookingConfirmed({ sales }: { sales: Sales }) {
   return (
     <div className="rounded-md border border-line bg-bg p-3 text-xs">
       <div className="flex items-center gap-2">
         <CalendarCheck className="size-4 shrink-0 text-ok" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{crm.booked.title}</span>
-        <Chip tone={toneOf('ok')}>{crm.booked.state}</Chip>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{sales.booked.title}</span>
+        <Chip tone={toneOf('ok')}>{sales.booked.state}</Chip>
       </div>
-      <div className="mt-2 font-medium">{crm.booked.who}</div>
-      <div className="num text-subtle">{crm.booked.when}</div>
+      <div className="mt-2 font-medium">{sales.booked.who}</div>
+      <div className="num text-subtle">{sales.booked.when}</div>
     </div>
   );
 }
 
-export function CalendarConnection({ crm }: { crm: Crm }) {
+export function CalendarConnection({ sales }: { sales: Sales }) {
   return (
     <div className="rounded-md border border-line bg-bg p-3 text-xs">
       <div className="flex items-center gap-2">
         <CalendarDays className="size-4 shrink-0 text-subtle" aria-hidden="true" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-semibold">{crm.calendar.provider}</span>
-          <span className="block truncate text-subtle">{crm.calendar.title}</span>
+          <span className="block truncate text-sm font-semibold">{sales.calendar.provider}</span>
+          <span className="block truncate text-subtle">{sales.calendar.title}</span>
         </span>
-        <Chip tone={toneOf('ok')}>{crm.calendar.state}</Chip>
+        <Chip tone={toneOf('ok')}>{sales.calendar.state}</Chip>
       </div>
       <dl className="mt-3 flex flex-col gap-1.5">
-        {crm.calendar.rows.map(([label, value]) => (
+        {sales.calendar.rows.map(([label, value]) => (
           <div key={label} className="flex items-baseline justify-between gap-3">
             <dt className="text-subtle">{label}</dt>
             <dd className="num shrink-0 text-right">{value}</dd>
@@ -80,11 +80,11 @@ export function CalendarConnection({ crm }: { crm: Crm }) {
   );
 }
 
-export function VySuggestion({ crm }: { crm: Crm }) {
+export function SalesSuggestion({ sales }: { sales: Sales }) {
   return (
     <p className="flex gap-2 rounded-md border border-dashed border-accent/50 bg-bg p-3 text-xs text-muted">
       <Bot className="mt-0.5 size-4 shrink-0 text-accent-ink" aria-hidden="true" />
-      <span>{crm.suggest}</span>
+      <span>{sales.suggest}</span>
     </p>
   );
 }
