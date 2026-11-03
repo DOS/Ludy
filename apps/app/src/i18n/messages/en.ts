@@ -7412,6 +7412,7 @@ export const en = {
         revoke_for_member: 'Revoke the booking feed of a member who lost access',
       },
       contact: {
+        company_candidates: 'Find the companies a contact may work at',
         list: 'View the contact list',
       },
       deal: {

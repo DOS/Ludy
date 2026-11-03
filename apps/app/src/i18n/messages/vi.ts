@@ -7411,6 +7411,7 @@ export const vi = {
         revoke_for_member: 'Thu hồi địa chỉ đăng ký lịch hẹn của thành viên đã mất quyền',
       },
       contact: {
+        company_candidates: 'Tìm các công ty một người liên hệ có thể làm việc',
         list: 'Xem danh sách liên hệ',
       },
       deal: {
