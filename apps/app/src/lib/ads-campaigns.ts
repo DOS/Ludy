@@ -3,9 +3,10 @@
 // server stores, the format problems found before a save, the largest amount a plan can spend (the sentence the approver signs), what a Social post
 // pre-fills, and the words for what local validation and the AI coworker's refusals say. The server decides every rule (the checks against the dates,
 // the caps and the switches included); these only choose what to show and what to send. Money is a decimal string, never a number.
-import { ADS_GENDERS, ADS_PLAN_LIMITS, ADS_REQUEST_BRIEF_MAX, zAdsBudget, zLocalDate, type AdsAdVariant, type AdsCallToAction, type AdsCampaignDraftView, type AdsCampaignPlanDraft, type AdsObjective, type AdsPlanIssue } from '@crove/kernel-contract';
+import { ADS_GENDERS, ADS_PLAN_LIMITS, ADS_REQUEST_BRIEF_MAX, zAdsBudget, zLocalDate, type AdsAdVariant, type AdsCallToAction, type AdsCampaignPlanDraft, type AdsObjective, type AdsPlanIssue } from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { fromUnits, toUnits } from './decimal.ts';
+import { monthLabel } from './period-lock.ts';
 
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -125,24 +126,36 @@ const validLink = (text: string): boolean => {
 
 // The format problems a save would be refused for (the server's own input check), found before it so each sits under its field. They are not the
 // plan's rules: a budget over a cap or an end date before the start is the server's list of issues.
-export type FormProblem = 'nameNeeded' | 'budgetFormat' | 'countryFormat' | 'ageFormat' | 'interestsFormat' | 'linkFormat' | 'variantIncomplete';
+export type FormProblem = 'nameNeeded' | 'budgetFormat' | 'locationNeeded' | 'countryFormat' | 'ageFormat' | 'interestsFormat' | 'linkFormat' | 'variantIncomplete';
 export type ProblemField = 'name' | 'dailyBudget' | 'locations' | 'age' | 'interests' | 'linkUrl' | 'variants';
+
+const blankLocation = (l: LocationForm): boolean => l.country.trim() === '' && l.region.trim() === '';
+
+// The first row of the locations that holds the problem (a row with a country that is not one, or the first row when none has a country at all), so the
+// error and the focus go to that row's field.
+export function badLocationIndex(form: Pick<CampaignForm, 'locations'>): number {
+  const bad = form.locations.findIndex((l) => !blankLocation(l) && !validLocation(l));
+  return bad >= 0 ? bad : 0;
+}
 
 export function formProblems(form: CampaignForm): Partial<Record<ProblemField, FormProblem>> {
   const out: Partial<Record<ProblemField, FormProblem>> = {};
   if (form.name.trim() === '') out.name = 'nameNeeded';
   if (form.dailyBudget.trim() !== '' && !zAdsBudget.safeParse(form.dailyBudget.trim()).success) out.dailyBudget = 'budgetFormat';
-  if (form.locations.some((l) => !validLocation(l) && !(l.country.trim() === '' && l.region.trim() === ''))) out.locations = 'countryFormat';
+  if (form.locations.every(blankLocation)) out.locations = 'locationNeeded';
+  else if (form.locations.some((l) => !blankLocation(l) && !validLocation(l))) out.locations = 'countryFormat';
   if (!validAge(form.ageMin) || !validAge(form.ageMax)) out.age = 'ageFormat';
   const interests = parseInterests(form.interests);
-  if (interests.length > ADS_PLAN_LIMITS.interestsMax || interests.some((i) => [...i].length > ADS_PLAN_LIMITS.interestMax)) out.interests = 'interestsFormat';
-  if (!validLink(form.linkUrl)) out.linkUrl = 'linkFormat';
+  // The server counts a text in UTF-16 units, so does this (never code points: an emoji is two).
+  if (interests.length > ADS_PLAN_LIMITS.interestsMax || interests.some((i) => i.length > ADS_PLAN_LIMITS.interestMax)) out.interests = 'interestsFormat';
+  // A Messenger ad opens a conversation: it has no link, so a link left in the form is neither checked nor sent.
+  if (form.objective !== 'messenger' && !validLink(form.linkUrl)) out.linkUrl = 'linkFormat';
   if (form.variants.some((v) => !isBlankVariant(v) && (v.headline.trim() === '' || v.primaryText.trim() === ''))) out.variants = 'variantIncomplete';
   return out;
 }
 
 // The plan a form stands for, ready to save (only after the format problems are cleared). A text with nothing typed is left out; a location with no
-// country is too; the audience is a whole or nothing (the server then says it is missing).
+// country is too; the audience is a whole or nothing (a form without one is refused first, so nothing typed is dropped).
 export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
   const locations = form.locations
     .filter((l) => l.country.trim() !== '')
@@ -159,8 +172,9 @@ export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
     startOn: form.startOn === '' ? null : form.startOn,
     endOn: form.endOn === '' ? null : form.endOn,
     targeting,
-    linkUrl: form.linkUrl.trim() === '' ? null : form.linkUrl.trim(),
-    pageConnectionId: form.pageConnectionId === '' ? null : form.pageConnectionId,
+    // A link belongs to a Traffic or an Engagement ad and a Page to a Messenger one: the other is not part of the plan, whatever the form still holds.
+    linkUrl: form.objective === 'messenger' || form.linkUrl.trim() === '' ? null : form.linkUrl.trim(),
+    pageConnectionId: form.objective !== 'messenger' || form.pageConnectionId === '' ? null : form.pageConnectionId,
     sourcePostId: form.sourcePostId === '' ? null : form.sourcePostId,
     mediaFileId: form.mediaFileId === '' ? null : form.mediaFileId,
     variants,
@@ -171,13 +185,15 @@ export function formToPlan(form: CampaignForm): AdsCampaignPlanDraft {
 const settled = (plan: AdsCampaignPlanDraft): string => JSON.stringify(formToPlan(planToForm(plan)));
 export const isDirty = (form: CampaignForm, plan: AdsCampaignPlanDraft): boolean => JSON.stringify(formToPlan(form)) !== settled(plan);
 
-// The fields the AI coworker drafted that the form still has as drafted: one edited since is no longer the AI's, the way the server counts it.
+// The fields the AI coworker drafted that the form still has as drafted: one edited since is no longer the AI's, the way the server counts it. A field the
+// AI coworker left empty (a link it had no words for) is not marked: there is nothing of its there.
 const AI_FIELDS = ['name', 'dailyBudget', 'startOn', 'endOn', 'targeting', 'linkUrl', 'variants'] as const;
 export type AiField = (typeof AI_FIELDS)[number];
-export function draftedFields(form: CampaignForm, draft: Pick<AdsCampaignDraftView, 'plan' | 'aiFields'>): AiField[] {
+const filled = (value: unknown): boolean => value !== null && value !== undefined && !(Array.isArray(value) && value.length === 0);
+export function draftedFields(form: CampaignForm, draft: { plan: AdsCampaignPlanDraft; aiFields: readonly string[] }): AiField[] {
   const now = formToPlan(form);
   const then = formToPlan(planToForm(draft.plan));
-  return AI_FIELDS.filter((field) => draft.aiFields.includes(field) && JSON.stringify(now[field] ?? null) === JSON.stringify(then[field] ?? null));
+  return AI_FIELDS.filter((field) => draft.aiFields.includes(field) && filled(then[field]) && JSON.stringify(now[field] ?? null) === JSON.stringify(then[field] ?? null));
 }
 
 // ---- The largest amount a plan can spend ----
@@ -200,13 +216,23 @@ export function maxSpendOf(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 
   return { amount: fromUnits(toUnits(budget) * BigInt(days)), days };
 }
 
+// Why the largest amount cannot be told: the dates and the budget are all given but the flight is backwards or longer than the most ('dates'), or something
+// is still missing ('none').
+export function maxSpendHint(form: Pick<CampaignForm, 'dailyBudget' | 'startOn' | 'endOn'>): 'dates' | 'none' {
+  return form.startOn !== '' && form.endOn !== '' && zAdsBudget.safeParse(form.dailyBudget.trim()).success ? 'dates' : 'none';
+}
+
 // ---- Starting from a Social post ----
 
-// Cut at a word, with an ellipsis, where the text is longer than the limit; a text within it is returned as it is.
+// Cut at a word, with an ellipsis, where the text is longer than the limit; a text within it is returned as it is. The limits are the server's, which
+// counts UTF-16 units (an emoji is two), so the text is counted the same way and never cut inside a pair.
 export function cutAt(text: string, max: number): string {
-  const chars = [...text.trim()];
-  if (chars.length <= max) return chars.join('');
-  const head = chars.slice(0, max - 1).join('');
+  const whole = text.trim();
+  if (whole.length <= max) return whole;
+  let end = max - 1;
+  const last = whole.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1;
+  const head = whole.slice(0, end);
   const space = head.lastIndexOf(' ');
   return `${(space > max / 2 ? head.slice(0, space) : head).trimEnd()}…`;
 }
@@ -272,7 +298,8 @@ const text = (value: string | number | undefined): string => String(value ?? '')
 
 // What local validation found, in one sentence each, from the machine code and its numbers (never a Vietnamese sentence the server wrote). A code this
 // build does not know is shown as it is, so a newer server never hides a finding.
-export function issueText(issue: AdsPlanIssue, t: Translate): string {
+// A day of a finding is shown as the date fields write it (`date`, from the format helper of the reader's language), a month as MM/YYYY.
+export function issueText(issue: AdsPlanIssue, t: Translate, date: (day: string) => string = (day) => day): string {
   const p = issue.params;
   switch (issue.code) {
     case 'missing_field':
@@ -280,7 +307,7 @@ export function issueText(issue: AdsPlanIssue, t: Translate): string {
     case 'end_before_start':
       return t('ads.campaigns.issue.end_before_start');
     case 'start_in_past':
-      return t('ads.campaigns.issue.start_in_past', { today: text(p.today) });
+      return t('ads.campaigns.issue.start_in_past', { today: date(text(p.today)) });
     case 'flight_too_long':
       return t('ads.campaigns.issue.flight_too_long', { max: text(p.max), days: text(p.days) });
     case 'age_range':
@@ -306,7 +333,7 @@ export function issueText(issue: AdsPlanIssue, t: Translate): string {
     case 'daily_cap_exceeded':
       return t('ads.campaigns.issue.daily_cap_exceeded');
     case 'monthly_cap_exceeded':
-      return t('ads.campaigns.issue.monthly_cap_exceeded', { month: text(p.month) });
+      return t('ads.campaigns.issue.monthly_cap_exceeded', { month: monthLabel(text(p.month)) });
     case 'writing_off':
       return t('ads.campaigns.issue.writing_off');
     case 'account_not_enabled':
@@ -391,6 +418,8 @@ export function problemText(problem: FormProblem, t: Translate): string {
       return t('ads.campaigns.problem.nameNeeded');
     case 'budgetFormat':
       return t('ads.campaigns.problem.budgetFormat');
+    case 'locationNeeded':
+      return t('ads.campaigns.problem.locationNeeded');
     case 'countryFormat':
       return t('ads.campaigns.problem.countryFormat');
     case 'ageFormat':

@@ -3,12 +3,13 @@
 // a person or drafted by the AI coworker and edited here. A field the AI coworker drafted and nobody has changed since is marked as drafted. Saving checks
 // the plan on the server against the dates, the spend caps and the switches of running ads, and the list says what is still to fix; the largest amount the
 // plan can spend is one sentence under the form, the same one the approver signs. Owners and admins ask for approval; nothing is sent to an ad platform.
+// The form is the person's own until they save: a draft someone else saved meanwhile never replaces their edits (the save is refused as stale instead).
 import { useMutation } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslations } from 'use-intl';
-import { ADS_CALLS_TO_ACTION, ADS_GENDERS, ADS_OBJECTIVES, ADS_PLAN_LIMITS, type AdAccountView, type AdsCampaignDraftView, type AdsObjective } from '@crove/kernel-contract';
+import { ADS_CALLS_TO_ACTION, ADS_GENDERS, ADS_OBJECTIVES, ADS_PLAN_LIMITS, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignPlanDraft, type AdsObjective } from '@crove/kernel-contract';
 import { Alert } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -20,6 +21,7 @@ import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
 import {
+  badLocationIndex,
   blankVariant,
   callToActionText,
   defaultCallToAction,
@@ -30,6 +32,7 @@ import {
   genderText,
   isDirty,
   issueText,
+  maxSpendHint,
   maxSpendOf,
   objectiveText,
   planToForm,
@@ -59,6 +62,15 @@ export const refreshCampaigns = () =>
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignDraft.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.campaignRequests.key() }),
   ]);
+
+// What the form was loaded from: the revision the next save is made from (a draft saved since is refused as stale), the plan the form is compared with
+// to tell edits from none, and the fields the AI coworker drafted at that revision.
+interface Loaded {
+  revision: number;
+  plan: AdsCampaignPlanDraft;
+  aiFields: readonly string[];
+}
+const loadedOf = (draft: AdsCampaignDraftView): Loaded => ({ revision: draft.revision, plan: draft.plan, aiFields: draft.aiFields });
 
 // The label of a field, with a chip when the AI coworker drafted it and nobody has changed it since.
 function Labelled({ text, ai }: { text: string; ai: boolean }) {
@@ -96,6 +108,7 @@ export function CampaignBuilder({
   const f = useFormat();
   const headingId = useId();
   const [form, setForm] = useState<CampaignForm>(() => (draft ? planToForm(draft.plan) : (seed ?? emptyForm())));
+  const [loaded, setLoaded] = useState<Loaded | null>(() => (draft ? loadedOf(draft) : null));
   const [attempted, setAttempted] = useState(false);
   const saveAttempt = useRef<KeyHolder | null>(null);
   const submitAttempt = useRef<KeyHolder | null>(null);
@@ -106,16 +119,30 @@ export function CampaignBuilder({
   const waiting = draft !== null && draft.pendingProposalId !== null;
   const approved = draft !== null && draft.status === 'approved';
   const frozen = waiting || approved;
-  const dirty = draft === null || isDirty(form, draft.plan);
-  const drafted: readonly AiField[] = draft ? draftedFields(form, draft) : [];
+  // The draft moved on since the form was loaded (someone saved it, or this save was read back): a form with no edits of its own follows it at once,
+  // a form with edits keeps them and says so.
+  const moved = draft !== null && loaded !== null && draft.revision !== loaded.revision;
+  const dirty = loaded === null || isDirty(form, loaded.plan);
+  useEffect(() => {
+    if (draft && loaded && draft.revision !== loaded.revision && !isDirty(form, loaded.plan)) {
+      setForm(planToForm(draft.plan));
+      setLoaded(loadedOf(draft));
+    }
+  }, [draft, loaded, form]);
+  const drafted: readonly AiField[] = loaded ? draftedFields(form, loaded) : [];
   const ai = (field: AiField) => drafted.includes(field);
   const problems = attempted ? formProblems(form) : {};
+  const badLocation = problems.locations ? badLocationIndex(form) : -1;
   const spend = maxSpendOf(form);
 
   const save = useMutation(
     orpc.ads.saveCampaignDraft.mutationOptions({
       onSuccess: async (saved) => {
         saveAttempt.current = null;
+        // What was saved is what is read back, at once, so the form, the findings and the page's own copy agree before the lists are asked again.
+        queryClient.setQueryData(orpc.ads.campaignDraft.queryOptions({ input: { draftId: saved.id } }).queryKey, saved);
+        setForm(planToForm(saved.plan));
+        setLoaded(loadedOf(saved));
         await refreshCampaigns();
         toast(t('campaigns.saved'));
         onSaved(saved);
@@ -144,12 +171,15 @@ export function CampaignBuilder({
 
   const onSave = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const target = event.currentTarget;
     flushSync(() => setAttempted(true));
-    if (Object.keys(formProblems(form)).length > 0) {
-      focusFirstInvalid(event.currentTarget);
+    // A field marked invalid (a format problem of this form, or a half-typed date) holds the save back and takes the focus.
+    if (Object.keys(formProblems(form)).length > 0 || target.querySelector('[aria-invalid="true"]')) {
+      focusFirstInvalid(target);
       return;
     }
-    const input = { ...(draft ? { draftId: draft.id, expectedRevision: draft.revision } : {}), adAccountId: account.id, plan: formToPlan(form) };
+    // An edit names the draft's own account, never the one the screen happens to show.
+    const input = { ...(draft && loaded ? { draftId: draft.id, expectedRevision: loaded.revision } : {}), adAccountId: draft?.adAccountId ?? account.id, plan: formToPlan(form) };
     // A retry of the same form after a lost answer is the same request; a changed form is another.
     saveAttempt.current = keyFor(saveAttempt.current, JSON.stringify(input));
     save.mutate({ ...input, idempotencyKey: saveAttempt.current.key });
@@ -161,9 +191,10 @@ export function CampaignBuilder({
     submit.mutate({ change: 'campaign_launch', draftId: draft.id, idempotencyKey: submitAttempt.current.key });
   };
 
-  const errors = draft ? draft.issues.filter((i) => i.severity === 'error') : [];
-  const warnings = draft ? draft.issues.filter((i) => i.severity === 'warning') : [];
-  const canSubmit = canManage && draft !== null && !dirty && !frozen && errors.length === 0 && currency !== null;
+  const checked = draft !== null && !dirty && !moved;
+  const errors = checked ? draft.issues.filter((i) => i.severity === 'error') : [];
+  const warnings = checked ? draft.issues.filter((i) => i.severity === 'warning') : [];
+  const canSubmit = canManage && checked && !frozen && errors.length === 0 && currency !== null;
   const objectiveChanged = (next: AdsObjective) =>
     set({
       objective: next,
@@ -181,7 +212,7 @@ export function CampaignBuilder({
   );
 
   return (
-    <form className="space-y-5" onSubmit={onSave} aria-labelledby={headingId} noValidate data-testid="campaign-builder">
+    <form className="space-y-5" onSubmit={onSave} aria-labelledby={headingId} data-testid="campaign-builder">
       <div className="flex flex-wrap items-center gap-2">
         <h2 id={headingId} className={H2}>
           {draft ? t('campaigns.builderTitle') : t('campaigns.builderNew')}
@@ -199,6 +230,22 @@ export function CampaignBuilder({
       )}
       {approved && <Alert role="status">{t('campaigns.approvedNote')}</Alert>}
       {draft?.origin === 'ai' && !frozen && <p className="text-sm text-muted-foreground">{t('campaigns.draftedHint')}</p>}
+      {moved && dirty && !frozen && draft && (
+        <Alert role="status" data-testid="campaign-moved">
+          <p>{t('campaigns.movedNote')}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-2"
+            onClick={() => {
+              setForm(planToForm(draft.plan));
+              setLoaded(loadedOf(draft));
+            }}
+          >
+            {t('campaigns.movedLoad')}
+          </Button>
+        </Alert>
+      )}
 
       <fieldset disabled={frozen || save.isPending} className="m-0 min-w-0 space-y-6 border-0 p-0">
         {section(
@@ -253,7 +300,7 @@ export function CampaignBuilder({
             <div className="space-y-2" role="group" aria-label={t('campaigns.locations')}>
               {form.locations.map((location, index) => (
                 <div key={index} className="flex flex-wrap items-start gap-3">
-                  <Field label={index === 0 ? t('campaigns.country') : undefined} error={index === 0 && problems.locations ? problemText(problems.locations, root) : undefined} className="w-28">
+                  <Field label={index === 0 ? t('campaigns.country') : undefined} error={index === badLocation && problems.locations ? problemText(problems.locations, root) : undefined} className="w-28">
                     {(control) => (
                       <Input {...control} maxLength={2} aria-label={t('campaigns.country')} value={location.country} onChange={(e) => setLocation(index, { country: e.target.value.toUpperCase() })} />
                     )}
@@ -279,7 +326,9 @@ export function CampaignBuilder({
                 {(control) => <Input {...control} inputMode="numeric" maxLength={3} value={form.ageMin} onChange={(e) => set({ ageMin: e.target.value.trim() })} />}
               </Field>
               <Field label={t('campaigns.ageMax')} className="w-28">
-                {(control) => <Input {...control} inputMode="numeric" maxLength={3} value={form.ageMax} onChange={(e) => set({ ageMax: e.target.value.trim() })} />}
+                {(control) => (
+                  <Input {...control} aria-invalid={problems.age ? true : undefined} inputMode="numeric" maxLength={3} value={form.ageMax} onChange={(e) => set({ ageMax: e.target.value.trim() })} />
+                )}
               </Field>
               <Field label={t('campaigns.gender')} className="w-40">
                 {(control) => (
@@ -315,8 +364,9 @@ export function CampaignBuilder({
               )}
             </Field>
           ) : (
+            // Not a url field: the browser's own check would refuse a link with its own words, and this form words its problems itself.
             <Field label={<Labelled text={t('campaigns.link')} ai={ai('linkUrl')} />} error={problems.linkUrl ? problemText(problems.linkUrl, root) : undefined} className="max-w-xl">
-              {(control) => <Input {...control} type="url" inputMode="url" placeholder="https://" maxLength={2000} value={form.linkUrl} onChange={(e) => set({ linkUrl: e.target.value })} />}
+              {(control) => <Input {...control} type="text" inputMode="url" autoComplete="off" placeholder="https://" maxLength={2000} value={form.linkUrl} onChange={(e) => set({ linkUrl: e.target.value })} />}
             </Field>
           ),
         )}
@@ -325,36 +375,39 @@ export function CampaignBuilder({
           t('campaigns.variantsTitle'),
           <div className="space-y-3">
             {ai('variants') && <Badge variant="proposal">{t('campaigns.drafted')}</Badge>}
-            {problems.variants && <ErrorText>{problemText(problems.variants, root)}</ErrorText>}
-            {form.variants.map((variant, index) => (
-              <Card key={index} className="block space-y-3 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-foreground">{t('campaigns.variant', { number: String(index + 1) })}</p>
-                  {form.variants.length > 1 && (
-                    <Button type="button" variant="ghost" onClick={() => set({ variants: form.variants.filter((_, i) => i !== index) })}>
-                      {t('campaigns.removeVariant')}
-                    </Button>
-                  )}
-                </div>
-                <Field label={t('campaigns.headline')}>
-                  {(control) => <Input {...control} maxLength={ADS_PLAN_LIMITS.headlineMax} value={variant.headline} onChange={(e) => setVariant(index, { headline: e.target.value })} />}
-                </Field>
-                <Field label={t('campaigns.primaryText')}>
-                  {(control) => <Textarea {...control} rows={3} maxLength={ADS_PLAN_LIMITS.primaryTextMax} value={variant.primaryText} onChange={(e) => setVariant(index, { primaryText: e.target.value })} />}
-                </Field>
-                <Field label={t('campaigns.callToAction')} className="w-56">
-                  {(control) => (
-                    <NativeSelect {...control} className="w-full" value={variant.callToAction} onChange={(e) => setVariant(index, { callToAction: e.target.value as typeof variant.callToAction })}>
-                      {ADS_CALLS_TO_ACTION.map((c) => (
-                        <NativeSelectOption key={c} value={c}>
-                          {callToActionText(c, root)}
-                        </NativeSelectOption>
-                      ))}
-                    </NativeSelect>
-                  )}
-                </Field>
-              </Card>
-            ))}
+            {form.variants.map((variant, index) => {
+              // A text with only one of its two parts: the empty part is the one that is marked.
+              const half = attempted && (variant.headline.trim() === '') !== (variant.primaryText.trim() === '');
+              return (
+                <Card key={index} className="block space-y-3 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-medium text-foreground">{t('campaigns.variant', { number: String(index + 1) })}</p>
+                    {form.variants.length > 1 && (
+                      <Button type="button" variant="ghost" onClick={() => set({ variants: form.variants.filter((_, i) => i !== index) })}>
+                        {t('campaigns.removeVariant')}
+                      </Button>
+                    )}
+                  </div>
+                  <Field label={t('campaigns.headline')} error={half && variant.headline.trim() === '' ? problemText('variantIncomplete', root) : undefined}>
+                    {(control) => <Input {...control} maxLength={ADS_PLAN_LIMITS.headlineMax} value={variant.headline} onChange={(e) => setVariant(index, { headline: e.target.value })} />}
+                  </Field>
+                  <Field label={t('campaigns.primaryText')} error={half && variant.primaryText.trim() === '' ? problemText('variantIncomplete', root) : undefined}>
+                    {(control) => <Textarea {...control} rows={3} maxLength={ADS_PLAN_LIMITS.primaryTextMax} value={variant.primaryText} onChange={(e) => setVariant(index, { primaryText: e.target.value })} />}
+                  </Field>
+                  <Field label={t('campaigns.callToAction')} className="w-56">
+                    {(control) => (
+                      <NativeSelect {...control} className="w-full" value={variant.callToAction} onChange={(e) => setVariant(index, { callToAction: e.target.value as typeof variant.callToAction })}>
+                        {ADS_CALLS_TO_ACTION.map((c) => (
+                          <NativeSelectOption key={c} value={c}>
+                            {callToActionText(c, root)}
+                          </NativeSelectOption>
+                        ))}
+                      </NativeSelect>
+                    )}
+                  </Field>
+                </Card>
+              );
+            })}
             {form.variants.length < ADS_PLAN_LIMITS.variantsMax && (
               <Button type="button" variant="outline" onClick={() => set({ variants: [...form.variants, blankVariant(form.objective)] })}>
                 {t('campaigns.addVariant')}
@@ -367,10 +420,12 @@ export function CampaignBuilder({
       <p className="text-sm font-medium text-foreground" data-testid="campaign-max-spend">
         {spend !== null && currency !== null
           ? t('campaigns.maxSpend', { amount: f.money(spend.amount, currency), days: spend.days, daily: f.money(form.dailyBudget.trim(), currency) })
-          : t('campaigns.maxSpendNone')}
+          : maxSpendHint(form) === 'dates'
+            ? t('campaigns.maxSpendDates', { max: String(ADS_PLAN_LIMITS.daysMax) })
+            : t('campaigns.maxSpendNone')}
       </p>
 
-      {draft === null || dirty ? (
+      {!checked ? (
         <p className="text-sm text-muted-foreground">{t('campaigns.issuesAfterSave')}</p>
       ) : errors.length === 0 && warnings.length === 0 ? (
         <p className="text-sm text-muted-foreground">{t('campaigns.issuesNone')}</p>
@@ -381,7 +436,7 @@ export function CampaignBuilder({
               <p className="font-medium">{t('campaigns.issuesTitle')}</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
                 {errors.map((issue, i) => (
-                  <li key={`${issue.code}:${i}`}>{issueText(issue, root)}</li>
+                  <li key={`${issue.code}:${i}`}>{issueText(issue, root, f.date)}</li>
                 ))}
               </ul>
             </Alert>
@@ -391,7 +446,7 @@ export function CampaignBuilder({
               <p className="font-medium">{t('campaigns.warningsTitle')}</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-sm">
                 {warnings.map((issue, i) => (
-                  <li key={`${issue.code}:${i}`}>{issueText(issue, root)}</li>
+                  <li key={`${issue.code}:${i}`}>{issueText(issue, root, f.date)}</li>
                 ))}
               </ul>
             </Alert>
@@ -426,7 +481,7 @@ export function CampaignBuilder({
               </ConfirmDialog>
             )}
           </div>
-          <p className="text-xs text-muted-foreground">{!canManage ? t('campaigns.managersOnly') : draft !== null && dirty ? t('campaigns.unsaved') : t('campaigns.submitHint')}</p>
+          <p className="text-xs text-muted-foreground">{!canManage ? t('campaigns.managersOnly') : draft !== null && !checked ? t('campaigns.unsaved') : t('campaigns.submitHint')}</p>
         </div>
       )}
       {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}

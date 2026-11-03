@@ -205,6 +205,27 @@ describe('the builder of a saved draft', () => {
     expect(vi).toContain('Chưa đặt hạn mức chi tiêu nào.');
   });
 
+  it('says why the most it can spend cannot be told when the budget and both dates are there but the flight is backwards', () => {
+    const html = render(builder({ draft: draft({ plan: { ...draft().plan, startOn: '2026-11-16', endOn: '2026-11-10' } }) }));
+    expect(html).toContain('The most it can spend is worked out for a flight of 1 to 90 days');
+    expect(html).not.toContain('Set the daily budget and the dates to see the most it can spend.');
+  });
+
+  it('offers the Page of a Messenger ad in place of the link, and the link of the others', () => {
+    const messenger = render(builder({ draft: draft({ plan: { ...draft().plan, objective: 'messenger', linkUrl: null } }) }));
+    expect(messenger).toContain('The Facebook Page');
+    expect(messenger).not.toContain('Where the ad leads');
+    const traffic = render(builder());
+    expect(traffic).toContain('Where the ad leads');
+    expect(traffic).not.toContain('The Facebook Page');
+  });
+
+  it('shows a day of a finding the way the date fields write it', () => {
+    const html = render(builder({ draft: draft({ issues: [{ code: 'start_in_past', severity: 'error', field: 'startOn', params: { today: '2026-11-03' } }] }) }), 'vi');
+    expect(html).toContain('03/11/2026');
+    expect(html).not.toContain('2026-11-03');
+  });
+
   it('never shows a cap amount: a member is not told one', () => {
     const html = render(builder({ canManage: false, draft: draft({ issues: [{ code: 'daily_cap_exceeded', severity: 'error', field: 'dailyBudget', params: { scope: 'org' } }] }) }));
     expect(html).toContain('The daily budget is above the daily spend cap in force.');

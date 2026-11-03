@@ -65,7 +65,7 @@ test('an owner starts a campaign from a post, sees the most it can spend, and wh
     await page.goto(`/o/${slug}/ads/campaigns`);
     await expect(builder).toBeVisible();
     await expect(page.getByTestId('campaign-ask')).toHaveCount(0);
-    await expect(page.getByText('Lưu bản nháp để kiểm tra với ngày chạy và hạn mức chi tiêu.')).toBeVisible();
+    await expect(page.getByText('Hãy lưu bản nháp để kiểm tra với ngày chạy và hạn mức chi tiêu.', { exact: true })).toBeVisible();
     await expect(page.getByTestId('campaign-max-spend')).toHaveText('Hãy đặt ngân sách mỗi ngày và ngày chạy để biết tối đa có thể chi bao nhiêu.');
     await expect(builder.getByRole('button', { name: 'Gửi duyệt' })).toBeDisabled();
   });

@@ -122,7 +122,7 @@ export function CampaignAsk({
           </Field>
           <Field
             label={t('campaigns.brief')}
-            hint={t('campaigns.briefCount', { count: String([...brief].length), max: String(ADS_REQUEST_BRIEF_MAX) })}
+            hint={t('campaigns.briefCount', { count: String(brief.length), max: String(ADS_REQUEST_BRIEF_MAX) })}
             error={needed && brief.trim() === '' ? t('campaigns.briefNeeded') : undefined}
             className="min-w-64 flex-1"
           >
@@ -135,8 +135,9 @@ export function CampaignAsk({
           </Button>
           {waiting && <span className="text-sm text-muted-foreground">{t('campaigns.requestWaiting')}</span>}
         </div>
-        {asked?.state === 'requested' && !waiting && <Alert role="status">{t('campaigns.asked')}</Alert>}
-        {asked?.state === 'none' && (
+        {/* Only until the list shows the request itself (its row then says whether it is being written, written or refused). */}
+        {asked?.state === 'requested' && !requests.some((r) => r.id === asked.id) && <Alert role="status">{t('campaigns.asked')}</Alert>}
+        {asked?.state === 'none' && !requests.some((r) => r.id === asked.id) && (
           <Alert variant="destructive" className="border-destructive/30 bg-destructive/10" data-testid="campaign-ask-refusal">
             {refusalText(asked.code, root)}
           </Alert>

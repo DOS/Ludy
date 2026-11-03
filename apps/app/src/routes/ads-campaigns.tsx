@@ -23,9 +23,11 @@ import { formFromPost, objectiveText, type CampaignsSearch, type PostStart } fro
 import { getConfig } from '../lib/auth.ts';
 
 // While the AI coworker has a request open, the requests and the drafts are asked for again every few seconds; the worker answers within a minute or so,
-// and a request nobody answers is closed by the server after a quarter of an hour, so the screen stops asking well before a day is out.
+// and the server closes a request nobody answered after a quarter of an hour, so the screen stops asking for one that is older than that.
 const REQUEST_POLL_MS = 4_000;
-const REQUEST_POLL_LIMIT = 300;
+const REQUEST_POLL_WINDOW_MS = 20 * 60_000;
+const polling = (requests: readonly { state: string; requestedAt: string }[] | undefined): boolean =>
+  requests !== undefined && requests.some((r) => r.state === 'requested' && Date.now() - Date.parse(r.requestedAt) < REQUEST_POLL_WINDOW_MS);
 
 export function AdsCampaignsPage() {
   const t = useTranslations('ads');
@@ -49,13 +51,13 @@ export function AdsCampaignsPage() {
   const requests = useQuery({
     ...orpc.ads.campaignRequests.queryOptions({ input: accountInput }),
     enabled: canDraft && Boolean(account),
-    refetchInterval: (query) => (query.state.data && hasWaitingRequest(query.state.data) && query.state.dataUpdateCount < REQUEST_POLL_LIMIT ? REQUEST_POLL_MS : false),
+    refetchInterval: (query) => (polling(query.state.data) ? REQUEST_POLL_MS : false),
   });
   const waiting = hasWaitingRequest(requests.data ?? []);
   const drafts = useQuery({
     ...orpc.ads.campaignDrafts.queryOptions({ input: accountInput }),
     enabled: canDraft && Boolean(account),
-    refetchInterval: waiting ? REQUEST_POLL_MS : false,
+    refetchInterval: polling(requests.data) ? REQUEST_POLL_MS : false,
   });
   // A request that has just been answered made a draft: the list is read once more at that moment.
   const wasWaiting = useRef(false);
@@ -100,8 +102,8 @@ export function AdsCampaignsPage() {
   return (
     <div>
       <PageHeader title={t('campaigns.title')} subtitle={t('campaigns.subtitle')} />
-      {accounts.error ? (
-        <ErrorText>{errorMessage(accounts.error)}</ErrorText>
+      {accounts.error || me.error ? (
+        <ErrorText>{errorMessage(accounts.error ?? me.error)}</ErrorText>
       ) : !accounts.data || me.isPending ? (
         // The role decides what the screen offers, so it waits for it.
         <div className="space-y-4">
@@ -173,7 +175,7 @@ export function AdsCampaignsPage() {
           <section className="space-y-3" aria-label={t('campaigns.builderTitle')}>
             <div className="flex flex-wrap items-center gap-3">
               {socialOn && <PostPicker onPick={picked} />}
-              {open && (
+              {(open || search.draft) && (
                 <Button type="button" variant="outline" size="lg" onClick={startNew}>
                   {t('campaigns.newDraft')}
                 </Button>
@@ -200,7 +202,8 @@ export function AdsCampaignsPage() {
             ) : (
               <Card className="block p-4">
                 <CampaignBuilder
-                  key={open ? `${open.id}:${open.revision}:${open.status}:${open.pendingProposalId ?? ''}` : `new:${account.id}:${fresh}`}
+                  // The same builder follows its draft through saves (it keeps what the person typed); a draft that changes state, or another draft, is another builder.
+                  key={open ? `${open.id}:${open.status}:${open.pendingProposalId ?? ''}` : `new:${account.id}:${fresh}`}
                   slug={slug}
                   account={list.find((a) => a.id === open?.adAccountId) ?? account}
                   draft={open}

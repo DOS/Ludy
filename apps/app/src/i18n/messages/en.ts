@@ -1701,6 +1701,7 @@ export const en = {
       problem: {
         nameNeeded: 'Give the campaign a name.',
         budgetFormat: 'Write the budget as a number above zero, with at most two decimals.',
+        locationNeeded: 'Add at least one country, for example VN.',
         countryFormat: 'A country is two capital letters, for example VN.',
         ageFormat: 'An age is a whole number from 18 to 65.',
         interestsFormat: 'At most 20 interests, each up to 100 characters.',
@@ -1775,6 +1776,9 @@ export const en = {
       saved: 'Draft saved.',
       maxSpend: 'The most it can spend is {amount} over {days, plural, one {# day} other {# days}}, {daily} a day.',
       maxSpendNone: 'Set the daily budget and the dates to see the most it can spend.',
+      maxSpendDates: 'The most it can spend is worked out for a flight of 1 to {max} days, the first and the last day included. Check the dates.',
+      movedNote: 'Someone saved this draft since you opened it. Your changes are still here; load their version to carry on from it.',
+      movedLoad: 'Load their version and drop my changes',
       issuesTitle: 'To fix before it can be approved',
       warningsTitle: 'Good to know',
       issuesNone: 'Nothing to fix.',

@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import type { AdsCampaignPlanDraft, AdsPlanIssue } from '@crove/kernel-contract';
 import { translatorFor } from '../src/i18n/runtime.ts';
 import {
+  badLocationIndex,
   cutAt,
   draftedFields,
   emptyForm,
@@ -15,6 +16,7 @@ import {
   formToPlan,
   isDirty,
   issueText,
+  maxSpendHint,
   maxSpendOf,
   parseCampaignsSearch,
   parseInterests,
@@ -76,6 +78,12 @@ describe('the form and its plan', () => {
     expect(isDirty({ ...form, name: `  ${form.name}  ` }, p)).toBe(false);
   });
 
+  it('leaves the link out of a Messenger plan and the Page out of the others, whatever the form still holds', () => {
+    const form = { ...planToForm(plan()), pageConnectionId: ID };
+    expect(formToPlan(form)).toMatchObject({ linkUrl: 'https://example.com/khai-truong', pageConnectionId: null });
+    expect(formToPlan({ ...form, objective: 'messenger' })).toMatchObject({ linkUrl: null, pageConnectionId: ID });
+  });
+
   it('splits interests on commas and new lines and keeps a repeat for the server to warn about', () => {
     expect(parseInterests(' cà phê, ẩm thực\n du lịch ,, cà phê ')).toEqual(['cà phê', 'ẩm thực', 'du lịch', 'cà phê']);
   });
@@ -98,6 +106,27 @@ describe('formProblems', () => {
     expect(formProblems({ ...form, variants: [{ headline: 'Chỉ có tiêu đề', primaryText: '', callToAction: 'learn_more' }] }).variants).toBe('variantIncomplete');
   });
 
+  it('does not check a link a Messenger ad does not have, so a save is never held back by a field that is not there', () => {
+    const form = { ...planToForm(plan()), linkUrl: 'http://khong-an-toan.example', objective: 'messenger' as const };
+    expect(formProblems(form).linkUrl).toBeUndefined();
+    expect(formProblems({ ...form, objective: 'traffic' }).linkUrl).toBe('linkFormat');
+  });
+
+  it('refuses an audience without a country instead of dropping what else was typed, and names the row at fault', () => {
+    const form = planToForm(plan());
+    expect(formProblems({ ...form, locations: [{ country: '', region: '' }] }).locations).toBe('locationNeeded');
+    expect(formProblems({ ...form, locations: [{ country: 'VN', region: '' }, { country: 'Viet', region: '' }] }).locations).toBe('countryFormat');
+    expect(badLocationIndex({ locations: [{ country: 'VN', region: '' }, { country: 'Viet', region: '' }] })).toBe(1);
+    expect(badLocationIndex({ locations: [{ country: '', region: '' }] })).toBe(0);
+  });
+
+  it('counts a text the way the server does, in UTF-16 units: an emoji is two', () => {
+    const form = planToForm(plan());
+    // 100 emoji are 200 units: over the 100 an interest may hold, though only 100 characters.
+    expect(formProblems({ ...form, interests: '😀'.repeat(100) }).interests).toBe('interestsFormat');
+    expect(formProblems({ ...form, interests: '😀'.repeat(50) }).interests).toBeUndefined();
+  });
+
   it('leaves the age order and the dates to the server: they are issues, not format problems', () => {
     const form = planToForm(plan());
     expect(formProblems({ ...form, ageMin: '50', ageMax: '30' })).toEqual({});
@@ -115,6 +144,13 @@ describe('the largest amount a plan can spend', () => {
     expect(maxSpendOf({ dailyBudget: '12.34', startOn: '2026-11-10', endOn: '2026-11-12' })).toEqual({ amount: '37.02', days: 3 });
     // A number JS floats would get wrong: 0.1 a day for 3 days.
     expect(maxSpendOf({ dailyBudget: '0.10', startOn: '2026-11-10', endOn: '2026-11-12' })).toEqual({ amount: '0.3', days: 3 });
+  });
+
+  it('says why it cannot be told: something is missing, or the dates and the budget are all there but the flight is not 1 to 90 days', () => {
+    expect(maxSpendHint({ dailyBudget: '', startOn: '2026-11-10', endOn: '2026-11-12' })).toBe('none');
+    expect(maxSpendHint({ dailyBudget: '100000', startOn: '', endOn: '2026-11-12' })).toBe('none');
+    expect(maxSpendHint({ dailyBudget: '100000', startOn: '2026-11-12', endOn: '2026-11-10' })).toBe('dates');
+    expect(maxSpendHint({ dailyBudget: '100000', startOn: '2026-11-01', endOn: '2027-03-01' })).toBe('dates');
   });
 
   it('cannot be told while a figure is missing, or the flight is backwards or longer than the most', () => {
@@ -135,7 +171,7 @@ describe('starting from a post', () => {
     expect(start.name).toBe('Khai trương chi nhánh mới');
     expect(start.brief).toBe(`${post.title}\n\n${post.body}`);
     expect(start.headline).toBe('Khai trương chi nhánh mới');
-    expect([...start.primaryText].length).toBeLessThanOrEqual(125);
+    expect(start.primaryText.length).toBeLessThanOrEqual(125);
     expect(start.primaryText.endsWith('…')).toBe(true);
     expect(start.linkUrl).toBe('https://example.com/khai-truong');
   });
@@ -144,7 +180,7 @@ describe('starting from a post', () => {
     const start = startFromPost({ id: ID, title: null, body: `Dòng đầu\n${'x'.repeat(2000)}`, linkUrl: 'http://example.com' });
     expect(start.name).toBe('Dòng đầu');
     expect(start.headline).toBe('Dòng đầu');
-    expect([...start.brief].length).toBeLessThanOrEqual(1000);
+    expect(start.brief.length).toBeLessThanOrEqual(1000);
     expect(start.linkUrl).toBe('');
   });
 
@@ -154,6 +190,14 @@ describe('starting from a post', () => {
     expect(form.objective).toBe('engagement');
     expect(form.variants[0]?.callToAction).toBe('no_button');
     expect(formToPlan(form).sourcePostId).toBe(ID);
+  });
+
+  it('counts the request in UTF-16 units and never cuts an emoji in two', () => {
+    const start = startFromPost({ id: ID, title: null, body: `${'a'.repeat(998)}😀😀😀 sau`, linkUrl: null });
+    expect(start.brief.length).toBeLessThanOrEqual(1000);
+    // A lone half of a pair cannot be encoded: this throws if one was left.
+    expect(() => encodeURIComponent(start.brief)).not.toThrow();
+    expect(cutAt('😀😀😀😀', 4)).toBe('😀…');
   });
 
   it('cuts at a word with an ellipsis and leaves a short text alone', () => {
@@ -167,6 +211,11 @@ describe('the fields still drafted by the AI coworker', () => {
 
   it('are all of them while the form is as drafted', () => {
     expect(draftedFields(planToForm(draft.plan), draft)).toEqual(['name', 'dailyBudget', 'targeting', 'variants']);
+  });
+
+  it('leave out a field the AI coworker left empty: there is nothing of its there', () => {
+    const empty = { plan: plan({ linkUrl: null }), aiFields: ['name', 'linkUrl'] };
+    expect(draftedFields(planToForm(empty.plan), empty)).toEqual(['name']);
   });
 
   it('lose a field the person changed, and only that one', () => {
@@ -227,6 +276,14 @@ describe.each(['en', 'vi'] as const)('the words in %s', (locale) => {
     expect(issueText(ISSUES[2]!, t)).toContain('2026-11-03');
     expect(issueText(ISSUES[6]!, t)).toContain('40');
     expect(issueText(ISSUES[0]!, t)).not.toBe(issueText({ ...ISSUES[0]!, field: 'startOn' }, t));
+  });
+
+  it('show a day and a month the way the reader writes them, not as stored', () => {
+    const date = (day: string) => day.split('-').reverse().join('/');
+    expect(issueText(ISSUES[2]!, t, date)).toContain('03/11/2026');
+    expect(issueText(ISSUES[2]!, t)).toContain('2026-11-03');
+    expect(issueText(ISSUES[15]!, t)).toContain('11/2026');
+    expect(issueText(ISSUES[15]!, t)).not.toContain('2026-11');
   });
 
   it('show a code this build does not know as it is, so a newer server never hides a finding', () => {
