@@ -118,6 +118,13 @@ export interface InboundJob {
   recipient: string | null;
 }
 
+// The name the receiving mail server writes in its Authentication-Results (INBOUND_AUTHSERV_ID), set once at start as the Message-ID domain is, so the worker's
+// dependencies stay as declared (the job egress invariant). A test passes its own through the deps.
+let configuredAuthservId: string | undefined;
+export function setInboundAuthservId(value: string | null | undefined): void {
+  configuredAuthservId = value ?? undefined;
+}
+
 export interface InboundProcessDeps {
   runtime: Runtime;
   store: BlobStore;
@@ -174,17 +181,20 @@ export async function processInboundEmail(deps: InboundProcessDeps, job: Inbound
   // right for a leaked address, but a supplier's legitimate mail in that window is lost without a bounce. So the drop
   // is counted for the org that owned a retired token (#139): only the count, nothing about the message.
   // The Inbox's own address (#2439) is a token of its own, so it is tried first and a mail to it never reaches the invoice reader.
-  const routed = await deps.runtime.orgless(async (db) => {
+  let toConversation = false;
+  const orgId = await deps.runtime.orgless(async (db) => {
     const inbox = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_conversation_token(${token}) AS org_id`.execute(db);
-    if (inbox.rows[0]?.org_id) return { orgId: inbox.rows[0].org_id, toConversation: true };
+    if (inbox.rows[0]?.org_id) {
+      toConversation = true;
+      return inbox.rows[0].org_id;
+    }
     const documents = await sql<{ org_id: string | null }>`SELECT crove_kernel.org_by_inbound_token(${token}) AS org_id`.execute(db);
-    return documents.rows[0]?.org_id ? { orgId: documents.rows[0].org_id, toConversation: false } : null;
+    return documents.rows[0]?.org_id ?? null;
   });
-  if (!routed) {
+  if (!orgId) {
     await countDrop(deps.runtime, token);
     throw unknownRecipient();
   }
-  const { orgId, toConversation } = routed;
 
   // Over a daily limit of the org (#675) the message is kept, not filed: the worker tries it again once the org is back
   // under it. The check comes before anything is stored for the org.
@@ -271,7 +281,8 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   if (email.automated === true) return { ignored: 'automated' };
   const sender = (email.from ?? '').trim().toLowerCase();
   // One mailbox only: a header like "<a@x.test,b@y.test>" is read by the parser as one address and by a mailer as two recipients.
-  if (!isMailAddress(sender)) return { ignored: 'no_sender' };
+  // The contract of a contact id is 200 characters, so a longer (valid) address is not one this intake can keep.
+  if (!isMailAddress(sender) || sender.length > 200) return { ignored: 'no_sender' };
   if (sender.endsWith(`@${domain.toLowerCase()}`)) return { ignored: 'own_address' };
   const given = (email.messageId ?? '').trim();
   const messageId = MESSAGE_ID.test(given) ? given : `<sha256-${rawSha256}@mail.invalid>`;
@@ -332,7 +343,7 @@ export interface ConversationMailResult {
 // A customer's mail to the org's conversation address: the intake of the Inbox, in the org the address names, as the system. Idempotent: a redelivery
 // of the same Message-ID is a duplicate and changes nothing.
 async function processConversationEmail(deps: InboundProcessDeps, orgId: string, email: ExtractedEmail, rawSha256: string, domain: string): Promise<ConversationMailResult> {
-  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId);
+  const made = conversationEventOf(email, rawSha256, domain, new Date(), deps.authservId ?? configuredAuthservId);
   if ('ignored' in made) return { conversation: 'ignored', reason: made.ignored };
   const out = await deps.runtime.execute<ConversationIngested>('kernel.conversation.email_ingest', { events: [made.event] }, { actor: { type: 'system', component: 'inbound.conversation' }, orgId });
   return { conversation: out.stored > 0 ? 'stored' : out.duplicates > 0 ? 'duplicate' : 'ignored' };

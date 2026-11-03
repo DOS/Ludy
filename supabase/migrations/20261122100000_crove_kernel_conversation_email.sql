@@ -72,6 +72,16 @@ $$;
 REVOKE ALL ON FUNCTION crove_kernel.conversation_access(text, uuid, boolean) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_kernel.conversation_access(text, uuid, boolean) TO crove_tenant;
 
+-- A reply to an email thread is a mail row that carries the customer's address and subject and the member's whole answer (to_address, subject, payload):
+-- whoever may not read the thread may not read it there either. The thread's own message decides (its row is read under the conversation policies); the
+-- system keeps its own access, and a mail of any other source is untouched.
+DROP POLICY IF EXISTS mail_message_conversation_reply ON crove_kernel.mail_message;
+CREATE POLICY mail_message_conversation_reply ON crove_kernel.mail_message AS RESTRICTIVE FOR ALL TO crove_tenant
+  USING (source IS DISTINCT FROM 'kernel.conversation.reply' OR crove_kernel.ctx_actor_type() = 'system'
+         OR EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = mail_message.org_id AND m.id = mail_message.source_id))
+  WITH CHECK (source IS DISTINCT FROM 'kernel.conversation.reply' OR crove_kernel.ctx_actor_type() = 'system'
+         OR EXISTS (SELECT 1 FROM crove_kernel.conversation_message m WHERE m.org_id = mail_message.org_id AND m.id = mail_message.source_id));
+
 -- Erasing or purging an email thread also drops the subject and the text of the replies sent on it (the guard lets a column only be nulled).
 GRANT UPDATE (subject, payload) ON crove_kernel.mail_message TO crove_tenant;
 

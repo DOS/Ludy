@@ -94,6 +94,7 @@ import { createMediaUrls } from './media-urls.ts';
 import { createTaxCodeLookup } from './tax-lookup.ts';
 import { createPortalSync } from './portal-sync.ts';
 import { createTaxPortalClient, testPortalAllowed } from './tax-portal.ts';
+import { setInboundAuthservId } from './inbound.ts';
 import { startWorker, workerApplicationName } from './worker.ts';
 import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
 
@@ -203,6 +204,7 @@ export function overviewContributions(config: Pick<Config, 'CROVE_MODULES'>): Ov
 export function moduleDefinitions(config: Config): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
+  setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -594,7 +596,6 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             adsCampaignWriter: resolved.adsCampaignWriter,
             extract: createExtractClient({ url: extractUrl, concurrency: extractConcurrency(config) }),
             inboundDomain: config.INBOUND_DOMAIN ?? null,
-            inboundAuthservId: config.INBOUND_AUTHSERV_ID ?? null,
             revoker: resolved.identity.revoker,
             refusalTallyRetentionDays: config.REFUSAL_TALLY_RETENTION_DAYS,
             build: { id: config.CROVE_BUILD ?? null, time: config.CROVE_BUILD_TIME ?? null },

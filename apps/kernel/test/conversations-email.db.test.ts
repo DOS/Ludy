@@ -8,13 +8,14 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { z } from 'zod';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import type { ExtractClient } from '@crove/extract-contract';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity, type UsageLimits } from '@crove/kernel';
 import type { ConversationDetail, ConversationListed } from '@crove/kernel-contract';
-import { Runtime, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { Runtime, defineQuery, inboundKey, newInboundBlobId, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
 import { processInboundEmail } from '../src/inbound.ts';
 import { inProcessExtract } from './extract-service.ts';
 import { TEST_MANIFESTS } from './manifests.ts';
@@ -96,6 +97,8 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
   let db: Db;
   let rt: Runtime;
   let worker: Runtime;
+  // Reads the reply mails an org's members could see, as a member's own database context would.
+  let probe: Runtime;
   let extract: ExtractClient;
   const store = new MemoryStore();
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -173,6 +176,13 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     rt = new Runtime(db, { manifests: TEST_MANIFESTS }).register(registered);
     worker = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register(registered);
     extract = inProcessExtract();
+    const mailRows = defineQuery({
+      name: 'test.reply_mail_rows',
+      input: z.object({}),
+      access: ['owner', 'admin', 'member', 'viewer'],
+      handler: async (ctx) => (await ctx.trx.selectFrom('crove_kernel.mail_message').select(['to_address', 'subject']).where('source', '=', 'kernel.conversation.reply').execute()).length,
+    });
+    probe = new Runtime(db, { manifests: TEST_MANIFESTS }).register({ commands: [], queries: [mailRows] });
   });
 
   afterAll(async () => {
@@ -512,6 +522,21 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     const [thread] = await threads(o);
     await expect(exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.member })).rejects.toMatchObject({ code: 'ASSIGNEE_NOT_ALLOWED' });
     await exec(o, o.owner, 'kernel.conversation.assign', { conversationId: thread?.id, assigneeUserId: o.owner });
+  });
+
+  it('shows the reply mail row only to those who may read its thread', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<pol1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Trả lời riêng.' });
+    const seenBy = (user: string) => probe.query<number>('test.reply_mail_rows', {}, { actor: asUser(user), orgId: o.orgId });
+    expect(await seenBy(o.owner)).toBe(1);
+    // A member with no permission to read mail to the business neither reads the thread nor the row that holds its answer.
+    expect(await seenBy(o.member)).toBe(0);
+    // Once granted, the member sees both.
+    await admin((c) => c.query("INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, granted_by) VALUES ($1, $2, 'desk.agent', $3)", [o.orgId, o.member, o.owner]));
+    await admin((c) => c.query("INSERT INTO crove_kernel.role_permission (role_key, permission) VALUES ('desk.agent', 'kernel.conversation.direct.read') ON CONFLICT DO NOTHING"));
+    expect(await seenBy(o.member)).toBe(1);
   });
 
   it('does not settle the message from an earlier mail once a retry made a new one', async () => {

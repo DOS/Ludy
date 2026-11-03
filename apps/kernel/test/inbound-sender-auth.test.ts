@@ -88,6 +88,8 @@ describe('conversationEventOf', () => {
   it('ignores a sender that is not one mailbox, and marks a verified one', () => {
     expect(conversationEventOf({ ...base, from: 'a@x.test,b@y.test' }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });
     expect(conversationEventOf({ ...base, from: '"a b"@x.test' }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });
+    // A valid address longer than a contact id may be is ignored, not left to fail the whole intake and lose the mail.
+    expect(conversationEventOf({ ...base, from: `${'a'.repeat(64)}@${'b'.repeat(63)}.${'c'.repeat(63)}.${'d'.repeat(50)}.test` }, 'ab', 'in.test', now, SERVER)).toEqual({ ignored: 'no_sender' });
     const verified = conversationEventOf({ ...base, authResults: [`${SERVER}; dmarc=pass header.from=mau.test`] }, 'ab', 'in.test', now, SERVER);
     expect(verified).toMatchObject({ event: { verified: true, contact: { id: 'khach@mau.test' } } });
     const unverified = conversationEventOf(base, 'ab', 'in.test', now, SERVER);
