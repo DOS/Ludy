@@ -56,7 +56,6 @@ const MACHINERY = new Set([
 const PENDING_TABLES = new Set<string>([
   'crove_ads.ad_campaign_request',
   'crove_finance.bank_party_rule',
-  'crove_kernel.today_mail',
   'crove_notes.link',
   'crove_notes.note',
 ]);
