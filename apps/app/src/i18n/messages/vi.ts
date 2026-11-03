@@ -8131,6 +8131,8 @@ export const vi = {
         saved_reply_update: 'Sửa một câu trả lời mẫu',
         attachment_source: 'Đọc địa chỉ ảnh khách gửi để tải về',
         counts: 'Đếm hội thoại theo trạng thái',
+        address_issue: 'Tạo địa chỉ email của Hộp thư lần đầu',
+        address_rotate: 'Đổi địa chỉ email của Hộp thư, địa chỉ cũ ngừng nhận thư',
         email_ingest: 'Ghi thư khách gửi vào Hộp thư thành hội thoại',
         erase_connection: 'Xóa hội thoại của một kênh theo yêu cầu xóa dữ liệu của Meta',
         erase_contact: 'Xóa một khách cùng mọi hội thoại của họ',

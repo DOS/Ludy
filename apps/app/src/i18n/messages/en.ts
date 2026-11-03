@@ -8134,6 +8134,8 @@ export const en = {
         saved_reply_update: 'Edit a saved reply',
         attachment_source: "Read a customer's image address to fetch it",
         counts: 'Count conversations by status',
+        address_issue: 'Make the Inbox email address the first time',
+        address_rotate: 'Change the Inbox email address; the old one stops receiving',
         email_ingest: 'Store a mail a customer sent as a conversation in the Inbox',
         erase_connection: "Erase a channel's conversations on Meta's data deletion request",
         erase_contact: 'Erase a customer and all their conversations',
