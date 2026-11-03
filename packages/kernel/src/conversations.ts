@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import { sql } from 'kysely';
 import {
   CONVERSATION_CALL_STALE_MS,
+  CONVERSATION_DRAFT_MAX,
   CONVERSATION_PREVIEW_CHARS,
   EMAIL_PROVIDER,
   EMAIL_REFS_MAX,
@@ -2775,7 +2776,7 @@ export const conversationDraftSource = defineQuery({
     return {
       conversationId: draft.conversation_id,
       provider: connection.provider,
-      maxChars: rules?.replyMax ?? 2000,
+      maxChars: Math.min(rules?.replyMax ?? CONVERSATION_DRAFT_MAX, CONVERSATION_DRAFT_MAX),
       customerName: conversation.customer_name,
       orgName: tenant?.name ?? null,
       messages,

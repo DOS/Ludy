@@ -402,9 +402,11 @@ export const zConversationDraftRequest = z.strictObject({ conversationId: zId })
 export const zConversationDraftEnqueue = z.strictObject({ conversationId: zId });
 export const zConversationDraftSource = z.strictObject({ draftId: zId });
 export const zConversationDraftDiscard = z.strictObject({ draftId: zId });
+// The longest draft a model's answer is kept as, whatever the channel lets a person send (an email reply may be longer): the draft record and the database hold this.
+export const CONVERSATION_DRAFT_MAX = 2000;
 export const zConversationDraftRecord = z.discriminatedUnion('outcome', [
   // The draft's text (1 to the thread's channel limit), and the model call's tokens for the org's AI cost limit.
-  z.strictObject({ outcome: z.literal('written'), draftId: zId, body: z.string().trim().min(1).max(2000).refine(noNul, 'NUL character') }),
+  z.strictObject({ outcome: z.literal('written'), draftId: zId, body: z.string().trim().min(1).max(CONVERSATION_DRAFT_MAX).refine(noNul, 'NUL character') }),
   // No draft: the model gave none, was refused or failed; `code` is a short code, never a platform's or a model's words.
   z.strictObject({ outcome: z.literal('none'), draftId: zId, code: z.string().regex(/^[A-Za-z0-9_.:-]{1,60}$/) }),
 ]);
