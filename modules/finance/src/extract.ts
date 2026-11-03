@@ -519,6 +519,8 @@ interface ExtractionFile {
   storage_key: string;
   generation: string | null;
   sha256: string;
+  // The legal entity the reading is made in (#2502): the one a re-reading was asked for, else the one the upload named; null, the org's default.
+  legalEntityId: string | null;
   hasExtraction: boolean;
   due: boolean;
   aiStopped: boolean;
