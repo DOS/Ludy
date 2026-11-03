@@ -47,6 +47,7 @@ const MONEY_COLUMNS = new Set(['crove_kernel.budget_policy.monthly_limit']);
 // Tenant tables whose primary key is not (org_id, id), with the key they have. Every one still leads with org_id
 // except outbox_pending, which is keyed by its global sequence.
 const PK_EXCEPTIONS: Record<string, { pk: string; reason: string }> = {
+  'crove_ads.ad_token_seal': { pk: 'org_id,revoke_id', reason: 'The sealed copy of the token of one closed ads connection, kept for its revoke (#2296, ADR-0025 amendment): the revoke is the key.' },
   'crove_finance.journal_line': { pk: 'org_id,entry_id,line_no', reason: 'A line of an append-only journal entry, keyed by its entry and line number.' },
   'crove_finance.portal_invoice_row': { pk: 'org_id,list_id,row_no', reason: 'A row of an imported tax-portal invoice list, keyed by its list and row number.' },
   'crove_finance.purchase_document_void': { pk: 'org_id,document_id', reason: 'At most one void per purchase document: the document is the key.' },
@@ -91,6 +92,7 @@ const EVENT_TRIGGER_EXCEPTIONS: Record<string, { shape: string; reason: string }
 // be on main first; while it is listed here, an exception that matches nothing is not stale. Remove the key once the
 // PR is merged. One key per line, sorted, with a trailing comma.
 const PENDING_EXCEPTIONS = new Set<string>([
+  'crove_ads.ad_token_seal',
   // 'crove_schema.table_name',
 ]);
 
