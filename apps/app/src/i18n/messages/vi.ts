@@ -8006,7 +8006,7 @@ export const vi = {
         voided_proposals: 'Tìm đề xuất có chứng từ đã hủy',
       },
       einvoice_connection: {
-        link: 'Kết nối nhà cung cấp hóa đơn điện tử',
+        connect: 'Kết nối nhà cung cấp hóa đơn điện tử',
         list: 'Xem các kết nối nhà cung cấp hóa đơn điện tử',
         record_test: 'Ghi kết quả kiểm tra kết nối hóa đơn điện tử',
         target: 'Kiểm tra pháp nhân và mã số thuế của kết nối hóa đơn điện tử',

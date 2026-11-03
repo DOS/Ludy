@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // An org's connection to an e-invoice provider (#2501, ADR-0044 point 2, plan einvoice-issue.md section 7):
-// - finance.einvoice_connection.link (owners and admins; R2): files a channel connection the kernel just made (provider `einvoice_<adapter>`, its credential sealed in
-//   crove_kernel.credential) under a legal entity and the seller's tax code. It sees no credential: the sealing is the API edge's, and the worker alone opens it.
+// - finance.einvoice_connection.connect (owners and admins; R2): runs kernel.channel.connect (provider `einvoice_<adapter>`, the credential sealed in
+//   crove_kernel.credential) and files the connection under a legal entity and the seller's tax code in ONE transaction. It sees no credential: the sealing is the API edge's,
+//   and the worker alone opens it.
 // - finance.einvoice_connection.record_test (same; R1): records the state the connection test came back with and adds the templates and series the provider listed to the
 //   connection's entity. The test itself (the provider calls) is the API's for the offline provider and the worker's for a real one; this command takes only a state.
 // - finance.einvoice_connection.unlink (same; R2): deletes the row. The API revokes the channel connection first, which drops the credential.
@@ -11,6 +12,7 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { isEInvoiceProvider } from '@crove/einvoice';
+import { zChannelConnect } from '@crove/kernel';
 import { zEInvoiceConnectionRecordTest, zEInvoiceSeriesSetDefault, zId, zSellerTaxCode, type EInvoiceConnection, type EInvoiceConnectionTested } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type QueryContext } from '@crove/kernel-runtime';
@@ -59,59 +61,61 @@ export const einvoiceConnectionTarget = defineQuery({
   handler: (ctx, input) => resolveSeller(ctx, input.legalEntityId, input.sellerTaxCode),
 });
 
-export const einvoiceConnectionLink = defineCommand({
-  name: 'finance.einvoice_connection.link',
-  input: z.strictObject({ connectionId: zId, legalEntityId: zId.nullable(), sellerTaxCode: zSellerTaxCode.nullable() }),
-  // It names which provider account the org's invoices will be issued from; nothing is issued and no credential is touched.
+export const einvoiceConnectionConnect = defineCommand({
+  name: 'finance.einvoice_connection.connect',
+  // The sealed envelope of what the org typed (made at the API's edge, never the secret), the entity the account issues for and the seller's tax code. One transaction
+  // writes the channel connection with its credential and files the connection under the entity, so a refusal of either rolls back both: a refused connect never
+  // replaces the credential or the connector of a connection that is already live.
+  input: z.strictObject({
+    provider: z.string().regex(/^[a-z][a-z0-9_]{0,21}$/),
+    legalEntityId: zId.nullable(),
+    sellerTaxCode: zSellerTaxCode.nullable(),
+    displayName: z.string().trim().min(1).max(200),
+    credential: zChannelConnect.shape.credential,
+  }),
+  // It names which provider account the org's invoices will be issued from and stores that account's login (sealed); nothing is issued.
   risk: 'R2',
-  sideEffect: 'internal',
+  sideEffect: 'external',
   access: MANAGERS,
   handler: async (ctx, input): Promise<{ id: string; existing: boolean }> => {
-    const channel = await ctx.trx
-      .selectFrom('crove_kernel.channel_connection')
-      .select(['provider', 'status'])
-      .where('org_id', '=', ctx.orgId)
-      .where('id', '=', input.connectionId)
-      // Held until this transaction ends, so a disconnect cannot revoke the connection between this check and the row that files it.
-      .forShare()
-      .executeTakeFirst();
-    if (!channel) throw new DomainError('CHANNEL_NOT_FOUND', 404, 'Không tìm thấy kết nối này');
-    if (!adapterOf(channel.provider)) throw new DomainError('EINVOICE_PROVIDER_UNKNOWN', 422, 'Kết nối này không phải của một nhà cung cấp hóa đơn điện tử');
-    if (channel.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kết nối này không còn hoạt động, hãy kết nối lại');
+    if (!isEInvoiceProvider(input.provider)) throw new DomainError('EINVOICE_PROVIDER_UNKNOWN', 422, 'Nhà cung cấp hóa đơn điện tử này không được hỗ trợ');
+    const channelProvider = `einvoice_${input.provider}`;
     const { legalEntityId: entityId, sellerTaxCode } = await resolveSeller(ctx, input.legalEntityId, input.sellerTaxCode);
-    // A connect that reaches the same account again (a retry whose answer was lost) is the same row; the same connection under another tax code is not: the seller of an
-    // account does not change, so it is disconnected and connected again.
-    const same = await ctx.trx
+    // The account is the entity's under this provider, so a second connect of it is the same connection. The seller's tax code is not in it, nor in the display name: the
+    // channel row stays as history after a disconnect, and a household's tax code is its owner's national ID. Only the finance row holds the code, and it goes with the
+    // disconnect.
+    const externalAccountId = entityId;
+    // The seller of an account does not change: the same connection under another tax code is refused before the credential is written, and disconnected and connected again.
+    const held = await ctx.trx
       .selectFrom('crove_finance.einvoice_connection')
-      .select(['id', 'legal_entity_id', 'seller_tax_code'])
+      .select(['id', 'seller_tax_code'])
       .where('org_id', '=', ctx.orgId)
-      .where('channel_connection_id', '=', input.connectionId)
+      .where('legal_entity_id', '=', entityId)
+      .where('provider', '=', channelProvider)
       .executeTakeFirst();
-    if (same) {
-      if (same.legal_entity_id !== entityId || same.seller_tax_code !== sellerTaxCode) throw new DomainError('EINVOICE_CONNECTION_EXISTS', 409, 'Kết nối này đã có cho một mã số thuế khác; hãy ngắt kết nối rồi kết nối lại');
-      return { id: same.id, existing: true };
-    }
+    if (held && held.seller_tax_code !== sellerTaxCode) throw new DomainError('EINVOICE_CONNECTION_EXISTS', 409, 'Kết nối này đã có cho một mã số thuế khác; hãy ngắt kết nối rồi kết nối lại');
+    const channel = await ctx.run<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', {
+      provider: channelProvider,
+      externalAccountId,
+      displayName: input.displayName,
+      scopes: [],
+      expiresAt: null,
+      credential: input.credential,
+    });
     const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
     try {
       const row = await ctx.trx
         .insertInto('crove_finance.einvoice_connection')
-        .values({ org_id: ctx.orgId, legal_entity_id: entityId, channel_connection_id: input.connectionId, provider: channel.provider, seller_tax_code: sellerTaxCode, created_by: userId })
-        // Two links of one channel connection at once (two connects of one account): the second waits for the first, finds its row and answers with it, so neither call is
-        // refused for the other's work and the API does not revoke a connection the other returned.
+        .values({ org_id: ctx.orgId, legal_entity_id: entityId, channel_connection_id: channel.connectionId, provider: channelProvider, seller_tax_code: sellerTaxCode, created_by: userId })
+        // Two connects of one account at once: the channel connection's own lock serialises them, and the second finds the first's row and answers with it.
         .onConflict((conflict) => conflict.columns(['org_id', 'channel_connection_id']).doNothing())
         .returning('id')
         .executeTakeFirst();
-      if (!row) {
-        const first = await ctx.trx
-          .selectFrom('crove_finance.einvoice_connection')
-          .select('id')
-          .where('org_id', '=', ctx.orgId)
-          .where('channel_connection_id', '=', input.connectionId)
-          .executeTakeFirstOrThrow();
-        return { id: first.id, existing: true };
-      }
-      ctx.audit({ connectionId: input.connectionId, legalEntityId: entityId, provider: channel.provider });
-      return { id: row.id, existing: false };
+      const id =
+        row?.id ??
+        (await ctx.trx.selectFrom('crove_finance.einvoice_connection').select('id').where('org_id', '=', ctx.orgId).where('channel_connection_id', '=', channel.connectionId).executeTakeFirstOrThrow()).id;
+      ctx.audit({ connectionId: channel.connectionId, legalEntityId: entityId, provider: channelProvider, reconnected: channel.reconnected });
+      return { id, existing: !row };
     } catch (error) {
       if (pgCode(error) === '23505') throw new DomainError('EINVOICE_CONNECTION_EXISTS', 409, 'Pháp nhân này đã có một kết nối với nhà cung cấp đó cho mã số thuế này');
       throw error;
@@ -236,5 +240,5 @@ export const einvoiceConnectionList = defineQuery({
   },
 });
 
-export const einvoiceConnectionCommands = [einvoiceConnectionLink, einvoiceConnectionRecordTest, einvoiceConnectionUnlink, einvoiceSeriesSetDefault];
+export const einvoiceConnectionCommands = [einvoiceConnectionConnect, einvoiceConnectionRecordTest, einvoiceConnectionUnlink, einvoiceSeriesSetDefault];
 export const einvoiceConnectionQueries = [einvoiceConnectionList, einvoiceConnectionTarget];

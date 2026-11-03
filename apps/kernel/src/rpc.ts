@@ -2183,27 +2183,18 @@ export function createRpcHandler(
             // The offline provider has no account: it is sealed with its own fixed word, so a credential row exists for the flow and holds nothing of the org's.
             const secret = provider.hosts.length === 0 ? SANDBOX_EINVOICE_SECRET : JSON.stringify(input.fields);
             const sealed = channels.broker.seal(secret, { orgId, provider: channelProvider, externalAccountId });
-            const command: ChannelConnectInput = {
-              provider: channelProvider,
-              externalAccountId,
-              displayName: provider.hosts.length === 0 ? 'Nhà cung cấp hóa đơn thử nghiệm' : input.provider,
-              scopes: [],
-              expiresAt: null,
-              credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
-            };
-            const { connectionId, reconnected } = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
-            try {
-              const linked = await runtime.execute<{ id: string }>(
-                'finance.einvoice_connection.link',
-                { connectionId, legalEntityId: seller.legalEntityId, sellerTaxCode: seller.sellerTaxCode },
-                { actor, orgId },
-              );
-              return { id: linked.id };
-            } catch (error) {
-              // The link was refused: no connection is left behind that no screen lists, with its sealed credential. One this call only reconnected is the account's own: it stays.
-              if (!reconnected) await runtime.execute('kernel.channel.disconnect', { connectionId }, { actor, orgId }).catch(() => undefined);
-              throw error;
-            }
+            const connected = await runtime.execute<{ id: string }>(
+              'finance.einvoice_connection.connect',
+              {
+                provider: input.provider,
+                legalEntityId: seller.legalEntityId,
+                sellerTaxCode: seller.sellerTaxCode,
+                displayName: provider.hosts.length === 0 ? 'Nhà cung cấp hóa đơn thử nghiệm' : input.provider,
+                credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              },
+              { actor, orgId },
+            );
+            return { id: connected.id };
           }),
         ),
         test: os.einvoice.connections.test.handler(({ context, input }) =>

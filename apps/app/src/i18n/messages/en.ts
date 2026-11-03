@@ -8009,7 +8009,7 @@ export const en = {
         voided_proposals: 'Find proposals whose document was voided',
       },
       einvoice_connection: {
-        link: 'Connect an e-invoice provider',
+        connect: 'Connect an e-invoice provider',
         list: 'View the e-invoice provider connections',
         record_test: 'Record the result of an e-invoice connection test',
         target: 'Check the entity and tax code of an e-invoice connection',
