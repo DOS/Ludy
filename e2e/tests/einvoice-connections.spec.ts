@@ -12,6 +12,9 @@ test('connects the offline e-invoice provider from Settings, tests it, picks the
   const card = page.getByLabel('Hóa đơn điện tử: nhà cung cấp của bạn');
 
   await test.step('the card is there, with nothing connected and a form that asks for the tax code', async () => {
+    // Under the section the owner looks for by its name, with the bank feed's card beside it where the deployment offers one.
+    await expect(page.getByRole('heading', { name: 'Tích hợp', exact: true })).toBeVisible();
+    await expect(page.getByText('Kết nối Ludy với ngân hàng và đơn vị phát hành hóa đơn của công ty.')).toBeVisible();
     await expect(card).toBeVisible();
     await expect(card.getByText('Chưa kết nối nhà cung cấp nào.')).toBeVisible();
     await expect(card.getByText('Nhà cung cấp thử nghiệm chạy ngay trên máy chủ này')).toBeVisible();

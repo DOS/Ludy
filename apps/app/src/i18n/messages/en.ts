@@ -1700,6 +1700,10 @@ export const en = {
     removeOf: 'Remove account number {number}',
     noBankAccounts: 'No bank account (112) is in use yet; create one in the chart of accounts.',
   },
+  integrations: {
+    title: 'Integrations',
+    lead: 'Connect {brand} to your company\'s bank and invoice provider.',
+  },
   einvoiceConnections: {
     title: 'E-invoices: your provider',
     intro: 'Sales invoices are issued at the e-invoice provider your business registered with. {brand} only connects to that account and does not create invoice series for you: if you have no series yet, create one on the provider\'s own page first.',

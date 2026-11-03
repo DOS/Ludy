@@ -62,6 +62,7 @@ suite('e-invoice provider connections (#2501)', () => {
   let adminUrl = '';
   let pool: pg.Pool;
   let workerPool: pg.Pool;
+  let rt: Runtime;
   let vault: CredentialVault;
   // The deployment with the offline provider on, one with it off, one whose provider needs the seller's own token to sign, and one that behaves like a real adapter
   // (a host, two fields to connect with) so the sealing of typed secrets can be searched for.
@@ -137,6 +138,7 @@ suite('e-invoice provider connections (#2501)', () => {
       commands: [...kernelCommands, ...financeCommands],
       queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries],
     });
+    rt = runtime;
     const config = loadConfig({ DATABASE_URL: appUrl.toString(), AUTH_JWT_SECRET: SECRET, AUTH_ISSUER: ISSUER, AUTH_SESSION_CHECK: 'off', MIGRATIONS_DIR: MIGRATIONS, WEB_DIST: '/nonexistent' });
     vault = new CredentialVault([parseVaultKey(randomBytes(32).toString('base64'))]);
     const deps = { config, runtime, store: new MemoryStore(), authenticate: createAuthenticator(config, db), pool, aiEnabled: false };
@@ -263,6 +265,38 @@ suite('e-invoice provider connections (#2501)', () => {
     const again = await call('connections/connect', owner, connectInput());
     expect(again.status).toBe(200);
     expect(String(again.body.id)).not.toBe(id);
+  });
+
+  it('keeps e-invoice connections out of the shared channel list, and lets two connects of one account at once both succeed on one connection', async () => {
+    // The shared list is the Social and messaging channels': an e-invoice connection names the seller's tax code and entity in its account id, which only the finance
+    // list shows (to the members of that entity).
+    const shared = await rpc('channels/list', await tokenFor(owner), {});
+    expect(shared.status).toBe(200);
+    expect(JSON.stringify(shared.body)).not.toContain('einvoice_');
+    expect(JSON.stringify(shared.body)).not.toContain(TAX_CODE);
+    // Two connects of one new account at once (a double click, a retry): both answer with the same connection, and neither call revokes what the other returned.
+    const branch = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh song song', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-002`]))[0]?.id);
+    const both = await Promise.all([call('connections/connect', owner, connectInput({ legalEntityId: branch })), call('connections/connect', adminUser, connectInput({ legalEntityId: branch }))]);
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect(both[0]?.body.id).toBe(both[1]?.body.id);
+    const mine = (await call('connections/list', owner)).body.filter((c: { legalEntityId: string }) => c.legalEntityId === branch);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ status: 'active' });
+    expect(await rows("SELECT status FROM crove_kernel.channel_connection WHERE org_id = $1 AND external_account_id = $2", [orgId, `${TAX_CODE}-002@${branch}`])).toEqual([{ status: 'active' }]);
+    expect(Number((await rows<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.credential WHERE org_id = $1 AND connection_id = $2', [orgId, mine[0]?.connectionId]))[0]?.n)).toBe(1);
+    // Closed again, so the tests after this one see the connections they made.
+    expect((await call('connections/disconnect', owner, { id: both[0]?.body.id })).body).toEqual({ removed: true });
+    // The command itself, linking one channel connection from four calls at once: one row, the same answer to all, none refused for the others' work.
+    const channel = randomUUID();
+    await rows(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, 'einvoice_sandbox', $3, 'Song song', $4)`, [orgId, channel, `race-${channel}`, owner.userId]);
+    const raceEntity = String((await rows<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by, tax_code) VALUES ($1, 'Chi nhánh đua', 'branch', $2, $3) RETURNING id`, [orgId, owner.userId, `${TAX_CODE}-003`]))[0]?.id);
+    const actor = { type: 'user' as const, userId: owner.userId, aal: 'aal2' as const, sessionId: randomUUID(), mfaAt: Math.floor(Date.now() / 1000) };
+    const linked = await Promise.all(
+      [1, 2, 3, 4].map(() => rt.execute<{ id: string; existing: boolean }>('finance.einvoice_connection.link', { connectionId: channel, legalEntityId: raceEntity, sellerTaxCode: null }, { actor, orgId, idempotencyKey: randomUUID() })),
+    );
+    expect(new Set(linked.map((l) => l.id)).size).toBe(1);
+    expect(linked.filter((l) => !l.existing)).toHaveLength(1);
+    expect(await rows('SELECT 1 FROM crove_finance.einvoice_connection WHERE org_id = $1 AND channel_connection_id = $2', [orgId, channel])).toHaveLength(1);
   });
 
   it('seals what the org types for a provider that has fields, and shows it nowhere: no answer, audit row, queued event or readable table', async () => {

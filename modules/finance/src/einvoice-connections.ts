@@ -79,8 +79,20 @@ export const einvoiceConnectionLink = defineCommand({
       const row = await ctx.trx
         .insertInto('crove_finance.einvoice_connection')
         .values({ org_id: ctx.orgId, legal_entity_id: entityId, channel_connection_id: input.connectionId, provider: channel.provider, seller_tax_code: sellerTaxCode, created_by: userId })
+        // Two links of one channel connection at once (two connects of one account): the second waits for the first, finds its row and answers with it, so neither call is
+        // refused for the other's work and the API does not revoke a connection the other returned.
+        .onConflict((conflict) => conflict.columns(['org_id', 'channel_connection_id']).doNothing())
         .returning('id')
-        .executeTakeFirstOrThrow();
+        .executeTakeFirst();
+      if (!row) {
+        const first = await ctx.trx
+          .selectFrom('crove_finance.einvoice_connection')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('channel_connection_id', '=', input.connectionId)
+          .executeTakeFirstOrThrow();
+        return { id: first.id, existing: true };
+      }
       ctx.audit({ connectionId: input.connectionId, legalEntityId: entityId, provider: channel.provider });
       return { id: row.id, existing: false };
     } catch (error) {

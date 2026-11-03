@@ -15,7 +15,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { ErrorText, RowsSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { decodeSymbol, fieldIsSecret, seriesOf, STATE_KEYS, templateWord } from '../lib/einvoice-connections.ts';
+import { decodeSymbol, einvoiceCardShown, fieldIsSecret, seriesOf, STATE_KEYS, templateWord } from '../lib/einvoice-connections.ts';
 import type { Role } from '../lib/members.ts';
 
 const refresh = async () => {
@@ -206,7 +206,7 @@ export function EInvoiceConnectionsCard({ role }: { role: Role }) {
   const loading = providers.isLoading || connections.isLoading || series.isLoading || (canManage && entities.isLoading);
   const failure = providers.error ?? connections.error ?? series.error ?? entities.error;
   // No provider on and nothing connected: nothing to show, so a deployment that offers none draws no card.
-  if (!loading && !failure && offered.length === 0 && list.length === 0) return null;
+  if (!loading && !failure && !einvoiceCardShown(offered, list)) return null;
   return (
     <Card className="block p-4" aria-label={t('title')}>
       <p className="text-sm font-medium text-muted-foreground">{t('title')}</p>

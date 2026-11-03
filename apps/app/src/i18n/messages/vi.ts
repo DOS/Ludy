@@ -1698,6 +1698,10 @@ export const vi = {
     removeOf: 'Gỡ số tài khoản {number}',
     noBankAccounts: 'Chưa có tài khoản ngân hàng (112) nào đang dùng; hãy tạo ở Hệ thống tài khoản.',
   },
+  integrations: {
+    title: 'Tích hợp',
+    lead: 'Kết nối {brand} với ngân hàng và đơn vị phát hành hóa đơn của công ty.',
+  },
   einvoiceConnections: {
     title: 'Hóa đơn điện tử: nhà cung cấp của bạn',
     intro: 'Hóa đơn bán ra được phát hành ở nhà cung cấp hóa đơn điện tử mà doanh nghiệp bạn đã đăng ký. {brand} chỉ kết nối vào tài khoản đó và không tạo ký hiệu hóa đơn thay bạn: chưa có ký hiệu thì hãy tạo ở trang của nhà cung cấp trước.',

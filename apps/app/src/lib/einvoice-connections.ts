@@ -29,6 +29,10 @@ export const STATE_KEYS = {
   signing_needs_person: 'states.signing_needs_person',
 } as const satisfies Record<EInvoiceConnectionState, string>;
 
+// Whether the e-invoice card draws: the deployment offers a provider to connect, or the org already has a connection (a viewer still reads it when the provider was
+// turned off since). While the answers are not in, it does not.
+export const einvoiceCardShown = (providers: readonly unknown[] | undefined, connections: readonly unknown[] | undefined): boolean => (providers?.length ?? 0) > 0 || (connections?.length ?? 0) > 0;
+
 // The series a connection issues from: its entity's, under its provider.
 export const seriesOf = (series: readonly EInvoiceSeries[], connection: Pick<EInvoiceConnection, 'legalEntityId' | 'provider'>): EInvoiceSeries[] =>
   series.filter((s) => s.legalEntityId === connection.legalEntityId && s.provider === connection.provider);
