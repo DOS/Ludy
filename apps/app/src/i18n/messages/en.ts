@@ -610,9 +610,10 @@ export const en = {
   // Learned bank-line rules in Settings (#2402).
   bankRules: {
     title: 'Learned bank line rules',
-    intro: 'When you choose the party of a bank line voucher yourself and approve it, {brand} remembers how the transfer text points at that party and suggests it next time. Only a hash of the main words is kept, never the text. A rule is only a suggestion: a person still makes and approves the voucher.',
+    intro: 'When you choose the party of a bank line voucher yourself and approve it, {brand} remembers how the transfer text points at that party and suggests it next time. Only a hash of the main words or of the counterparty account number is kept, never the text or the number. A rule is only a suggestion: a person still makes and approves the voucher.',
     empty: 'No rule yet. One appears when you choose the party of a bank line voucher yourself and approve it.',
     forParty: 'A transfer text like the earlier one matches {party}',
+    forPartyAccount: 'The same counterparty account number as before matches {party}',
     learnedFrom: 'Confirmed by {name} on {date}, when approving voucher {code}',
     formerMember: 'a former member',
     remove: 'Remove',
@@ -2764,6 +2765,7 @@ export const en = {
       amount: 'Signed amount',
       balance: 'Balance',
       reference: 'Reference',
+      counterpartyAccount: 'Counterparty account (if any)',
       status: 'Check',
     },
     status: {
@@ -2830,6 +2832,7 @@ export const en = {
         taxCode: 'Suggested match: the tax code is in the transfer text',
         invoice: 'Suggested match: invoice {number} and its amount are in the transfer text',
         learned: 'Suggested match: by the rule learned from an earlier approval',
+        account: 'Suggested match: the counterparty account number was matched to this party at an earlier approval',
         name: "Suggested match: the party's name is in the transfer text",
         balance: "Suggested match: the amount equals the party's open balance",
         none: 'How it matched is not known',
@@ -3113,6 +3116,7 @@ export const en = {
       tax_code: 'its tax code is in the transfer description',
       invoice: 'invoice {number} of this amount is in the transfer description',
       learned: 'by a rule learned from an earlier approval',
+      account: 'the counterparty account number was matched to this party at an earlier approval',
       name: 'its name is in the transfer description',
       balance: 'its open balance is exactly this amount',
     },

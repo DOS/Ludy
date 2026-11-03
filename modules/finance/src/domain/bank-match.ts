@@ -7,6 +7,8 @@
 // - tax_code: a party's tax code (mã số thuế) is written in the description;
 // - invoice: an invoice of the line's direction (a sale for money in, a purchase for money out) for exactly the line's
 //   amount, whose number is written in the description;
+// - account: the line's counterparty account number is the key of a rule a person taught by matching such a line to the party by
+//   hand (#2402); only a hint, and only when exactly one party holds it (a settlement or shared account says nothing);
 // - learned: the line's distinctive words are the key of a rule a person taught by matching such a line to the party by
 //   hand (#2402); only a hint of the party, a person still makes and approves the voucher;
 // - name: a party's name, without its legal form (Công ty TNHH ...), is written in the description;
@@ -147,6 +149,8 @@ export function matchLine(
   balances: readonly MatchBalance[],
   // The parties whose learned rule the line's text hits (bank-rules.ts, same org and legal entity as the line).
   learned: readonly string[] = [],
+  // The parties whose learned rule the line's counterparty account number hits (#2402).
+  accounts: readonly string[] = [],
 ): LineMatch {
   const amount = new Decimal(line.amount).abs();
   const known = new Set(parties.map((p) => p.id));
@@ -169,6 +173,9 @@ export function matchLine(
       add({ partyId: invoice.partyId, reason: 'invoice', invoice: { series: invoice.series, number: invoice.number } });
     }
   }
+  // An account that several parties were matched to (a payment gateway's settlement account, a shared account) points at none of them.
+  const accountParties = [...new Set(accounts)];
+  if (accountParties.length === 1) add({ partyId: accountParties[0] as string, reason: 'account' });
   for (const partyId of learned) add({ partyId, reason: 'learned' });
   const descriptionWords = words(line.description);
   const compact = descriptionWords.join('');

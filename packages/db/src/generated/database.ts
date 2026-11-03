@@ -570,6 +570,7 @@ export interface FinanceBankLineTable {
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   legal_entity_id: ColumnType<string, string, NotGranted>;
+  counterparty_account: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.bank_party_rule */

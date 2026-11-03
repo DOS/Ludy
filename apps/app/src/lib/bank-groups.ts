@@ -28,7 +28,7 @@ export function voucherRequestOf(item: BankMatchLine, legalEntityId: string | un
 // How a party was found, as a tag the screen turns into words (`bank.match.reason.<tag>`): the tax code in the transfer text
 // (with the invoice the amount settles when there is one), the invoice number, a rule learned from an earlier approval (#2402), the
 // name, or an open balance equal to the amount.
-export type ReasonTag = 'taxCodeInvoice' | 'taxCode' | 'invoice' | 'learned' | 'name' | 'balance' | 'none';
+export type ReasonTag = 'taxCodeInvoice' | 'taxCode' | 'invoice' | 'account' | 'learned' | 'name' | 'balance' | 'none';
 
 export function reasonTag(by: { reason?: BankMatchReason | undefined; invoice?: { number: string } | undefined }): { tag: ReasonTag; number: string } {
   const number = by.invoice?.number ?? '';
@@ -37,6 +37,8 @@ export function reasonTag(by: { reason?: BankMatchReason | undefined; invoice?: 
       return { tag: by.invoice ? 'taxCodeInvoice' : 'taxCode', number };
     case 'invoice':
       return { tag: 'invoice', number };
+    case 'account':
+      return { tag: 'account', number };
     case 'learned':
       return { tag: 'learned', number };
     case 'name':

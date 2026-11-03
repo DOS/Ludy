@@ -70,6 +70,7 @@ export function readBankStatement(bytes: Uint8Array): ExtractedBankStatement {
       date: line.date,
       description: line.description,
       reference: line.reference,
+      counterpartyAccount: line.counterpartyAccount,
       moneyIn: cellOut(line.moneyIn),
       moneyOut: cellOut(line.moneyOut),
       balance: cellOut(line.balance),

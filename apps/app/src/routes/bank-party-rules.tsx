@@ -27,7 +27,7 @@ function RuleRow({ rule, canManage }: { rule: BankPartyRule; canManage: boolean 
     <li className="py-2 text-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="break-words text-foreground">{t('forParty', { party: rule.party.name })}</p>
+          <p className="break-words text-foreground">{rule.kind === 'account' ? t('forPartyAccount', { party: rule.party.name }) : t('forParty', { party: rule.party.name })}</p>
           <p className="mt-1 text-xs text-subtle-foreground">{t('learnedFrom', { name, date: f.date(rule.confirmedAt), code: rule.voucher.code })}</p>
         </div>
         {canManage && !confirming && (

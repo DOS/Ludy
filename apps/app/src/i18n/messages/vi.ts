@@ -608,9 +608,10 @@ export const vi = {
   // Learned bank-line rules in Settings (#2402).
   bankRules: {
     title: 'Quy tắc khớp dòng sao kê đã học',
-    intro: 'Khi bạn tự chọn đối tượng cho chứng từ của một dòng sao kê rồi duyệt, {brand} nhớ cách nội dung chuyển khoản trỏ tới đối tượng đó và gợi ý nó ở lần sau. Chỉ lưu mã băm của các từ chính, không lưu nội dung. Quy tắc chỉ là gợi ý: chứng từ vẫn do người dùng lập và duyệt.',
+    intro: 'Khi bạn tự chọn đối tượng cho chứng từ của một dòng sao kê rồi duyệt, {brand} nhớ cách nội dung chuyển khoản trỏ tới đối tượng đó và gợi ý nó ở lần sau. Chỉ lưu mã băm của các từ chính hoặc của số tài khoản đối tác, không lưu nội dung hay số tài khoản. Quy tắc chỉ là gợi ý: chứng từ vẫn do người dùng lập và duyệt.',
     empty: 'Chưa có quy tắc nào. Quy tắc sẽ có khi bạn tự chọn đối tượng cho chứng từ của một dòng sao kê rồi duyệt.',
     forParty: 'Nội dung chuyển khoản như lần trước thì khớp với {party}',
+    forPartyAccount: 'Số tài khoản đối tác như lần trước thì khớp với {party}',
     learnedFrom: 'Do {name} xác nhận ngày {date}, khi duyệt chứng từ {code}',
     formerMember: 'người đã rời tổ chức',
     remove: 'Xóa',
@@ -2760,6 +2761,7 @@ export const vi = {
       amount: 'Số tiền (có dấu)',
       balance: 'Số dư',
       reference: 'Số tham chiếu',
+      counterpartyAccount: 'Số tài khoản đối tác (nếu có)',
       status: 'Kết quả kiểm tra',
     },
     status: {
@@ -2826,6 +2828,7 @@ export const vi = {
         taxCode: 'Gợi ý khớp: mã số thuế có trong nội dung chuyển khoản',
         invoice: 'Gợi ý khớp: số hóa đơn {number} và số tiền có trong nội dung chuyển khoản',
         learned: 'Gợi ý khớp: theo quy tắc đã học từ lần duyệt trước',
+        account: 'Gợi ý khớp: số tài khoản đối tác đã khớp với đối tượng này ở lần duyệt trước',
         name: 'Gợi ý khớp: tên đối tượng có trong nội dung chuyển khoản',
         balance: 'Gợi ý khớp: số tiền bằng công nợ còn mở của đối tượng',
         none: 'Chưa rõ cách khớp',
@@ -3109,6 +3112,7 @@ export const vi = {
       tax_code: 'mã số thuế có trong nội dung chuyển khoản',
       invoice: 'hóa đơn số {number} đúng số tiền này có trong nội dung chuyển khoản',
       learned: 'theo quy tắc đã học từ lần duyệt trước',
+      account: 'số tài khoản đối tác đã khớp với đối tượng này ở lần duyệt trước',
       name: 'tên có trong nội dung chuyển khoản',
       balance: 'số dư công nợ bằng đúng số tiền này',
     },
