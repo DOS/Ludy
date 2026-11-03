@@ -1317,6 +1317,7 @@ export const vi = {
       WORKER_LOST: 'Việc gửi bị gián đoạn, chưa rõ đã gửi hay chưa',
       SUPPRESSED: 'Địa chỉ này đã bị chặn gửi thư (thư trước bị trả lại hoặc người nhận đã từ chối)',
       BOUNCED: 'Thư bị trả lại: địa chỉ của khách không nhận được thư',
+      COMPLAINED: 'Khách đã báo thư này là thư rác',
       MAIL_OFF: 'Máy chủ này chưa gửi được email, nên thư chưa đi. Hãy nhờ người cài đặt cấu hình thư',
       NO_ADDRESS: 'Thư không còn địa chỉ người nhận',
       TEMPLATE_DATA: 'Không dựng được nội dung thư',

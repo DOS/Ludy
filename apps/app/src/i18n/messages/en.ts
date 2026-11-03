@@ -1319,6 +1319,7 @@ export const en = {
       WORKER_LOST: 'Sending was interrupted, not clear whether it was sent',
       SUPPRESSED: 'This address is blocked for mail (an earlier mail bounced or the person opted out)',
       BOUNCED: 'The mail bounced: the customer address did not accept it',
+      COMPLAINED: 'The customer marked this mail as spam',
       MAIL_OFF: 'This server cannot send email yet, so the mail did not go. Ask whoever installs it to set up mail',
       NO_ADDRESS: 'The mail no longer has a recipient address',
       TEMPLATE_DATA: 'The mail text could not be built',

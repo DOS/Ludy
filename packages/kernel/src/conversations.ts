@@ -637,9 +637,10 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   await staleDrafts(ctx, conversation.id);
 
   const inbound = event.direction === 'in';
-  // An email's activity is dated no earlier than a day back: the sender's clock may be years off, and a thread whose last message looks that old would fall to the
-  // retention purge as it arrives. Its own Date header is kept as the message's sent_at (and for the erasure tombstone).
-  const activityAt = event.kind === 'email' ? new Date(Math.max(sentAt.getTime(), ctx.now.getTime() - 24 * 3_600_000)) : sentAt;
+  // An email's activity is dated by its arrival: the sender's clock may be years off (a thread whose last message looks that old would fall to the retention
+  // purge as it arrives and sort behind every other), and a mail that comes late is news now. Its own Date header is kept as the message's sent_at, and is
+  // what the erasure tombstone compares.
+  const activityAt = event.kind === 'email' && event.direction === 'in' ? ctx.now : sentAt;
   const newest = conversation.last_message_at && conversation.last_message_at.getTime() > activityAt.getTime() ? conversation.last_message_at : activityAt;
   const lastInbound = inbound && (!conversation.last_inbound_at || conversation.last_inbound_at.getTime() < activityAt.getTime()) ? activityAt : conversation.last_inbound_at;
   // A customer's new message reopens the thread as new; the org's own message from the platform's inbox answers it.

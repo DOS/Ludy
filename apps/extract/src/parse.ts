@@ -46,12 +46,11 @@ function messageIds(value: string | undefined): string[] {
 
 // A bulk, list or auto-generated mail (RFC 3834 and the usual markers): the Inbox opens no conversation for it and never answers it.
 function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): boolean {
-  const header = (name: string): string | undefined => headers.find((h) => h.key.toLowerCase() === name)?.value.trim().toLowerCase();
-  const autoSubmitted = header('auto-submitted');
-  if (autoSubmitted !== undefined && autoSubmitted !== 'no') return true;
-  const precedence = header('precedence');
-  if (precedence !== undefined && ['bulk', 'junk', 'list', 'auto_reply'].includes(precedence)) return true;
-  return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => header(name) !== undefined);
+  // Every header of the name counts, not the first only: a mail that starts "Auto-Submitted: no" and later carries "auto-replied" is automated.
+  const values = (name: string): string[] => headers.filter((h) => h.key.toLowerCase() === name).map((h) => h.value.trim().toLowerCase());
+  if (values('auto-submitted').some((value) => value !== 'no')) return true;
+  if (values('precedence').some((value) => ['bulk', 'junk', 'list', 'auto_reply'].includes(value))) return true;
+  return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => values(name).length > 0);
 }
 
 // The Authentication-Results headers, topmost first (a receiving server adds its own on top) and unfolded; at most maxAuthResults. A header longer than
@@ -127,7 +126,8 @@ async function mime(bytes: Uint8Array): Promise<ExtractSuccess> {
       fromName: cap(email.from?.name?.trim() || null),
       sentAt: sentAtOf(email.date),
       inReplyTo: cap(messageIds(email.inReplyTo)[0] ?? null),
-      references: messageIds(email.references),
+      // References, then every id In-Reply-To names (the nearest ancestors come last and are the ones kept when the list is cut).
+      references: messageIds(`${email.references ?? ''} ${email.inReplyTo ?? ''}`),
       automated: isAutomated(email.headers),
       authResults: authResultsOf(email.headers),
     },

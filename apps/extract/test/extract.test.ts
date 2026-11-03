@@ -113,6 +113,14 @@ describe('crove-extract HTTP service', () => {
     expect(result.email.authResults).toEqual([0, 1, 2, 3, 4].map((i) => `mx${i}.in.test; dmarc=pass header.from=mau.test${i}`));
   });
 
+  it('reads every Auto-Submitted and Precedence header, and keeps every In-Reply-To id among the references', async () => {
+    const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a3@mau.test>', 'Auto-Submitted: no', 'Auto-Submitted: auto-replied', 'In-Reply-To: <p1@mau.test> <p2@mau.test>', 'References: <r1@mau.test>', 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
+    const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));
+    if (!result.ok || result.kind !== 'mime') throw new Error(`unexpected ${JSON.stringify(result)}`);
+    expect(result.email.automated).toBe(true);
+    expect(result.email.references).toEqual(['<r1@mau.test>', '<p1@mau.test>', '<p2@mau.test>']);
+  });
+
   it('never cuts a long Authentication-Results header: it is kept as its authserv-id and none', async () => {
     const lines = ['From: Khach <khach@mau.test>', 'To: x@in.test', 'Subject: Hoi gia', 'Message-ID: <a2@mau.test>', `Authentication-Results: mx.in.test; spf=pass (${'x'.repeat(1200)}); dkim=pass header.d=victim.test.evil.test`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=utf-8', '', 'Xin chao'];
     const result = await answer(await post(createExtractApp(), 'mime', encode(lines.join('\r\n'))));

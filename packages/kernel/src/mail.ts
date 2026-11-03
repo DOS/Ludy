@@ -358,6 +358,8 @@ export const recordMailEvent = defineCommand({
     }
     // A hard bounce (the address does not take mail) fails the reply it answered, though the mailer had accepted it.
     if (input.kind === 'bounce_hard') await settleConversationReply(ctx, mail.id, 'failed', 'BOUNCED');
+    // A complaint (the customer marked it as spam) fails it too, though the mailer had taken it.
+    if (input.kind === 'complaint') await settleConversationReply(ctx, mail.id, 'failed', 'COMPLAINED');
     const suppression =
       input.kind === 'bounce_hard' ? { scope: 'all' as const, reason: 'hard_bounce' as const } : input.kind === 'complaint' ? { scope: 'marketing' as const, reason: 'complaint' as const } : null;
     let suppressed: MailScope | null = null;

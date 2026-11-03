@@ -117,6 +117,8 @@ export async function matchContacts(ai: ConversationAi, orgId: string, userId: s
   });
   // One name or none needs no ranking: nothing is asked of the model.
   if (found.names.length < 2 || found.customerName === null) return result('used', found.names);
+  // Email and phone matches that already fill the answer leave no room for a name: the model's order would change nothing, so nothing is asked of it.
+  if (found.email.length + found.phone.length >= CONVERSATION_CONTACT_MATCHES_MAX) return result('used', found.names);
   if (!ai.reader) return result('off', found.names);
   const ticket = ai.contactBudget.take(orgId, userId);
   if (!ticket.allowed) return result('busy', found.names);

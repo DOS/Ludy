@@ -5,8 +5,8 @@ import type { MailTemplate, MailTemplateInput } from './mail-queue.ts';
 
 const escapeHtml = (text: string) => text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
 const oneLine = (text: string) => text.replace(/[\r\n\t]+/g, ' ').trim();
-// An app path the mail names: the org's Inbox, nothing else.
-const PATH = /^\/o\/[a-z0-9][a-z0-9-]{0,62}\/inbox$/;
+// An app path the mail names: the org's Inbox for documents, or Hộp thư for customers' conversations, nothing else.
+const PATH = /^\/o\/[a-z0-9][a-z0-9-]{0,62}\/(?:social\/)?inbox$/;
 
 const WHAT: Record<string, string> = {
   inbound_emails: 'số email nhận hóa đơn',

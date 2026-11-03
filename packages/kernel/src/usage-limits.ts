@@ -142,7 +142,7 @@ export const usageDefer = defineCommand({
           templateKey: USAGE_DEFERRED_TEMPLATE,
           to: person.email,
           subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
-          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: `/o/${org.slug}/inbox` },
+          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: input.metric === 'conversation_emails' ? `/o/${org.slug}/social/inbox` : `/o/${org.slug}/inbox` },
           status: 'queued',
         });
         if (mail.status === 'queued') queued++;

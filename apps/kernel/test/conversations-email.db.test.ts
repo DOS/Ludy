@@ -568,6 +568,18 @@ suite('customer email in the Inbox on PostgreSQL (#2439)', () => {
     expect(await seenBy(o.member)).toBe(1);
   });
 
+  it('fails the reply when the customer complains about the mail', async () => {
+    const o = await org();
+    await deliver(o.address, raw({ to: o.address, messageId: '<cmp1@mau.test>' }));
+    const [thread] = await threads(o);
+    await exec(o, o.owner, 'kernel.conversation.reply', { conversationId: thread?.id, lastSeenSeq: 1, body: 'Dạ, giá 25.000.' });
+    const [mail] = await rows<{ id: string }>("SELECT id FROM crove_kernel.mail_message WHERE org_id = $1 AND source = 'kernel.conversation.reply'", [o.orgId]);
+    const begun = await sys<{ attempt: number }>(o, 'kernel.mail.queue.begin', { messageId: mail?.id, provider: 'smtp', safety: 'never' });
+    await sys(o, 'kernel.mail.queue.record', { messageId: mail?.id, attempt: begun.attempt, outcome: 'sent' });
+    await sys(o, 'kernel.mail.event.record', { messageId: mail?.id, provider: 'smtp', providerEventId: `fbl:${randomUUID()}`, kind: 'complaint', occurredAt: new Date().toISOString(), detail: {} });
+    expect((await messagesOf(thread?.id as string)).slice(-1)[0]).toMatchObject({ send_state: 'failed', send_error_code: 'COMPLAINED' });
+  });
+
   it('does not settle the message from an earlier mail once a retry made a new one', async () => {
     const o = await org();
     await deliver(o.address, raw({ to: o.address, messageId: '<old1@mau.test>' }));

@@ -3,7 +3,7 @@
 // admins of an org on a server that receives mail. It is made the first time the Inbox is opened (no setup), a customer writes to it or the org
 // forwards its own mailbox to it, and the owner can replace it (the old one stops receiving for good).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -18,6 +18,11 @@ export function EmailAddressCard() {
   const org = useQuery(orpc.org.get.queryOptions());
   const issue = useMutation(orpc.org.issueConversationAddress.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries() }));
   const [confirming, setConfirming] = useState(false);
+  // Opening the confirmation unmounts the button that held focus: the confirmation takes it, and a screen reader announces it.
+  const confirmRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+  }, [confirming]);
   const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const rotate = useMutation(
     orpc.org.rotateConversationAddress.mutationOptions({
@@ -70,11 +75,11 @@ export function EmailAddressCard() {
         )}
       </div>
       {confirming && (
-        <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm" role="alertdialog" aria-label={t('rotateTitle')}>
+        <div ref={confirmRef} tabIndex={-1} className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm outline-none" role="alertdialog" aria-label={t('rotateTitle')}>
           <p className="font-medium text-foreground">{t('rotateTitle')}</p>
           <p className="text-muted-foreground">{t('rotateBody')}</p>
           <div className="flex gap-2">
-            <Button type="button" variant="destructive" size="sm" disabled={rotate.isPending} onClick={rotateNow}>
+            <Button type="button" variant="destructive" size="sm" loading={rotate.isPending} onClick={rotateNow}>
               {t('rotateConfirm')}
             </Button>
             <Button

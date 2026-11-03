@@ -74,6 +74,19 @@ describe('senderVerified', () => {
     expect(senderVerified([`${SERVER}; spf=pass smtp.helo=dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
   });
 
+  it('reads a quoted property value, and stops at a malformed header of ours instead of reading the one below it', () => {
+    expect(senderVerified([`${SERVER}; dmarc=pass header.from="khach.test"`], SERVER, 'khach.test')).toBe(true);
+    expect(senderVerified([`${SERVER}; dkim=pass header.d="khach.test"`], SERVER, 'khach.test')).toBe(true);
+    // A quoted value that is not a plain domain is blanked, so it cannot carry a result.
+    expect(senderVerified([`${SERVER}; dmarc=pass header.from="khach.test; dmarc=pass"`], SERVER, 'khach.test')).toBe(false);
+    // The topmost header of ours is malformed (an unclosed comment): the verdict is no, and a clean header of ours below it is not consulted.
+    expect(senderVerified([`${SERVER}; spf=pass (unclosed`, `${SERVER}; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
+    expect(senderVerified([`(unclosed ${SERVER}; dmarc=pass header.from=khach.test`, `${SERVER}; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(false);
+    // The authserv-id after a comment is still ours; a quoted one too.
+    expect(senderVerified([`(a comment) ${SERVER}; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(true);
+    expect(senderVerified([`"${SERVER}"; dmarc=pass header.from=khach.test`], SERVER, 'khach.test')).toBe(true);
+  });
+
   it('ties a DMARC pass to the From domain', () => {
     expect(senderVerified([`${SERVER}; dmarc=pass header.from=other.test`], SERVER, 'victim.test')).toBe(false);
     expect(senderVerified([`${SERVER}; dmarc=pass`], SERVER, 'victim.test')).toBe(false);
@@ -105,6 +118,16 @@ describe('conversationEventOf', () => {
     expect(at('2019-01-01T00:00:00.000Z')).toBe('2019-01-01T00:00:00.000Z');
     expect(at('2030-01-01T00:00:00.000Z')).toBe('2026-11-03T10:00:00.000Z');
     expect(at(null)).toBe('2026-11-03T10:00:00.000Z');
+  });
+
+  it('keeps In-Reply-To last among the references so a long References list never cuts it, and takes a NUL out of the subject and the name', () => {
+    const references = Array.from({ length: 50 }, (_, i) => `<r${i}@mau.test>`);
+    const made = conversationEventOf({ ...base, references, inReplyTo: '<parent@mau.test>', subject: 'Hỏi\u0000giá', fromName: 'Chị\u0000Hoa' }, 'ab', 'in.test', now, SERVER);
+    if (!('event' in made)) throw new Error('ignored');
+    expect(made.event.refs?.at(-1)).toBe('<parent@mau.test>');
+    expect(made.event.refs?.length).toBe(50);
+    expect(made.event.subject).toBe('Hỏi giá');
+    expect(made.event.contact.name).toBe('Chị Hoa');
   });
 
   it('ignores a sender that is not one mailbox, and marks a verified one', () => {

@@ -286,15 +286,19 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   if (sender.endsWith(`@${domain.toLowerCase()}`)) return { ignored: 'own_address' };
   const given = (email.messageId ?? '').trim();
   const messageId = MESSAGE_ID.test(given) ? given : `<sha256-${rawSha256}@mail.invalid>`;
-  const refs = [...new Set([email.inReplyTo ?? '', ...(email.references ?? [])].map((r) => r.trim()).filter((r) => MESSAGE_ID.test(r) && r !== messageId))].slice(-EMAIL_REFS_MAX);
+  // In-Reply-To comes last, the nearest ancestor, so the cut to the last ones never drops it.
+  const refs = [...new Set([...(email.references ?? []), email.inReplyTo ?? ''].map((r) => r.trim()).filter((r) => MESSAGE_ID.test(r) && r !== messageId))].slice(-EMAIL_REFS_MAX);
   const written = (email.text ?? '').trim();
   const attachments = email.attachments.length > 0 ? `\n\n[Thư có ${email.attachments.length} tệp đính kèm, chưa hiển thị]` : '';
   const text = `${written === '' ? NO_TEXT : written.slice(0, CONVERSATION_BODY_MAX - 80)}${attachments}`.slice(0, CONVERSATION_BODY_MAX);
   const sent = email.sentAt ? Date.parse(email.sentAt) : Number.NaN;
   // The sender's clock is trusted a few minutes ahead at most; backdated mail keeps its date (the core dates the thread's activity itself).
   const at = new Date(Number.isNaN(sent) || sent > now.getTime() + CLOCK_SKEW_MS ? now.getTime() : sent).toISOString();
-  const subject = (email.subject ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, EMAIL_SUBJECT_MAX);
-  const name = (email.fromName ?? '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, 200);
+  // A NUL is refused by the conversation contract, which would drop the whole mail: it goes with the line breaks.
+  // oxlint-disable-next-line no-control-regex
+  const subject = (email.subject ?? '').replace(/[\u0000\r\n\t]+/g, ' ').trim().slice(0, EMAIL_SUBJECT_MAX);
+  // oxlint-disable-next-line no-control-regex
+  const name = (email.fromName ?? '').replace(/[\u0000\r\n\t]+/g, ' ').trim().slice(0, 200);
   return {
     event: {
       kind: 'email',
@@ -311,13 +315,15 @@ export function conversationEventOf(email: ExtractedEmail, rawSha256: string, do
   };
 }
 
-// An Authentication-Results value with its comments (RFC 8601 section 2.2: "( ... )", nested, with quoted pairs) removed and its quoted strings emptied. A
-// comment or a quoted string may hold text the sender chose (an envelope sender with a quoted local part, the "designates" note of an SPF check) and
-// may hold a ";", so neither may be read as a result. Null when the value is not well formed (an unclosed comment or quote).
+// An Authentication-Results value with its comments (RFC 8601 section 2.2: "( ... )", nested, with quoted pairs) removed and its quoted strings emptied,
+// except a quoted string that is only letters, digits, dots and hyphens (a domain written in quotes, which the RFC allows for a property value): that is
+// kept without its quotes, since nothing in it can end a result or start another. A comment or a quoted string may hold text the sender chose (an envelope
+// sender with a quoted local part, the "designates" note of an SPF check) and may hold a ";", so neither is read as a result. Null when the value is not
+// well formed (an unclosed comment or quote).
 function plainResults(value: string): string | null {
   let out = '';
   let depth = 0;
-  let quoted = false;
+  let quoted: string | null = null;
   for (let i = 0; i < value.length; i++) {
     const ch = value[i] as string;
     if (depth > 0) {
@@ -326,38 +332,67 @@ function plainResults(value: string): string | null {
       else if (ch === ')') depth--;
       continue;
     }
-    if (quoted) {
-      if (ch === '\\') i++;
-      else if (ch === '"') {
-        quoted = false;
-        out += '"';
-      }
+    if (quoted !== null) {
+      if (ch === '\\') {
+        i++;
+        quoted += '\\';
+      } else if (ch === '"') {
+        out += /^[A-Za-z0-9.-]{1,253}$/.test(quoted) ? quoted : '""';
+        quoted = null;
+      } else quoted += ch;
       continue;
     }
     if (ch === '(') {
       depth = 1;
       out += ' ';
-    } else if (ch === '"') {
-      quoted = true;
-      out += '"';
-    } else out += ch;
+    } else if (ch === '"') quoted = '';
+    else out += ch;
   }
-  return depth > 0 || quoted ? null : out;
+  return depth > 0 || quoted !== null ? null : out;
+}
+
+// The authserv-id a header starts with, after any comments and white space before it (RFC 8601 allows CFWS there): a token or a quoted string, lower case.
+// Null when it cannot be read (an unclosed comment before it, or nothing).
+function authservIdOf(line: string): string | null {
+  let i = 0;
+  for (;;) {
+    while (i < line.length && /\s/.test(line[i] as string)) i++;
+    if (line[i] !== '(') break;
+    let depth = 0;
+    for (; i < line.length; i++) {
+      const ch = line[i] as string;
+      if (ch === '\\') i++;
+      else if (ch === '(') depth++;
+      else if (ch === ')' && --depth === 0) {
+        i++;
+        break;
+      }
+    }
+    if (depth > 0) return null;
+  }
+  const quoted = line[i] === '"' ? /^"((?:[^"\\]|\\.)*)"/.exec(line.slice(i))?.[1] : undefined;
+  const id = quoted ?? /^[^\s;()"]+/.exec(line.slice(i))?.[0];
+  return id ? id.toLowerCase() : null;
 }
 
 // Whether the receiving mail server vouched for the sender's domain (RFC 8601): the topmost Authentication-Results header written by our own server
 // (its authserv-id is `authservId`; a header any earlier hop wrote could say anything), with dmarc=pass for the From domain (header.from), or dkim=pass for a
 // signing domain (header.d) the From domain is, or is a subdomain of. Each result is read as `method=result` at the start of its own `;` segment, after the
-// comments and quoted strings are gone. With no authserv-id configured nothing is verified.
+// comments and quoted strings are gone. The headers are read from the top: one whose authserv-id cannot be read, or which is ours and not well formed,
+// ends the search as not verified, so a header below it can never decide in its place. With no authserv-id configured nothing is verified.
 export function senderVerified(results: readonly string[], authservId: string | undefined, fromDomain: string): boolean {
   if (!authservId) return false;
   const ours = authservId.trim().toLowerCase();
-  const header = (line: string): string | null => {
-    const plain = plainResults(line);
-    return plain !== null && (plain.split(';')[0] ?? '').trim().toLowerCase().split(/\s+/)[0] === ours ? plain : null;
-  };
-  const own = results.map(header).find((plain) => plain !== null);
-  if (own === undefined || own === null) return false;
+  let own: string | null = null;
+  for (const line of results) {
+    const id = authservIdOf(line);
+    if (id === null) return false;
+    if (id !== ours) continue;
+    own = plainResults(line);
+    if (own === null) return false;
+    break;
+  }
+  if (own === null) return false;
   const methods = own
     .split(';')
     .slice(1)

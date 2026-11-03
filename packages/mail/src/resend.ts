@@ -121,7 +121,7 @@ export function parseResendWebhook(secret: string, request: WebhookRequest, now:
 function resendFrom(from: string, name: string): string {
   const address = /<([^<>\s]+)>/.exec(from)?.[1] ?? from.trim();
   // oxlint-disable-next-line no-control-regex
-  const clean = name.replace(/[\u0000-\u001f\u007f"<>\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+  const clean = name.replace(/[\u0000-\u001f\u007f"<>\\,;]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
   return clean ? `${clean} <${address}>` : from;
 }
 
