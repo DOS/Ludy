@@ -6,6 +6,17 @@
 - Builds on: ADR-0017 (crypto-shredding, the data classes and the personal-data registry), ADR-0021 (finance kernel support), ADR-0034 (outbound email), ADR-0039 (bank feeds: Ludy reads, never moves money), `crove_finance.legal_entity_books` (the chart of an entity), the proposal path of finance, plan section 5.2 (data classes, `sensitive` queries)
 - Issue: [#2498](https://github.com/DOS/Ludy/issues/2498); the plan is [payroll.md](../plan/payroll.md)
 
+## Addendum 2026-11-04: payroll is its own app
+
+The owner decided on 2026-11-04 in the Accounting PO chat that payroll is not part of Kế toán: "Nếu Tính lương thì sẽ nằm Riêng" (if it is payroll, it sits apart). This follows the all-in-one suites Ludy measures itself against (Odoo, MISA AMIS; `docs/product/scope.md` section 6), which give HR and payroll an app of their own that posts its totals to accounting. It changes these points of the decision and nothing else:
+
+- **Its own module and app.** Employees, employments, dependents, the rule-driven calculator's runs and payslips live in a new module `hr` (schema `crove_hr`) that contributes its own app to the shell (ADR-0031), working name Ludy Nhân sự (English: Ludy HR); the owner may rename it. The rule data stays in `@crove/l10n-vn` (point 2).
+- **Its own permissions.** Point 4's `finance.payroll.read` and `finance.payroll.run` become `hr.payroll.read` and `hr.payroll.run`, with the same defaults (owners and admins only) and the same `sensitive` queries. A finance role alone reads no payroll line.
+- **Posting through finance's proposal path.** The `hr` module depends on `finance`. Approving a month in the HR app creates the posting proposal (point 6) in finance through finance's own command; Kế toán sees and approves that proposal with its totals by account, like any other, and never the lines behind it. No foreign key crosses from `crove_hr` to `crove_finance`; the proposal carries the run's id as its source.
+- **The coworker.** The HR app gets its own coworker once the owner names one (DESIGN.md section 1.1); until then the HR screens name the general manager (`{gm}`), and the AI features keep their own `AI_FEATURES` keys under the meter (point 5).
+
+The builds #2529 to #2534 and #2539 to #2541 build into the `hr` module; their order and slicing in the plan stay.
+
 ## Context and problem statement
 
 A small business with staff runs payroll every month: gross pay, the employee's and the employer's social, health and unemployment insurance, personal income tax withholding with family deductions, a payslip, the posting (334, 338x, 3335 and the expense accounts), the payments, and then two declarations, one to the social insurance agency and one to the tax authority. Ludy has none of this.

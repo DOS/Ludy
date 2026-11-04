@@ -13,7 +13,7 @@ const FILE_PATTERN = /^(\d{14})_crove_[a-z0-9]+_[a-z0-9_]+\.sql$/;
 // directory can never silently apply the original to the other system's database.
 // Ludy's own roles, by name (#2284): the roles the migrations create. A shared database may hold another system's role named
 // `crove_something`; only these are trusted as Ludy's.
-export const LUDY_ROLES: readonly string[] = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter', 'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_system'];
+export const LUDY_ROLES: readonly string[] = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_prober', 'crove_reporter', 'crove_auth_reader', 'crove_definer_tenant', 'crove_definer_system', 'crove_definer_einvoice'];
 
 export const DATABASE_WIDE_MIGRATIONS: ReadonlySet<string> = new Set(['20261015120000_crove_kernel_revoke_temp.sql']);
 

@@ -106,14 +106,10 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   [`${QUEUES.extract} handler`]: { reason: 'the same file again, once its org is back under its daily limit' },
   // The hourly sweep queues the ad accounts that are due, each linked by an owner or admin through ads.account.link.
   [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
+  // The sweep queues the e-invoices whose time to ask has come, each approved by an owner or admin through finance.einvoice.issue (#2502).
+  [`${QUEUES.einvoiceIssue} handler`]: { command: 'finance.einvoice.issue' },
   // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
   startWorker: { command: 'ads.account.link' },
-};
-
-// Sends a later change adds (#2502: the e-invoice sweep queues its due drafts from inside the queue's own handler, as the bank feed's and the ads sweeps do), accepted whether or not
-// the send exists yet, so the two steps of the change can land apart. A site found here is held to the same checks as one in OTHER_SENDS; the step-two change moves it there.
-const LATER_SENDS: Readonly<Record<string, { command: string }>> = {
-  'finance-einvoice-issue handler': { command: 'finance.einvoice.issue' },
 };
 
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
@@ -330,8 +326,8 @@ describe('job egress (#1653)', () => {
       return def?.sideEffect !== undefined && RANK[deriveRisk(def.sideEffect)] >= RANK.R2;
     };
     const found = [...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort();
-    // The reviewed sites: those above, and those of a later change that are there already.
-    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = { ...OTHER_SENDS, ...Object.fromEntries(Object.entries(LATER_SENDS).filter(([site]) => found.includes(site))) };
+    // The reviewed sites: those above.
+    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = OTHER_SENDS;
     expect(found).toEqual(Object.keys(reviewed).sort());
     for (const [site, why] of Object.entries(reviewed)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
 

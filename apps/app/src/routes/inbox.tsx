@@ -17,6 +17,7 @@ import { IntakePanel, useIntake } from '../components/intake.tsx';
 import { LookupOriginalCard } from '../components/lookup-original-card.tsx';
 import { ProposalBadges } from '../components/proposal-badges.tsx';
 import { ProposalGroups } from '../components/proposal-groups.tsx';
+import { StagedMarketplace } from '../components/staged-marketplace.tsx';
 import { StagedStatements } from '../components/staged-statements.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, Spinner, TableSkeleton } from '../components/ui.tsx';
@@ -556,6 +557,7 @@ export function InboxPage() {
       )}
 
       <IntakePanel intake={intake} />
+      {config.modules.includes('finance') && <StagedMarketplace canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {config.modules.includes('finance') && <StagedStatements canDecide={org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member'} refetchMs={pollEvery(live, 30_000, SAFETY_POLL_MS)} />}
       {(org.data?.role === 'owner' || org.data?.role === 'admin') && <FailedJobs />}
       {config.modules.includes('finance') && (org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member') && <OriginalsNeeded />}

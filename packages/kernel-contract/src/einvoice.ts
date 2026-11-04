@@ -121,6 +121,9 @@ export const zEInvoiceDraft = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   issues: z.array(zDraftIssue),
+  // After it was sent (#2502): the number the provider gave, and the code of what stopped it (a rejection that sent it back to a draft, a failure), never a provider's text.
+  issuedNumber: z.string().nullable(),
+  errorCode: z.string().nullable(),
 });
 export type EInvoiceDraft = z.infer<typeof zEInvoiceDraft>;
 
@@ -131,6 +134,12 @@ export const zEInvoiceDraftSummary = z.object({
   buyerName: z.string().nullable(),
   total: z.string(),
   issueCount: z.number().int(),
+  issuedNumber: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  // The signed XML is stored with the draft (an issued invoice's original).
+  evidenceStored: z.boolean(),
+  // When it last changed: a request made for an earlier state is not the one to approve.
+  updatedAt: z.string(),
 });
 export type EInvoiceDraftSummary = z.infer<typeof zEInvoiceDraftSummary>;
 
@@ -209,3 +218,39 @@ export const zEInvoiceConnectionTested = z.object({ state: z.enum(EINVOICE_CONNE
 export type EInvoiceConnectionTested = z.infer<typeof zEInvoiceConnectionTested>;
 
 export const zEInvoiceSeriesSetDefault = z.strictObject({ seriesId: zId });
+
+// Issuing a draft (ADR-0044 point 3, #2502): the request for approval and what it holds. The payload names the draft, the hash of everything it is issued from (the database
+// computes it from the stored rows: einvoice_content_hash) and the total, so a draft changed after the request cannot be issued under it. No personal data: the card reads the
+// draft itself.
+export const EINVOICE_ISSUE_COMMAND = 'finance.einvoice.issue';
+export const EINVOICE_ISSUE_KIND = 'finance.einvoice_issue';
+export const zEInvoiceIssuePayload = z.strictObject({
+  draftId: zId,
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+  // The draft's total, a decimal string: the database matches it against the draft's own at the approval.
+  amount: z.string().regex(/^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,4})?$/),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  lineCount: z.number().int().min(1).max(EINVOICE_DRAFT_MAX_LINES),
+});
+export type EInvoiceIssuePayload = z.infer<typeof zEInvoiceIssuePayload>;
+
+// What the Inbox card of a request to issue shows: the draft as it stands now, and whether it is still the one the request was made for (its content hash is the same).
+export const zEInvoiceIssueView = z.object({
+  draftId: zId,
+  state: z.string(),
+  date: z.string(),
+  currency: z.string(),
+  total: z.string(),
+  lineCount: z.number().int(),
+  buyerKind: z.string(),
+  buyerName: z.string().nullable(),
+  buyerTaxCode: z.string().nullable(),
+  series: z.string().nullable(),
+  // What the approval puts to the provider besides the total: every line and the VAT, as the draft holds them now.
+  subtotal: z.string(),
+  vatAmount: z.string(),
+  lines: z.array(zEInvoiceDraftLine),
+  // False once the draft was edited after the request, or has left `draft`: an approval then fails with EINVOICE_DRAFT_CHANGED.
+  current: z.boolean(),
+});
+export type EInvoiceIssueView = z.infer<typeof zEInvoiceIssueView>;

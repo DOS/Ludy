@@ -189,7 +189,9 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -1372,6 +1374,9 @@ export const contract = {
           z.object({ command: z.literal('finance.closing.record'), input: zYearClosingRequest, idempotencyKey: zId }),
           // A month's depreciation and allocation (#919): the server builds the lines from the register.
           z.object({ command: z.literal('finance.depreciation.record'), input: zDepreciationRequest, idempotencyKey: zId }),
+          // A sales e-invoice draft asked to be issued (#2502, ADR-0044 point 3): the server checks the draft and hashes what it is issued from; an owner or an admin approves.
+          // EINVOICE_DRAFT_INVALID, EINVOICE_DRAFT_MISMATCH, EINVOICE_NOT_DRAFT (409/422), EINVOICE_ISSUE_PENDING (409) while a request for the same content is open.
+          z.object({ command: z.literal('finance.einvoice.issue'), input: z.strictObject({ draftId: zId }), idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1633,7 +1638,53 @@ export const contract = {
       // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
       save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
+      // The request to issue a draft as the Inbox card shows it (#2502): the draft now, and whether it is still what was asked for. Owners, admins and members.
+      issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
     },
+  },
+  // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.
+  // staged lists the reports waiting; preview says how one stands against the org's orders and stock items now; confirm stores the orders once and moves stock for the lines that name an
+  // item (MARKETPLACE_NOT_STAGED, 409, when it was already decided or read again); reject skips it, storing nothing. orders lists the confirmed orders. No buyer data of any kind.
+  marketplace: {
+    staged: oc.input(z.object({}).optional()).output(z.array(zMarketplaceStaged)),
+    preview: oc.input(z.object({ fileId: zId })).output(zMarketplacePreview),
+    confirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceConfirmResult),
+    reject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    orders: oc.input(zMarketplaceOrdersInput.optional()).output(z.array(zMarketplaceOrder)),
+    // The order lines that move stock and name no item yet, newest first, and the assignment of one: the shipment (and the return) move stock through the item, once.
+    // MARKETPLACE_LINE_ASSIGNED, MARKETPLACE_LINE_NOT_SHIPPED (409), MARKETPLACE_LINE_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH (422), STOCK_ITEM_INACTIVE (409).
+    unassigned: oc.input(zMarketplaceUnassignedInput.optional()).output(z.array(zMarketplaceUnassignedLine)),
+    assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
+  },
+  // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
+  // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.
+  stock: {
+    items: {
+      // The items of one legal entity, or of every entity the caller may see; the inactive ones only when asked. On hand is the sum of the item's moves.
+      list: oc.input(z.object({ legalEntityId: zId.optional(), includeInactive: z.boolean().optional() }).optional()).output(z.array(zStockItem)),
+      // STOCK_ITEM_CODE_EXISTS (409), STOCK_ITEM_CODE_FIXED, STOCK_ITEM_ENTITY_FIXED, STOCK_ITEM_IN_USE (the unit and the account stay once a move names the item),
+      // STOCK_ACCOUNT_UNKNOWN, STOCK_ACCOUNT_INACTIVE, STOCK_ACCOUNT_KIND (422), STOCK_ITEM_NOT_FOUND (404).
+      save: oc.input(zStockItemInput).output(z.object({ id: zId })),
+      setActive: oc.input(z.object({ itemId: zId, active: z.boolean() })).output(z.object({ active: z.boolean() })),
+    },
+    aliases: {
+      // STOCK_ALIAS_TAKEN and STOCK_ALIAS_FACTOR (409), STOCK_ALIAS_EMPTY (422), STOCK_ITEM_INACTIVE (409).
+      teach: oc.input(zStockAliasTeach).output(z.object({ id: zId, existing: z.boolean() })),
+      forget: oc.input(z.object({ aliasId: zId })).output(z.object({ removed: z.boolean() })),
+    },
+    moves: {
+      list: oc.input(z.object({ itemId: zId, limit: z.number().int().min(1).max(500).optional() })).output(z.array(zStockMove)),
+      // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
+      reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
+    },
+    // The goods lines of posted documents that moved no stock: they matched no item by code or by a taught name.
+    unassigned: oc.input(zStockUnassignedInput.optional()).output(z.array(zStockUnassignedLine)),
+    // Writes the move of a line and, unless told not to, teaches its name to the item. STOCK_LINE_NOT_FOUND (404), STOCK_LINE_ASSIGNED and STOCK_LINE_VOIDED (409),
+    // STOCK_LINE_NOT_GOODS, STOCK_LINE_NO_QUANTITY and STOCK_ITEM_ENTITY_MISMATCH (422).
+    assign: oc.input(zStockAssign).output(z.object({ moveId: zId, aliasId: zId.nullable() })),
+    // Nhập xuất tồn of one month and the stock card of an item (#2513): read-only and provisional (the weighted average of the month); every role reads.
+    report: oc.input(zStockReportInput).output(z.array(zStockReportRow)),
+    card: oc.input(zStockCardInput).output(zStockCard),
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),

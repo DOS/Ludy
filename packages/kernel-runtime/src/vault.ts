@@ -4,7 +4,7 @@
 // provider, account), so an envelope copied to another org's or another account's row does not open.
 //
 // Envelope v1 (bytes): 0x01 | wrap iv (12) | wrap tag (16) | wrapped data key (32) | iv (12) | tag (16) | ciphertext.
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 
 const VERSION = 0x01;
 const IV = 12;
@@ -86,6 +86,9 @@ export interface CredentialBroker {
   readonly id: string;
   seal(secret: string, binding: CredentialBinding): SealedCredential;
   open(sealed: SealedCredential, binding: CredentialBinding): string;
+  // A key for another purpose, derived from the broker's current key (HKDF-SHA256, `info` names the purpose), so the
+  // root never leaves the broker and one purpose's key is no other's. Absent when the broker holds no key.
+  derive?(info: string): Buffer;
 }
 
 export class CredentialVault implements CredentialBroker {
@@ -114,6 +117,10 @@ export class CredentialVault implements CredentialBroker {
   // The ids of every key this vault opens, the current one first: an envelope under any other id does not open (#1888).
   get keyIds(): readonly string[] {
     return [...this.keys.keys()];
+  }
+
+  derive(info: string): Buffer {
+    return Buffer.from(hkdfSync('sha256', this.current.key, Buffer.alloc(0), info, KEY));
   }
 
   seal(secret: string, binding: CredentialBinding): SealedCredential {

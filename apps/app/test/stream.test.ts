@@ -36,6 +36,7 @@ function seeded() {
     detail1: orpc.inbox.get.queryKey({ input: { id: P1 } }),
     detail2: orpc.inbox.get.queryKey({ input: { id: P2 } }),
     files: orpc.files.recent.queryKey(),
+    marketplaceStaged: orpc.marketplace.staged.queryKey({ input: {} }),
     batch: orpc.files.batch.queryKey({ input: { ids: [FILE] } }),
     journal: orpc.journal.list.queryKey({ input: {} }),
     entry: orpc.journal.get.queryKey({ input: { id: ENTRY } }),
@@ -79,7 +80,8 @@ describe('invalidateHint', () => {
     for (const type of ['file', 'extraction'] as const) {
       const { qc, stale } = seeded();
       await invalidateHint(qc, { type, id: FILE });
-      expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending']);
+      // marketplaceStaged: an order report read in the sandbox shows up as its card without a reload (#2515).
+      expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending', 'marketplaceStaged']);
     }
   });
 

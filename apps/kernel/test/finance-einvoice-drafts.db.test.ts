@@ -107,9 +107,35 @@ suite('sales e-invoice drafts (#2500)', () => {
       c.release();
     }
   }
+  // The first step of the machine, `draft` to `submitting`, is a person's approved issue and never the job's (finance-einvoice-issue.db.test.ts tests that path and the guard's
+  // refusal of every other); here it is set up as the database owner with the triggers off, so these tests can start from `submitting` and judge the moves that follow.
+  const toSubmitting = (o: Org, draftId: string) =>
+    admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('SET LOCAL session_replication_role = replica');
+        await c.query("UPDATE crove_finance.einvoice_draft SET state = 'submitting', submitted_at = pg_catalog.now() WHERE org_id = $1 AND id = $2 AND state = 'draft'", [o.orgId, draftId]);
+        await c.query('COMMIT');
+      } catch (error) {
+        await c.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      }
+    });
   // Moves a draft to a state as the job does, through the states the machine allows on the way (`draft` to `issued` is `submitting` first).
   const moveDraft = async (o: Org, draftId: string, ...to: Array<'submitting' | 'pending' | 'issued' | 'rejected' | 'failed'>) => {
-    for (const state of to) await asJob(o, `UPDATE crove_finance.einvoice_draft SET state = $3, provider_ref = CASE WHEN $3 IN ('pending', 'issued') THEN 'sbx-test' ELSE provider_ref END WHERE org_id = $1 AND id = $2`, [o.orgId, draftId, state]);
+    for (const state of to) {
+      const current = (await admin(async (c) => (await c.query<{ state: string }>('SELECT state FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId])).rows[0]))?.state;
+      if (state === 'submitting' && current === 'draft') {
+        await toSubmitting(o, draftId);
+        continue;
+      }
+      await asJob(
+        o,
+        `UPDATE crove_finance.einvoice_draft SET state = $3, provider_ref = CASE WHEN $3 IN ('pending', 'issued') THEN 'sbx-test' ELSE provider_ref END,
+           issued_number = CASE WHEN $3 = 'issued' THEN 'C26TAA/1' ELSE issued_number END, issued_at = CASE WHEN $3 = 'issued' THEN pg_catalog.now() ELSE issued_at END WHERE org_id = $1 AND id = $2`,
+        [o.orgId, draftId, state],
+      );
+    }
   };
   const sync = async (o: Org, legalEntityId: string | null = null) => execute<{ added: number; series: Series[] }>(o, 'finance.einvoice_series.sync', { legalEntityId, provider: 'sandbox' });
   const auditOf = (o: Org, command: string) =>
@@ -321,7 +347,7 @@ suite('sales e-invoice drafts (#2500)', () => {
     const [series] = (await sync(o)).series;
     const fresh = () => execute<Draft>(o, 'finance.einvoice_draft.save', form(series?.id ?? null));
     const row = async (id: string) =>
-      admin(async (c) => (await c.query<{ state: string; provider_ref: string | null; idempotency_key: string; buyer_name: string | null }>('SELECT state, provider_ref, idempotency_key, buyer_name FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows[0]);
+      admin(async (c) => (await c.query<{ state: string; provider_ref: string | null; idempotency_key: string; buyer_name: string | null; error_code: string | null }>('SELECT state, provider_ref, idempotency_key, buyer_name, error_code FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, id])).rows[0]);
     const update = (id: string, sets: string, params: unknown[] = [], mark: string | null = null) => asJob(o, `UPDATE crove_finance.einvoice_draft SET ${sets} WHERE org_id = $1 AND id = $2`, [o.orgId, id, ...params], mark);
     const stuck = (what: Promise<unknown>, code = 'EINVOICE_STATE') => expect(what).rejects.toMatchObject({ code: '42501', message: expect.stringContaining(code) });
     const del = (table: string, where: string, id: string, mark: string | null = null) => asJob(o, `DELETE FROM crove_finance.${table} WHERE org_id = $1 AND ${where} = $2`, [o.orgId, id], mark);
@@ -373,7 +399,9 @@ suite('sales e-invoice drafts (#2500)', () => {
     await stuck(update(b.id, "state = 'draft', provider_ref = NULL"));
     await stuck(update(b.id, "state = 'pending', provider_ref = 'sbx-1'"));
     await stuck(update(b.id, "state = 'failed'"));
-    await update(b.id, "state = 'draft', provider_ref = NULL, idempotency_key = gen_random_uuid()");
+    // Back to `draft` is a clean slate: a new key, and no reference and no submit time of the rejected try (the guard says so).
+    await stuck(update(b.id, "state = 'draft', provider_ref = NULL, idempotency_key = gen_random_uuid()"));
+    await update(b.id, "state = 'draft', provider_ref = NULL, submitted_at = NULL, idempotency_key = gen_random_uuid()");
     const back = await row(b.id);
     expect(back?.state).toBe('draft');
     expect(back?.idempotency_key).not.toBe(keyB);
@@ -383,20 +411,28 @@ suite('sales e-invoice drafts (#2500)', () => {
     await moveDraft(o, b2.id, 'submitting');
     await update(b2.id, "state = 'rejected', provider_ref = 'sbx-rej'");
     await stuck(update(b2.id, "state = 'draft', idempotency_key = gen_random_uuid()"));
-    await update(b2.id, "state = 'draft', provider_ref = NULL, idempotency_key = gen_random_uuid()");
+    await update(b2.id, "state = 'draft', provider_ref = NULL, submitted_at = NULL, idempotency_key = gen_random_uuid()");
     expect((await row(b2.id))?.provider_ref).toBeNull();
 
-    // failed goes back to submitting with the same key (a retry of the same invoice) and nowhere else.
+    // failed goes back to draft only for a code that says nothing was sent (a new key, a clean slate), never back to submitting, and an invoice whose fate is unknown stays failed.
     const c = await fresh();
-    const keyC = (await row(c.id))?.idempotency_key;
     await moveDraft(o, c.id, 'submitting', 'failed');
     await stuck(update(c.id, "state = 'draft'"));
     await stuck(update(c.id, "state = 'pending', provider_ref = 'sbx-1'"));
     await stuck(update(c.id, "state = 'issued', provider_ref = 'sbx-1'"));
-    await stuck(update(c.id, "state = 'submitting', idempotency_key = gen_random_uuid()"));
+    await stuck(update(c.id, "state = 'submitting'"));
     await stuck(update(c.id, "state = 'rejected'"));
-    await moveDraft(o, c.id, 'submitting');
-    expect(await row(c.id)).toMatchObject({ state: 'submitting', idempotency_key: keyC });
+    // Failed with no code, or with STATUS_UNKNOWN (the provider may have the invoice): not back to a draft.
+    await stuck(update(c.id, "state = 'draft', submitted_at = NULL, idempotency_key = gen_random_uuid()"));
+    await update(c.id, "error_code = 'STATUS_UNKNOWN'");
+    await stuck(update(c.id, "state = 'draft', submitted_at = NULL, idempotency_key = gen_random_uuid()"));
+    // Failed before the send: back to a draft with a new key, no submit time and the code kept.
+    const keyC = (await row(c.id))?.idempotency_key;
+    await update(c.id, "error_code = 'TAX_CODE_NEEDED'");
+    await stuck(update(c.id, "state = 'draft', submitted_at = NULL"));
+    await update(c.id, "state = 'draft', submitted_at = NULL, idempotency_key = gen_random_uuid()");
+    expect(await row(c.id)).toMatchObject({ state: 'draft', error_code: 'TAX_CODE_NEEDED' });
+    expect((await row(c.id))?.idempotency_key).not.toBe(keyC);
 
     // A draft that has left `draft` is removed only by the org's purge: not by the job, not by an owner, not with the mark forged.
     const d = await fresh();

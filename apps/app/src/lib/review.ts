@@ -2,12 +2,15 @@
 // a proposal. The server decides every approval; these only shape the requests and the keys.
 
 import { z } from 'zod';
-import { ADS_PROPOSAL_KIND_PREFIX, PROPOSAL_APPROVE_PERMISSION } from '@crove/kernel-contract';
+import { ADS_PROPOSAL_KIND_PREFIX, EINVOICE_ISSUE_KIND, PROPOSAL_APPROVE_PERMISSION } from '@crove/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 // A request to open the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set
 // or raised, launches opened again. It posts nothing to the books, so it has no invoice, no checks and no "matched" badge.
 export const isAdsProposalKind = (kind: string): boolean => kind.startsWith(ADS_PROPOSAL_KIND_PREFIX);
+
+// A request to issue a sales e-invoice (ADR-0044 point 3, #2502): it posts nothing to the books and is approved one at a time, never in a batch.
+export const isEInvoiceIssueKind = (kind: string): boolean => kind === EINVOICE_ISSUE_KIND;
 
 // The Inbox tabs, by proposal status; pending is the default. Expired proposals (#876) waited past the org's expiry;
 // their author may ask for them again.
@@ -44,7 +47,7 @@ export function bulkSelectable(
   item: { status: string; failedChecks: number; kind: string; duplicateOf: string | null; unclassifiedLines?: number; anomalyChecks?: number | undefined },
   reversalKind: string,
 ): boolean {
-  if (isAdsProposalKind(item.kind)) return false;
+  if (isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return false;
   // A line no rule matched (#2091) has no account to approve: it is classified on the proposal's own page first.
   return item.status === 'pending' && item.failedChecks === 0 && item.duplicateOf === null && item.kind !== reversalKind && (item.unclassifiedLines ?? 0) === 0 && (item.anomalyChecks ?? 0) === 0;
 }
@@ -67,7 +70,7 @@ export function showMatched(
   // The kinds approved as shown, with no checks: a reversal, a cash or bank voucher, a general journal voucher (#888).
   ...plainKinds: string[]
 ): boolean {
-  if (plainKinds.includes(item.kind) || isAdsProposalKind(item.kind)) return false;
+  if (plainKinds.includes(item.kind) || isAdsProposalKind(item.kind) || isEInvoiceIssueKind(item.kind)) return false;
   if (item.voided) return false;
   if (item.requestedByAgent && !item.extracted) return false;
   return item.failedChecks === 0 && item.warnChecks === 0 && !item.duplicateOf;
