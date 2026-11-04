@@ -37,79 +37,79 @@ A competitor cell says yes, partial or no, with the product name. "Not confirmed
 
 Ludy cells give the status first. Competitor cells give yes, partial or no, with the product.
 
-| Capability | Ludy | MISA AMIS | Base.vn | HubSpot | Odoo | Pancake |
+| Capability | Ludy | MISA AMIS | Odoo | Pancake | Base.vn | HubSpot |
 |---|---|---|---|---|---|---|
 | **Finance and accounting** | | | | | | |
-| Books to Vietnamese standards (TT133) | Shipped: Ludy Kế toán | Yes: AMIS Kế toán, MISA SME | No: Accounting "Coming soon" | No: no ledger | Yes: Accounting, Vietnam module | Yes: Fintab, TT133 books (cash, bank, sales, purchase, stock, fixed assets, payroll, tax, reports, opening balances) |
-| Purchase e-invoice intake and AI reading | Shipped: XML, PDF, photo, tax portal sync | Yes: Hóa đơn điện tử, Kế toán | No: Invoice "Coming soon" | No | Partial: vendor bills in Accounting, not confirmed for Vietnamese XML | Partial: Fintab has Mua hàng and Hóa đơn điện tử; AI reading and XML checks not confirmed |
-| Issue sales e-invoices | In build: drafts and an offline provider shipped; live providers open | Yes: Hóa đơn điện tử (meInvoice) | No: Invoice "Coming soon" | Partial: Invoices, not tax-authority e-invoices | Partial: Viettel S-Invoice connector | Yes: Fintab has a Hóa đơn điện tử area; providers and depth not confirmed from outside |
-| VAT return and financial statements with tax XML | Shipped: 01/GTGT, B01-DNN, B02-DNN, HTKK XML | Yes: Thuế điện tử, AMIS Kế toán | No | No | Not confirmed for Vietnam | Yes: Fintab has Thuế and Báo cáo; tax XML export not confirmed |
-| Bank statements, matching, bank feed | Shipped: statement import and matching; In build: live bank feed | Yes: Ngân hàng điện tử | No: Bankfeed "Coming soon" | No | Partial: statement import and QR codes; Vietnamese bank sync not confirmed | Partial: Fintab has Tiền gửi; statement import and bank feed not confirmed |
-| Fixed assets and depreciation | Shipped | Yes: AMIS Kế toán, Tài sản | No: Asset "Coming soon" | No | Partial: Accounting | Yes: Fintab, Tài sản cố định and Công cụ dụng cụ (tools and supplies) |
-| Household business (hộ kinh doanh) books | In build: plan and issues for books S1a to S2e | Yes: Kế toán HKD | No | No | No | Yes: Fintab, 2026 household tax declarations |
-| Cooperative (HTX) books | Missing | Yes: Kế toán HTX | No | No | No | Not confirmed |
-| Expense claims and advances | Missing | Not confirmed | Yes: Expense | No | Yes: Expenses | Partial: Fintab records expenses and debts |
-| Digital signature, tax filing, audit, business loans | Missing | Yes: Chữ ký số, Thuế điện tử, Kiểm toán, Vay vốn | No | No | No | Not confirmed |
+| Books to Vietnamese standards (TT133) | Shipped: Ludy Kế toán | Yes: AMIS Kế toán, MISA SME | Yes: Accounting, Vietnam module | Yes: Fintab, TT133 books (cash, bank, sales, purchase, stock, fixed assets, payroll, tax, reports, opening balances) | No: Accounting "Coming soon" | No: no ledger |
+| Purchase e-invoice intake and AI reading | Shipped: XML, PDF, photo, tax portal sync | Yes: Hóa đơn điện tử, Kế toán | Partial: vendor bills in Accounting, not confirmed for Vietnamese XML | Partial: Fintab has Mua hàng and Hóa đơn điện tử; AI reading and XML checks not confirmed | No: Invoice "Coming soon" | No |
+| Issue sales e-invoices | In build: drafts and an offline provider shipped; live providers open | Yes: Hóa đơn điện tử (meInvoice) | Partial: Viettel S-Invoice connector | Yes: Fintab has a Hóa đơn điện tử area; providers and depth not confirmed from outside | No: Invoice "Coming soon" | Partial: Invoices, not tax-authority e-invoices |
+| VAT return and financial statements with tax XML | Shipped: 01/GTGT, B01-DNN, B02-DNN, HTKK XML | Yes: Thuế điện tử, AMIS Kế toán | Not confirmed for Vietnam | Yes: Fintab has Thuế and Báo cáo; tax XML export not confirmed | No | No |
+| Bank statements, matching, bank feed | Shipped: statement import and matching; In build: live bank feed | Yes: Ngân hàng điện tử | Partial: statement import and QR codes; Vietnamese bank sync not confirmed | Partial: Fintab has Tiền gửi; statement import and bank feed not confirmed | No: Bankfeed "Coming soon" | No |
+| Fixed assets and depreciation | Shipped | Yes: AMIS Kế toán, Tài sản | Partial: Accounting | Yes: Fintab, Tài sản cố định and Công cụ dụng cụ (tools and supplies) | No: Asset "Coming soon" | No |
+| Household business (hộ kinh doanh) books | In build: plan and issues for books S1a to S2e | Yes: Kế toán HKD | No | Yes: Fintab, 2026 household tax declarations | No | No |
+| Cooperative (HTX) books | Missing | Yes: Kế toán HTX | No | Not confirmed | No | No |
+| Expense claims and advances | Missing | Not confirmed | Yes: Expenses | Partial: Fintab records expenses and debts | Yes: Expense | No |
+| Digital signature, tax filing, audit, business loans | Missing | Yes: Chữ ký số, Thuế điện tử, Kiểm toán, Vay vốn | No | Not confirmed | No | No |
 | **Sales and CRM** | | | | | | |
-| Contacts, deals, pipeline board, import | Shipped: Engage, Customers and Sales | Yes: CRM | Yes: Sales | Yes: Sales Hub, Smart CRM | Yes: CRM | Yes: CRM, and customer records inside Pancake |
-| Booking pages and calendar | Shipped: booking pages, Google Calendar | Partial: Lịch | Partial: Booking (rooms and resources) | Yes: Meeting Scheduler | Yes: Appointments | Partial: CRM appointments for service businesses |
-| Quotes, sales orders, contracts | Missing | Partial: CRM, Hợp đồng điện tử | Yes: Commerce, Contract | Yes: Quotes, Revenue Hub | Yes: Sales | Partial: orders in Pancake POS; quotes not confirmed |
-| Recurring billing and payment links | Missing | Partial: Cổng thanh toán | Not confirmed | Yes: Subscriptions, Payment Links | Yes: Subscriptions | Partial: payment gateways and a QR code per order in POS |
-| Point of sale (retail, restaurant) | Missing | Yes: Cửa hàng, Nhà hàng | Partial: Commerce | No | Yes: POS Shop, POS Restaurant | Yes: Pancake POS (web, marketplaces, social and retail stores) |
-| Orders taken inside the chat (chat commerce) | Missing | Not confirmed | Not confirmed | Not confirmed | Not confirmed | Yes: Pancake, create a POS order in the live chat and from livestreams |
+| Contacts, deals, pipeline board, import | Shipped: Engage, Customers and Sales | Yes: CRM | Yes: CRM | Yes: CRM, and customer records inside Pancake | Yes: Sales | Yes: Sales Hub, Smart CRM |
+| Booking pages and calendar | Shipped: booking pages, Google Calendar | Partial: Lịch | Yes: Appointments | Partial: CRM appointments for service businesses | Partial: Booking (rooms and resources) | Yes: Meeting Scheduler |
+| Quotes, sales orders, contracts | Missing | Partial: CRM, Hợp đồng điện tử | Yes: Sales | Partial: orders in Pancake POS; quotes not confirmed | Yes: Commerce, Contract | Yes: Quotes, Revenue Hub |
+| Recurring billing and payment links | Missing | Partial: Cổng thanh toán | Yes: Subscriptions | Partial: payment gateways and a QR code per order in POS | Not confirmed | Yes: Subscriptions, Payment Links |
+| Point of sale (retail, restaurant) | Missing | Yes: Cửa hàng, Nhà hàng | Yes: POS Shop, POS Restaurant | Yes: Pancake POS (web, marketplaces, social and retail stores) | Partial: Commerce | No |
+| Orders taken inside the chat (chat commerce) | Missing | Not confirmed | Not confirmed | Yes: Pancake, create a POS order in the live chat and from livestreams | Not confirmed | Not confirmed |
 | **Marketing** | | | | | | |
-| Social publishing and review | Shipped: Engage, Marketing | Partial: aiMarketing | No | Yes: Social Media Management | Yes: Social Marketing | Not confirmed: pages describe replies, not publishing |
-| Ads: read results | Shipped | Not confirmed | Yes: Ads manager | Yes: Ads Software | No | Partial: conversion events to Meta and Google, ad results per channel in POS |
-| Ads: create and run campaigns | In build: first slice shipped, launch and pause open | Not confirmed | No: measure only | Yes: Ads Software | No | Partial: optimises Facebook Ads from conversion events; no campaign creation confirmed |
-| Email marketing and campaigns | Planned: plan accepted, epic in the Icebox | Yes: aiMarketing | Coming soon: Express | Yes: Marketing Hub | Yes: Email Marketing | Partial: CRM automations send email and messages |
-| SMS, WhatsApp, Zalo notifications | Missing | Not confirmed | Coming soon: Express | Yes: SMS Marketing, WhatsApp | Yes: SMS Marketing, WhatsApp | Yes: bulk messages on Facebook, TikTok, WhatsApp, Zalo (Botcake, POS) |
-| Website, landing pages, forms | Missing (a link-in-bio page ships in Engage) | No | Coming soon: Form | Yes: Content Hub | Yes: Website, eCommerce | Yes: Webcake Landing and Storefront |
-| Promotions and loyalty | Missing | Yes: Khuyến mại | Not confirmed | Partial: Marketing Hub | Yes: eCommerce, POS | Partial: Botcake offers promotions in chat |
+| Social publishing and review | Shipped: Engage, Marketing | Partial: aiMarketing | Yes: Social Marketing | Not confirmed: pages describe replies, not publishing | No | Yes: Social Media Management |
+| Ads: read results | Shipped | Not confirmed | No | Partial: conversion events to Meta and Google, ad results per channel in POS | Yes: Ads manager | Yes: Ads Software |
+| Ads: create and run campaigns | In build: first slice shipped, launch and pause open | Not confirmed | No | Partial: optimises Facebook Ads from conversion events; no campaign creation confirmed | No: measure only | Yes: Ads Software |
+| Email marketing and campaigns | Planned: plan accepted, epic in the Icebox | Yes: aiMarketing | Yes: Email Marketing | Partial: CRM automations send email and messages | Coming soon: Express | Yes: Marketing Hub |
+| SMS, WhatsApp, Zalo notifications | Missing | Not confirmed | Yes: SMS Marketing, WhatsApp | Yes: bulk messages on Facebook, TikTok, WhatsApp, Zalo (Botcake, POS) | Coming soon: Express | Yes: SMS Marketing, WhatsApp |
+| Website, landing pages, forms | Missing (a link-in-bio page ships in Engage) | No | Yes: Website, eCommerce | Yes: Webcake Landing and Storefront | Coming soon: Form | Yes: Content Hub |
+| Promotions and loyalty | Missing | Yes: Khuyến mại | Yes: eCommerce, POS | Partial: Botcake offers promotions in chat | Not confirmed | Partial: Marketing Hub |
 | **Service and inbox** | | | | | | |
-| One inbox for customer messages and comments | In build: Zalo OA messages shipped; Facebook comments and Messenger open | Not confirmed | Partial: Prospect | Yes: Shared Inbox | Partial: Live Chat, Discuss | Yes: Pancake (social, Zalo, TikTok, WhatsApp, marketplace chats) |
-| Tickets, SLA, help desk | Missing by decision: no cases, tickets or SLA (2026-11-03) | No | Partial: Success | Yes: Service Hub | Yes: Helpdesk | Partial: tags and auto-assignment; no tickets or SLA confirmed |
-| Knowledge base and customer portal | Missing | No | Not confirmed | Yes: Service Hub | Partial: Knowledge, eLearning, Forum | Not confirmed |
-| Live chat widget and chatbot | Missing | Not confirmed | Not confirmed | Yes: Live Chat, chatbots | Yes: Live Chat | Yes: Botcake chatbot, chat plugin in Webcake |
-| Phone and VoIP | Missing | Not confirmed | Coming soon: Call | Yes: Sales Hub VoIP | Yes: VoIP | Yes: call recording and history in POS and Pancake |
+| One inbox for customer messages and comments | In build: Zalo OA messages shipped; Facebook comments and Messenger open | Not confirmed | Partial: Live Chat, Discuss | Yes: Pancake (social, Zalo, TikTok, WhatsApp, marketplace chats) | Partial: Prospect | Yes: Shared Inbox |
+| Tickets, SLA, help desk | Missing by decision: no cases, tickets or SLA (2026-11-03) | No | Yes: Helpdesk | Partial: tags and auto-assignment; no tickets or SLA confirmed | Partial: Success | Yes: Service Hub |
+| Knowledge base and customer portal | Missing | No | Partial: Knowledge, eLearning, Forum | Not confirmed | Not confirmed | Yes: Service Hub |
+| Live chat widget and chatbot | Missing | Not confirmed | Yes: Live Chat | Yes: Botcake chatbot, chat plugin in Webcake | Not confirmed | Yes: Live Chat, chatbots |
+| Phone and VoIP | Missing | Not confirmed | Yes: VoIP | Yes: call recording and history in POS and Pancake | Coming soon: Call | Yes: Sales Hub VoIP |
 | **Work and projects** | | | | | | |
-| Tasks and personal to-dos | Shipped: tasks, My work, Notes | Yes: Công việc | Yes: Task | Partial: CRM tasks | Yes: Project, To-do | Yes: Pancake Work |
-| Projects with board and list | In build: ADR-0048 accepted, issues open | Yes: Công việc | Yes: Project | No | Yes: Project | Yes: Pancake Work (Kanban, Issues) |
-| Notes and documents | Shipped: Notes | Yes: Ghi chép | Yes: Docs | No | Yes: Documents, Knowledge | Not confirmed |
-| Approvals and request forms | Partial: approval of AI and posting proposals only | Yes: Quy trình | Yes: Request | No | Yes: Approvals | Not confirmed |
-| Workflow and automation builder | Missing | Yes: Workflow | Yes: Workflow, Automation | Yes: Workflow Automation | Yes: Studio | Partial: chatbot flows and CRM automations |
-| Electronic signature and contracts | Planned: `sign` module in the kernel plan | Yes: Hợp đồng điện tử | Yes: E-Sign, Contract | Partial: quote e-signatures | Yes: Sign | Not confirmed |
-| Records and incoming documents (văn thư) | Partial: files and evidence storage | Yes: Văn thư | Yes: E-Office, Drive | No | Partial: Documents | Not confirmed |
+| Tasks and personal to-dos | Shipped: tasks, My work, Notes | Yes: Công việc | Yes: Project, To-do | Yes: Pancake Work | Yes: Task | Partial: CRM tasks |
+| Projects with board and list | In build: ADR-0048 accepted, issues open | Yes: Công việc | Yes: Project | Yes: Pancake Work (Kanban, Issues) | Yes: Project | No |
+| Notes and documents | Shipped: Notes | Yes: Ghi chép | Yes: Documents, Knowledge | Not confirmed | Yes: Docs | No |
+| Approvals and request forms | Partial: approval of AI and posting proposals only | Yes: Quy trình | Yes: Approvals | Not confirmed | Yes: Request | No |
+| Workflow and automation builder | Missing | Yes: Workflow | Yes: Studio | Partial: chatbot flows and CRM automations | Yes: Workflow, Automation | Yes: Workflow Automation |
+| Electronic signature and contracts | Planned: `sign` module in the kernel plan | Yes: Hợp đồng điện tử | Yes: Sign | Not confirmed | Yes: E-Sign, Contract | Partial: quote e-signatures |
+| Records and incoming documents (văn thư) | Partial: files and evidence storage | Yes: Văn thư | Partial: Documents | Not confirmed | Yes: E-Office, Drive | No |
 | **People and HR** | | | | | | |
-| Payroll, social insurance, personal income tax | In build: plan and issues; will be the HR app, module `hr` | Yes: Tiền lương, BHXH, Thuế TNCN | Yes: Payroll | No | Partial: Payroll app; Vietnam payroll not confirmed | Partial: Fintab has Tiền lương; social insurance and personal income tax depth not confirmed |
-| Employee records | In build: staff list inside the payroll plan | Yes: Thông tin nhân sự | Yes: HRIS | No | Yes: Employees | Not confirmed |
-| Time and attendance, leave | In build: time-keeping inputs and leave balances for payroll | Yes: Chấm công | Yes: Timesheet | No | Yes: Time Off, Timesheets | Yes: Chấm công in Pancake Work |
-| Recruiting | Missing | Yes: Tuyển dụng | Yes: E-Hiring | No | Yes: Recruitment | No |
-| Goals and performance reviews | Missing | Yes: Mục tiêu, Đánh giá | Yes: Goal, Review | No | Yes: Appraisals | No |
+| Payroll, social insurance, personal income tax | In build: plan and issues; will be the HR app, module `hr` | Yes: Tiền lương, BHXH, Thuế TNCN | Partial: Payroll app; Vietnam payroll not confirmed | Partial: Fintab has Tiền lương; social insurance and personal income tax depth not confirmed | Yes: Payroll | No |
+| Employee records | In build: staff list inside the payroll plan | Yes: Thông tin nhân sự | Yes: Employees | Not confirmed | Yes: HRIS | No |
+| Time and attendance, leave | In build: time-keeping inputs and leave balances for payroll | Yes: Chấm công | Yes: Time Off, Timesheets | Yes: Chấm công in Pancake Work | Yes: Timesheet | No |
+| Recruiting | Missing | Yes: Tuyển dụng | Yes: Recruitment | No | Yes: E-Hiring | No |
+| Goals and performance reviews | Missing | Yes: Mục tiêu, Đánh giá | Yes: Appraisals | No | Yes: Goal, Review | No |
 | **Communication** | | | | | | |
-| AI meeting notes | In build: ADR-0047 accepted, issues open | Partial: Phòng họp (rooms) | Yes: Meeting | Partial: Conversation Intelligence (calls) | No | No |
-| Internal chat | Missing | Yes: Chat | Yes: Chat | No | Yes: Discuss | Yes: Pancake Work channels and direct messages |
-| Company news feed | Missing | Yes: Mạng xã hội | Yes: Townhall | No | Partial: Discuss | Partial: Pancake Work channels |
-| Mailbox | Partial: inbound address and outbound mail; no mailbox | Yes: Mail | Coming soon: Mail | Partial: email integration | Partial: Discuss | No |
+| AI meeting notes | In build: ADR-0047 accepted, issues open | Partial: Phòng họp (rooms) | No | No | Yes: Meeting | Partial: Conversation Intelligence (calls) |
+| Internal chat | Missing | Yes: Chat | Yes: Discuss | Yes: Pancake Work channels and direct messages | Yes: Chat | No |
+| Company news feed | Missing | Yes: Mạng xã hội | Partial: Discuss | Partial: Pancake Work channels | Yes: Townhall | No |
+| Mailbox | Partial: inbound address and outbound mail; no mailbox | Yes: Mail | Partial: Discuss | No | Coming soon: Mail | Partial: email integration |
 | **Operations (stock, purchase, production)** | | | | | | |
-| Stock and cost of goods sold | In build: plan and issues | Yes: Kho hàng | Yes: Inventory | No | Yes: Inventory | Yes: Fintab Kho and real-time stock in POS; cost method not confirmed |
-| Marketplace orders (Shopee, TikTok Shop, Lazada) | In build: plan and issues | Not confirmed | Not confirmed | No | Not confirmed | Yes: POS takes orders from marketplaces and syncs stock |
-| Shipping carrier connection and delivery tracking | Missing | Not confirmed | Not confirmed | No | Not confirmed | Yes: POS creates carrier orders, syncs status, tracks fees |
-| Purchase orders and suppliers | Missing (purchase invoices only) | Yes: Mua hàng | Not confirmed | No | Yes: Purchase | Partial: Fintab has Mua hàng; purchase orders not confirmed |
-| Manufacturing | Missing | Yes: Sản xuất | Partial: bill of materials in Inventory | No | Yes: Manufacturing, PLM, Quality | No |
-| Operational assets and maintenance | Missing | Yes: Tài sản | Not confirmed | No | Yes: Maintenance, Fleet | No |
+| Stock and cost of goods sold | In build: plan and issues | Yes: Kho hàng | Yes: Inventory | Yes: Fintab Kho and real-time stock in POS; cost method not confirmed | Yes: Inventory | No |
+| Marketplace orders (Shopee, TikTok Shop, Lazada) | In build: plan and issues | Not confirmed | Not confirmed | Yes: POS takes orders from marketplaces and syncs stock | Not confirmed | No |
+| Shipping carrier connection and delivery tracking | Missing | Not confirmed | Not confirmed | Yes: POS creates carrier orders, syncs status, tracks fees | Not confirmed | No |
+| Purchase orders and suppliers | Missing (purchase invoices only) | Yes: Mua hàng | Yes: Purchase | Partial: Fintab has Mua hàng; purchase orders not confirmed | Not confirmed | No |
+| Manufacturing | Missing | Yes: Sản xuất | Yes: Manufacturing, PLM, Quality | No | Partial: bill of materials in Inventory | No |
+| Operational assets and maintenance | Missing | Yes: Tài sản | Yes: Maintenance, Fleet | No | Not confirmed | No |
 | **AI** | | | | | | |
-| AI inside the daily workflow | Shipped: invoice reading, bank and party matching, post drafts, payment reminders, Vy's daily brief | Yes: MISA AVA, OneAI | Mostly "Coming soon": Agent, Agents, AI Workspace | Yes: Breeze agents, AI Assistant | Yes: AI app | Yes: Botcake AI chatbot, AI assistant in Fintab and Pancake |
-| A named coworker per department | Shipped in part: Vy and the roster in the design; per-member Vy is Planned (ADR-0049) | Partial: AVA, Agentwork | Coming soon: Agents | Yes: Agent Hub | No | Partial: Botcake AI agent, no named roster |
-| AI proposes, a person approves, with checks | Shipped: AI Inbox, tainted output, approval and four-eyes rules | Not confirmed | Not confirmed | Partial: agents with spend and action limits | Not confirmed | Partial: bot-to-human handover in Botcake |
-| AI spend limits per org and module | Shipped: AI budget meter | Not confirmed | Not confirmed | Yes: HubSpot Credits | Not confirmed | Not confirmed |
-| Build your own AI app or agent | Missing | Partial: Agentwork | Coming soon: Studio | Yes: AI Studio | Yes: Studio | Partial: Botcake pre-built scripts and AI flows |
+| AI inside the daily workflow | Shipped: invoice reading, bank and party matching, post drafts, payment reminders, Vy's daily brief | Yes: MISA AVA, OneAI | Yes: AI app | Yes: Botcake AI chatbot, AI assistant in Fintab and Pancake | Mostly "Coming soon": Agent, Agents, AI Workspace | Yes: Breeze agents, AI Assistant |
+| A named coworker per department | Shipped in part: Vy and the roster in the design; per-member Vy is Planned (ADR-0049) | Partial: AVA, Agentwork | No | Partial: Botcake AI agent, no named roster | Coming soon: Agents | Yes: Agent Hub |
+| AI proposes, a person approves, with checks | Shipped: AI Inbox, tainted output, approval and four-eyes rules | Not confirmed | Not confirmed | Partial: bot-to-human handover in Botcake | Not confirmed | Partial: agents with spend and action limits |
+| AI spend limits per org and module | Shipped: AI budget meter | Not confirmed | Not confirmed | Not confirmed | Not confirmed | Yes: HubSpot Credits |
+| Build your own AI app or agent | Missing | Partial: Agentwork | Yes: Studio | Partial: Botcake pre-built scripts and AI flows | Coming soon: Studio | Yes: AI Studio |
 | **Platform and integrations** | | | | | | |
-| Open source and self-hosted | Shipped: AGPL, `docker compose up` | No | No | No | Yes: Community edition | No |
-| Several legal entities in one org | Shipped: legal entities | Not confirmed | Not confirmed | Yes: multi-account | Yes: multi-company (Custom plan) | Not confirmed |
-| Tamper-evident audit log and org export | Shipped | Not confirmed | Not confirmed | Partial: activity logs | Not confirmed | Not confirmed |
-| App marketplace and public API | Planned: OAuth server in ADR-0032, proposed | Yes: Chợ ứng dụng | Not confirmed | Yes: app marketplace | Yes: External API (Custom plan) | Partial: open API and reports |
-| No-code customization | Missing | Partial: custom software service | Coming soon: Studio | Yes: custom objects | Yes: Studio | Partial: Webcake custom code |
-| Industry packs | Missing | Yes: 20+ industry solutions | Not confirmed | Not confirmed | Yes: industry modules | Partial: solutions by industry (fashion, education, beauty, retail) |
+| Open source and self-hosted | Shipped: AGPL, `docker compose up` | No | Yes: Community edition | No | No | No |
+| Several legal entities in one org | Shipped: legal entities | Not confirmed | Yes: multi-company (Custom plan) | Not confirmed | Not confirmed | Yes: multi-account |
+| Tamper-evident audit log and org export | Shipped | Not confirmed | Not confirmed | Not confirmed | Not confirmed | Partial: activity logs |
+| App marketplace and public API | Planned: OAuth server in ADR-0032, proposed | Yes: Chợ ứng dụng | Yes: External API (Custom plan) | Partial: open API and reports | Not confirmed | Yes: app marketplace |
+| No-code customization | Missing | Partial: custom software service | Yes: Studio | Partial: Webcake custom code | Coming soon: Studio | Yes: custom objects |
+| Industry packs | Missing | Yes: 20+ industry solutions | Yes: industry modules | Partial: solutions by industry (fashion, education, beauty, retail) | Not confirmed | Not confirmed |
 
 ## Pancake and Ludy: where they overlap
 
