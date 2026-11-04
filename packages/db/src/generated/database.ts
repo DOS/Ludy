@@ -319,6 +319,10 @@ export interface AdsAdLaunchTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  wound_down_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  wind_down_tries: ColumnType<number, number | undefined, NotGranted>;
+  wind_down_next_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  wind_down_code: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_ads.ad_object */

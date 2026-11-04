@@ -23,6 +23,8 @@ import { sql } from 'kysely';
 import { AdPlatformError, type AdRevoker } from '@crove/ad-platform';
 import type { Db } from '@crove/db';
 import { DomainError, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
+import type { PauseBegin, PauseRecorded } from '@crove/mod-ads';
+import { pauseWork } from './ads-pause-run.ts';
 
 const SYSTEM = { type: 'system' as const, component: 'ads.revoke' };
 
@@ -89,6 +91,29 @@ async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; l
   }
 }
 
+// What the launches of the obligation's account made at the platform is paused before the permission is removed (ADR-0043 point 4, W2-4a): a switch-off stops them and
+// closes the write connection in the same transaction, so the sealed copy this sweep holds is the only token left to pause with, and a revoke first would leave them
+// running with nothing to stop them. The secret is handed to the narrowed pause of the revoker (`pauseWork`) and nowhere else. True while a launch is not paused yet
+// (a run is in flight, the platform failed, or a create of the launch may still land): the revoke waits for the next try. A launch Ludy gives up on (the token is refused,
+// ten runs, seven days) does not hold the revoke, and its person is told to pause by hand.
+async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string }, secret: string, revoker: AdRevoker): Promise<boolean> {
+  const options = { actor: SYSTEM, orgId: row.orgId };
+  const launches = await deps.runtime.query<string[]>('ads.pause.pending', { revokeId: row.id }, options);
+  let waiting = false;
+  for (const launchId of launches) {
+    const work = await deps.runtime.execute<PauseBegin>('ads.pause.begin', { launchId, via: 'copy' }, options);
+    if (work.action === 'none') {
+      // Another run holds the launch: its pause is not over, and this token must not be revoked under it.
+      if (work.reason === 'in_flight') waiting = true;
+      continue;
+    }
+    const result = await pauseWork(revoker, secret, work);
+    const recorded = await deps.runtime.execute<PauseRecorded>('ads.pause.record', { launchId, callKey: work.callKey, via: 'copy', result }, options);
+    if (!recorded.recorded || recorded.state === 'pending') waiting = true;
+  }
+  return waiting;
+}
+
 // One try of one obligation: opens the copy, calls the revoker, and says what came of it, or null when there is nothing to record (the copy is gone).
 // Never throws a platform error and never returns or logs the secret.
 async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; provider: string; leaseToken: string }): Promise<Outcome | null> {
@@ -114,6 +139,9 @@ async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; pr
     // A copy that no longer opens (a key that was removed too early) cannot be revoked from: given up, wiped, revoke by hand.
     return unrevocable('OPEN_FAILED');
   }
+  // What the account's launches made is paused first, with this same copy; the revoke waits for the next try while any is not (the policy's backoff and its ten tries and
+  // seven days apply). A database failure here is thrown like one while opening the copy: the claim runs out and the obligation is claimed again.
+  if (await pausedFirst(deps, row, secret, revoker)) return failed('transient', 'PAUSE_PENDING');
   try {
     const revoked = await revoker.revokeToken(secret);
     return { kind: 'done', how: revoked.how };
