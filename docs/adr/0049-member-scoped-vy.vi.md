@@ -15,7 +15,7 @@ Người dùng chỉ thấy **một Vy**, một cái tên, ở mọi app. Không
 
 Ngày 2026-11-03 JOY quyết trên #1677: "Với những data riêng thì Vy chỉ trả lời cho user đó thôi chứ. Nôm na là data nào user có access thì Vy (của người đó) có."
 
-- **Khi Vy làm việc riêng cho một người, nó thấy đúng những gì người đó thấy**, kể cả với người chỉ được xem (viewer): chỉ trong phạm vi họ thấy và làm được. Ghi chú riêng của họ, ghi chú chung họ được xem, dữ liệu các app khác theo quyền của họ. Không hơn.
+- **Khi Vy làm việc riêng cho một người, nó thấy đúng những gì người đó thấy**, chỉ trong phạm vi họ thấy và làm được. Ghi chú riêng của họ, ghi chú chung họ được xem, dữ liệu các app khác theo quyền của họ. Không hơn.
 - **Cái Vy tìm thấy trong dữ liệu riêng chỉ trả về cho đúng người đó.** Trí nhớ và kết quả cũng là của riêng từng người. Chủ tổ chức, quản trị viên, người khác, hệ thống đều không đọc được.
 - **Việc chung của cả công ty vẫn không đọc gì riêng tư.** Bản tin hằng ngày cho cả nhóm, đề xuất để người khác duyệt, việc của các tác tử AI trong sơ đồ tổ chức: không đụng vào ghi chú riêng.
 - Quyết định này sửa điều N-6 của ADR-0037 ("tác tử không đọc ghi chú") chỉ cho chế độ Vy làm việc riêng cho từng người. Chế độ làm việc chung giữ N-6.
@@ -33,6 +33,8 @@ Ngày 2026-11-03 JOY quyết trên #1677: "Với những data riêng thì Vy ch�
 
 9. **"Bộ não" của Vy nằm sau một giao diện thay thế được, còn ranh giới quyền luôn do Ludy giữ** (JOY quyết ngày 2026-11-04). Bộ não gồm kho kiến thức từ dữ liệu chung của công ty, trí nhớ dài hạn riêng cho từng người, và mô hình AI. Ludy chạy tự lưu trữ có sẵn bản dựng sẵn, chạy bằng `docker compose up` mà không cần dịch vụ ngoài: trí nhớ là bảng `member_vy_memory`, kiến thức lấy qua các câu truy vấn đã khai báo, chạy dưới quyền của đúng người đó. Ludy Cloud có thể cắm một nhà cung cấp dịch vụ được lưu trữ sẵn qua lớp Cloud riêng tư. Dù dùng bên nào, quy tắc không đổi: dữ liệu được lọc theo quyền của người đó **trước khi** gửi đi, nên nhà cung cấp không bao giờ thấy thứ người đó không đọc được. Trí nhớ của người này không bao giờ được đưa cho người khác. Nhà cung cấp không có logic phân quyền riêng, việc "người này có được xem không" luôn do Ludy quyết trước. Khi xóa (người rời tổ chức, xóa nguồn, yêu cầu xóa dữ liệu, xóa tổ chức), lệnh xóa phải tới tận nhà cung cấp, bên nào không xóa được thì không đủ điều kiện dùng. Có bài kiểm thử với một nhà cung cấp giả để ghi lại mọi thứ nó nhận được.
 
+10. **Ai được làm việc với Vy: một quyền mới tên `vy.use`** (JOY quyết ngày 2026-11-04: "Ở chỗ set quyền có thêm 'Sử dụng trợ lý Vy'"). Trong màn hình đặt quyền có thêm một công tắc, tên hiển thị là **"Làm việc với Vy"** (tiếng Anh "Work with Vy"). Tôi dùng chữ "làm việc với" thay cho "trợ lý" vì quy tắc "Vy là đồng nghiệp AI, không phải trợ lý" của JOY ngày 2026-11-02; Frontend PO đang xác nhận cách đặt tên này với JOY. Mặc định chủ tổ chức, quản trị viên và thành viên có quyền này, người chỉ được xem (viewer) thì không. Chủ tổ chức hoặc quản trị viên có thể cấp cho người chỉ được xem hoặc bất kỳ ai, và thu lại của bất kỳ ai. Quyền được kiểm mỗi lần Vy làm việc riêng cho một người, cả khi người dùng bấm trong app lẫn khi chạy nền, và cả ở bước tính ngân sách. Thu quyền thì các lần chạy đang dở của người đó dừng ngay, giống như khi gỡ người đó khỏi tổ chức. Quyền này chỉ bật hoặc tắt Vy cho người đó; nó **không bao giờ** mở rộng những gì Vy đọc được, vì Vy vẫn chỉ đọc đúng phần người đó được xem. Người chỉ được xem mà được cấp quyền vẫn chỉ thấy những gì viewer thấy. Đây là thay đổi về hệ thống phân quyền nên nằm trong bước kiểm thử bất biến của giai đoạn A. Mục này thêm sau khi Platform PO duyệt bản đầu; bước duyệt khi xây giai đoạn A sẽ kiểm.
+
 ## Hai giai đoạn
 
 - **Giai đoạn A, cho N8 (tóm tắt ghi chú, gợi ý việc cần làm):** chạy trong phiên của người bấm. Không đổi chính sách của ghi chú, không đổi danh sách bảng được ghi khi Vy làm việc chung. Không cần đường dẫn đặc biệt nào để worker đọc ghi chú. Vì lúc này Vy mang toàn quyền ghi của người đó, ranh giới là mã: các hàm tính năng chỉ biến đầu vào thành đầu ra, chỉ một lệnh lưu duy nhất ghi kết quả, và một bài kiểm thử tĩnh giữ điều đó.
@@ -46,7 +48,6 @@ Kế hoạch cuộc họp (#2554) và kế hoạch dự án (#2556, bước P7) 
 - Các bảng được phép dùng `ctx_acting_user_id()` ghi trong một danh mục do migration điền, có cột chế độ đọc hoặc ghi, và một bài kiểm thử quét hai chiều chính sách và hàm định nghĩa so với danh mục.
 - Giữ hạn xóa 30 ngày chung với ghi chú.
 - Tên kỹ thuật: `member_vy`, `member_vy_result`, `member_vy_memory`, lệnh `kernel.member_vy.*`.
-- Người chỉ xem (viewer) cũng được Vy làm việc cho, chỉ trong phạm vi họ xem được (Frontend PO quyết theo đúng quy tắc của JOY).
 
 JOY chỉ cần quyết nếu muốn đổi thứ mà ADR để mặc định: trần chi phí mặc định cho từng người, quyền "mở khóa khẩn cấp" cho chủ tổ chức, hoặc cho phép Vy ghi thẳng vào bảng của cuộc họp thay vì bấm một lần.
 
