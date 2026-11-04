@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The narrowed view of the writer the revoke worker is given (ADR-0043 point 4, #2296, W2-1): one method, `revokeToken`, and a source that names no
-// other call of a writer. The worker opens a sealed copy of a closed connection's token for that call alone.
+// The narrowed view of the writer the revoke worker is given (ADR-0043 point 4, #2296, W2-1 and W2-4a): `revokeToken`, and the pause of what a stopped launch made
+// that must come before it on a switch-off (`pauseLaunch`, the same narrowed pause the pause job has, tested in pausers.test.ts), and a source that names no
+// other call of a writer. The worker opens a sealed copy of a closed connection's token for those two calls alone.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { Fetch } from '@crove/channel';
@@ -9,9 +10,9 @@ import { AdPlatformError, MetaAdWriter, adRevokers, revokerOf, sandboxAdWriter, 
 const SANDBOX_SECRET = sandboxWriteLogin({ externalAccountId: 'sbxads-0123456789abcdef', currency: 'VND' }).secret;
 
 describe('the revoke view of a writer', () => {
-  it('has the one method, and none of the writer is reachable through it', () => {
+  it('has the revoke and the pause, and nothing else of the writer is reachable through it', () => {
     const view = revokerOf(sandboxAdWriter);
-    expect(Object.getOwnPropertyNames(view)).toEqual(['revokeToken']);
+    expect(Object.getOwnPropertyNames(view).sort()).toEqual(['pauseLaunch', 'revokeToken']);
     expect(Object.getPrototypeOf(view)).toBe(Object.prototype);
     // Frozen: nothing can be added to it or replaced on it, and the map of a deployment is frozen too.
     expect(Object.isFrozen(view)).toBe(true);
@@ -20,13 +21,13 @@ describe('the revoke view of a writer', () => {
       (view as unknown as Record<string, unknown>).verify = () => undefined;
     }).toThrow();
     // Not even by name: the writer's other methods are not on the view.
-    for (const name of ['verify', 'provider', 'createCampaign', 'createAdSet', 'createCreative', 'createAd', 'setStatus', 'readObjects', 'findByTag', 'resolveTargeting']) {
+    for (const name of ['verify', 'provider', 'createCampaign', 'createAdSet', 'createCreative', 'createAd', 'setStatus', 'readObjects', 'findByTag', 'resolveTargeting', 'activate']) {
       expect(name in view).toBe(false);
     }
   });
 
   it('calls the writer revokeToken with the secret and gives its answer back', async () => {
-    const writer: Pick<AdWriter, 'revokeToken'> = { revokeToken: vi.fn(async () => ({ how: 'revoked' as const })) };
+    const writer: Pick<AdWriter, 'revokeToken' | 'findByTag' | 'setStatus'> = { revokeToken: vi.fn(async () => ({ how: 'revoked' as const })), findByTag: vi.fn(async () => []), setStatus: vi.fn(async () => undefined) };
     await expect(revokerOf(writer).revokeToken('the-secret')).resolves.toEqual({ how: 'revoked' });
     expect(writer.revokeToken).toHaveBeenCalledTimes(1);
     expect(writer.revokeToken).toHaveBeenCalledWith('the-secret');

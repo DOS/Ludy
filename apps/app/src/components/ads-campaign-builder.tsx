@@ -491,8 +491,8 @@ export function CampaignBuilder({
   );
 }
 
-// What an approved plan's launch is (W2-2, #2296): its amount is held against the spend caps until it is cancelled, and nothing is sent to the ad platform yet (W2-3
-// runs a queued launch). Owners and admins can cancel one that has not started, which releases the amount at once.
+// What an approved plan's launch is (W2-2, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
+// not started, which releases the amount at once, and stop one that has (W2-4a): the commitment stays to at least today, and the ads it made at the platform are paused.
 function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canManage: boolean }) {
   const t = useTranslations('ads');
   const f = useFormat();
@@ -506,10 +506,56 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
       },
     }),
   );
+  const stop = useMutation(
+    orpc.ads.stopLaunch.mutationOptions({
+      onSuccess: async () => {
+        attempt.current = null;
+        await refreshCampaigns();
+        toast(t('campaigns.launchStoppedToast'));
+      },
+    }),
+  );
   const launch = draft.launch;
   if (!launch) return <Alert role="status">{t('campaigns.approvedNote')}</Alert>;
   if (launch.state === 'cancelled') return <Alert role="status">{t('campaigns.launchCancelled')}</Alert>;
-  if (launch.state !== 'queued') return <Alert role="status">{t('campaigns.approvedNote')}</Alert>;
+  const held = { amount: f.money(launch.amount, launch.currency), until: f.date(launch.commitUntil ?? launch.endOn) };
+  const reason = launch.stopReason ?? '-';
+  if (launch.state === 'failed') return <Alert role="status">{t('campaigns.launchFailed', { reason })}</Alert>;
+  if (launch.state === 'stopped') {
+    return (
+      <Alert role="status" data-testid="campaign-launch">
+        <p>{t('campaigns.launchStopped', held)}</p>
+        {launch.windDown && <p data-testid="campaign-wind-down">{t(launch.windDown.state === 'done' ? 'campaigns.launchWindDownDone' : launch.windDown.state === 'gave_up' ? 'campaigns.launchWindDownGaveUp' : 'campaigns.launchWindDownPending')}</p>}
+      </Alert>
+    );
+  }
+  if (launch.state === 'launching' || launch.state === 'needs_attention' || launch.state === 'live') {
+    return (
+      <Alert role="status" data-testid="campaign-launch">
+        <p>
+          {launch.state === 'needs_attention'
+            ? t('campaigns.launchNeedsAttention', { ...held, reason })
+            : t(launch.step === 'paused' ? 'campaigns.launchCreated' : 'campaigns.launchCreating', held)}
+        </p>
+        {canManage && (
+          <ConfirmDialog
+            render={<Button loading={stop.isPending} type="button" variant="destructive" className="mt-2" />}
+            destructive
+            title={t('campaigns.launchStopTitle')}
+            description={t('campaigns.launchStopBody', { name: draft.plan.name })}
+            confirm={t('campaigns.launchStop')}
+            onConfirm={() => {
+              attempt.current = keyFor(attempt.current, launch.id);
+              stop.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
+            }}
+          >
+            {t('campaigns.launchStop')}
+          </ConfirmDialog>
+        )}
+        {stop.error && <ErrorText>{errorMessage(stop.error)}</ErrorText>}
+      </Alert>
+    );
+  }
   return (
     <Alert role="status" data-testid="campaign-launch">
       <p>{t('campaigns.launchQueued', { amount: f.money(launch.amount, launch.currency), from: f.date(launch.startOn), until: f.date(launch.commitUntil ?? launch.endOn) })}</p>

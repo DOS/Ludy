@@ -8,7 +8,7 @@ import type { LegalEntity, MemberRoles } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
 import { catalog } from '../src/i18n/runtime.ts';
-import { assignableRoles, roleNeedsEntity } from '../src/lib/member-roles.ts';
+import { assignableRoles, inviteRoleChoices, roleNeedsEntity } from '../src/lib/member-roles.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -86,6 +86,14 @@ describe('assignableRoles', () => {
     expect(assignableRoles(data.roles, limited, 'member').map((r) => r.key)).toEqual(['external_accountant']);
     expect(roleNeedsEntity({ scope: 'legal_entity' })).toBe(true);
     expect(roleNeedsEntity({ scope: 'org' })).toBe(false);
+  });
+
+  it('offers an invite the org-wide department roles only, and a viewer none that grants a permission (#2611)', () => {
+    // An entity role is the entity toggle of the invite form, not a department pick.
+    expect(inviteRoleChoices(data.roles, 'member').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant']);
+    expect(inviteRoleChoices(data.roles, 'admin').map((r) => r.key)).toEqual(['finance.chief_accountant', 'finance.accountant']);
+    expect(inviteRoleChoices(data.roles, 'viewer').map((r) => r.key)).toEqual(['finance.accountant']);
+    expect(inviteRoleChoices([], 'member')).toEqual([]);
   });
 
   it('has a Vietnamese name and hint for every built-in role', () => {

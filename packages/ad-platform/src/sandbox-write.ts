@@ -97,7 +97,9 @@ export interface SandboxWrittenObject {
 // case reconcile exists for), `before` fails with nothing made. `times` calls are hit, one by default.
 export interface SandboxWriterFault {
   level: AdObjectLevel;
-  when: 'before' | 'after';
+  // `find` fails a `findByTag` of the level (by default as an answer with more pages than the first, which is unknowable); `status` fails a `setStatus` of an
+  // object of the level, with nothing changed.
+  when: 'before' | 'after' | 'find' | 'status';
   error?: AdPlatformError;
   times?: number;
 }
@@ -120,6 +122,8 @@ export class SandboxAdWriter implements AdWriter {
   readonly objects = new Map<string, SandboxWrittenObject>();
   // The create calls it received (the level, whether or not they were failed), in order.
   readonly received: AdObjectLevel[] = [];
+  // The status changes it received (a test reads it): which object, and to what.
+  readonly statusCalls: Array<{ level: AdObjectLevel; id: string; status: 'paused' | 'archived' }> = [];
   private readonly faults: SandboxWriterFault[] = [];
   private readonly unknown: ReadonlySet<string>;
   // An id is unique across restarts of the process: the objects are in memory and are lost with it, but their ids stay recorded in the database, and a new
@@ -159,7 +163,7 @@ export class SandboxAdWriter implements AdWriter {
   }
 
   // The fault, if one is due for this call: taken off the list as it is used.
-  private due(level: AdObjectLevel, when: 'before' | 'after'): SandboxWriterFault | undefined {
+  private due(level: AdObjectLevel, when: SandboxWriterFault['when']): SandboxWriterFault | undefined {
     const index = this.faults.findIndex((f) => f.level === level && f.when === when);
     const fault = this.faults[index];
     if (!fault) return undefined;
@@ -210,6 +214,8 @@ export class SandboxAdWriter implements AdWriter {
 
   async findByTag(secret: string, account: AdWriterAccount, level: AdObjectLevel, tag: string): Promise<AdFoundObject[]> {
     const accountId = this.reach(secret, account);
+    const fault = this.due(level, 'find');
+    if (fault) throw fault.error ?? new AdPlatformError('unknown', 'PAGED_ANSWER');
     return [...this.objects.values()].filter((o) => o.accountId === accountId && o.level === level && o.name.includes(tag)).map((o) => ({ id: o.id, name: o.name }));
   }
 
@@ -237,7 +243,10 @@ export class SandboxAdWriter implements AdWriter {
     if (status !== 'paused' && status !== 'archived') throw new AdPlatformError('bad_request', 'STATUS_REFUSED');
     const found = this.objects.get(object.id);
     if (!found || found.level !== object.level) throw new AdPlatformError('bad_request', 'OBJECT_NOT_FOUND');
+    const fault = this.due(object.level, 'status');
+    if (fault) throw fault.error ?? new AdPlatformError('transient', 'NETWORK');
     found.status = status;
+    this.statusCalls.push({ level: object.level, id: object.id, status });
   }
 }
 

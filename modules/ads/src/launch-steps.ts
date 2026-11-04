@@ -59,6 +59,20 @@ export function nameTail(tag: string, step: string): string {
   return `${tag}${level === 'campaign' ? '' : level === 'ad_set' ? ' set' : ` ${level} ${stepVariant(step)}`}`;
 }
 
+// Which object of a launch a name is, from its tail (the inverse of `nameTail`): the tag and what the object is. null for a name that does not carry the tag, or
+// whose tail is not one of the launch's steps (an object that cannot be told, which the pause job still pauses but does not record). `variants` is how many text
+// variants the plan has (a creative or an ad past that is not one of this launch's).
+export function slotOfName(tag: string, name: string, variants: number): string | null {
+  const at = name.indexOf(tag);
+  if (at < 0) return null;
+  const tail = name.slice(at + tag.length);
+  if (tail === '') return 'campaign';
+  if (tail === ' set') return 'ad_set';
+  const match = /^ (creative|ad) ([1-3])$/.exec(tail);
+  if (!match || Number(match[2]) > variants) return null;
+  return `${match[1] === 'creative' ? 'creative' : 'ad'}_${match[2]}`;
+}
+
 // The longest an object's name is made (the platform's limit for a creative's is not known to be more [U]): the plan's name is cut to leave room for the tail.
 export const OBJECT_NAME_MAX = 100;
 

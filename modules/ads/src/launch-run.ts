@@ -206,7 +206,12 @@ export const adsLaunchBegin = defineCommand({
     const stop = stopConditionOf(setting, account, connection);
     if (stop) {
       if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'cancelled', stop_reason: stop, commit_until: null });
-      else await stopLaunch(ctx, launch.id, stop);
+      else {
+        await stopLaunch(ctx, launch.id, stop);
+        // What it made at the platform is paused from the queue after the commit (W2-4a): the stop commands of the org and the account write the same event for the launches
+        // they stop, and this is the one that finds a launch a condition stopped while the job was running (a connection that closed, a switch that went off between).
+        await ctx.emit('ads.pause.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
+      }
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, stopped: stop, state: launch.state });
       return none(stop);
     }
