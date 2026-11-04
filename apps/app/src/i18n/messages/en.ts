@@ -2070,8 +2070,8 @@ export const en = {
       discardedToast: 'The draft was discarded.',
       waiting: 'Waiting for approval in the Inbox',
       openInbox: 'Open the Inbox',
-      approvedNote: 'Approved. Nothing is sent to the ad platform yet.',
-      launchQueued: 'Approved. {amount} is held against your spend caps from {from} to {until}. Nothing is sent to the ad platform yet.',
+      approvedNote: 'Approved. Nothing is spent yet.',
+      launchQueued: 'Approved. {amount} is held against your spend caps from {from} to {until}. The campaign reaches the ad platform paused, so nothing is spent yet.',
       launchCancelled: 'This launch was cancelled. The amount held against your spend caps is released.',
       launchCancel: 'Cancel and release the amount',
       launchCancelTitle: 'Cancel this launch?',
@@ -7939,7 +7939,9 @@ export const en = {
       flag_settings_set: 'Set the thresholds of the spend flags',
       flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
       launch: {
+        begin: 'Decide the next platform call of an approved ad launch',
         cancel: 'Cancel a launch that has not started and release its amount',
+        record: 'Record the result of one platform call of an ad launch',
       },
       launches: {
         prepare_unblock: 'Ask to open ad launches again',

@@ -18,6 +18,7 @@ export interface CroveAdsSchema {
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
@@ -321,6 +322,25 @@ export interface AdsAdLaunchTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_ads.ad_object */
+export interface AdsAdObjectTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  launch_id: ColumnType<string, string, NotGranted>;
+  slot: ColumnType<string, string, NotGranted>;
+  level: ColumnType<string, string, NotGranted>;
+  external_id: ColumnType<string, string, NotGranted>;
+  name: ColumnType<string, string, NotGranted>;
+  configured_status: Generated<string>;
+  effective_status: string | null;
+  review_reason: string | null;
+  last_seen_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_ads.ad_org_setting */

@@ -294,8 +294,8 @@ catalogs:
       specifier: 12.38.0
       version: 12.38.0
     postal-mime:
-      specifier: 4.0.5
-      version: 4.0.5
+      specifier: 4.0.8
+      version: 4.0.8
     postcss:
       specifier: 8.5.30
       version: 8.5.30
@@ -459,7 +459,7 @@ importers:
         version: 4.13.13
       postal-mime:
         specifier: 'catalog:'
-        version: 4.0.5
+        version: 4.0.8
       unpdf:
         specifier: 'catalog:'
         version: 1.8.1
@@ -1884,6 +1884,7 @@ packages:
   '@smithy/core@3.36.0':
     resolution: {integrity: sha512-3hJiwG1F5t1SoXqp/yOCmYXziyx7ZVqF63S5W6YU201e/qwVaHPex+E/3vvyY9a3ORq/b+BydeNZpP2saQ9X2g==}
     engines: {node: '>=18.0.0'}
+    deprecated: Deprecated due to a bug in custom logger data redaction. See https://github.com/aws/aws-sdk-js-v3/issues/8393.
 
   '@smithy/credential-provider-imds@4.5.2':
     resolution: {integrity: sha512-A9uSdn72ozbRUSit0eib0TW7nXuNPlaeM0zcGkJ+nE6tFcSDbnmtwoxbTCFBukVQcszDAyvsd7+rTduPTXpygg==}
@@ -3407,8 +3408,8 @@ packages:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
     engines: {node: '>= 0.4'}
 
-  postal-mime@4.0.5:
-    resolution: {integrity: sha512-fWu1Cmo2ef6LCwgHU1fVrqo55eyFP31F7hH0j/wMWkQYYdh+H8zz3nBf3EYRQelkmTfDrbDfTvPUQEBT8DS/jw==}
+  postal-mime@4.0.8:
+    resolution: {integrity: sha512-nnAgc4a9hn7zYuQmX4C7LU+fN47kR5S8cE8zvB/vZ2NimNDbaj+ISZJ9qe3CKIfn2uOTwwz4nQeIyljvdFNgOA==}
     engines: {node: '>=20'}
 
   postcss@8.5.23:
@@ -6361,7 +6362,7 @@ snapshots:
 
   possible-typed-array-names@1.1.0: {}
 
-  postal-mime@4.0.5: {}
+  postal-mime@4.0.8: {}
 
   postcss@8.5.23:
     dependencies:
