@@ -6,3 +6,4 @@ export * from './accounting.ts';
 export * from './vat-rate.ts';
 export * from './bank-statement-sheet.ts';
 export * from './invoice-lookup.ts';
+export * from './payroll/index.ts';
