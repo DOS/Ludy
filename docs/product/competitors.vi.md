@@ -8,19 +8,19 @@ Xong (bản nháp để anh xem). Viết ngày 2026-11-04, đã thêm Pancake th
 - **Base.vn:** bộ 69 ứng dụng, mạnh về công việc, nhân sự, bán hàng, giao tiếp. Cả nhóm Tài chính (Kế toán, Hóa đơn, Bankfeed...) vẫn ghi "Coming soon", tức là chưa có kế toán. Giá tính theo tài khoản mỗi tháng, công khai.
 - **HubSpot:** nền tảng khách hàng của Mỹ (Marketing, Sales, Service, Content, Data, Revenue) có các tác tử AI. Không có kế toán hay sổ cái. Có bản miễn phí, các gói trả phí theo từng hub, AI tính bằng "credits".
 - **Odoo:** bộ phần mềm mã nguồn mở, khoảng 60 ứng dụng, giống Ludy nhất về cách xây (một nền tảng, một cơ sở dữ liệu, cài thêm ứng dụng). Có mô-đun kế toán Việt Nam và kết nối hóa đơn điện tử Viettel S-Invoice. Giá theo người dùng mỗi tháng; bản Community miễn phí.
-- **Pancake:** nền tảng bán hàng qua chat của Việt Nam (hãng nói có hơn 260.000 doanh nghiệp). Là một họ ứng dụng dùng chung một tài khoản:
+- **Pancake:** nền tảng bán hàng qua chat của Việt Nam (hãng nói có hơn 260.000 doanh nghiệp), và có cả ứng dụng kế toán riêng, nên là đối thủ gần nhất với toàn bộ câu chuyện của Ludy: hộp thư và đơn hàng cộng kế toán trong một họ sản phẩm. Là một họ ứng dụng dùng chung một tài khoản:
   - **Pancake:** một hộp thư cho tin nhắn và bình luận từ mạng xã hội, Zalo, TikTok, WhatsApp, sàn thương mại điện tử; tạo đơn ngay trong chat.
   - **Pancake POS:** đơn đa kênh, tồn kho thời gian thực, nối đơn vị vận chuyển, mã QR thanh toán mỗi đơn, ghi âm cuộc gọi.
   - **Pancake CRM, Botcake** (chatbot AI và nhắn tin hàng loạt), **Webcake** (landing page và website bán hàng), **Pancake Work** (chat nội bộ, bảng công việc, chấm công).
-  - **Fintab:** kế toán đơn giản và kê khai thuế 2026 cho hộ kinh doanh. Cùng dịch vụ WhatsApp.
-  - Không thấy lương, phát hành hóa đơn điện tử, đọc hóa đơn mua vào hay đăng bài mạng xã hội trên các trang đã đọc. Giá theo số trang kết nối và số nhân viên, dùng thử 14 ngày; gói nhỏ nhất ghi từ 550.000 đ cho 6 tháng. Không mã nguồn mở.
+  - **Fintab:** phần mềm kế toán theo TT133 có trợ lý AI, đi kèm Pancake POS và hộp thư. Menu có: tiền mặt, tiền gửi, bán hàng, mua hàng, hóa đơn điện tử, kho, công cụ dụng cụ, tài sản cố định, tiền lương, thuế, báo cáo, số dư đầu kỳ. Trang công khai của hãng nhắm vào hộ kinh doanh và người bán online với quy định thuế 2026. Cùng dịch vụ WhatsApp.
+  - Từ bên ngoài chưa xác nhận được Fintab phát hành hóa đơn điện tử và tính lương sâu đến đâu. Không thấy đăng bài mạng xã hội trên các trang đã đọc. Giá theo số trang kết nối và số nhân viên, dùng thử 14 ngày; gói nhỏ nhất ghi từ 550.000 đ cho 6 tháng. Không mã nguồn mở.
 
 ## Pancake chồng lấn với Ludy ở đâu
 
 - **Hộp thư (Engage, Dy):** đây là sản phẩm lõi của Pancake, và Ludy đang xây việc tương tự. Pancake hơn về số kênh; khác biệt của Ludy là bản nháp trả lời do AI soạn và người duyệt.
 - **Đăng bài và quảng cáo:** ít chồng lấn. Pancake không đăng bài, chỉ gửi sự kiện chuyển đổi cho Meta và Google. Ludy đăng bài rồi và đang xây việc tạo quảng cáo.
 - **Đơn hàng và kho:** chồng lấn lớn nhất và là sân mạnh nhất của Pancake (đơn tạo ngay trong chat, đơn từ sàn, tồn kho, vận chuyển). Ludy chưa có đơn hàng nào; kế hoạch kho của Ludy (đang xây) bắt đầu từ hóa đơn và file báo cáo của sàn, không từ đơn trong chat, và chưa có nối đơn vị vận chuyển.
-- **Sổ sách hộ kinh doanh:** Fintab nhắm cùng nhóm khách với kế hoạch hộ kinh doanh của Ludy. Ludy khác ở chỗ đọc chứng từ bằng AI và giữ sổ cái đầy đủ.
+- **Kế toán (Ludy Kế toán, Ly):** Fintab phủ cùng mảng với Ludy Kế toán (sổ TT133, tiền mặt và ngân hàng, bán và mua, hóa đơn điện tử, kho, công cụ dụng cụ, tài sản cố định, lương, thuế, báo cáo), nên cạnh tranh trực diện chứ không chỉ ở sổ hộ kinh doanh. Trang của hãng nói biến mọi giao dịch bán hàng thành báo cáo kế toán và thuế, tức là đơn đi thẳng vào sổ trong cùng một họ sản phẩm. Ludy đã có sổ sách, nhưng chưa có đối tượng đơn hàng, nên giao dịch bán chỉ vào sổ qua hóa đơn và file. Fintab có biểu tượng trợ lý AI ở đầu trang; nó làm gì, và có kiểm tra tất định cùng người duyệt phía sau hay không thì chưa xác nhận.
 - **Việc nội bộ:** Pancake Work chồng lấn với kế hoạch dự án và chấm công của Ludy; chat nội bộ thì Ludy không có kế hoạch.
 
 ## Bảng tóm tắt (đã rút gọn)
@@ -29,10 +29,11 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 
 | Mảng | Ludy | Ai đang mạnh |
 |---|---|---|
-| Kế toán TT133, hóa đơn mua vào đọc bằng AI, tờ khai VAT, báo cáo tài chính, tài sản cố định, đối chiếu ngân hàng | Đã có | MISA AMIS (đầy đủ hơn), Odoo (một phần) |
-| Phát hành hóa đơn bán ra | Đang xây | MISA AMIS, Odoo (qua Viettel) |
+| Kế toán TT133, hóa đơn mua vào đọc bằng AI, tờ khai VAT, báo cáo tài chính, tài sản cố định, đối chiếu ngân hàng | Đã có | MISA AMIS (đầy đủ hơn), Pancake Fintab, Odoo (một phần) |
+| Phát hành hóa đơn bán ra | Đang xây | MISA AMIS, Odoo (qua Viettel), Pancake Fintab (độ sâu chưa xác nhận) |
 | Lấy sao kê ngân hàng tự động | Đang xây | MISA AMIS |
 | Sổ sách hộ kinh doanh | Đang xây | MISA AMIS, Pancake Fintab |
+| Kế toán TT133 đầy đủ cho doanh nghiệp (tiền, bán, mua, kho, tài sản, lương, thuế, báo cáo) | Đã có phần lớn (lương và kho đang xây) | MISA AMIS (sâu nhất), Pancake Fintab, Odoo |
 | Khách hàng, cơ hội bán, bảng pipeline, trang đặt lịch | Đã có | Cả năm |
 | Đăng bài mạng xã hội, xem quảng cáo | Đã có | HubSpot, Odoo |
 | Chạy quảng cáo ngay trong Ludy | Đang xây | HubSpot |
@@ -41,7 +42,7 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 | Dự án, bảng công việc | Đang xây | Base, MISA, Odoo, Pancake Work |
 | Ghi chú và việc cần làm cá nhân | Đã có | Hầu hết (Pancake chỉ có công việc, chưa thấy ghi chú) |
 | Ghi chú cuộc họp bằng AI | Đang xây | Base |
-| Lương, BHXH, thuế TNCN, nhân sự, chấm công | Đang xây (sẽ thành app Ludy Nhân sự) | MISA AMIS, Base |
+| Lương, BHXH, thuế TNCN, nhân sự, chấm công | Đang xây (sẽ thành app Ludy Nhân sự) | MISA AMIS, Base, Pancake Fintab (độ sâu chưa xác nhận) |
 | Kho, giá vốn, đơn hàng Shopee, TikTok Shop, Lazada | Đang xây | MISA AMIS, Base, Odoo, Pancake POS |
 | Đơn tạo ngay trong chat, nối đơn vị vận chuyển, nhắn hàng loạt cho khách | Chưa có | Pancake (mạnh nhất) |
 | Landing page, website bán hàng | Chưa có | Pancake (Webcake), HubSpot, Odoo |
@@ -53,9 +54,9 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 
 ## Ludy khác ở đâu
 
-1. **Trợ lý AI nằm trong từng việc, kết quả AI luôn là đề xuất, người duyệt** (đã có phần lớn; Vy riêng cho từng thành viên mới là đề xuất, ADR-0049).
+1. **Trợ lý AI nằm trong từng việc, kết quả AI luôn là đề xuất, người duyệt** (đã có phần lớn; Vy riêng cho từng thành viên mới là đề xuất, ADR-0049). Đối thủ cũng có AI (MISA AVA, HubSpot, Botcake, trợ lý của Fintab); điều các trang không cho thấy là quy tắc "kết quả AI là đề xuất đã kiểm tra, người duyệt", nên đó mới là điểm khác, không phải là họ không có AI.
 2. **Mã nguồn mở, tự cài bằng `docker compose up`** (đã có). Trong năm đối thủ chỉ Odoo Community mở. Ludy Cloud "sắp ra mắt".
-3. **Đặc thù Việt Nam:** TT133, hóa đơn điện tử XML, tờ khai VAT và HTKK, đối chiếu ngân hàng (đã có); phát hành hóa đơn bán ra, bank feed, hộ kinh doanh, lương và BHXH, kho (đang xây). MISA AMIS đã phủ rộng hơn Ludy (chữ ký số, nộp thuế, kiểm toán, vay vốn), nên lợi thế của Ludy là AI đọc chứng từ và mã nguồn mở, không phải độ phủ.
+3. **Đặc thù Việt Nam:** TT133, hóa đơn điện tử XML, tờ khai VAT và HTKK, đối chiếu ngân hàng (đã có); phát hành hóa đơn bán ra, bank feed, hộ kinh doanh, lương và BHXH, kho (đang xây). MISA AMIS đã phủ rộng hơn Ludy (chữ ký số, nộp thuế, kiểm toán, vay vốn), và Pancake Fintab ghi TT133, hóa đơn điện tử, thuế, lương, kho trong menu. Điều repo chứng minh mà trang đối thủ không xác nhận là khâu kiểm tra: XML hóa đơn được kiểm tra tất định (mã cơ quan thuế, chữ số kiểm tra mã số thuế, tổng tiền) trước khi đề xuất; PDF và ảnh do AI đọc rồi kiểm tra như vậy; có mẫu nhập của MISA SME. Lợi thế của Ludy là việc đọc có kiểm tra, có người duyệt, và mã nguồn mở, không phải độ phủ.
 4. **Một đường ghi dữ liệu, có duyệt, nhật ký không sửa được, cô lập từng tổ chức** (đã có). Năm đối thủ không công bố điều tương đương trên các trang đã đọc, nên bảng ghi "chưa xác nhận" chứ không ghi "không có".
 5. **Điểm yếu thẳng thắn:** độ phủ. MISA có hơn 25 phân hệ, Base 69 ứng dụng, Odoo khoảng 60; Ludy mới có 3 app trên main (Kế toán, Engage, Notes) và vài app đang xây.
 
@@ -89,7 +90,7 @@ Trạng thái của Ludy: **đã có** (trên nhánh main), **đang xây** (có 
 | Chợ ứng dụng và API công khai | Cần khi có đối tác muốn tích hợp; máy chủ OAuth mới ở mức đề xuất | Thấp |
 | Công cụ tự dựng AI hoặc ứng dụng | Không dành cho OPC; các trợ lý có tên mới là sản phẩm | Thấp |
 
-Vì sao Pancake đổi thứ tự: với người bán nhỏ ở Việt Nam, cuộc trò chuyện là nơi chốt đơn, nên đơn hàng, vận chuyển và nhắn hàng loạt nằm ngay cạnh hộp thư. Hộp thư của Ludy đang xây, nên thứ người bán sẽ đòi tiếp theo là đơn hàng. Pancake không có lương, hóa đơn điện tử hay sổ cái đầy đủ, nên không đổi thứ tự phần kế toán.
+Vì sao Pancake đổi thứ tự: với người bán nhỏ ở Việt Nam, cuộc trò chuyện là nơi chốt đơn, nên đơn hàng, vận chuyển và nhắn hàng loạt nằm ngay cạnh hộp thư. Hộp thư của Ludy đang xây, nên thứ người bán sẽ đòi tiếp theo là đơn hàng. Fintab nghĩa là Pancake cũng cạnh tranh ở kế toán, nhưng không mở thêm chỗ thiếu nào về kế toán; nó làm việc chậm đối tượng đơn hàng tốn kém hơn, vì Pancake đã nối giao dịch bán vào sổ.
 
 ## Báo giá và đơn hàng thuộc về đâu
 
@@ -97,6 +98,6 @@ Chúng thuộc CRM (nhóm Khách hàng và Bán hàng của Engage): cơ hội d
 
 ## Nhận xét ngắn
 
-Base.vn chưa có kế toán và HubSpot không có sổ cái; Pancake chỉ có Fintab cho hộ kinh doanh. Nên về kế toán chỉ MISA AMIS và Odoo cạnh tranh trực tiếp toàn diện với Ludy Kế toán, và chỉ MISA AMIS có đủ chuỗi thuế Việt Nam đang chạy. Chỗ trống rộng nhất là kế toán và chăm sóc khách hàng cho doanh nghiệp nhỏ nhất, làm bằng AI. Thiếu sót dễ làm khách trả tiền chùn chân nhất là báo giá và đơn hàng, và với người bán hàng hóa là kho, mua hàng và vận chuyển.
+Base.vn chưa có kế toán và HubSpot không có sổ cái. Về kế toán, MISA AMIS, Odoo và Pancake (qua Fintab) cạnh tranh trực tiếp toàn diện với Ludy Kế toán, và chỉ MISA AMIS được xác nhận có đủ chuỗi thuế Việt Nam đang chạy. Pancake là đối thủ cần theo dõi nhất: đã giữ hộp thư và đơn hàng, giờ đặt thêm kế toán ngay cạnh. Chỗ trống rộng nhất là kế toán và chăm sóc khách hàng cho doanh nghiệp nhỏ nhất, làm bằng AI. Thiếu sót dễ làm khách trả tiền chùn chân nhất là báo giá và đơn hàng, và với người bán hàng hóa là kho, mua hàng và vận chuyển.
 
 Giới hạn: bảng chỉ đọc danh sách sản phẩm trên trang của mỗi hãng, không đo độ sâu tính năng. Trang Odoo đọc qua bản tóm tắt vì trình duyệt tích hợp không mở được. Giá của Fintab, Botcake và Webcake chưa đọc. Mục ghi "chưa xác nhận" cần xem kỹ trước khi dựa vào. Nguồn và ngày đọc nằm ở cuối [bản tiếng Anh](competitors.md).
