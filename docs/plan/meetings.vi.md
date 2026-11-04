@@ -82,19 +82,19 @@ JOY trả lời "Đồng ý" ngày 2026-11-04, nên cả sáu câu dưới đây
 
 ## Các bước xây (mỗi bước một issue, một PR)
 
-1. Bài kiểm thử an toàn trước: chứng minh người không được đọc thì không đọc được.
-2. Cuộc họp, âm thanh và video: tải lên, xác nhận đồng ý, mã hóa, nghe và xem lại, xóa bằng hủy khóa.
-3. Hộp cách ly xử lý âm thanh và video.
-4. Chép lời bằng Vy của người ghi (kết quả chỉ người ghi thấy), đo ngân sách theo phút, nút dừng AI, đo độ chính xác.
-5. Thời hạn lưu giữ và hủy khóa tự động, xóa khi đóng tổ chức.
-6. Tóm tắt, quyết định, việc cần làm; nút chia sẻ cho người dự họp; việc cần làm thành việc của nhóm.
-7. Ghi bằng micro ngay trong ứng dụng.
-8. Mã truy cập (token) riêng cho tiện ích, thu hồi được.
-9. Tiện ích Ludy với khung chung và tính năng ghi cuộc họp.
-10. Việc của JOY: tài khoản Chrome Web Store.
-11. Việc của người: luật sư, cuộc họp mẫu.
+1. Bài kiểm thử an toàn trước: chứng minh người không được đọc thì không đọc được (#2575).
+2. Cuộc họp, âm thanh và video: tải lên, xác nhận đồng ý, mã hóa, nghe và xem lại, xóa bằng hủy khóa (#2576).
+3. Hộp cách ly xử lý âm thanh và video (#2577).
+4. Chép lời bằng Vy của người ghi (kết quả chỉ người ghi thấy), đo ngân sách theo phút, nút dừng AI, đo độ chính xác (#2578).
+5. Thời hạn lưu giữ và hủy khóa tự động, xóa khi đóng tổ chức (#2579).
+6. Tóm tắt, quyết định, việc cần làm; nút chia sẻ cho người dự họp; việc cần làm thành việc của nhóm (#2580).
+7. Ghi bằng micro ngay trong ứng dụng (#2581).
+8. Mã truy cập (token) riêng cho tiện ích, thu hồi được (#2582).
+9. Tiện ích Ludy với khung chung và tính năng ghi cuộc họp (#2583).
+10. Việc của JOY: tài khoản Chrome Web Store (#2584).
+11. Việc của người: luật sư, cuộc họp mẫu (#2585).
 
 ## Để sau, và không làm
 
-- **Để sau**: gắn cuộc họp với khách hàng, cơ hội bán hàng, lịch hẹn; tìm kiếm trong các cuộc họp; Vy soạn email sau họp (người bấm gửi); bot tự vào Meet, Zoom, Teams và ghi chú trực tiếp (JOY thấy bot phiền nên để sau); tìm dữ liệu cá nhân trong bản chép lời khi có yêu cầu xóa; ghi âm bằng ứng dụng điện thoại; đưa tiện ích lên cửa hàng của Edge nếu cần.
+- **Để sau** (issue #2587, #2589, #2590, #2592 trong Icebox, #2594 trước khi mở đăng ký công khai): gắn cuộc họp với khách hàng, cơ hội bán hàng, lịch hẹn; tìm kiếm trong các cuộc họp; Vy soạn email sau họp (người bấm gửi); bot tự vào Meet, Zoom, Teams và ghi chú trực tiếp (JOY thấy bot phiền nên để sau); tìm dữ liệu cá nhân trong bản chép lời khi có yêu cầu xóa; ghi âm bằng ứng dụng điện thoại; đưa tiện ích lên cửa hàng của Edge nếu cần.
 - **Không làm**: ứng dụng cài trên máy tính (một ứng dụng chỉ để ghi âm không đáng công duy trì, và Ludy hiện chưa có ứng dụng máy tính nào); nhận diện giọng nói giữa các cuộc họp; ghi mà không báo trước.
