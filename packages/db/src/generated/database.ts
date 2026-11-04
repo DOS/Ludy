@@ -814,6 +814,16 @@ export interface FinanceEinvoiceDraftTable {
   created_by: string | null;
   created_at: ColumnType<Date, Date | string | undefined, Date | string>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  issued_number: string | null;
+  issued_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  authority_code: string | null;
+  signed_file_id: string | null;
+  pdf_file_id: string | null;
+  error_code: string | null;
+  submitted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  next_check_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  check_attempts: Generated<number>;
+  channel_connection_id: string | null;
 }
 
 /** crove_finance.einvoice_series */
