@@ -152,6 +152,8 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             // What a bank statement read into bank lines recorded as its result (#2142): only the small summary of a run of
             // method 'unsupported' (the guard keeps an invoice's result from being read for every file).
             sql<unknown>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'bank_statement' THEN x.result -> 'summary' END`.as('statement'),
+            // The state of a marketplace order report the same way (#2515): staged, imported or rejected; its details are the finance module's own.
+            sql<string | null>`CASE WHEN x.method = 'unsupported' AND x.status = 'done' AND x.result ->> 'kind' = 'marketplace_orders' THEN x.result -> 'summary' ->> 'state' END`.as('marketplace_state'),
             sql<boolean>`x.status = 'pending' AND x.created_at > pg_catalog.now() - pg_catalog.make_interval(mins => ${REEXTRACT_STALE_MINUTES}::int)`.as(
               'in_flight',
             ),
@@ -206,6 +208,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
       'e.method',
       'e.entry_count',
       'e.statement',
+      'e.marketplace_state',
       'e.in_flight',
       'e.run_at',
       'p.id as proposal_id',
@@ -270,6 +273,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
     const decided = ['rejected', 'expired', 'failed'].includes(r.proposal_status ?? '') || isVoided;
     const failedSinceDecision = lastRunFailed && decided && r.decided_at !== null && r.run_at !== null && r.run_at > r.decided_at;
     const statement = statementOf(r.statement, asStatement(r), known);
+    const orderState = r.marketplace_state === 'staged' || r.marketplace_state === 'imported' || r.marketplace_state === 'rejected' ? r.marketplace_state : null;
     const status: FileStatus['status'] = waiting
       ? 'waiting'
       : !r.extraction_status || r.in_flight
@@ -280,7 +284,9 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
             : 'failed'
           : statement
             ? STATEMENT_STATUS[statement.state]
-            : r.proposal_id && !failedSinceDecision
+            : orderState
+              ? STATEMENT_STATUS[orderState]
+              : r.proposal_id && !failedSinceDecision
               ? r.duplicate_of
                 ? 'duplicate'
                 : 'proposed'
@@ -313,6 +319,7 @@ export async function fileStatuses(ctx: QueryContext, filter: FileStatusFilter):
           // A statement imported is stored once: reading it again would only find its lines already there. One waiting or
           // skipped may be read again (a corrected mapping, a second look).
           statement?.state !== 'imported' &&
+          orderState !== 'imported' &&
           Boolean(r.extraction_status) &&
           !r.in_flight &&
           // Reading this file again is refused once the original of its invoice took its proposal's place (#2269): the

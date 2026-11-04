@@ -96,6 +96,10 @@ describe('the lines of a Shopee file', () => {
     const result = read([SHOPEE_HEAD, [{ number: '2610123456789012345' }, '2026-10-30', 'Hoàn thành', '', '', '', 'QC-1', 'x', '1', '1', '1']]);
     expect(result.skipped).toEqual([{ rowNo: 2, reason: 'bad_id' }]);
     expect(result.lines).toEqual([]);
+    // A text id that looks like a number in exponent form is one too; an order number that merely has an E in it is not.
+    const exponent = read([SHOPEE_HEAD, shopeeRow('2.61E+18', 'Hoàn thành', 'QC-1', '1', '1', '1'), shopeeRow('E1', 'Hoàn thành', 'QC-1', '1', '1', '1')]);
+    expect(exponent.skipped).toEqual([{ rowNo: 2, reason: 'bad_id' }]);
+    expect(exponent.lines.map((l) => l.orderNo)).toEqual(['E1']);
   });
 
   it('gives a second row of the same product in one order its own line, and lists a status it does not know', () => {

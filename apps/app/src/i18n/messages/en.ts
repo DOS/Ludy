@@ -8153,6 +8153,12 @@ export const en = {
         list: 'View the sales invoice drafts',
         save: 'Save a sales invoice draft',
       },
+      marketplace: {
+        confirm: 'Import a marketplace order report',
+        preview: 'Preview a marketplace order report',
+        reject: 'Skip a marketplace order report',
+        staged: 'View the order reports waiting to be imported',
+      },
       stock: {
         assign: 'Assign an invoice line to an item',
         card: 'View the stock card of an item',

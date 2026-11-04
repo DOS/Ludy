@@ -8150,6 +8150,12 @@ export const vi = {
         list: 'Xem các bản nháp hóa đơn bán ra',
         save: 'Lưu bản nháp hóa đơn bán ra',
       },
+      marketplace: {
+        confirm: 'Nhập báo cáo đơn hàng của sàn',
+        preview: 'Xem trước báo cáo đơn hàng của sàn',
+        reject: 'Bỏ qua báo cáo đơn hàng của sàn',
+        staged: 'Xem các báo cáo đơn hàng chờ nhập',
+      },
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
         card: 'Xem thẻ kho của mặt hàng',

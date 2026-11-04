@@ -31,7 +31,12 @@ export interface StockMoveWrite {
   date: string;
   // Signed decimal string, not zero.
   quantity: string;
-  source: { type: 'document_line'; documentId: string; lineNo: number } | { type: 'manual' } | { type: 'reversal'; reversesMoveId: string };
+  source:
+    | { type: 'document_line'; documentId: string; lineNo: number }
+    | { type: 'manual' }
+    | { type: 'reversal'; reversesMoveId: string }
+    // A shipment (out) or a return (in) of a marketplace order line (#2515), each once per line.
+    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return' };
 }
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
@@ -63,6 +68,8 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       document_id: move.source.type === 'document_line' ? move.source.documentId : null,
       line_no: move.source.type === 'document_line' ? move.source.lineNo : null,
       line_attempt: attempt,
+      order_line_id: move.source.type === 'order_line' ? move.source.orderLineId : null,
+      order_move: move.source.type === 'order_line' ? move.source.move : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,
     })

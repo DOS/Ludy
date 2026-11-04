@@ -171,7 +171,10 @@ async function lockFile(ctx: CommandContext, fileId: string, statement = false) 
   return file;
 }
 
-// Whether the file's newest run is a bank statement a member imported (#2142).
+// The kinds of staged read a member decides (#2142, #2515): a bank statement and a marketplace order report. Each is kept with the file's read until a member imports or skips it.
+const STAGED_KINDS: readonly unknown[] = ['bank_statement', 'marketplace_orders'];
+
+// Whether the file's newest run is a staged read (a bank statement, an order report) a member imported (#2142).
 async function statementImported(ctx: CommandContext, fileId: string): Promise<boolean> {
   const run = await ctx.trx
     .selectFrom('crove_kernel.extraction')
@@ -182,7 +185,7 @@ async function statementImported(ctx: CommandContext, fileId: string): Promise<b
     .limit(1)
     .executeTakeFirst();
   const result = run?.result as { kind?: unknown; summary?: { state?: unknown } } | null | undefined;
-  return result?.kind === 'bank_statement' && result.summary?.state === 'imported';
+  return STAGED_KINDS.includes(result?.kind) && result?.summary?.state === 'imported';
 }
 
 // Whether a read of the file was a bank statement's (#2142): an .xlsx stored as a ZIP that the worker read as a statement
@@ -778,9 +781,10 @@ export const statementState = defineCommand({
       .forUpdate()
       .executeTakeFirst();
     const result = run?.result as { kind?: unknown; summary?: { state?: unknown } & Record<string, unknown> } | null | undefined;
-    if (!run || run.status !== 'done' || result?.kind !== 'bank_statement' || result.summary?.state !== 'staged') {
-      throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Sao kê này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
+    if (!run || run.status !== 'done' || !STAGED_KINDS.includes(result?.kind) || result?.summary?.state !== 'staged') {
+      throw new DomainError('STATEMENT_NOT_STAGED', 409, 'Tệp này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
     }
+    const kind = result.kind as 'bank_statement' | 'marketplace_orders';
     const summary = {
       ...result.summary,
       state: input.state,
@@ -796,17 +800,24 @@ export const statementState = defineCommand({
         ...(run.legal_entity_id ? { legal_entity_id: run.legal_entity_id } : {}),
         method: 'unsupported',
         status: 'done',
-        result: JSON.stringify({ kind: 'bank_statement', summary }),
+        result: JSON.stringify({ kind, summary }),
         checks: '[]',
         completed_at: ctx.now,
       })
       .execute();
     ctx.audit({ state: input.state, ...(input.newLines !== undefined ? { new_lines: input.newLines } : {}) });
+    const orders = kind === 'marketplace_orders';
     await ctx.activity(
       'kernel.file',
       input.fileId,
       input.state === 'imported' ? 'statement.imported' : 'statement.rejected',
-      input.state === 'imported' ? `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có` : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
+      input.state === 'imported'
+        ? orders
+          ? `Đã nhập báo cáo đơn hàng: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+          : `Đã nhập sao kê: ${input.newLines ?? 0} dòng mới, ${input.duplicateLines ?? 0} dòng đã có`
+        : orders
+          ? 'Đã bỏ qua báo cáo đơn hàng; không có đơn nào được nhập'
+          : 'Đã bỏ qua sao kê; không có dòng nào được nhập',
     );
     return { fileId: input.fileId, state: input.state };
   },

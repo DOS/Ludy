@@ -336,7 +336,7 @@ const RETURN_DONE = ['hoan thanh', 'da chap nhan', 'da hoan', 'completed', 'acce
 // An id that a spreadsheet turned into a number has lost its last digits: a number of 16 or more digits (a double holds 15), or one with an exponent.
 function brokenId(cell: StatementCell | undefined): boolean {
   const text = cellText(cell);
-  return /e\+?\d+$/i.test(text) || (cell?.kind === 'number' && /^\d{16,}$/.test(text));
+  return /^\d+(?:\.\d+)?e\+?\d+$/i.test(text) || (cell?.kind === 'number' && /^\d{16,}$/.test(text));
 }
 
 // The lines of the file under its header, at most maxRows of them; null when the file has more. Rows with no order number and nothing else in them are blank and not reported.

@@ -1,0 +1,248 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Marketplace order reports as files (#2515, ADR-0045 points 4, 5 and 7), on a real PostgreSQL 17 and the real parsing sandbox: a Shopee report is read and STAGED with nothing stored, a
+// member confirms it and the orders are stored once (a stage only moves forward, a re-upload is idempotent), the lines that name a stock item move stock at shipment and again on a return,
+// a file that is no report or has rows the profile cannot read stores nothing, and no buyer data of the report appears in any stored row. The files are made in code with made-up buyers.
+// Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
+import { randomUUID } from 'node:crypto';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createDb, createPool, type Db } from '@crove/db';
+import type { ExtractClient } from '@crove/extract-contract';
+import { migrate, setRolePasswords } from '@crove/db/migrate';
+import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
+import { Runtime, fileKey, sha256Hex, type BlobStore } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries, readMarketplaceFile } from '@crove/mod-finance';
+import { fileURLToPath } from 'node:url';
+import { buildXlsx, type XlsxCell } from '../../extract/test/xlsx-fixture.ts';
+import { inProcessExtract } from './extract-service.ts';
+import { TEST_MANIFESTS } from './manifests.ts';
+
+const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
+const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
+const suite = ADMIN ? describe : describe.skip;
+
+// What the report carries about the buyer, which must be nowhere in what is stored.
+const BUYER = { name: 'Lê Thị Mua Thử', phone: '0900000003', email: 'mua.thu3@example.com', address: '3 Phố Thử, Quận Thử, Hà Nội' };
+const HEAD: XlsxCell[] = ['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'Người Mua', 'Số điện thoại', 'Địa chỉ nhận hàng', 'Email', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'];
+const row = (order: string, status: string, sku: string, qty: number, price = 50000): XlsxCell[] => [order, '2026-10-30 14:05', status, BUYER.name, BUYER.phone, BUYER.address, BUYER.email, sku, `Sản phẩm ${sku}`, price, qty, price * qty];
+const report = (...rows: XlsxCell[][]) => buildXlsx([['Báo cáo đơn hàng'], HEAD, ...rows]);
+
+class MemoryStore implements BlobStore {
+  private readonly blobs = new Map<string, Uint8Array>();
+  async put(key: string, bytes: Uint8Array) {
+    this.blobs.set(key, bytes);
+    return `content:${sha256Hex(bytes)}`;
+  }
+  async get(key: string) {
+    const b = this.blobs.get(key);
+    if (!b) throw new Error('missing blob');
+    return b;
+  }
+  async delete(key: string) {
+    this.blobs.delete(key);
+  }
+}
+
+suite('marketplace order reports (#2515)', () => {
+  const dbName = `crove_test_marketplace_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+  let adminUrl = '';
+  let pool: pg.Pool;
+  let workerPool: pg.Pool;
+  let db: Db;
+  let rt: Runtime;
+  let worker: Runtime;
+  let extract: ExtractClient;
+  const store = new MemoryStore();
+  const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, mfaAt: Math.floor(Date.now() / 1000) });
+  const rows = async <T extends pg.QueryResultRow = Record<string, unknown>>(text: string, values: unknown[] = []) => {
+    const client = new pg.Client({ connectionString: adminUrl });
+    await client.connect();
+    try {
+      return (await client.query<T>(text, values)).rows;
+    } finally {
+      await client.end();
+    }
+  };
+  const identity = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@market.test`, name: null });
+  type Org = { orgId: string; owner: string; member: string; viewer: string };
+  async function org(): Promise<Org> {
+    const owner = await identity('owner');
+    const { orgId } = await createOrg(rt, asUser(owner), `Công ty Bán sàn ${randomUUID().slice(0, 6)}`);
+    const [member, viewer] = await Promise.all([identity('member'), identity('viewer')]);
+    await rows("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member'), ($1, $3, 'viewer')", [orgId, member, viewer]);
+    return { orgId, owner, member, viewer };
+  }
+  const execute = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.execute<T>(name, input, { actor: asUser(user), orgId: o.orgId, idempotencyKey: randomUUID() });
+  const query = <T>(o: Org, name: string, input: unknown, user = o.owner) => rt.query<T>(name, input, { actor: asUser(user), orgId: o.orgId });
+  const makeItem = (o: Org, code: string, extra: Record<string, unknown> = {}) =>
+    execute<{ id: string }>(o, 'finance.stock_item.save', { itemId: null, legalEntityId: null, code, name: `Hàng ${code}`, unit: 'gói', stockAccount: '156', trade: 'goods', ...extra }).then((r) => r.id);
+  const onHand = async (o: Org, itemId: string) => (await query<Array<{ id: string; onHand: string }>>(o, 'finance.stock_item.list', {})).find((i) => i.id === itemId)?.onHand;
+  const moves = (o: Org, itemId: string) => rows<{ order_move: string; quantity: string }>("SELECT order_move, quantity::text FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2 AND source_type = 'order_line' ORDER BY created_at, order_move", [o.orgId, itemId]);
+  const orderRows = (o: Org) => rows<{ order_no: string; stage: string; quantity: string }>('SELECT o.order_no, l.stage, l.quantity::text FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 ORDER BY o.order_no, l.line_key', [o.orgId]);
+  async function ingest(o: Org, bytes: Uint8Array) {
+    const sha256 = sha256Hex(bytes);
+    const storageKey = fileKey(o.orgId, sha256);
+    const generation = await store.put(storageKey, bytes);
+    const { fileId } = await rt.execute<{ fileId: string }>(
+      'kernel.file.ingest',
+      { filename: 'don-hang.xlsx', contentType: 'application/zip', sizeBytes: bytes.byteLength, sha256, storageKey, generation, source: 'upload' },
+      { actor: asUser(o.owner), orgId: o.orgId },
+    );
+    return fileId;
+  }
+  // The worker's side: the file is read as an order report; handled is false for a file that is none.
+  async function read(o: Org, bytes: Uint8Array) {
+    const fileId = await ingest(o, bytes);
+    const result = await readMarketplaceFile({ runtime: worker, store, extract }, o.orgId, fileId);
+    return { fileId, ...result };
+  }
+  const confirm = (o: Org, fileId: string, user = o.member) => execute<{ newLines: number; updatedLines: number; duplicateLines: number; stockMoves: number }>(o, 'finance.marketplace.confirm', { fileId }, user);
+
+  beforeAll(async () => {
+    extract = inProcessExtract();
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`CREATE DATABASE ${dbName}`);
+    await root.end();
+    const base = new URL(ADMIN as string);
+    base.pathname = `/${dbName}`;
+    adminUrl = base.toString();
+    await migrate({ adminUrl, dir: MIGRATIONS });
+    await setRolePasswords(adminUrl, { crove_app: 'test-app-pw', crove_worker: 'test-worker-pw' });
+    const login = (username: string, password: string) => {
+      const url = new URL(adminUrl);
+      url.username = username;
+      url.password = password;
+      return url.toString();
+    };
+    pool = createPool({ connectionString: login('crove_app', 'test-app-pw'), max: 4 });
+    db = createDb(pool);
+    workerPool = createPool({ connectionString: login('crove_worker', 'test-worker-pw'), max: 2 });
+    const register = (target: Db) => new Runtime(target, { manifests: TEST_MANIFESTS }).register({ commands: [...kernelCommands, ...financeCommands], queries: [...kernelQueries({ inboundDomain: null }), ...financeQueries] });
+    rt = register(db);
+    worker = register(createDb(workerPool));
+  }, 120_000);
+
+  afterAll(async () => {
+    await pool?.end();
+    await workerPool?.end();
+    if (!ADMIN) return;
+    const root = new pg.Client({ connectionString: ADMIN });
+    await root.connect();
+    await root.query(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+    await root.end();
+  });
+
+  it('stages a report and stores nothing until a member confirms, with no buyer value in the read', async () => {
+    const o = await org();
+    const bytes = report(row('A1', 'Đang giao', 'QC-1', 2), row('A2', 'Đã hủy', 'QC-2', 1), row('A3', 'Hoàn thành', 'QC-1', 1));
+    const { fileId, handled } = await read(o, bytes);
+    expect(handled).toBe(true);
+    const run = (await rows<{ result: { kind: string; summary: Record<string, unknown> } }>('SELECT result FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, fileId]))[0]?.result;
+    expect(run).toMatchObject({ kind: 'marketplace_orders', summary: { state: 'staged', platform: 'shopee', orders: 3, lines: 3, profileConfirmed: false, stages: { shipped: 1, completed: 1, cancelled: 1, placed: 0, returned: 0, unknown: 0 } } });
+    // Nothing is stored as an order or as stock, and no buyer value was kept anywhere in the read.
+    expect(await orderRows(o)).toEqual([]);
+    for (const value of Object.values(BUYER)) expect(JSON.stringify(run)).not.toContain(value);
+    const staged = await query<Array<{ fileId: string; summary: { platform: string; lines: number } }>>(o, 'finance.marketplace.staged', {}, o.member);
+    expect(staged).toEqual([expect.objectContaining({ fileId, summary: expect.objectContaining({ platform: 'shopee', lines: 3 }) })]);
+    // A viewer neither lists nor confirms.
+    await expect(query(o, 'finance.marketplace.staged', {}, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(confirm(o, fileId, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await orderRows(o)).toEqual([]);
+  });
+
+  it('stores the orders once on confirm, moves stock for the lines that name an item, and treats a re-upload as nothing new', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    const first = await read(o, report(row('A1', 'Đang giao', 'QC-1', 2), row('A2', 'Đã hủy', 'QC-2', 1), row('A3', 'Hoàn thành', 'QC-1', 1), row('A9', 'Đang giao', 'LẠ-1', 4)));
+    // How it stands before the decision: three lines move stock, two of them name the item, one a SKU no item has yet.
+    expect(await query(o, 'finance.marketplace.preview', { fileId: first.fileId }, o.member)).toEqual({ newLines: 4, knownLines: 0, advancedLines: 0, matchedLines: 2, unmatchedLines: 1 });
+    expect(await confirm(o, first.fileId)).toEqual({ newLines: 4, updatedLines: 0, duplicateLines: 0, stockMoves: 2 });
+    expect(await onHand(o, item)).toBe('-3');
+    expect((await orderRows(o)).map((r) => [r.order_no, r.stage])).toEqual([
+      ['A1', 'shipped'],
+      ['A2', 'cancelled'],
+      ['A3', 'completed'],
+      ['A9', 'shipped'],
+    ]);
+    // Decided once.
+    await expect(confirm(o, first.fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_NOT_STAGED' });
+    // An overlapping report: A1 has got to completed (a stage moves forward), A3 is as it was, A4 is new. Only the new line and the advanced one count, and the shipped stock is not moved twice.
+    const second = await read(o, report(row('A1', 'Hoàn thành', 'QC-1', 2), row('A3', 'Hoàn thành', 'QC-1', 1), row('A4', 'Đang giao', 'QC-1', 5)));
+    expect(await confirm(o, second.fileId)).toEqual({ newLines: 1, updatedLines: 1, duplicateLines: 1, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('-8');
+    expect((await moves(o, item)).map((m) => [m.order_move, m.quantity])).toEqual([
+      ['ship', '-2.000000'],
+      ['ship', '-1.000000'],
+      ['ship', '-5.000000'],
+    ]);
+    // A report showing an earlier stage than the org holds changes nothing (never backwards).
+    const third = await read(o, report(row('A1', 'Đang giao', 'QC-1', 2), row('A44', 'Chờ xác nhận', 'QC-1', 1)));
+    expect(await confirm(o, third.fileId)).toEqual({ newLines: 1, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
+    expect((await orderRows(o)).find((r) => r.order_no === 'A1')?.stage).toBe('completed');
+    expect(await onHand(o, item)).toBe('-8');
+  });
+
+  it('takes a returned order line back into stock once, through the item the shipment moved', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('R1', 'Đang giao', 'QC-1', 2)))).fileId);
+    expect(await onHand(o, item)).toBe('-2');
+    expect(await confirm(o, (await read(o, report(row('R1', 'Đã hoàn trả', 'QC-1', 2)))).fileId)).toEqual({ newLines: 0, updatedLines: 1, duplicateLines: 0, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('0');
+    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
+    // A report that still says returned moves nothing more.
+    expect(await confirm(o, (await read(o, report(row('R1', 'Đã hoàn trả', 'QC-1', 2), row('R2', 'Chờ xác nhận', 'QC-1', 1)))).fileId)).toEqual({ newLines: 1, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('0');
+    // A line first seen already returned ships and returns in one go: the net is nothing, and each happens once.
+    expect(await confirm(o, (await read(o, report(row('R3', 'Đã hoàn trả', 'QC-1', 3)))).fileId)).toMatchObject({ newLines: 1, stockMoves: 2 });
+    expect(await onHand(o, item)).toBe('0');
+  });
+
+  it('applies the factor of a name taught for the platform, and reads a SKU as an item code without case', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'Nuoc-Chai', { unit: 'chai' });
+    await execute(o, 'finance.stock_alias.teach', { itemId: item, source: 'shopee', key: 'NUOC-THUNG', factor: '12' });
+    const read1 = await read(o, report(row('F1', 'Đang giao', 'nuoc-chai', 3), row('F2', 'Đang giao', 'NUOC-THUNG', 2)));
+    expect(await confirm(o, read1.fileId)).toMatchObject({ newLines: 2, stockMoves: 2 });
+    // Three bottles by the code and two cartons of twelve by the taught name.
+    expect(await onHand(o, item)).toBe('-27');
+  });
+
+  it('stores nothing when a member skips the report, and nothing for a file that is no report or has rows it cannot read', async () => {
+    const o = await org();
+    const skipped = await read(o, report(row('S1', 'Đang giao', 'QC-1', 1)));
+    await execute(o, 'finance.marketplace.reject', { fileId: skipped.fileId }, o.member);
+    expect(await orderRows(o)).toEqual([]);
+    await expect(confirm(o, skipped.fileId)).rejects.toMatchObject({ code: 'MARKETPLACE_NOT_STAGED' });
+    // A generic sheet is not handled: the worker goes on to the other readers, and no run is recorded here.
+    const none = await read(o, buildXlsx([['nothing', 'here'], ['a', 'b']]));
+    expect(none.handled).toBe(false);
+    expect(await rows('SELECT 1 FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2', [o.orgId, none.fileId])).toEqual([]);
+    // A row with a quantity that is not one stops the file: a failed read that names the row, and nothing staged.
+    const bad = await read(o, report(row('B1', 'Đang giao', 'QC-1', 1), row('B2', 'Đang giao', 'QC-1', 0)));
+    expect(bad.handled).toBe(true);
+    const failed = (await rows<{ status: string; error: string }>('SELECT status, error FROM crove_kernel.extraction WHERE org_id = $1 AND file_id = $2 ORDER BY version DESC LIMIT 1', [o.orgId, bad.fileId]))[0];
+    expect(failed).toMatchObject({ status: 'failed', error: expect.stringContaining('dòng 4') });
+    expect(await orderRows(o)).toEqual([]);
+  });
+
+  it('keeps one entity\'s orders apart from another\'s and holds no buyer value in any stored row', async () => {
+    const o = await org();
+    const only = await read(o, report(row('E1', 'Đang giao', 'QC-1', 1)));
+    expect(only.handled).toBe(true);
+    await confirm(o, only.fileId);
+    const stored = await rows<{ t: string }>(
+      `SELECT (SELECT coalesce(jsonb_agg(to_jsonb(l)), '[]'::jsonb) FROM crove_finance.channel_order_line l WHERE l.org_id = $1)::text || (SELECT coalesce(jsonb_agg(to_jsonb(c)), '[]'::jsonb) FROM crove_finance.channel_order c WHERE c.org_id = $1)::text AS t`,
+      [o.orgId],
+    );
+    for (const value of Object.values(BUYER)) expect(stored[0]?.t).not.toContain(value);
+    // The audit rows and the activity of the file carry no buyer value either.
+    const audit = await rows<{ detail: unknown }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'finance.marketplace.confirm'`, [o.orgId]);
+    for (const value of Object.values(BUYER)) expect(JSON.stringify(audit)).not.toContain(value);
+    // Another org sees none of it.
+    const other = await org();
+    expect(await orderRows(other)).toEqual([]);
+    expect(await query(other, 'finance.marketplace.staged', {}, other.member)).toEqual([]);
+  });
+});
