@@ -2696,7 +2696,7 @@ suite('ads on PostgreSQL (#2217)', () => {
 
             it('runs a launch that needs attention again only when an owner or an admin asks, and reconciles what the earlier attempt left unsettled before it creates anything', async () => {
               const w = new SandboxAdWriter();
-              const { launch } = await queued('Chạy lại không trùng', { variants: [variant(1)] });
+              const { draft, launch } = await queued('Chạy lại không trùng', { variants: [variant(1)] });
               // The ad set is made at the platform and the answer is lost: the row stays unclear, and the launch is sent to a person.
               w.inject({ level: 'ad_set', when: 'after' });
               expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
@@ -2707,10 +2707,27 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await callAs(owner, 'ads/retryLaunch', { launchId: randomUUID(), idempotencyKey: key() })).status).toBe(404);
               expect(await callAs(adminAccount, 'ads/retryLaunch', { launchId: launch.id, idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchId: launch.id, requested: true } });
               expect(await launchNow(launch.id)).toMatchObject({ state: 'needs_attention', attempt: 1 });
+              expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({
+                launch: { id: launch.id, state: 'needs_attention', retryRequested: true, objects: [{ slot: 'campaign', level: 'campaign', effectiveStatus: null }] },
+              });
               expect((await events('ads.launch.queued', launch.id)).length).toBe(2);
               // The job takes the request: attempt two, and the ad set the first attempt may have made is found by its tag, never made again.
               expect(await run(w, launch.id)).toMatchObject({ ended: 'paused' });
               expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused', attempt: 2 });
+              expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({
+                launch: {
+                  id: launch.id,
+                  state: 'launching',
+                  step: 'paused',
+                  retryRequested: false,
+                  objects: [
+                    { slot: 'campaign', level: 'campaign', effectiveStatus: null },
+                    { slot: 'ad_set', level: 'ad_set', effectiveStatus: null },
+                    { slot: 'creative_1', level: 'creative', effectiveStatus: null },
+                    { slot: 'ad_1', level: 'ad', effectiveStatus: null },
+                  ],
+                },
+              });
               expect([...w.objects.values()].filter((o) => o.level === 'ad_set')).toHaveLength(1);
               expect([...w.objects.values()].map((o) => o.level).sort()).toEqual(['ad', 'ad_set', 'campaign', 'creative']);
               const rows = await calls(launch.id);

@@ -283,9 +283,11 @@ describe('a draft that is frozen', () => {
     endOn: '2026-11-16',
     commitUntil: '2026-11-16',
     stopReason: null,
+    retryRequested: false,
     createdAt: at,
     finishedAt: null,
     windDown: null,
+    objects: [],
     ...over,
   });
 
@@ -309,7 +311,7 @@ describe('a draft that is frozen', () => {
     expect(vi).toContain('Hủy và trả lại số tiền');
   });
 
-  // A launch that has started (W2-4a, #2296): owners and admins can stop it, and a stopped one says where the pause of its ads at the platform stands.
+  // A launch that has started (W2-4a..W2-4c, #2296): owners and admins can stop it or retry one that needs attention, and a stopped one says where the pause of its ads stands.
   it('a launch that has started says what stage it is at, offers owners and admins to stop it, and offers a member nothing', () => {
     const created = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }) }));
     expect(created).toContain('every ad is paused: nothing is spent yet.');
@@ -317,15 +319,75 @@ describe('a draft that is frozen', () => {
     const creating = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'ad_set' }) }) }));
     expect(creating).toContain('is being created at the ad platform');
     expect(creating).not.toContain('Cancel and release the amount');
+    const activating = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'activate' }) }) }));
+    expect(activating).toContain('is switching on its ads at the ad platform');
+    const live = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'live', step: 'live' }) }) }));
+    expect(live).toContain('This launch is live on the ad platform.');
+    expect(live).toContain('Stop this launch');
     const attention = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'needs_attention', step: 'campaign', stopReason: 'token_expired' }) }) }));
-    expect(attention).toContain('needs a person to look at it (token_expired)');
+    expect(attention).toContain('needs a person to look at it (the ad account connection expired; reconnect it on the Ads screen)');
+    expect(attention).toContain('Try again');
     expect(attention).toContain('Stop this launch');
-    const member = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }), canManage: false }));
-    expect(member).toContain('every ad is paused');
+    const retryQueued = render(
+      builder({ draft: draft({ status: 'approved', launch: launch({ state: 'needs_attention', step: 'campaign', stopReason: 'platform_refused', retryRequested: true }) }) }),
+    );
+    expect(retryQueued).toContain('A retry is queued and will run shortly.');
+    expect(retryQueued).not.toContain('Try again');
+    expect(retryQueued).toContain('Stop this launch');
+    const member = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'needs_attention', step: 'campaign', stopReason: 'token_expired' }) }), canManage: false }));
+    expect(member).toContain('the ad account connection expired');
+    expect(member).not.toContain('Try again');
     expect(member).not.toContain('Stop this launch');
-    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }) }), 'vi');
-    expect(vi).toContain('chưa tiêu đồng nào');
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'needs_attention', step: 'paused', stopReason: 'platform_refused' }) }) }), 'vi');
+    expect(vi).toContain('nền tảng quảng cáo từ chối yêu cầu');
+    expect(vi).toContain('Chạy lại');
     expect(vi).toContain('Dừng lần chạy này');
+  });
+
+  it('lists the objects created on the ad platform and shows whether they are active or paused', () => {
+    const objects = [
+      { slot: 'campaign', level: 'campaign' as const, externalId: 'cmp_101', name: 'Khai trương [ludy:0123456789]', effectiveStatus: null, reviewReason: null },
+      { slot: 'ad_set', level: 'ad_set' as const, externalId: 'set_202', name: 'Khai trương [ludy:0123456789]', effectiveStatus: null, reviewReason: null },
+      { slot: 'creative_1', level: 'creative' as const, externalId: 'cr_303', name: 'Khai trương #1 [ludy:0123456789]', effectiveStatus: null, reviewReason: null },
+      { slot: 'ad_1', level: 'ad' as const, externalId: 'ad_404', name: 'Khai trương #1 [ludy:0123456789]', effectiveStatus: 'PENDING_REVIEW', reviewReason: 'in_review' },
+    ];
+    const pausedHtml = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused', objects }) }) }));
+    expect(pausedHtml).toContain('Created on the ad platform');
+    expect(pausedHtml).toContain('Campaign: ');
+    expect(pausedHtml).toContain('cmp_101');
+    expect(pausedHtml).toContain('Ad set: ');
+    expect(pausedHtml).toContain('set_202');
+    expect(pausedHtml).toContain('PENDING_REVIEW (in_review)');
+    const liveHtml = render(
+      builder({
+        draft: draft({
+          status: 'approved',
+          launch: launch({
+            state: 'live',
+            step: 'live',
+            objects: objects.slice(0, 2),
+          }),
+        }),
+      }),
+    );
+    expect(liveHtml).toContain('Active');
+    const vi = render(
+      builder({
+        draft: draft({
+          status: 'approved',
+          launch: launch({
+            state: 'live',
+            step: 'live',
+            objects: objects.slice(0, 2),
+          }),
+        }),
+      }),
+      'vi',
+    );
+    expect(vi).toContain('Đã tạo trên nền tảng quảng cáo');
+    expect(vi).toContain('Chiến dịch: ');
+    expect(vi).toContain('Nhóm quảng cáo: ');
+    expect(vi).toContain('Đang bật');
   });
 
   it('a stopped launch says its commitment stays and where the pause of its ads stands: being paused, paused, or to be paused by hand', () => {
@@ -342,7 +404,7 @@ describe('a draft that is frozen', () => {
     const vi = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'stopped', stopReason: 'stopped', windDown: { state: 'gave_up', code: 'age' } }) }) }), 'vi');
     expect(vi).toContain('Hãy tự tạm dừng');
     const failed = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'failed', stopReason: 'flight_over', commitUntil: null }) }) }));
-    expect(failed).toContain('could not run (flight_over)');
+    expect(failed).toContain('could not run (the campaign dates have already ended)');
   });
 });
 

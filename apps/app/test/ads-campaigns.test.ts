@@ -16,6 +16,8 @@ import {
   formToPlan,
   isDirty,
   issueText,
+  launchObjectLevelText,
+  launchReasonText,
   maxSpendHint,
   maxSpendOf,
   parseCampaignsSearch,
@@ -288,5 +290,37 @@ describe.each(['en', 'vi'] as const)('the words in %s', (locale) => {
 
   it('show a code this build does not know as it is, so a newer server never hides a finding', () => {
     expect(issueText({ code: 'brand_new_rule', severity: 'error', field: null, params: {} }, t)).toBe('brand_new_rule');
+  });
+
+  it('say every launch stop or failure reason in plain words, and keep an unknown code visible', () => {
+    const reasons = [
+      'platform_refused',
+      'token_expired',
+      'cannot_run_ads',
+      'targeting_unknown',
+      'zone_unknown',
+      'page_inactive',
+      'cap_lowered',
+      'reconcile_unclear',
+      'object_missing',
+      'step_failed',
+      'page_required',
+      'objective_unsupported',
+      'currency_unsupported',
+      'media_unsupported',
+      'flight_over',
+      'plan_changed',
+    ];
+    for (const r of reasons) {
+      const text = launchReasonText(r, t);
+      expect(text, r).not.toBe(r);
+      expect(text, r).not.toMatch(/[{}]/);
+      expect(text.length, r).toBeGreaterThan(8);
+    }
+    expect(launchReasonText('future_server_reason', t)).toBe('future_server_reason');
+    expect(launchReasonText(null, t)).toBe('-');
+    for (const lvl of ['campaign', 'ad_set', 'creative', 'ad'] as const) {
+      expect(launchObjectLevelText(lvl, t)).not.toMatch(/[{}]/);
+    }
   });
 });

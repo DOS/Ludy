@@ -3,7 +3,21 @@
 // server stores, the format problems found before a save, the largest amount a plan can spend (the sentence the approver signs), what a Social post
 // pre-fills, and the words for what local validation and the AI coworker's refusals say. The server decides every rule (the checks against the dates,
 // the caps and the switches included); these only choose what to show and what to send. Money is a decimal string, never a number.
-import { ADS_GENDERS, ADS_PLAN_LIMITS, ADS_REQUEST_BRIEF_MAX, zAdsBudget, zLocalDate, type AdsAdVariant, type AdsCallToAction, type AdsCampaignPlanDraft, type AdsObjective, type AdsPlanIssue } from '@crove/kernel-contract';
+import {
+  ADS_GENDERS,
+  ADS_PLAN_LIMITS,
+  ADS_REQUEST_BRIEF_MAX,
+  zAdsBudget,
+  zLocalDate,
+  type AdsAdVariant,
+  type AdsCallToAction,
+  type AdsCampaignPlanDraft,
+  type AdsLaunchObjectLevel,
+  type AdsLaunchObjectView,
+  type AdsLaunchView,
+  type AdsObjective,
+  type AdsPlanIssue,
+} from '@crove/kernel-contract';
 import type { Translate } from '../i18n/runtime.ts';
 import { fromUnits, toUnits } from './decimal.ts';
 import { monthLabel } from './period-lock.ts';
@@ -430,5 +444,99 @@ export function problemText(problem: FormProblem, t: Translate): string {
       return t('ads.campaigns.problem.linkFormat');
     case 'variantIncomplete':
       return t('ads.campaigns.problem.variantIncomplete');
+  }
+}
+
+// Plain words for why a launch needs attention or failed (W2-4c, #2296). Any newer server code not yet listed falls back to the code itself so nothing is hidden.
+export function launchReasonText(reason: string | null, t: Translate): string {
+  switch (reason) {
+    case 'platform_refused':
+      return t('ads.campaigns.launchReason.platform_refused');
+    case 'token_expired':
+      return t('ads.campaigns.launchReason.token_expired');
+    case 'cannot_run_ads':
+      return t('ads.campaigns.launchReason.cannot_run_ads');
+    case 'targeting_unknown':
+      return t('ads.campaigns.launchReason.targeting_unknown');
+    case 'zone_unknown':
+      return t('ads.campaigns.launchReason.zone_unknown');
+    case 'page_inactive':
+      return t('ads.campaigns.launchReason.page_inactive');
+    case 'cap_lowered':
+      return t('ads.campaigns.launchReason.cap_lowered');
+    case 'reconcile_unclear':
+      return t('ads.campaigns.launchReason.reconcile_unclear');
+    case 'object_missing':
+      return t('ads.campaigns.launchReason.object_missing');
+    case 'step_failed':
+      return t('ads.campaigns.launchReason.step_failed');
+    case 'page_required':
+      return t('ads.campaigns.launchReason.page_required');
+    case 'objective_unsupported':
+      return t('ads.campaigns.launchReason.objective_unsupported');
+    case 'currency_unsupported':
+      return t('ads.campaigns.launchReason.currency_unsupported');
+    case 'media_unsupported':
+      return t('ads.campaigns.launchReason.media_unsupported');
+    case 'flight_over':
+      return t('ads.campaigns.launchReason.flight_over');
+    case 'plan_changed':
+      return t('ads.campaigns.launchReason.plan_changed');
+    default:
+      return reason ?? '-';
+  }
+}
+
+export function launchObjectLevelText(level: AdsLaunchObjectLevel, t: Translate): string {
+  switch (level) {
+    case 'campaign':
+      return t('ads.campaigns.objectLevel.campaign');
+    case 'ad_set':
+      return t('ads.campaigns.objectLevel.ad_set');
+    case 'creative':
+      return t('ads.campaigns.objectLevel.creative');
+    case 'ad':
+      return t('ads.campaigns.objectLevel.ad');
+  }
+}
+
+// What status to show for a platform object created by a launch: if the platform's own status has been synced (`effectiveStatus`), show that (and any review reason);
+// otherwise derive from the launch state (every object is created paused until the launch is live).
+export function launchObjectStatusText(obj: AdsLaunchObjectView, launch: AdsLaunchView, t: Translate): string {
+  if (obj.effectiveStatus !== null) {
+    const low = obj.effectiveStatus.toLowerCase();
+    const base =
+      low === 'active'
+        ? t('ads.campaigns.objectStatus.active')
+        : low === 'paused'
+          ? t('ads.campaigns.objectStatus.paused')
+          : low === 'archived'
+            ? t('ads.campaigns.objectStatus.archived')
+            : obj.effectiveStatus;
+    return obj.reviewReason ? `${base} (${obj.reviewReason})` : base;
+  }
+  if (launch.state === 'live' && obj.level !== 'creative') return t('ads.campaigns.objectStatus.active');
+  return t('ads.campaigns.objectStatus.paused');
+}
+
+export function launchStateBadge(
+  launch: AdsLaunchView,
+  t: Translate,
+): { label: string; variant: 'success' | 'warning' | 'destructive' | 'outline' } {
+  switch (launch.state) {
+    case 'live':
+      return { label: t('ads.campaigns.launchState.live'), variant: 'success' };
+    case 'launching':
+      return { label: launch.step === 'paused' ? t('ads.campaigns.launchState.paused') : t('ads.campaigns.launchState.launching'), variant: 'outline' };
+    case 'needs_attention':
+      return { label: t('ads.campaigns.launchState.needs_attention'), variant: 'warning' };
+    case 'failed':
+      return { label: t('ads.campaigns.launchState.failed'), variant: 'destructive' };
+    case 'stopped':
+      return { label: t('ads.campaigns.launchState.stopped'), variant: 'outline' };
+    case 'cancelled':
+      return { label: t('ads.campaigns.launchState.cancelled'), variant: 'outline' };
+    case 'queued':
+      return { label: t('ads.campaigns.launchState.queued'), variant: 'outline' };
   }
 }
