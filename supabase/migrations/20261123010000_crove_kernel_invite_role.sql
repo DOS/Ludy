@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2611, ADR-0049 decision 10's screens): an owner invites someone with a department role, one pick
 -- beside the base role, granted when the invite is accepted. Idempotent; applied files stay untouched.
 --
@@ -237,6 +238,7 @@ END $$;
 -- ---------------------------------------------------------------------------
 -- What the invitee sees: the role's key, never its permissions
 -- ---------------------------------------------------------------------------
+-- crove:contract adr=0049
 DROP FUNCTION IF EXISTS crove_kernel.invite_peek(uuid, text, boolean);
 CREATE FUNCTION crove_kernel.invite_peek(p_user_id uuid, p_token text, p_upstream boolean)
 RETURNS TABLE (org_name text, role text, role_key text, invited_by_email text, invited_by_name text, expires_at timestamptz)
