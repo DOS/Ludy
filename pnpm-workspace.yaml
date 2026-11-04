@@ -46,7 +46,7 @@ catalog:
   kysely: 0.29.6
   lucide-react: 1.56.0
   next: 16.4.3
-  nodemailer: 10.1.1
+  nodemailer: 10.1.4
   oxlint: 1.88.0
   pg-boss: 12.38.0
   pg: 8.23.1
