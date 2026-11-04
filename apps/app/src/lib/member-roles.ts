@@ -21,3 +21,9 @@ export function assignableRoles(catalog: readonly CatalogRole[], held: readonly 
     return !limited && !held.some((a) => a.roleKey === role.key);
   });
 }
+
+// The department roles an owner may send with an invite (#2611): the catalog's org-wide roles, never an entity role (that is
+// the entity toggle), and, for a viewer, none that grants a permission (the kernel refuses it: ROLE_PRIVILEGED_FOR_VIEWER).
+export function inviteRoleChoices(catalog: readonly CatalogRole[], baseRole: string): CatalogRole[] {
+  return catalog.filter((role) => !roleNeedsEntity(role) && !(baseRole === 'viewer' && role.permissions.length > 0));
+}

@@ -419,6 +419,9 @@ export const zInviteCreated = z.object({
   inviteId: zId,
   email: z.string(),
   role: zInviteRole,
+  // The department role the invitee gets on accepting (#2611), or null: a key of the role catalog (roles.ts), a plain string here so
+  // this file does not import roles.ts.
+  roleKey: z.string().nullable(),
   expiresAt: z.string(),
   acceptPath: z.string(),
 });
@@ -438,12 +441,16 @@ export const zInvite = z.object({
   mail: zInviteMailStatus.nullable(),
   // The legal entities the invitee will be limited to (#1281), or null for an invite to the whole org.
   legalEntityIds: z.array(zId).nullable(),
+  // The department role the invitee gets on accepting (#2611), or null.
+  roleKey: z.string().nullable(),
 });
 
 // What the invitee consents to before accepting.
 export const zInvitePreview = z.object({
   orgName: z.string(),
   role: zInviteRole,
+  // The department role the invite carries (#2611), or null.
+  roleKey: z.string().nullable(),
   invitedBy: z.string(),
   expiresAt: z.string(),
 });

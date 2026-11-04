@@ -35,6 +35,7 @@ function Shell({ children }: { children: ReactNode }) {
 export function InvitePage() {
   const navigate = useNavigate();
   const t = useTranslations('invite');
+  const root = useTranslations();
   const tc = useTranslations('common');
   const f = useFormat();
   const token = pendingInvite();
@@ -106,10 +107,11 @@ export function InvitePage() {
       <ScreenTitle name={t('title', { org: invite.orgName })} />
       <h1 className="mt-6 text-lg font-semibold text-foreground">{t('title', { org: invite.orgName })}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        {t.rich('body', {
+        {t.rich(invite.roleKey ? 'bodyWithDepartment' : 'body', {
           invitedBy: invite.invitedBy,
           org: invite.orgName,
           role: t(`role.${invite.role}`),
+          department: invite.roleKey ? root(`memberRoles.roles.${invite.roleKey}`) : '',
           strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
         })}
       </p>
