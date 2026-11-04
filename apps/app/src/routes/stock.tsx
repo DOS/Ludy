@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Stock, the "Hàng hóa" screen (#2512, ADR-0045): the items of goods with what is on hand (the sum of their moves, a negative one shown as a warning), the goods lines of posted
 // invoices that matched no item and moved nothing yet ("Chưa gán hàng"), assigned here to an item (which also teaches the item that name), and each item's moves, which are
-// never edited: a correction is a reversing move. Stock only mirrors the books; nothing here changes an entry.
+// never edited: a correction is a reversing move. Stock only mirrors the books; nothing here changes an entry. The imported marketplace orders (#2515) list below the report, and
+// their shipped lines that named no item wait next to the invoice ones, assigned the same way.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
@@ -15,6 +16,7 @@ import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
+import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -371,6 +373,7 @@ export function StockPage() {
         </section>
       )}
       {unassigned.error && <ErrorText>{errorMessage(unassigned.error)}</ErrorText>}
+      <MarketplaceUnassigned legalEntityId={entity.legalEntityId} ready={entity.ready} items={list} canWrite={canWrite} />
 
       <div className="mb-2 flex items-center justify-between gap-2">
         <h2 className="text-base font-medium text-foreground">{t('items')}</h2>
@@ -430,6 +433,7 @@ export function StockPage() {
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
       <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} />
     </>
   );
 }
