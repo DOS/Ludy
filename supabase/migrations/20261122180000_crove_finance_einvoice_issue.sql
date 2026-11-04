@@ -30,6 +30,10 @@ ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS error_code tex
 ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS submitted_at timestamptz;
 ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS next_check_at timestamptz;
 ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS check_attempts integer NOT NULL DEFAULT 0 CHECK (check_attempts >= 0);
+-- The channel connection the draft was SENT through, written by the job at its first send and never changed (a clean slate empties it with the key): asking about the invoice,
+-- polling it and fetching its files go through this connection and no other, so a second connection of the entity (another seller tax code) can never answer "unknown" for
+-- an invoice the first one holds. A plain id, no foreign key: the connection may be gone, and the draft is then held, never released and never sent again.
+ALTER TABLE crove_finance.einvoice_draft ADD COLUMN IF NOT EXISTS channel_connection_id uuid;
 
 DO $$
 BEGIN
@@ -196,7 +200,7 @@ DECLARE
   v_system boolean := (SELECT crove_kernel.ctx_actor_type()) = 'system';
   v_move text;
   -- Everything a transition may touch besides the state: compared as a whole, with the columns that have their own rule taken out below.
-  v_free text[] := ARRAY['state', 'provider_ref', 'idempotency_key', 'updated_at', 'issued_number', 'issued_at', 'authority_code', 'signed_file_id', 'pdf_file_id', 'error_code', 'submitted_at', 'next_check_at', 'check_attempts'];
+  v_free text[] := ARRAY['state', 'provider_ref', 'idempotency_key', 'updated_at', 'issued_number', 'issued_at', 'authority_code', 'signed_file_id', 'pdf_file_id', 'error_code', 'submitted_at', 'next_check_at', 'check_attempts', 'channel_connection_id'];
 BEGIN
   IF TG_OP = 'UPDATE'
      AND pg_catalog.to_jsonb(NEW) - ARRAY['created_by', 'buyer_party_id', 'signed_file_id', 'pdf_file_id'] = pg_catalog.to_jsonb(OLD) - ARRAY['created_by', 'buyer_party_id', 'signed_file_id', 'pdf_file_id']
@@ -229,7 +233,7 @@ BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.state <> 'draft' OR NEW.provider_ref IS NOT NULL
        OR NEW.issued_number IS NOT NULL OR NEW.issued_at IS NOT NULL OR NEW.authority_code IS NOT NULL OR NEW.signed_file_id IS NOT NULL OR NEW.pdf_file_id IS NOT NULL
-       OR NEW.error_code IS NOT NULL OR NEW.submitted_at IS NOT NULL OR NEW.next_check_at IS NOT NULL OR NEW.check_attempts <> 0 THEN
+       OR NEW.error_code IS NOT NULL OR NEW.submitted_at IS NOT NULL OR NEW.next_check_at IS NOT NULL OR NEW.check_attempts <> 0 OR NEW.channel_connection_id IS NOT NULL THEN
       RAISE EXCEPTION '%', CASE WHEN v_system THEN 'EINVOICE_STATE' ELSE 'EINVOICE_NOT_DRAFT' END USING ERRCODE = '42501';
     END IF;
     -- The key is the database's, never a person's.
@@ -250,6 +254,11 @@ BEGIN
          OR OLD.submitted_at IS NOT NULL OR NEW.submitted_at IS NULL OR NEW.error_code IS NOT NULL OR NEW.series_id IS NULL THEN
         RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
       END IF;
+      -- The role's identity is not the approval: the same approved execution the definer tests, for this draft and its total, is required here too, so a session that can act as
+      -- the role still cannot move a draft to `submitting` without the approval the database can see.
+      IF NOT crove_finance.approved_execution('finance.einvoice.issue', pg_catalog.jsonb_build_object('draftId', NEW.id::text), NEW.total) THEN
+        RAISE EXCEPTION 'EINVOICE_FIELD_LOCKED' USING ERRCODE = '42501';
+      END IF;
       RETURN NEW;
     END IF;
     IF OLD.state <> 'draft' THEN
@@ -258,7 +267,8 @@ BEGIN
     IF NEW.state IS DISTINCT FROM OLD.state OR NEW.provider_ref IS DISTINCT FROM OLD.provider_ref OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
        OR NEW.issued_number IS DISTINCT FROM OLD.issued_number OR NEW.issued_at IS DISTINCT FROM OLD.issued_at OR NEW.authority_code IS DISTINCT FROM OLD.authority_code
        OR NEW.signed_file_id IS DISTINCT FROM OLD.signed_file_id OR NEW.pdf_file_id IS DISTINCT FROM OLD.pdf_file_id OR NEW.error_code IS DISTINCT FROM OLD.error_code
-       OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at OR NEW.next_check_at IS DISTINCT FROM OLD.next_check_at OR NEW.check_attempts IS DISTINCT FROM OLD.check_attempts THEN
+       OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at OR NEW.next_check_at IS DISTINCT FROM OLD.next_check_at OR NEW.check_attempts IS DISTINCT FROM OLD.check_attempts
+       OR NEW.channel_connection_id IS DISTINCT FROM OLD.channel_connection_id THEN
       RAISE EXCEPTION 'EINVOICE_FIELD_LOCKED' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
@@ -281,10 +291,12 @@ BEGIN
       IF NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.provider_ref IS DISTINCT FROM OLD.provider_ref
          OR NEW.issued_number IS DISTINCT FROM OLD.issued_number OR NEW.issued_at IS DISTINCT FROM OLD.issued_at OR NEW.authority_code IS DISTINCT FROM OLD.authority_code
          OR NEW.signed_file_id IS DISTINCT FROM OLD.signed_file_id OR NEW.pdf_file_id IS DISTINCT FROM OLD.pdf_file_id OR NEW.submitted_at IS DISTINCT FROM OLD.submitted_at
-         OR NEW.next_check_at IS DISTINCT FROM OLD.next_check_at OR NEW.check_attempts IS DISTINCT FROM OLD.check_attempts THEN
+         OR NEW.next_check_at IS DISTINCT FROM OLD.next_check_at OR NEW.check_attempts IS DISTINCT FROM OLD.check_attempts OR NEW.channel_connection_id IS DISTINCT FROM OLD.channel_connection_id THEN
         RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
       END IF;
-    ELSIF pg_catalog.to_jsonb(NEW) - ARRAY['updated_at', 'error_code', 'next_check_at', 'check_attempts'] <> pg_catalog.to_jsonb(OLD) - ARRAY['updated_at', 'error_code', 'next_check_at', 'check_attempts'] THEN
+    ELSIF pg_catalog.to_jsonb(NEW) - ARRAY['updated_at', 'error_code', 'next_check_at', 'check_attempts', 'channel_connection_id'] <> pg_catalog.to_jsonb(OLD) - ARRAY['updated_at', 'error_code', 'next_check_at', 'check_attempts', 'channel_connection_id']
+          -- The connection of the first send is set once, from empty.
+          OR (OLD.channel_connection_id IS NOT NULL AND NEW.channel_connection_id IS DISTINCT FROM OLD.channel_connection_id) THEN
       RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
     END IF;
     RETURN NEW;
@@ -299,6 +311,11 @@ BEGIN
   IF v_move = 'failed>draft' AND (OLD.error_code IS NULL OR OLD.error_code <> ALL (ARRAY['PROVIDER_NOT_READY', 'TAX_CODE_NEEDED', 'SELLER_TAX_CODE_CHANGED', 'DRAFT_MISMATCH', 'CREDENTIALS', 'PROVIDER_UNAVAILABLE'])) THEN
     RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
   END IF;
+  -- And only when the ledger agrees nothing was sent: the issue call of the old key is absent or failed, never started, ambiguous or succeeded.
+  IF v_move = 'failed>draft' AND EXISTS (
+       SELECT 1 FROM crove_kernel.external_call c WHERE c.org_id = OLD.org_id AND c.key = 'einvoice:issue:' || OLD.idempotency_key::text AND c.state <> 'failed') THEN
+    RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
+  END IF;
   -- The content stays as it was.
   IF pg_catalog.to_jsonb(NEW) - v_free <> pg_catalog.to_jsonb(OLD) - v_free THEN
     RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
@@ -309,7 +326,8 @@ BEGIN
      OR (OLD.issued_at IS NOT NULL AND NEW.issued_at IS DISTINCT FROM OLD.issued_at)
      OR (OLD.authority_code IS NOT NULL AND NEW.authority_code IS DISTINCT FROM OLD.authority_code)
      OR (OLD.signed_file_id IS NOT NULL AND NEW.signed_file_id IS DISTINCT FROM OLD.signed_file_id)
-     OR (OLD.pdf_file_id IS NOT NULL AND NEW.pdf_file_id IS DISTINCT FROM OLD.pdf_file_id) THEN
+     OR (OLD.pdf_file_id IS NOT NULL AND NEW.pdf_file_id IS DISTINCT FROM OLD.pdf_file_id)
+     OR (OLD.channel_connection_id IS NOT NULL AND NEW.channel_connection_id IS DISTINCT FROM OLD.channel_connection_id) THEN
     IF v_move NOT IN ('rejected>draft', 'failed>draft') THEN
       RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
     END IF;
@@ -318,7 +336,7 @@ BEGIN
     -- A fresh key and a clean slate: no reference, number, time, authority code, file, submit time, next check or attempt of the rejected try (the error code stays, so
     -- the person sees why it was rejected until the next issue clears it).
     IF NEW.idempotency_key = OLD.idempotency_key OR NEW.provider_ref IS NOT NULL OR NEW.issued_number IS NOT NULL OR NEW.issued_at IS NOT NULL OR NEW.authority_code IS NOT NULL
-       OR NEW.signed_file_id IS NOT NULL OR NEW.pdf_file_id IS NOT NULL OR NEW.submitted_at IS NOT NULL OR NEW.next_check_at IS NOT NULL OR NEW.check_attempts <> 0 THEN
+       OR NEW.signed_file_id IS NOT NULL OR NEW.pdf_file_id IS NOT NULL OR NEW.submitted_at IS NOT NULL OR NEW.next_check_at IS NOT NULL OR NEW.check_attempts <> 0 OR NEW.channel_connection_id IS NOT NULL THEN
       RAISE EXCEPTION 'EINVOICE_STATE' USING ERRCODE = '42501';
     END IF;
   ELSE

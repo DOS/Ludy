@@ -392,6 +392,44 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
   });
 
+  it('asks about an invoice only through the connection it was sent through, whatever the entity\'s tax code is later, and holds it when that connection is gone', async () => {
+    const o = await org();
+    const connectionOf = async (draftId: string) => (await rows<{ channel_connection_id: string | null }>('SELECT channel_connection_id FROM crove_finance.einvoice_draft WHERE org_id = $1 AND id = $2', [o.orgId, draftId]))[0]?.channel_connection_id;
+    const first = (await rows<{ channel_connection_id: string }>('SELECT channel_connection_id FROM crove_finance.einvoice_connection WHERE org_id = $1', [o.orgId]))[0]?.channel_connection_id;
+    // A second connection of the entity under another seller tax code (the database checks a connection's code against the entity's when it is made).
+    await execute(o, 'kernel.org.set_tax_code', { taxCode: OTHER_TAX_CODE });
+    const second = randomUUID();
+    await admin(async (c) => {
+      await c.query('INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, connected_by) VALUES ($1, $2, $3, $4, $5, $6)', [o.orgId, second, 'einvoice_sandbox', `acct-${second.slice(0, 8)}`, 'Hóa đơn thử 2', o.owner]);
+      await c.query(`INSERT INTO crove_finance.einvoice_connection (org_id, channel_connection_id, provider, seller_tax_code) VALUES ($1, $2, 'einvoice_sandbox', $3)`, [o.orgId, second, OTHER_TAX_CODE]);
+    });
+    await execute(o, 'kernel.org.set_tax_code', { taxCode: SELLER_TAX_CODE });
+    const draftId = await submitted(o);
+    const { provider, control } = createSandboxEInvoiceProvider();
+    control.script('lose_answer');
+    // The first send goes through the connection that matches the entity's tax code, which is written on the draft, with the call.
+    expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'submitting' });
+    expect(await connectionOf(draftId)).toBe(first);
+    const key = (await draftRow(o, draftId)).idempotency_key;
+    // The tax code is corrected to the other connection's: asking about the invoice still goes through the connection it was sent through, not the one that matches now.
+    await execute(o, 'kernel.org.set_tax_code', { taxCode: OTHER_TAX_CODE });
+    await due(o, draftId);
+    const begin = () => worker.execute<{ action: string; reason?: string; connectionId?: string }>('finance.einvoice.job_begin', { draftId }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
+    expect(await begin()).toMatchObject({ action: 'ask', connectionId: first });
+    // The connection it was sent through is no longer usable: the draft is held with the code, asked about again later, and neither released with a new key nor sent through the other.
+    await rows("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE org_id = $1 AND id = $2", [o.orgId, first]);
+    await due(o, draftId);
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'submitting', error_code: 'PROVIDER_NOT_READY', idempotency_key: key });
+    expect(await connectionOf(draftId)).toBe(first);
+    expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
+    // Past the day it is for a person to look at, still never released or sent again.
+    await fixture("UPDATE crove_finance.einvoice_draft SET submitted_at = pg_catalog.now() - interval '25 hours', next_check_at = pg_catalog.now() - interval '1 second' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    expect(await run(o, draftId, provider)).toEqual({ action: 'none', state: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'failed', error_code: 'STATUS_UNKNOWN', idempotency_key: key });
+    expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
+  });
+
   it('leaves a send that started a moment ago alone (it is in flight) and asks about it once it is old enough', async () => {
     const o = await org();
     const draftId = await submitted(o);

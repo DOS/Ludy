@@ -109,7 +109,7 @@ async function releaseDraft(ctx: CommandContext, draft: DraftRow, code: string):
     .execute();
   await ctx.trx
     .updateTable('crove_finance.einvoice_draft')
-    .set({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0, updated_at: ctx.now })
+    .set({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0, channel_connection_id: null, updated_at: ctx.now })
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', draft.id)
     .execute();
@@ -139,9 +139,10 @@ async function holdDraft(ctx: CommandContext, draft: DraftRow, code: string): Pr
   return draft.state;
 }
 
-// The connection a draft issues through: the entity's own connection to the series' provider, active, and, for a first send, with the seller's tax code the entity has NOW (the
-// database checked it only when the connection was made).
-export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, 'legal_entity_id' | 'series_id'>, first: boolean) {
+// The connection a draft issues through. For a first send: the entity's own connection to the series' provider, active, with the seller's tax code the entity has NOW (the database
+// checked it only when the connection was made). For everything after (asking about the invoice, polling it, fetching its files, sending the same request again): the connection the
+// first send went through, written on the draft, and no other; when that one is gone or not active the answer is PROVIDER_NOT_READY and the draft is held, never sent through another.
+export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, 'legal_entity_id' | 'series_id' | 'channel_connection_id'>, first: boolean) {
   const series = draft.series_id
     ? await ctx.trx.selectFrom('crove_finance.einvoice_series').select(['provider', 'template_no', 'symbol']).where('org_id', '=', ctx.orgId).where('id', '=', draft.series_id).executeTakeFirst()
     : undefined;
@@ -155,12 +156,14 @@ export async function connectionFor(ctx: CommandContext, draft: Pick<DraftRow, '
     .where('c.legal_entity_id', '=', draft.legal_entity_id)
     .where('c.provider', '=', `einvoice_${series.provider}`)
     .where('cc.status', '=', 'active')
+    .$if(!first, (qb) => qb.where('c.channel_connection_id', '=', draft.channel_connection_id ?? '00000000-0000-0000-0000-000000000000'))
     .orderBy('c.seller_tax_code')
     .execute();
   if (!entity || rows.length === 0) return { code: EINVOICE_ERROR_CODES.providerNotReady } as const;
   // An entity with no tax code of its own issues nothing: the connection's code was typed for the connection alone (the org's tax code is set in Settings).
   if (first && !entity.tax_code) return { code: EINVOICE_ERROR_CODES.taxCodeNeeded } as const;
-  const chosen = first ? rows.find((r) => r.seller_tax_code === entity.tax_code) : (rows.find((r) => r.seller_tax_code === entity.tax_code) ?? rows[0]);
+  // The pinned connection stands whatever the entity's tax code is now: it is the account the invoice was issued under.
+  const chosen = first ? rows.find((r) => r.seller_tax_code === entity.tax_code) : rows[0];
   if (!chosen) return { code: EINVOICE_ERROR_CODES.sellerTaxCodeChanged } as const;
   return {
     connectionId: chosen.channel_connection_id,
@@ -250,6 +253,14 @@ export const einvoiceJobBegin = defineCommand({
     }
     const provider = target.channelProvider;
     if (action === 'issue') {
+      // The connection of the first send is written with the call, in the same transaction, and never changes: every later question goes through it.
+      await ctx.trx
+        .updateTable('crove_finance.einvoice_draft')
+        .set({ channel_connection_id: target.connectionId, updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', draft.id)
+        .where('channel_connection_id', 'is', null)
+        .execute();
       await startCall(ctx, { key: issueKey(draft.idempotency_key), target: provider, step: 'issue', safety: 'reconcile_only' });
     } else if (action === 'ask') {
       // The call was started and never answered: it is ambiguous now, and what is asked next is the provider's record under the key.
@@ -339,7 +350,7 @@ export const einvoiceJobRecord = defineCommand({
         const code = rejectionCode(result.code);
         // Rejected, and at once back to a draft with a new key, no reference and a clean slate: the person fixes it and issues again; the code stays on the draft.
         await update({ state: 'rejected', provider_ref: draft.provider_ref ?? result.ref, error_code: code, next_check_at: null });
-        await update({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0 });
+        await update({ state: 'draft', idempotency_key: sql`pg_catalog.gen_random_uuid()`, provider_ref: null, submitted_at: null, next_check_at: null, check_attempts: 0, channel_connection_id: null });
         if (input.step !== 'poll') await endCall(ctx, issueCall, { state: 'failed', kind: 'bad_request', code });
         if (input.step !== 'issue') await closeStatus({ state: 'succeeded' });
         ctx.audit({ draftId: draft.id, state: 'rejected', code });
@@ -372,18 +383,16 @@ export const einvoiceJobRecord = defineCommand({
           .returning('id')
           .executeTakeFirst();
         if (!again) return { recorded: false, state: draft.state };
-        // The provider has nothing under the key, so nothing was sent: what stops the send now returns the draft to a draft.
-        const target = await connectionFor(ctx, draft, true);
+        // The same request goes out again only through the connection of the first send. When that one is no longer usable, or the stored draft no longer computes to what was sent,
+        // the draft is held for a person (never released, never sent through another connection): the provider said it knows nothing of the key, but it was asked through the
+        // account the invoice would have been issued under, and a day without a way to ask again ends in STATUS_UNKNOWN.
+        const target = await connectionFor(ctx, draft, false);
         if ('code' in target) {
-          await endCall(ctx, issueCall, { state: 'failed', kind: 'permission', code: target.code });
-          await releaseDraft(ctx, draft, target.code);
-          return { recorded: true, state: 'draft' };
+          return { recorded: true, state: await holdDraft(ctx, draft, target.code) };
         }
         const { request, consistent } = await requestFor(ctx, draft, target);
         if (!consistent) {
-          await endCall(ctx, issueCall, { state: 'failed', kind: 'bad_request', code: EINVOICE_ERROR_CODES.draftMismatch });
-          await releaseDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch);
-          return { recorded: true, state: 'draft' };
+          return { recorded: true, state: await holdDraft(ctx, draft, EINVOICE_ERROR_CODES.draftMismatch) };
         }
         return { recorded: true, state: draft.state, resend: request };
       }

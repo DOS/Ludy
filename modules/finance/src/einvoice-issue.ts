@@ -73,7 +73,7 @@ export const einvoicePrepareIssue = defineCommand({
       throw new DomainError('EINVOICE_DRAFT_MISMATCH', 409, 'Số tiền của bản nháp không khớp với các dòng của nó; hãy lưu lại bản nháp');
     }
     // The entity has a working connection to the series' provider under the tax code it has now, so nothing is asked of an approver that the job could not send.
-    const ready = await connectionFor(ctx, { legal_entity_id: draft.legalEntityId, series_id: draft.seriesId }, true);
+    const ready = await connectionFor(ctx, { legal_entity_id: draft.legalEntityId, series_id: draft.seriesId, channel_connection_id: null }, true);
     if ('code' in ready) {
       if (ready.code === EINVOICE_ERROR_CODES.taxCodeNeeded) throw new DomainError('EINVOICE_TAX_CODE_NEEDED', 422, 'Hãy nhập mã số thuế của công ty trong Cài đặt trước khi phát hành hóa đơn');
       if (ready.code === EINVOICE_ERROR_CODES.sellerTaxCodeChanged) throw new DomainError('EINVOICE_TAX_CODE_MISMATCH', 422, 'Mã số thuế của công ty đã đổi so với kết nối nhà cung cấp; hãy kết nối lại với mã số thuế mới');

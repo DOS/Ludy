@@ -816,6 +816,7 @@ export interface FinanceEinvoiceDraftTable {
   submitted_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   next_check_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   check_attempts: Generated<number>;
+  channel_connection_id: string | null;
 }
 
 /** crove_finance.einvoice_series */
