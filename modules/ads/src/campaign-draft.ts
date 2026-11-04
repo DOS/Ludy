@@ -27,6 +27,9 @@ import { todayIn } from './domain.ts';
 import { cancelQueuedLaunches, launchesOfDrafts, lockedLaunch, queueLaunch, refuseOverCaps } from './launch-ledger.ts';
 import { currentSetting, lockedSetting, onlyApproved, refuseOpenRequest } from './write.ts';
 
+// The event the approval writes for the launch job (and the sweep writes again for a launch that waited): the relay turns it into a job of the queue ads-launch.
+export const ADS_LAUNCH_QUEUED = 'ads.launch.queued';
+
 const DRAFTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
 
@@ -135,6 +138,14 @@ async function planContext(ctx: Db, account: { id: string; currency: string | nu
     launchesBlocked: base.launchesBlocked,
     pageOk,
   };
+}
+
+// The complete plan of a draft and the Page connection it names, as the launch job runs them (null when the draft is gone or no longer holds a complete plan).
+export async function draftPlanOf(ctx: Db, draftId: string): Promise<{ plan: NonNullable<ReturnType<typeof completePlan>>; pageConnectionId: string | null } | null> {
+  const [row] = await rows(ctx, { id: draftId }).execute();
+  if (!row) return null;
+  const plan = completePlan(planOf(row));
+  return plan ? { plan, pageConnectionId: row.page_connection_id } : null;
 }
 
 export async function accountOf(ctx: Db, adAccountId: string, lock = false) {
@@ -368,7 +379,9 @@ export const adsCampaignPrepareLaunch = defineCommand({
 // What an approval runs (access 'proposal': only through kernel.proposal.approve, as the approver, in the approving transaction). In W1 it marks the plan
 // approved and nothing else: W2 queues the launch. It re-checks everything the request was made under, because the proposal may be old.
 export const adsCampaignLaunch = defineCommand({
-  name: ADS_CAMPAIGN_LAUNCH_COMMAND,
+  // A literal, not the contract's constant (which equals it): the job-egress invariant reads the name of every command whose events feed a queue with egress from
+  // the source, and this command's event (ads.launch.queued) now feeds the launch queue.
+  name: 'ads.campaign.launch',
   input: z.object({ payload: zAdsCampaignLaunchPayload, acceptFailedChecks: z.boolean().default(false) }),
   risk: 'R3',
   sideEffect: 'financial',
@@ -432,6 +445,9 @@ export const adsCampaignLaunch = defineCommand({
       amount: payload.amount,
       approverId: ctx.actor.userId,
     });
+    // The launch job's trigger (W2-3): ids only. The relay turns it into a job of the queue ads-launch where this deployment has a writer; a lost event is queued
+    // again by the sweep (crove_ads.launch_requeue).
+    await ctx.emit(ADS_LAUNCH_QUEUED, { launchId: launch.id, adAccountId: account.id });
     ctx.audit({ draftId: row.id, launchId: launch.id, adAccountId: account.id, maxSpend: payload.amount, currency: payload.currency, days: payload.days, planHash: payload.planHash, revision: row.revision });
     return { draftId: row.id, launchId: launch.id, approved: true, maxSpend: payload.amount, currency: payload.currency };
   },
