@@ -323,6 +323,8 @@ export interface AdsAdLaunchTable {
   wind_down_tries: ColumnType<number, number | undefined, NotGranted>;
   wind_down_next_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   wind_down_code: ColumnType<string | null, string | null, NotGranted>;
+  retry_requested_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  retry_requested_by: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_ads.ad_object */

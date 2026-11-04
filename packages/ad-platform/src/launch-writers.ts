@@ -4,8 +4,12 @@
 // not name, not even by a cast: no `revokeToken`, and no `setStatus`, which is the pause and archive of W2-4 and the activation that W2-4 adds. The four
 // creates leave every object PAUSED, so the launch job cannot spend: a launch ends W2-3 as objects created, paused. A test pins both the view and the source of
 // this file.
+import { activatorOf, type AdActivator } from './activators.ts';
+import { MetaAdActivator } from './meta-activate.ts';
+import { META_WRITE_PROVIDER } from './meta-write-connector.ts';
 import { MetaAdWriter } from './meta-write.ts';
 import { pauserOf, type AdPauser } from './pausers.ts';
+import { SandboxAdActivator } from './sandbox-activate.ts';
 import { sandboxAdWriter, type SandboxAdWriter } from './sandbox-write.ts';
 import type { AdWriter } from './writer.ts';
 
@@ -61,4 +65,20 @@ export function adPausers(options: LaunchWritersOptions): Readonly<Record<string
     pausers[meta.provider] = pauserOf(meta);
   }
   return Object.freeze(pausers);
+}
+
+// The activators of a deployment (W2-4b), by the provider id of the write connection they work with: the frozen view the activation job is given (activators.ts), apart
+// from the writers above, so the view that creates cannot switch anything on. Meta's is built with the same switch as its writer (ADS_LIVE_LAUNCH), with the secret of the
+// same write app. A provider without one has no entry: its launches stay paused until a deployment that has one runs them. The map is frozen too.
+export function adActivators(options: LaunchWritersOptions): Readonly<Record<string, AdActivator>> {
+  const activators: Record<string, AdActivator> = {};
+  if (options.sandbox) {
+    const sandbox = options.sandbox === true ? sandboxAdWriter : options.sandbox;
+    activators[sandbox.provider] = activatorOf(new SandboxAdActivator(sandbox));
+  }
+  if (options.meta) {
+    const graphVersion = options.meta.graphVersion;
+    activators[META_WRITE_PROVIDER] = activatorOf(new MetaAdActivator({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) }));
+  }
+  return Object.freeze(activators);
 }

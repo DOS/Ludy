@@ -54,6 +54,7 @@ import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
+import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
@@ -64,7 +65,7 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
-import type { AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
+import type { AdActivator, AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -346,6 +347,8 @@ const ADS_REVOKE_CRON = '* * * * *';
 const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
 // The safety net of the pause of stopped launches (#2296, W2-4a): every five minutes, a stopped launch whose objects are not paused yet and whose job was lost or is due again.
 const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
+// The activation's sweep: a launch whose flight has begun and whose event or job was lost, or that waited for its first day, is queued again (#2296, W2-4b).
+const ADS_ACTIVATE_SWEEP_CRON = '*/10 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -414,6 +417,9 @@ export interface WorkerDeps {
     // The one call of an ad platform's writer that pauses what a stopped launch made (#2296, W2-4a), by the provider id of the write connection: a frozen view that finds the
     // objects carrying the launch's tag and sets them PAUSED, never the writer. The pause job alone uses it, with the credential it opens.
     adPausers?: Readonly<Record<string, AdPauser>>;
+    // The calls of an ad platform that switch on what an approved launch made (#2296, W2-4b), by the provider id of the write connection: a frozen view with `activate` and
+    // `readStatus`, never the writer. The activation job alone uses it, with the credential it opens.
+    adActivators?: Readonly<Record<string, AdActivator>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -1211,6 +1217,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsPause, ADS_PAUSE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsPause);
+  }
+
+  // The activation of an approved launch at the ad platform (#2296, W2-4b): ids only in the job (the org and the launch), queued by the relay below when the launch job left a
+  // launch's objects created and paused (ads.activate.queued), and again by a sweep every ten minutes for a launch whose flight has begun and whose event or job was lost
+  // (crove_ads.activate_requeue writes the same event for the providers this worker has an activator for; the job's begin decides what is due, and re-checks the stop
+  // conditions, the plan and the caps before every call). The job switches the launch's own objects on with the credential of the write connection, and nothing else.
+  const adActivators = deps.channels?.adActivators;
+  if (ads && adActivators && adsBroker && Object.keys(adActivators).length > 0) {
+    await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-activate] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsActivate({ runtime: deps.runtime, broker: adsBroker, activators: adActivators }, job.data);
+      console.log(`[ads-activate] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsActivate, ADS_ACTIVATE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsActivate);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -2120,6 +2147,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const launchId = String(row.payload.launchId);
                 await boss.send(QUEUES.adsPause, { orgId: row.org_id, launchId } satisfies AdsPauseJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.adsPause, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An approved launch whose objects are created and paused (#2296, W2-4b): the job switches them on and records each answer; ids only in the job. A deployment with
+              // no activator leaves the launch paused, untouched.
+              if (ads && deps.channels?.adActivators && Object.keys(deps.channels.adActivators).length > 0 && row.type === 'ads.activate.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsActivate, { orgId: row.org_id, launchId } satisfies AdsActivateJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsActivate, launchId),
                   retryLimit: 2,
                   retryDelay: 30,
                   retryBackoff: true,

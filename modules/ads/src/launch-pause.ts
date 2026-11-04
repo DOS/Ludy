@@ -125,6 +125,23 @@ export const adsPauseBegin = defineCommand({
       .where('id', '=', launchId)
       .executeTakeFirst();
     if (!launch) return none('not_found');
+    // A launch that has started whose write connection was closed by any path (the platform's deletion of the grant, the orphan sweep, an expired token, a replacement) is
+    // stopped here, before anything else, with the commitment kept to at least today and what it made paused: the closers that are not the stop commands never visited it
+    // (W2-4b, #2622 item 1). The revoke sweep lists such launches (`ads.pause.pending`) and pauses before it revokes.
+    if ((STARTED_STATES as readonly string[]).includes(launch.state)) {
+      const owner = await ctx.trx.selectFrom('crove_ads.ad_account').select('write_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', launch.ad_account_id).executeTakeFirst();
+      const open = owner?.write_connection_id
+        ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', owner.write_connection_id).executeTakeFirst()
+        : undefined;
+      if (open?.status === 'active') return none('not_stopped');
+      await lockedSetting(ctx);
+      const stopped = await stopStartedLaunches(ctx, 'connection_closed', { launchId: launchId });
+      ctx.audit({ launchId, adAccountId: launch.ad_account_id, via: input.via, outcome: 'stopped_connection_closed', stopped: stopped.length });
+      if (stopped.length !== 1) return none('not_stopped');
+      const after = await ctx.trx.selectFrom('crove_ads.ad_launch').select(['state', 'finished_at']).where('org_id', '=', ctx.orgId).where('id', '=', launchId).executeTakeFirst();
+      launch.state = (after?.state ?? 'stopped') as typeof launch.state;
+      launch.finished_at = after?.finished_at ?? null;
+    }
     if (launch.state !== 'stopped') return none('not_stopped');
     if (launch.wound_down_at) return none('wound_down');
     if (launch.wind_down_code) return none('gave_up');
@@ -161,6 +178,13 @@ export const adsPauseBegin = defineCommand({
       ctx.audit({ launchId, adAccountId: launch.ad_account_id, via: input.via, outcome: 'nothing_to_pause' });
       return none('nothing_to_pause');
     }
+
+    // An activation call that was begun and may still be in flight (its row is not settled and is younger than the longest a call can take, with its read) could switch an
+    // object on after this run paused it: this run waits (the sweep brings the launch back), and the record of that call settles the row (W2-4b).
+    const { rows: inFlight } = await sql<{ n: number }>`
+      SELECT count(*)::int AS n FROM crove_kernel.external_call
+      WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`} AND state IN ('started', 'ambiguous') AND updated_at > ${new Date(ctx.now.getTime() - ACTIVATION_IN_FLIGHT_SECONDS * 1000)}`.execute(ctx.trx);
+    if ((inFlight[0]?.n ?? 0) > 0) return none('activation_in_flight');
 
     // Which token pauses it. A run on the live connection needs it active; one whose connection is closed (a switch-off closes it in the same transaction as the stop) is
     // the revoke sweep's, with the sealed copy it holds, as long as that obligation is open; with neither there is nothing to pause with and the person is told.
@@ -373,6 +397,8 @@ interface PausePending {
   // is made whatever the pause came to, since a revoke held again would leave the permission valid at the platform for good (the screen says to remove the app by hand).
   lastChance: boolean;
 }
+// The longest an activation call, and the read that settles it, can be in flight: the job's call timeout and the platform's own, with room.
+const ACTIVATION_IN_FLIGHT_SECONDS = 360;
 const PENDING_PAGE = 50;
 export const adsPausePending = defineQuery({
   name: 'ads.pause.pending',
@@ -395,15 +421,22 @@ export const adsPausePending = defineQuery({
     let launches: string[] = [];
     let blocked = false;
     if (own) {
+      // A launch that has started and is still going counts too while the account's write connection is closed (W2-4b): it was closed by a path that is not a stop command,
+      // and `ads.pause.begin` stops the launch first. With the connection open the launch is not this obligation's (the connection that closed is another one).
+      const holder = await ctx.trx.selectFrom('crove_ads.ad_account').select('write_connection_id').where('org_id', '=', ctx.orgId).where('id', '=', own).executeTakeFirst();
+      const current = holder?.write_connection_id
+        ? await ctx.trx.selectFrom('crove_kernel.channel_connection').select('status').where('org_id', '=', ctx.orgId).where('id', '=', holder.write_connection_id).executeTakeFirst()
+        : undefined;
+      const connectionClosed = current?.status !== 'active';
       const rows = await ctx.trx
         .selectFrom('crove_ads.ad_launch')
         .select('id')
         .where('org_id', '=', ctx.orgId)
         .where('ad_account_id', '=', own)
-        .where('state', '=', 'stopped')
         .where('started_at', 'is not', null)
-        .where('wound_down_at', 'is', null)
-        .where('wind_down_code', 'is', null)
+        .where((eb) =>
+          eb.or([...(connectionClosed ? [eb('state', 'in', [...STARTED_STATES])] : []), eb.and([eb('state', '=', 'stopped'), eb('wound_down_at', 'is', null), eb('wind_down_code', 'is', null)])]),
+        )
         .orderBy('updated_at')
         .limit(PENDING_PAGE + 1)
         .execute();
