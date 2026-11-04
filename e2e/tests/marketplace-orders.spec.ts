@@ -8,7 +8,7 @@ import { buildXlsx, type XlsxCell } from '../../apps/extract/test/xlsx-fixture.t
 import { createOrg, newEmail, signUp } from '../lib/session.ts';
 
 // What the report carries about the buyer: the importer never reads these columns, so none of it may appear anywhere.
-const BUYER = { name: 'Lê Thị Mua Thử', phone: '0900000042', email: 'mua.thu.e2e@example.com', address: '42 Phố Thử, Quận Thử, Hà Nội' };
+const BUYER = { name: 'Lê Thị Mua Thử', phone: '0900000004', email: 'mua.thu.e2e@example.com', address: '42 Phố Thử, Quận Thử, Hà Nội' };
 const SKU = 'E2E-AO-01';
 const HEAD: XlsxCell[] = ['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'Người Mua', 'Số điện thoại', 'Địa chỉ nhận hàng', 'Email', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'];
 const row = (order: string, status: string, qty: number): XlsxCell[] => [order, '2026-10-30 14:05', status, BUYER.name, BUYER.phone, BUYER.address, BUYER.email, SKU, 'Áo thun cổ tròn', 50000, qty, 50000 * qty];

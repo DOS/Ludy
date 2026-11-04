@@ -126,7 +126,7 @@ async function matchSkus(ctx: Pick<QueryContext, 'trx' | 'orgId'>, legalEntityId
 
 // The newest run of a file when it is a staged order report: the run a member decides. `lock`: the file row and the run are locked for the decision (the order a re-read and a record
 // take them in, as for a bank statement).
-async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: MarketplaceSummary; lines: StagedLine[]; legalEntityId: string | null; sha256: string } | null> {
+async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Promise<{ summary: MarketplaceSummary; platform: Platform; lines: StagedLine[]; legalEntityId: string | null; sha256: string } | null> {
   const file = await ctx.trx.selectFrom('crove_kernel.file').select(['id', 'sha256']).where('org_id', '=', ctx.orgId).where('id', '=', fileId).$if(lock, (qb) => qb.forUpdate()).executeTakeFirst();
   if (!file) return null;
   let query = ctx.trx.selectFrom('crove_kernel.extraction').select(['result', 'status', 'legal_entity_id']).where('org_id', '=', ctx.orgId).where('file_id', '=', fileId).orderBy('version', 'desc').limit(1);
@@ -135,7 +135,7 @@ async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Prom
   if (!run || run.status !== 'done') return null;
   const parsed = zStagedResult.safeParse(run.result);
   if (!parsed.success || parsed.data.summary.state !== 'staged' || !parsed.data.lines) return null;
-  return { summary: parsed.data.summary, lines: parsed.data.lines, legalEntityId: run.legal_entity_id ?? null, sha256: file.sha256 };
+  return { summary: parsed.data.summary, platform: parsed.data.summary.platform, lines: parsed.data.lines, legalEntityId: run.legal_entity_id ?? null, sha256: file.sha256 };
 }
 
 const lockReport = (ctx: QueryContext, fileId: string) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.report:${ctx.orgId}:${fileId}`}, 0))`.execute(ctx.trx);
@@ -384,7 +384,7 @@ export const marketplaceConfirm = defineCommand({
     const staged = await stagedRun(ctx, input.fileId, true);
     if (!staged) throw notStaged();
     const legalEntityId = await resolveLegalEntity(ctx, staged.legalEntityId);
-    const platform = staged.summary.platform;
+    const platform = staged.platform;
     const today = await databaseToday(ctx.trx);
     const known = await knownLines(ctx, legalEntityId, platform, [...new Set(staged.lines.map((l) => l.orderNo))]);
     const orderIds = new Map<string, string>();
