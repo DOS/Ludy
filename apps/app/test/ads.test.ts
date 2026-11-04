@@ -55,6 +55,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   connectionStatus: 'active',
   pausedSince: null,
   pausedReason: null,
+  connectionExpiresAt: null,
   writeEnabled: false,
   writeConnectionStatus: null,
   canRunAds: false,
@@ -292,23 +293,26 @@ describe('what an account says about its figures', () => {
 
   it('knows the ad platforms connected through an OAuth dialog, reading and running ads apart, and names them', () => {
     // Both kinds are ad providers: the Social channels screen leaves every one of them out (it filters with isAdOAuthProvider).
-    expect(AD_OAUTH_PROVIDERS).toEqual(['meta_ads', 'metawrite_ads']);
+    expect(AD_OAUTH_PROVIDERS).toEqual(['meta_ads', 'google_ads', 'metawrite_ads']);
     expect(isAdOAuthProvider('meta_ads')).toBe(true);
+    expect(isAdOAuthProvider('google_ads')).toBe(true);
     expect(isAdOAuthProvider('metawrite_ads')).toBe(true);
     expect(isAdOAuthProvider('sandbox_ads')).toBe(false);
     expect(isAdOAuthProvider('facebook_page')).toBe(false);
-    expect(['facebook_page', 'meta_ads', 'metawrite_ads', 'instagram'].filter((p) => !isAdOAuthProvider(p))).toEqual(['facebook_page', 'instagram']);
-    // Connecting an account for reading offers Meta's read provider alone; the one that runs ads is a separate offer.
-    expect(AD_READ_OAUTH_PROVIDERS).toEqual(['meta_ads']);
+    expect(['facebook_page', 'meta_ads', 'google_ads', 'metawrite_ads', 'instagram'].filter((p) => !isAdOAuthProvider(p))).toEqual(['facebook_page', 'instagram']);
+    // Connecting an account for reading offers Meta and Google's read providers; the one that runs ads is a separate offer.
+    expect(AD_READ_OAUTH_PROVIDERS).toEqual(['meta_ads', 'google_ads']);
     expect(AD_WRITE_OAUTH_PROVIDERS).toEqual(['metawrite_ads']);
     expect(isAdWriteOAuthProvider('metawrite_ads')).toBe(true);
     expect(isAdWriteOAuthProvider('meta_ads')).toBe(false);
+    expect(isAdWriteOAuthProvider('google_ads')).toBe(false);
     expect(isAdWriteOAuthProvider('sandboxwrite_ads')).toBe(false);
-    // Both are Meta to the reader.
+    // Named platforms to the reader.
     expect(adProviderName('meta_ads')).toBe('Meta');
     expect(adProviderName('metawrite_ads')).toBe('Meta');
+    expect(adProviderName('google_ads')).toBe('Google Ads');
     // An unknown platform is shown by its id.
-    expect(adProviderName('google_ads')).toBe('google_ads');
+    expect(adProviderName('tiktok_ads')).toBe('tiktok_ads');
   });
 
   it('offers an ad platform only where the deployment lists it among the OAuth providers', () => {

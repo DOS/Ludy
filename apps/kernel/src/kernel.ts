@@ -70,7 +70,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -276,7 +276,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
 type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
-  Partial<Pick<Config, 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
+  Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
 // product), the member app otherwise.
@@ -314,10 +314,14 @@ export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): R
   return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
 }
 
-export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
+export function adPlatformsOf(
+  config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'> &
+    Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET'>>,
+): Readonly<Record<string, AdPlatform>> {
   return adPlatforms({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+    ...(config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET ? { google: { clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET } } : {}),
   });
 }
 
@@ -381,6 +385,10 @@ export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>
   // Meta ad accounts, read only (ADR-0040, #2218): its own app credentials, which may be the same app as the Pages one.
   if (config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET) {
     connectors.meta_ads = new MetaAdsConnector({ appId: config.CHANNEL_META_ADS_APP_ID, appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
+  }
+  // Google Ads accounts, read only (ADR-0040, #2220): OAuth web client in the deployment's Google Cloud project.
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET) {
+    connectors.google_ads = new GoogleAdsConnector({ clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET });
   }
   // Meta ad accounts, the connection that can run ads (ADR-0043, #2294, W0b): its own app credentials, which may be the same app as the
   // read one or the Pages one. It only logs in and lists accounts; no job or queue reaches it, and the readers' registry

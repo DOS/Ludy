@@ -471,9 +471,9 @@ export const zChannelConnection = z.object({
 export const OAUTH_CHANNEL_PROVIDERS = ['facebook_page', 'instagram', 'zalo_oa', 'threads', 'linkedin', 'youtube', 'tiktok', 'x', 'google_business', 'pinterest', 'linkedin_page'] as const;
 // Accounts one OAuth grant connects in a request, one command each (#375): a Meta user may manage hundreds of Pages.
 export const OAUTH_MAX_ACCOUNTS_PER_GRANT = 100;
-// The ad platforms connected the same way (ADR-0040, #2218): the Ads screen offers them, never the Social channels one.
+// The ad platforms connected the same way (ADR-0040, #2218, #2220): the Ads screen offers them, never the Social channels one.
 // metawrite_ads is the write connection of an ad account (ADR-0043, W0b): the owner connects it while the org's switch is on.
-export const OAUTH_AD_PROVIDERS = ['meta_ads', 'metawrite_ads'] as const;
+export const OAUTH_AD_PROVIDERS = ['meta_ads', 'google_ads', 'metawrite_ads'] as const;
 export const zOAuthProvider = z.enum([...OAUTH_CHANNEL_PROVIDERS, ...OAUTH_AD_PROVIDERS]);
 export const zOAuthState = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 

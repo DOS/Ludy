@@ -366,6 +366,11 @@ const schema = z.object({
   // The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_WRITE_APP_ID: optional,
   CHANNEL_META_ADS_WRITE_APP_SECRET: optional,
+  // The Google Cloud OAuth web client for Google Ads, read only (ADR-0040, #2220): set both to offer "Connect a Google Ads
+  // account" on the Ads screen; neither hides it. Each deployment brings its own Google Cloud project and OAuth client (no
+  // developer token: Google sunset them in 2026-09), and the callback URI is APP_URL/channels/oauth/google_ads/callback.
+  CHANNEL_GOOGLE_ADS_CLIENT_ID: optional,
+  CHANNEL_GOOGLE_ADS_CLIENT_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
   // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
@@ -702,6 +707,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.CHANNEL_TIKTOK_CLIENT_KEY) !== Boolean(config.CHANNEL_TIKTOK_CLIENT_SECRET)) throw new Error('set both CHANNEL_TIKTOK_CLIENT_KEY and CHANNEL_TIKTOK_CLIENT_SECRET, or neither');
   if (config.CHANNEL_TIKTOK_CLIENT_KEY && !/^[A-Za-z0-9]{8,64}$/.test(config.CHANNEL_TIKTOK_CLIENT_KEY)) throw new Error('CHANNEL_TIKTOK_CLIENT_KEY is the client key of the TikTok app');
   if (Boolean(config.CHANNEL_GOOGLE_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET, or neither');
+  if (Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET, or neither');
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
@@ -826,7 +833,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }

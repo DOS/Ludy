@@ -301,7 +301,7 @@ export const adsAccountList = defineQuery({
       // The write connection, when the account has one (W0b): "can run ads" is a live one, anything else is read only.
       .leftJoin('crove_kernel.channel_connection as w', (j) => j.onRef('w.org_id', '=', 'a.org_id').onRef('w.id', '=', 'a.write_connection_id'))
       .select([
-        'w.status as write_status', 'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
+        'w.status as write_status', 'a.id', 'a.channel_connection_id', 'c.status', 'c.status_reason', 'c.updated_at as connection_updated_at', 'c.expires_at', 'c.scopes', 'a.provider', 'a.name', 'a.currency', 'a.time_zone', 'a.legal_entity_id', 'a.expense_account_code', 'a.result_kind',
         'a.backfill_from', 'a.settled_through', 'a.synced_through', 'a.last_run_at', 'a.last_error_kind', 'a.next_run_at', 'a.write_enabled',
       ])
       .where('a.org_id', '=', ctx.orgId)
@@ -320,9 +320,11 @@ export const adsAccountList = defineQuery({
       canRunAds: r.write_status === 'active',
       pausedSince: r.status === 'active' ? null : stamp(r.connection_updated_at),
       pausedReason: r.status === 'active' ? null : pausedReason(r.status_reason),
+      connectionExpiresAt: r.status === 'active' ? stamp(r.expires_at) : null,
       // What the sealed token can do beyond reading ad reports (a Meta token holds every permission the person granted the
-      // app): the screen says so. public_profile is the basic login permission and is not one of them.
-      extraScopes: r.scopes.filter((s) => s !== 'ads_read' && s !== 'public_profile'),
+      // app): the screen says so. public_profile is the basic login permission and is not one of them; Google's single
+      // AdWords scope is the standard grant for Google Ads and the card states separately that Ludy calls only read endpoints.
+      extraScopes: r.scopes.filter((s) => s !== 'ads_read' && s !== 'public_profile' && s !== 'https://www.googleapis.com/auth/adwords'),
       provider: r.provider,
       name: r.name,
       currency: r.currency,

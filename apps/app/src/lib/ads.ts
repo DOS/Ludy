@@ -142,11 +142,11 @@ export function writeConnectWay(provider: string, offer: AdWriteOffer): WriteCon
 
 // The platform's name where the screen says which platform an account or a connection belongs to; the sandbox keeps its
 // own badge, so it has no name here, and an unknown platform is shown by its id.
-const AD_PROVIDER_NAMES: Record<string, string> = { meta_ads: 'Meta', metawrite_ads: 'Meta' };
+const AD_PROVIDER_NAMES: Record<string, string> = { meta_ads: 'Meta', google_ads: 'Google Ads', metawrite_ads: 'Meta' };
 export const adProviderName = (provider: string): string => AD_PROVIDER_NAMES[provider] ?? provider;
 
 // The result kinds the screen has its own words for; any other key is shown as the platform gives it.
-export const NAMED_RESULT_KINDS = ['purchase', 'lead'] as const;
+export const NAMED_RESULT_KINDS = ['purchase', 'lead', 'conversion'] as const;
 export type NamedResultKind = (typeof NAMED_RESULT_KINDS)[number];
 export const isNamedResultKind = (kind: string): kind is NamedResultKind => (NAMED_RESULT_KINDS as readonly string[]).includes(kind);
 
@@ -257,3 +257,11 @@ export function isCalmRefusal(error: unknown): boolean {
 // the account until then (ADS_SYNC_ON_HOLD).
 export const syncHeld = (account: Pick<AdAccountView, 'nextRunAt'>, nowMs: number): boolean =>
   account.nextRunAt !== null && Date.parse(account.nextRunAt) > nowMs;
+
+// Formats a signed decimal money change (`spendDelta`, `cprDelta`) with `+` for an increase, `-` for a decrease, and no sign for zero.
+export function signedMoney(amount: string, formatMoney: (value: string) => string): string {
+  if (amount.startsWith('-')) return `-${formatMoney(amount.slice(1))}`;
+  if (isZeroAmount(amount)) return formatMoney('0');
+  return `+${formatMoney(amount)}`;
+}
+

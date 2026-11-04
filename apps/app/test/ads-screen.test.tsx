@@ -52,7 +52,8 @@ vi.mock('../src/lib/api.ts', async () => {
 });
 
 const { AdsBooksStrip } = await import('../src/components/ads-books-strip.tsx');
-const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
+const { AccountHeader, AdsEmpty, AdsSettingsCard, Breakdowns, ConnectGoogle, ConnectMeta, Totals } = await import('../src/routes/ads.tsx');
+const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.tsx');
 const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
 const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
 
@@ -77,6 +78,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   connectionStatus: 'active',
   pausedSince: null,
   pausedReason: null,
+  connectionExpiresAt: null,
   writeEnabled: false,
   writeConnectionStatus: null,
   canRunAds: false,
@@ -1110,3 +1112,99 @@ describe('the books strip', () => {
     expect(html).not.toContain(`>${en.ads.books.platform}<`);
   });
 });
+
+describe('Google Ads connection, short refresh-token warning, and 7-day comparison note (#2220)', () => {
+  it('offers Google Ads on the empty screen only when configured, and states the single adwords scope and read-only calls', () => {
+    const withoutGoogle = render(<AdsEmpty canManage sandbox={false} meta={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
+    expect(withoutGoogle).not.toContain(en.ads.connectGoogle.action);
+
+    const withGoogle = render(<AdsEmpty canManage sandbox={false} google={{ slug: 'acme' }} entities={one} onConnected={() => undefined} />);
+    expect(withGoogle).toContain(en.ads.connectGoogle.title);
+    expect(withGoogle).toContain(en.ads.connectGoogle.action);
+    expect(withGoogle).toContain('https://www.googleapis.com/auth/adwords');
+    expect(withGoogle).toContain('customers:listAccessibleCustomers');
+    expect(withGoogle).toContain('googleAds:searchStream');
+
+    const reconnect = render(<ConnectGoogle slug="acme" another reconnect />, 'vi');
+    expect(reconnect).toContain(viMessages.ads.connectGoogle.reconnect);
+  });
+
+  it('states Google’s read-only usage on the account header and warns when a Testing consent screen refresh token has an expiry date', () => {
+    const active = render(<AccountHeader account={account({ provider: 'google_ads', connectionExpiresAt: '2026-11-09T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
+    expect(active).toContain('Google Ads');
+    expect(active).toContain('customers:listAccessibleCustomers');
+    expect(active).toContain('Testing mode issues 7-day tokens');
+    expect(active).toContain('09/11/2026');
+
+    const metaWithExpiry = render(<AccountHeader account={account({ provider: 'meta_ads', connectionExpiresAt: '2026-12-31T00:00:00.000Z' })} canRefresh onRequested={() => undefined} />);
+    expect(metaWithExpiry).not.toContain('Testing mode issues 7-day tokens');
+  });
+
+  it('renders Uy’s 7-day side-by-side comparison note across Meta and Google when seeded, and nothing when empty', () => {
+    client.current.setQueryData(['ads', 'weeklyNote'], []);
+    expect(render(<AdsWeeklyNoteCard />)).toBe('');
+
+    client.current.setQueryData(
+      ['ads', 'weeklyNote'],
+      [
+        {
+          currency: 'VND',
+          recentFrom: '2026-11-08',
+          recentTo: '2026-11-14',
+          priorFrom: '2026-11-01',
+          priorTo: '2026-11-07',
+          recentSpend: '2700000',
+          priorSpend: '3000000',
+          spendDelta: '-300000',
+          platforms: [
+            {
+              provider: 'meta_ads',
+              accountCount: 1,
+              recentSpend: '1500000',
+              priorSpend: '1000000',
+              spendDelta: '500000',
+              resultKind: 'purchase',
+              recentResults: '10',
+              priorResults: '10',
+              recentCostPerResult: '150000',
+              priorCostPerResult: '100000',
+              cprDelta: '50000',
+            },
+            {
+              provider: 'google_ads',
+              accountCount: 1,
+              recentSpend: '1200000',
+              priorSpend: '2000000',
+              spendDelta: '-800000',
+              resultKind: 'conversion',
+              recentResults: '15',
+              priorResults: '20',
+              recentCostPerResult: '80000',
+              priorCostPerResult: '100000',
+              cprDelta: '-20000',
+            },
+          ],
+          topMover: {
+            adAccountId: 'a2',
+            accountName: 'Google Tìm kiếm',
+            provider: 'google_ads',
+            externalObjectId: 'g-1',
+            campaignName: 'Brand Search VN',
+            recentSpend: '1200000',
+            priorSpend: '2000000',
+            spendDelta: '-800000',
+          },
+          skippedAccounts: 1,
+        },
+      ],
+    );
+    const html = render(<AdsWeeklyNoteCard />, 'vi');
+    expect(html).toContain('Ghi chú so sánh 7 ngày của Uy');
+    expect(html).toContain('Meta');
+    expect(html).toContain('Google Ads');
+    expect(html).toContain('Brand Search VN');
+    expect(html).toContain('Google Tìm kiếm');
+    expect(html).toContain('Chưa tính trong VND');
+  });
+});
+
