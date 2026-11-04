@@ -385,7 +385,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
   let event: ConversationEvent = original.kind === 'email' ? { ...original, threadId: await emailThreadId(ctx, connectionId, original) } : original;
   const existing = await ctx.trx
     .selectFrom('crove_kernel.conversation_message')
-    .select(['id', 'conversation_id', 'body', 'direction', 'platform_removed_at'])
+    .select(['id', 'conversation_id', 'body', 'direction', 'hidden_at', 'platform_removed_at'])
     .where('org_id', '=', ctx.orgId)
     .where('channel_connection_id', '=', connectionId)
     .where('external_message_id', '=', event.messageId)
@@ -403,14 +403,34 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       await ctx.trx.deleteFrom('crove_kernel.conversation_attachment').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).execute();
       // A draft Vy wrote from what the person has now removed goes stale with its text.
       await staleDrafts(ctx, existing.conversation_id);
-    } else if (!event.removed && !existing.platform_removed_at && existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
-      // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
-      // the message has none, so a redelivery does not add them again.
-      const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
-      if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
+    } else if (!event.removed && !existing.platform_removed_at) {
+      if (event.edited && existing.direction === 'in' && event.text !== '' && event.text !== existing.body) {
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_message')
+          .set({ body: event.text })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing.id)
+          .execute();
+        await staleDrafts(ctx, existing.conversation_id);
+      }
+      if (event.hidden !== undefined && existing.direction === 'in' && (event.hidden ? existing.hidden_at === null : existing.hidden_at !== null)) {
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_message')
+          .set({ hidden_at: event.hidden ? ctx.now : null, ...(event.hidden ? {} : { hidden_by: null }), hide_request: null, hide_error_code: null })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', existing.id)
+          .execute();
+      }
+      if (existing.direction === 'in' && event.attachments && event.attachments.length > 0) {
+        // The message was stored before its notice brought the images (the history read stores the text alone): the images are added once, when
+        // the message has none, so a redelivery does not add them again.
+        const has = await ctx.trx.selectFrom('crove_kernel.conversation_attachment').select('id').where('org_id', '=', ctx.orgId).where('message_id', '=', existing.id).limit(1).executeTakeFirst();
+        if (!has) await addAttachments(ctx, existing.id, connectionId, event.kind, event.attachments);
+      }
     }
     return 'duplicates';
   }
+  if (event.hiddenOnly) return 'ignored';
   // One customer's intake and erasure take turns: erase_contact holds the same lock while it deletes and writes the tombstone, so a message
   // that was in flight is checked against the tombstone after the erasure commits, not before it.
   await customerLock(ctx, provider, event.contact.id);
@@ -617,6 +637,7 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       body: event.text,
       author_identity_id: event.direction === 'in' ? identity.id : null,
       send_state: event.direction === 'in' ? null : 'sent',
+      ...(event.direction === 'in' && event.hidden ? { hidden_at: ctx.now } : {}),
       // A customer's text is tainted external text; the org's own message seen as an echo is its own.
       tainted: event.direction === 'in',
       email_refs: event.kind === 'email' ? [...new Set(event.refs ?? [])] : [],
@@ -2232,11 +2253,22 @@ export const conversationHistoryBegin = defineCommand({
     requireSystem(ctx);
     const row = await ctx.trx
       .selectFrom('crove_kernel.channel_connection')
-      .select(['provider', 'status', 'history_synced_at', 'connected_at'])
+      .select(['provider', 'status', 'scopes', 'history_synced_at', 'connected_at'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row || row.status !== 'active') return { action: 'none' };
+    // A Facebook Page connected only for publishing (without pages_read_user_content) has no comment permissions to read with: mark its
+    // sync timestamp so the sweep does not ask again for an hour, and make no platform call.
+    if (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) {
+      await ctx.trx
+        .updateTable('crove_kernel.channel_connection')
+        .set({ history_synced_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.connectionId)
+        .execute();
+      return { action: 'none' };
+    }
     // Back to the last read, or to the connection's start, and never further than the window.
     const floor = new Date(ctx.now.getTime() - HISTORY_WINDOW_DAYS * 24 * HOUR_MS);
     const from = row.history_synced_at ?? row.connected_at;

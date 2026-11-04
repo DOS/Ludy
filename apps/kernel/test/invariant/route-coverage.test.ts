@@ -32,6 +32,8 @@ const PUBLIC: Record<string, string> = {
     "Meta's data deletion callback for the Ads connection (ads plan section 9, #2219), POST and GET: the POST is checked by Meta's signed_request (HMAC-SHA256 with the app secret, constant time, not expired) before anything else, has a body cap, is rate limited per address, stores no body, and only queues the keyed hash of the user id for the worker, which erases the ad accounts that user granted; the GET is the status page Meta shows the person, answered by the confirmation code (128 random bits) and showing no tenant data",
   '/api/channels/zalo/webhook':
     "Zalo OA's signed notice of a customer's message (conversation core, #2304, plan docs/plan/conversations.md section 6.1): checks X-ZEvent-Signature over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
+  '/api/channels/facebook/webhook':
+    "Meta's Page webhook for comments on connected Facebook Pages (conversation core CV2, #2307, plan docs/plan/conversations.md section 6.1): GET answers the hub.verify_token subscription challenge in constant time; POST checks X-Hub-Signature-256 (HMAC-SHA256 with the app secret, constant time) over the raw body before anything else and refuses a body over its size cap before reading it, names no org in its path or answer, writes no tenant row (it only parks the signed body for the worker, which finds the org from the stored connection), and answers 401 to a missing or wrong signature without saying why",
   '/api/stream': 'the event stream, opened with a one-time ticket that POST /api/stream/tickets issues after the session check',
   '/api/review/view': "Social's client review page (#589): a signed, expiring review link is the credential",
   '/api/review/media': 'the same review link, for the media of the post under review',
@@ -86,6 +88,8 @@ function app(authenticate: HttpDeps['authenticate']) {
     adsDeletion: { appSecret: 'z'.repeat(32) },
     // The Zalo app and its OA secret key, so the webhook of customers' messages is registered and listed (conversation core, #2304).
     zaloWebhook: { appId: '4318000000000000001', oaSecretKey: 'k'.repeat(24) },
+    // The Meta app and its verify token, so the Page webhook is registered and listed (conversation core CV2, #2307).
+    facebookWebhook: { appSecret: 's'.repeat(32), verifyToken: 'v'.repeat(24) },
     stream: { hub: { ready: false }, tickets: unused, slots: unused, recheckSeconds: 30 } as unknown as NonNullable<HttpDeps['stream']>,
   });
 }

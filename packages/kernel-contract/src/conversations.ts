@@ -53,6 +53,9 @@ export interface ConversationProviderRules {
 }
 export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationProviderRules>> = {
   sandbox: { kinds: ['comment_thread', 'direct'], replyMax: 2000, canHide: true, windowHours: null },
+  // Facebook Page comments (CV2, #2307, plan section 6.2): public comment threads under Page posts, up to 8000 characters per reply,
+  // reversible hide/unhide (`is_hidden`), and no 24-hour messaging window on public comments.
+  facebook_page: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: null },
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
@@ -102,6 +105,10 @@ export const zConversationEvent = z.strictObject({
   at: z.iso.datetime({ offset: true }),
   // The platform says the message was removed: the body is blanked (plan section 10).
   removed: z.boolean().optional(),
+  // A comment edited or hidden on the platform (CV2, #2307: Meta's `feed` webhook verbs `edited`, `hide` and `unhide`, and `is_hidden` on reconcile).
+  edited: z.boolean().optional(),
+  hidden: z.boolean().optional(),
+  hiddenOnly: z.boolean().optional(),
   // The images the customer's message carries (CV5c, #2357); each is fetched later by the worker and shown beside the message's text.
   attachments: z.array(zConversationEventImage).max(CONVERSATION_ATTACHMENTS_MAX).optional(),
   // Email only (#2439): the subject line, and the Message-IDs the mail names in In-Reply-To and References, which decide the thread.

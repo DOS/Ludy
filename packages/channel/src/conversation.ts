@@ -19,6 +19,11 @@ export interface InboundConversationEvent {
   text: string;
   at: string;
   removed?: boolean | undefined;
+  // A comment edited or hidden on the platform (CV2, #2307: Meta's feed webhook verbs `edited`, `hide` and `unhide`, and `is_hidden` on reconcile).
+  edited?: boolean | undefined;
+  hidden?: boolean | undefined;
+  // A hide or unhide notice that carried no comment text: updates an existing comment when found, and never creates a blank one when not.
+  hiddenOnly?: boolean | undefined;
   // The images the message carries, by the platform's address (CV5c, #2357): personal data the worker fetches once and the core clears, so it
   // is never logged, never put in a job and never kept past the fetch (six days at the most).
   attachments?: Array<{ kind: 'image'; url: string }> | undefined;

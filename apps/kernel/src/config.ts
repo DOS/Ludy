@@ -346,6 +346,13 @@ const schema = z.object({
   // The app's valid OAuth redirect URI is APP_URL/channels/oauth/facebook_page/callback.
   CHANNEL_META_APP_ID: optional,
   CHANNEL_META_APP_SECRET: optional,
+  // The secret CHANNEL_META_APP_SECRET replaces while Meta may still sign webhook notices with it during a rotation (conversation core CV2, #2307).
+  CHANNEL_META_APP_SECRET_PREVIOUS: optional,
+  // The verify token Meta sends on GET /api/channels/facebook/webhook when subscribing the app's Page webhook (conversation core CV2, #2307).
+  // Set alongside CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, the route /api/channels/facebook/webhook exists and Page comment notices are taken in.
+  CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
+  // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
+  CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
@@ -674,6 +681,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_APP_ID)) throw new Error('CHANNEL_META_APP_ID is the numeric id of the Meta app');
+  if (config.CHANNEL_META_APP_SECRET_PREVIOUS !== undefined) {
+    if (config.CHANNEL_META_APP_SECRET === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === config.CHANNEL_META_APP_SECRET) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
+  }
+  if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
+    if (!config.CHANNEL_META_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
+  }
   if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {
     throw new Error('set both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET, or neither');
   }

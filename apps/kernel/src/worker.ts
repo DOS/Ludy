@@ -401,9 +401,9 @@ export interface WorkerDeps {
   // them, with the credentials it opens.
   channels?: {
     broker: CredentialBroker;
-    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY): off until the live check has settled the
-    // shapes of the platform's history answers (docs/runbooks/zalo-conversations-live-check.md).
+    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY, CHANNEL_FACEBOOK_HISTORY).
     conversationHistory?: boolean;
+    facebookHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
@@ -2493,8 +2493,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
       // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.
       if (conversationPublishers && conversationBroker) {
-        const withMethod = (method: 'history' | 'profile') => Object.entries(conversationPublishers).filter(([, p]) => typeof p.conversations?.[method] === 'function').map(([id]) => id);
-        const due = await dueConversationSync(deps.workerDb, { history: deps.channels?.conversationHistory ? withMethod('history') : [], profile: withMethod('profile') });
+        const withMethod = (method: 'history' | 'profile') =>
+          Object.entries(conversationPublishers)
+            .filter(([id, p]) => {
+              if (typeof p.conversations?.[method] !== 'function') return false;
+              if (method !== 'history') return true;
+              if (id === 'facebook_page') return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
+              return Boolean(deps.channels?.conversationHistory);
+            })
+            .map(([id]) => id);
+        const due = await dueConversationSync(deps.workerDb, { history: withMethod('history'), profile: withMethod('profile') });
         await requestConversationSync(deps.runtime, due);
         // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
         await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));
