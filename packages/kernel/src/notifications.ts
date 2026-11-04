@@ -228,17 +228,21 @@ export const notificationDispatch = defineCommand({
             .executeTakeFirst();
           users = seat?.holder_user_id ? [seat.holder_user_id] : [];
         }
-        const sent = await notifyMembers(ctx, {
-          kind: TASK_ASSIGNED,
-          users,
-          key: `task_assigned:${task.id}:${event.id}`,
-          subject: { type: 'kernel.task', id: task.id },
-          legalEntityId: task.legal_entity_id,
-          // The task's title is read when the notice is shown, never copied (#1977).
-          detail: {},
-          eventId: event.id,
-          actor: event.actor,
-        });
+        let sent = 0;
+        for (const userId of users) {
+          sent += await notifyMembers(ctx, {
+            kind: TASK_ASSIGNED,
+            users: [userId],
+            key: `task_assigned:${task.id}:${event.id}`,
+            subject: { type: 'kernel.task', id: task.id },
+            // An org-wide task (legal_entity_id IS NULL) uses an entity the recipient reads so notification's le_scope policy shows it.
+            legalEntityId: task.legal_entity_id ?? (await uploaderEntity(ctx, userId)),
+            // The task's title is read when the notice is shown, never copied (#1977).
+            detail: {},
+            eventId: event.id,
+            actor: event.actor,
+          });
+        }
         return { sent };
       }
       case 'kernel.task.rerouted': {

@@ -147,10 +147,13 @@ describe('legal entity scope', () => {
 
 // Task due day conversion for task creation and editing (#2588).
 describe('taskDueDay and taskDueFromDay', () => {
-  it('converts between an ISO timestamp and the local day in Asia/Ho_Chi_Minh', () => {
+  it('converts between an ISO timestamp and the local day in Asia/Ho_Chi_Minh and across DST', () => {
     const iso = taskDueFromDay('2026-11-20', 'Asia/Ho_Chi_Minh');
     expect(iso).toBe('2026-11-20T16:59:00.000Z');
     expect(taskDueDay(iso, 'Asia/Ho_Chi_Minh')).toBe('2026-11-20');
+    const dst = taskDueFromDay('2026-04-04', 'Australia/Sydney');
+    expect(dst).toBe('2026-04-04T12:59:00.000Z');
+    expect(taskDueDay(dst, 'Australia/Sydney')).toBe('2026-04-04');
     expect(taskDueFromDay('', 'Asia/Ho_Chi_Minh')).toBeNull();
     expect(taskDueDay(null, 'Asia/Ho_Chi_Minh')).toBe('');
   });

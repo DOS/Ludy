@@ -728,6 +728,8 @@ export const updateTask = defineCommand({
   target: (input) => ({ type: 'kernel.task', id: input.id }),
   handler: async (ctx, input) => {
     requireUser(ctx);
+    // Serialize with chart and role changes when moving the task to another seat (#1858).
+    if (input.assigneePositionId !== undefined) await lockChartChanges(ctx);
     const before = await ctx.trx
       .selectFrom('crove_kernel.task')
       .selectAll()

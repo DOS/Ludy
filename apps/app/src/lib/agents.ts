@@ -1,6 +1,7 @@
 // What the AI agents screens decide on their own (ADR-0029, issue #258): the chart as a tree, who may use which
 // control, and how far a budget is spent. The server enforces every rule; these only hide what can never succeed.
 import { z } from 'zod';
+import { todoDueInstant } from '@crove/kernel-contract';
 import type { Role } from './members.ts';
 import { readSearch, type Defined } from './search.ts';
 
@@ -171,23 +172,11 @@ export function taskDueDay(due: string | null | undefined, timeZone: string): st
 
 /** End of `dueOn` (23:59) in `timeZone` as an ISO timestamp, or null when `dueOn` is empty (#2588). */
 export function taskDueFromDay(dueOn: string, timeZone: string): string | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueOn.trim());
-  if (!m) return null;
-  const utcEnd = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 0);
+  const day = dueOn.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
   try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(new Date(utcEnd));
-    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
-    const localAsUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), 0);
-    return new Date(utcEnd - (localAsUtc - utcEnd)).toISOString();
+    return todoDueInstant(day, '23:59', timeZone).toISOString();
   } catch {
-    return new Date(utcEnd).toISOString();
+    return `${day}T23:59:00.000Z`;
   }
 }

@@ -245,7 +245,8 @@ export function TaskDetailPage() {
   const chart = useQuery(orpc.chart.get.queryOptions());
   const detail = useQuery(orpc.tasks.get.queryOptions({ input: { id } }));
   const perms = agentPermissions(org.data?.role);
-  const [editing, setEditing] = useState(false);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const editing = editingTaskId === id;
   const [body, setBody] = useState('');
   const [commentKey, setCommentKey] = useState(() => crypto.randomUUID());
   const comment = useMutation(orpc.tasks.comment.mutationOptions({ onSuccess: refresh }));
@@ -296,14 +297,14 @@ export function TaskDetailPage() {
               size="sm"
               disabled={task.checkedOut}
               title={task.checkedOut ? t('checkedOut') : undefined}
-              onClick={() => setEditing(true)}
+              onClick={() => setEditingTaskId(task.id)}
             >
               {t('edit')}
             </Button>
           ) : undefined
         }
       />
-      {editing && perms.tasks && <EditTaskForm task={task} chart={chart.data} onDone={() => setEditing(false)} />}
+      {editing && perms.tasks && <EditTaskForm key={task.id} task={task} chart={chart.data} onDone={() => setEditingTaskId(null)} />}
       <Card className="gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
