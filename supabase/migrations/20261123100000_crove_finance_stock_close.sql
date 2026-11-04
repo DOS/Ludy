@@ -60,7 +60,7 @@ SELECT crove_kernel.make_append_only('crove_finance.stock_period');
 CREATE OR REPLACE FUNCTION crove_finance.stock_period_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NEW.period_month + interval '1 month' > pg_catalog.current_date THEN
+  IF NEW.period_month + interval '1 month' > current_date THEN
     RAISE EXCEPTION 'STOCK_PERIOD_NOT_ENDED' USING ERRCODE = '23514';
   END IF;
   IF EXISTS (
