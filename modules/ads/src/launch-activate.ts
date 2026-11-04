@@ -191,6 +191,10 @@ export const adsActivateBegin = defineCommand({
     }
     if (!connection) return none('no_activator');
 
+    // What the ledger says of this launch's activation calls, of every attempt. A campaign whose activation was begun and did not fail (succeeded, or began and was never
+    // settled, or answered unclearly) may be delivering: a launch that ends for any reason from here on is stopped and its pause queued, never left for a person to look at.
+    const rows = await activationRows(ctx, launch.id);
+    const mayBeOn = rows.some((r) => r.state !== 'failed' && slotOfActivationStep(parseLaunchCallKey(r.key)?.step ?? '') === 'campaign');
     // The plan that was approved is the plan that runs. A plan that is not (it cannot change; the account's currency can) ends the launch stopped, as above.
     const drafted = await draftPlanOf(ctx, launch.draft_id);
     const plan = drafted?.plan ?? null;
@@ -201,8 +205,11 @@ export const adsActivateBegin = defineCommand({
       return none('plan_changed');
     }
     if (!zoneKnown(account.time_zone)) {
-      await needAttention(ctx, launch.id, 'zone_unknown');
-      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, needsAttention: 'zone_unknown', phase: 'activate' });
+      if (mayBeOn) {
+        const stopped = await stopRunningLaunch(ctx, 'zone_unknown', launch.id);
+        for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+      } else await needAttention(ctx, launch.id, 'zone_unknown');
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, needsAttention: 'zone_unknown', stopped: mayBeOn, phase: 'activate' });
       return none('zone_unknown');
     }
     // The flight, in the account's own zone: a flight that has not begun waits (the sweep brings it on its first day); one that is over cannot be started.
@@ -218,15 +225,17 @@ export const adsActivateBegin = defineCommand({
     // attention, nothing called.
     const problems = await launchCapsProblems(ctx, launch, account.id, today > launch.start_text ? today : launch.start_text);
     if (problems.length > 0) {
-      await needAttention(ctx, launch.id, 'cap_lowered');
-      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, needsAttention: 'cap_lowered', phase: 'activate', problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
+      if (mayBeOn) {
+        const stopped = await stopRunningLaunch(ctx, 'cap_lowered', launch.id);
+        for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+      } else await needAttention(ctx, launch.id, 'cap_lowered');
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, needsAttention: 'cap_lowered', stopped: mayBeOn, phase: 'activate', problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
       return none('cap_lowered');
     }
 
     // Which object is next: each ad, then the ad set, then the campaign last; the first whose activation has not succeeded.
     const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
     const idOf = new Map(objects.map((o) => [o.slot, o.external_id]));
-    const rows = await activationRows(ctx, launch.id);
     const done = doneSlots(rows);
     const slots = activationSlots(plan.variants.length);
     const missing = slots.find((slot) => !idOf.has(slot));
@@ -237,7 +246,15 @@ export const adsActivateBegin = defineCommand({
     }
     const next = slots.find((slot) => !done.has(slot));
     if (!next) {
-      // Every object is on: the launch is live (the database checks the approval, the objects, the switches and the flight in this very statement).
+      // Every object is on: the launch is live. The database holds the rule in this very statement (the approval, the objects, the settled activations, the switches and the
+      // flight); asked first, so a launch it would refuse is stopped and paused here, never left half way with every object on.
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      if (gap[0]?.p != null) {
+        const stopped = await stopRunningLaunch(ctx, 'activation_unconfirmed', launch.id);
+        for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+        ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, stopped: 'activation_unconfirmed', problem: gap[0].p, phase: 'activate' });
+        return none('activation_unconfirmed');
+      }
       await setLaunch(ctx, launch.id, { state: 'live', step: LAUNCH_STEP_LIVE });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, state: 'live', phase: 'activate' });
       return none('live');
@@ -249,7 +266,11 @@ export const adsActivateBegin = defineCommand({
     const callKey = activationCallKey(launch.id, launch.attempt, next);
     const row = rows.find((r) => r.key === callKey);
     if (row?.state === 'ambiguous' && row.error_code !== null && (row.calls >= UNCLEAR_MAX_CALLS || (ctx.now.getTime() - row.started_at.getTime()) / 1000 >= UNCLEAR_GIVE_UP_SECONDS)) {
-      await needAttention(ctx, launch.id, 'reconcile_unclear');
+      // The row is the campaign's or an ad's: whatever it is, a campaign that may be on is stopped and paused, not left for a person.
+      if (mayBeOn) {
+        const stopped = await stopRunningLaunch(ctx, 'reconcile_unclear', launch.id);
+        for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+      } else await needAttention(ctx, launch.id, 'reconcile_unclear');
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, calls: row.calls, stopped: 'reconcile_unclear', phase: 'activate' });
       return none('reconcile_unclear');
     }
@@ -340,6 +361,9 @@ export const adsActivateRecord = defineCommand({
       const done = doneSlots(rows);
       if (slots.length === 0 || !slots.every((s) => done.has(s))) return { recorded: true, state: 'launching', step: launch.step, next: 'continue' };
       const setting = await currentSetting(ctx);
+      // The database's own rule, asked before the move (a refusal would throw and leave every object on): a launch it would refuse is left for the next begin, which stops and pauses it.
+      const { rows: gap } = await sql<{ p: string | null }>`SELECT crove_ads.launch_activation_problem(${ctx.orgId}::uuid, ${launch.id}::uuid) AS p`.execute(ctx.trx);
+      if (gap[0]?.p != null) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };
       const today = found.account.time_zone && zoneKnown(found.account.time_zone) ? todayIn(found.account.time_zone, ctx.now) : null;
       if (stopConditionOf(setting, found.account, found.connection) || today === null || today < launch.start_text || today > launch.end_text) return { recorded: true, state: 'launching', step: launch.step, next: 'stop' };
       await setLaunch(ctx, launch.id, { state: 'live', step: LAUNCH_STEP_LIVE });
@@ -351,7 +375,7 @@ export const adsActivateRecord = defineCommand({
       // A read shows the object is not on: the call may be made again, once, from an unclear row (a second `missing` for the same row is stale, so two jobs never both make
       // it), and only if nothing has stopped the launch since: the owner can stop while the read runs, and the job still holds the token it opened before.
       if (row.state !== 'ambiguous') return { recorded: false, reason: 'stale' };
-      if (stopConditionOf(await currentSetting(ctx), found.account, found.connection)) return { recorded: true, state: launch.state, step: launch.step, next: 'stop' };
+      if (stopConditionOf(await lockedSetting(ctx), found.account, found.connection)) return { recorded: true, state: launch.state, step: launch.step, next: 'stop' };
       await settle({ state: 'started', calls: row.calls + 1 });
       ctx.audit({ launchId, adAccountId: launch.ad_account_id, step: parsed.step, attempt: parsed.attempt, phase: input.phase, outcome: 'missing' });
       return { recorded: true, state: 'launching', step: launch.step, next: 'call' };

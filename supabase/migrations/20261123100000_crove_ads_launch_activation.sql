@@ -38,6 +38,11 @@ DECLARE
   v_slot text;
   v_n integer;
 BEGIN
+  -- Asked by the guard (in the context of the launch's org, or none at all for a raw statement of the table's owner) and by the worker's commands (in their org's context): a
+  -- context of another org is told nothing.
+  IF crove_kernel.ctx_org_id() IS NOT NULL AND p_org IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    RETURN 'org';
+  END IF;
   SELECT l.draft_id, l.proposal_id, l.plan_hash, l.ad_account_id, l.currency, l.start_on, l.end_on INTO v_l FROM crove_ads.ad_launch l WHERE l.org_id = p_org AND l.id = p_launch;
   IF NOT FOUND THEN
     RETURN 'launch';
@@ -86,6 +91,8 @@ BEGIN
   RETURN NULL;
 END $$;
 REVOKE ALL ON FUNCTION crove_ads.launch_activation_problem(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+-- The worker's commands ask it before a move to live (the reason text only; worker login only, and bound to the org of the context above).
+GRANT EXECUTE ON FUNCTION crove_ads.launch_activation_problem(uuid, uuid) TO crove_worker;
 
 -- The W2-4a guard with the additions of this slice (marked W2-4b): everything else is as it was.
 CREATE OR REPLACE FUNCTION crove_ads.launch_guard() RETURNS trigger

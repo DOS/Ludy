@@ -123,7 +123,8 @@ export async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id:
       const work = await deps.runtime.execute<PauseBegin>('ads.pause.begin', { launchId, via: 'copy' }, options);
       if (work.action === 'none') {
         // Another run holds the launch: its pause is not over, and this token must not be revoked under it.
-        if (work.reason === 'in_flight') waiting = true;
+        // (An activation call that may still land is the same: it could switch an object on after this pause, with no token left to stop it, W2-4b.)
+        if (work.reason === 'in_flight' || work.reason === 'activation_in_flight') waiting = true;
         continue;
       }
       const result = await pauseWork(revoker, secret, work);

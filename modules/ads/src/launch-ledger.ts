@@ -126,7 +126,7 @@ export interface StoppedLaunch {
 // is cancelled instead (cancelQueuedLaunches).
 export async function stopStartedLaunches(
   ctx: Db,
-  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected' | 'connection_closed' | 'plan_changed' | 'flight_over',
+  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected' | 'connection_closed' | 'plan_changed' | 'flight_over' | 'cap_lowered' | 'zone_unknown' | 'reconcile_unclear' | 'activation_unconfirmed',
   filter: { adAccountId?: string; launchId?: string } = {},
 ): Promise<StoppedLaunch[]> {
   const account = filter.adAccountId ?? null;

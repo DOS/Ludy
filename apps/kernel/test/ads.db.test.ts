@@ -2640,6 +2640,20 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(statuses(w).every((s) => s.endsWith(':paused'))).toBe(true);
             });
 
+            it('stops and pauses a launch whose campaign may be on when a cap is lowered, instead of leaving it for a person', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await created('Hạ hạn mức khi chiến dịch có thể đã bật', w);
+              // The campaign is switched on at the platform and the answer is lost: its row is unclear, the object may be delivering.
+              w.inject({ level: 'campaign', when: 'status_after' });
+              expect(await activate(w, launch.id)).toEqual({ steps: 3, ended: 'unknown' });
+              expect(statuses(w).filter((s) => s.endsWith(':active')).sort()).toEqual(['ad:active', 'ad_set:active', 'campaign:active']);
+              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000002', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, account, owner.userId]);
+              expect(await activate(w, launch.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
+              // Not needs attention: stopped, its commitment kept to today, and the pause is queued (ids only) for what may be on.
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'cap_lowered', commit_until: inDays(0) });
+              expect((await events('ads.pause.queued', launch.id)).length).toBe(1);
+            });
+
             it('waits for a flight that has not begun, and the sweep queues it on its first day', async () => {
               const w = new SandboxAdWriter();
               const { launch } = await created('Chờ ngày đầu', w, { startOn: inDays(2), endOn: inDays(8) });
