@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="vi" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>So sánh Ludy với đối thủ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&amp;display=swap">
+<style>
+:root{
+  --bg:#0f1113; --surface:#16181d; --card:#1b1e25; --line:#2c303a; --fg:#eef0f4; --muted:#a3a9b6;
+  --accent:#ff2e29; --accent-ink:#ff8a85;
+  --ok:#34d399; --ok-bg:#0f2a21; --warn:#fbbf24; --warn-bg:#2a2110; --bad:#f87171; --bad-bg:#2d1515; --info:#60a5fa; --info-bg:#121f35;
+  --mute:#a3a9b6; --mute-bg:#23262e;
+  --code-bg:#23262e;
+  --font-body:"Be Vietnam Pro",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font-body);font-size:16px;line-height:1.7;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums}
+.page{padding:32px 0 72px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+main{width:100%;min-width:0}
+.prose{max-width:1100px}
+a{color:var(--accent-ink);text-decoration:none;overflow-wrap:anywhere}a:hover{text-decoration:underline}
+.eyebrow{color:var(--accent-ink);font-weight:600;letter-spacing:.08em;text-transform:uppercase;font-size:13px;margin:0}
+h1{font-size:clamp(26px,4vw,34px);line-height:1.25;margin:6px 0 10px}
+h2{font-size:22px;margin:44px 0 12px;padding-top:12px;border-top:1px solid var(--line)}
+h3{font-size:18px;margin:26px 0 8px}
+.lead{color:var(--muted);margin:0 0 8px;max-width:1100px}
+code{font-family:var(--font-mono);font-size:.88em;background:var(--code-bg);padding:1px 6px;border-radius:4px}
+.callout{border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--surface);border-radius:8px;padding:14px 18px;margin:16px 0;max-width:1100px}
+.callout.warn{border-left-color:var(--warn)}
+.callout.ok{border-left-color:var(--ok)}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.card b{display:block;font-size:18px;color:var(--accent-ink);line-height:1.3;margin-bottom:4px}
+.card p{margin:0 0 8px;font-size:14.5px;line-height:1.55}
+.card .price{color:var(--muted);font-size:13.5px}
+.table-wrap{overflow:auto;margin:12px 0;border:1px solid var(--line);border-radius:8px;max-height:80vh;max-width:100%}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:inherit;min-width:1180px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px;line-height:1.5}
+thead th{position:sticky;top:0;z-index:3;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--line)}
+tbody th[scope=row]{position:sticky;left:0;z-index:2;background:var(--surface);font-weight:600;min-width:210px;max-width:260px;border-right:1px solid var(--line)}
+thead th:first-child{left:0;z-index:4;min-width:210px}
+td{min-width:150px}
+tr.grp th{position:sticky;left:0;background:var(--info-bg);color:var(--info);font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:7px 12px}
+tr:last-child td,tr:last-child th{border-bottom:0}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap;margin-right:6px}
+.chip.ok{background:var(--ok-bg);color:var(--ok)}
+.chip.warn{background:var(--warn-bg);color:var(--warn)}
+.chip.bad{background:var(--bad-bg);color:var(--bad)}
+.chip.info{background:var(--info-bg);color:var(--info)}
+.chip.mute{background:var(--mute-bg);color:var(--mute)}
+.nt{display:block;color:var(--muted);font-size:13px;margin-top:3px}
+.legend{display:flex;flex-wrap:wrap;gap:8px 18px;margin:8px 0 4px;font-size:14px;color:var(--muted)}
+.legend div{display:flex;align-items:center;gap:6px}
+ul,ol{padding-left:22px}
+li{margin:6px 0}
+.muted{color:var(--muted)}
+.gap{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+.gap .card b{font-size:15.5px;color:var(--fg)}
+.gap .card p{margin:0}
+footer{margin-top:48px;color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<div class="page">
+<main>
+
+<p class="eyebrow">Ludy · so sánh đối thủ · 04/11/2026</p>
+<h1>So sánh Ludy với đối thủ</h1>
+<p class="lead">Ludy đặt cạnh MISA AMIS, Base.vn, HubSpot, Odoo và Pancake: ai có gì, Ludy đã chạy gì, đang làm gì và còn thiếu gì. Bản chính bằng tiếng Anh: <a href="competitors.md">competitors.md</a>; bản tóm tắt chữ: <a href="competitors.vi.md">competitors.vi.md</a>.</p>
+<div class="callout warn prose">Đây là bản đồ thị trường, chưa phải quyết định. Mức ưu tiên cho phần còn thiếu chỉ là gợi ý; anh quyết, và theo AGENTS.md chưa xây gì cho đến khi anh đồng ý.</div>
+
+<h2>1. Họ là ai</h2>
+<div class="grid">
+  <div class="card"><b>Ludy</b><p>Hệ điều hành doanh nghiệp mã nguồn mở, AI-first cho OPC và SME Việt Nam. Tự cài bằng docker compose up; bản Cloud sắp ra mắt.</p><p class="price">Giá: mã nguồn mở, tự cài miễn phí. Chưa có giá bản Cloud.</p></div>
+  <div class="card"><b>MISA AMIS</b><p>Dẫn đầu kế toán Việt Nam, bộ hơn 25 phân hệ: kế toán, hóa đơn, thuế, ngân hàng, CRM, nhân sự, văn phòng số, kho, sản xuất. Không mã nguồn mở.</p><p class="price">Giá: ba gói theo quy mô, trả tối thiểu 12 tháng.</p></div>
+  <div class="card"><b>Base.vn</b><p>Bộ 69 ứng dụng, mạnh về công việc, nhân sự, bán hàng, giao tiếp. Cả nhóm Tài chính còn "Coming soon". Không mã nguồn mở.</p><p class="price">Giá: theo tài khoản mỗi tháng, thanh toán theo năm, công khai.</p></div>
+  <div class="card"><b>HubSpot</b><p>Nền tảng khách hàng của Mỹ: Marketing, Sales, Service, Content, Data, Revenue và các tác tử AI. Không có kế toán hay sổ cái.</p><p class="price">Giá: có bản miễn phí, các gói theo từng hub; AI tính bằng credits.</p></div>
+  <div class="card"><b>Odoo</b><p>Bộ phần mềm mã nguồn mở khoảng 60 ứng dụng, giống Ludy nhất về cách xây. Có mô-đun kế toán Việt Nam và kết nối Viettel S-Invoice.</p><p class="price">Giá: một app miễn phí, rồi theo người dùng mỗi tháng; bản Community miễn phí.</p></div>
+  <div class="card"><b>Pancake</b><p>Bán hàng qua chat của Việt Nam: hộp thư, POS, CRM, Botcake, Webcake, Pancake Work và Fintab (kế toán TT133, có trợ lý AI). Đối thủ gần nhất với toàn bộ câu chuyện của Ludy: hộp thư và đơn hàng cộng kế toán.</p><p class="price">Giá: theo số trang và số nhân viên, dùng thử 14 ngày; gói nhỏ nhất từ 550.000 đ cho 6 tháng.</p></div>
+</div>
+
+<h2>2. Bảng so sánh</h2>
+<p class="muted prose">Mỗi ô có nhãn trạng thái và tên sản phẩm. Với Ludy, nhãn là trạng thái của chính Ludy. Hàng tiêu đề và cột đầu cố định khi cuộn. Bảng chỉ đọc danh sách sản phẩm trên trang của mỗi hãng, không đo độ sâu tính năng.</p>
+<div class="legend">
+  <div><span class="chip ok">Có</span> đối thủ có</div>
+  <div><span class="chip warn">Một phần</span> có một phần</div>
+  <div><span class="chip bad">Không</span> không có (hoặc hãng ghi sắp ra mắt)</div>
+  <div><span class="chip mute">Chưa rõ</span> trang công khai không nói rõ</div>
+  <div>Ludy: <span class="chip ok">Đã chạy</span><span class="chip info">Đang làm</span><span class="chip warn">Có kế hoạch</span><span class="chip bad">Chưa có</span></div>
+</div>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Bảng so sánh năng lực">
+<table>
+<thead><tr><th scope="col">Năng lực</th><th scope="col">Ludy</th><th scope="col">MISA AMIS</th><th scope="col">Base.vn</th><th scope="col">HubSpot</th><th scope="col">Odoo</th><th scope="col">Pancake</th></tr></thead>
+<tbody>
+<tr class="grp"><th scope="colgroup" colspan="7">Tài chính - kế toán</th></tr>
+<tr><th scope="row">Sổ sách theo TT133</th><td><span class="chip ok">Đã chạy</span><span class="nt">Ludy Kế toán</span></td><td><span class="chip ok">Có</span><span class="nt">AMIS Kế toán, MISA SME</span></td><td><span class="chip bad">Không</span><span class="nt">Accounting sắp ra mắt</span></td><td><span class="chip bad">Không</span><span class="nt">không có sổ cái</span></td><td><span class="chip ok">Có</span><span class="nt">Accounting, mô-đun Việt Nam</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab: tiền, bán, mua, kho, TSCĐ, lương, thuế, báo cáo</span></td></tr>
+<tr><th scope="row">Nhận hóa đơn mua vào, AI đọc</th><td><span class="chip ok">Đã chạy</span><span class="nt">XML, PDF, ảnh, đồng bộ cổng thuế</span></td><td><span class="chip ok">Có</span><span class="nt">Hóa đơn điện tử, Kế toán</span></td><td><span class="chip bad">Không</span><span class="nt">Invoice sắp ra mắt</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">hóa đơn mua trong Accounting, XML Việt Nam chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Fintab có Mua hàng và Hóa đơn điện tử; AI đọc chưa rõ</span></td></tr>
+<tr><th scope="row">Phát hành hóa đơn bán ra</th><td><span class="chip info">Đang làm</span><span class="nt">bản nháp và nhà cung cấp thử đã có; nhà cung cấp thật đang làm</span></td><td><span class="chip ok">Có</span><span class="nt">meInvoice</span></td><td><span class="chip bad">Không</span><span class="nt">Invoice sắp ra mắt</span></td><td><span class="chip warn">Một phần</span><span class="nt">Invoices, không phải hóa đơn điện tử thuế</span></td><td><span class="chip warn">Một phần</span><span class="nt">kết nối Viettel S-Invoice</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab có mục Hóa đơn điện tử; độ sâu chưa rõ</span></td></tr>
+<tr><th scope="row">Tờ khai VAT và báo cáo tài chính có XML thuế</th><td><span class="chip ok">Đã chạy</span><span class="nt">01/GTGT, B01-DNN, B02-DNN, XML HTKK</span></td><td><span class="chip ok">Có</span><span class="nt">Thuế điện tử, AMIS Kế toán</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span><span class="nt">Việt Nam chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab có Thuế và Báo cáo; XML chưa rõ</span></td></tr>
+<tr><th scope="row">Sao kê, đối chiếu, bank feed</th><td><span class="chip ok">Đã chạy</span><span class="nt">nhập sao kê và đối chiếu đã có; bank feed thật đang làm</span></td><td><span class="chip ok">Có</span><span class="nt">Ngân hàng điện tử</span></td><td><span class="chip bad">Không</span><span class="nt">Bankfeed sắp ra mắt</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">nhập sao kê, QR; bank feed Việt Nam chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Fintab có Tiền gửi; nhập sao kê chưa rõ</span></td></tr>
+<tr><th scope="row">Tài sản cố định, khấu hao</th><td><span class="chip ok">Đã chạy</span></td><td><span class="chip ok">Có</span><span class="nt">AMIS Kế toán, Tài sản</span></td><td><span class="chip bad">Không</span><span class="nt">Asset sắp ra mắt</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">Accounting</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab: Tài sản cố định, Công cụ dụng cụ</span></td></tr>
+<tr><th scope="row">Sổ hộ kinh doanh</th><td><span class="chip info">Đang làm</span><span class="nt">kế hoạch và issue cho sổ S1a đến S2e</span></td><td><span class="chip ok">Có</span><span class="nt">Kế toán HKD</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab: kê khai thuế hộ 2026</span></td></tr>
+<tr><th scope="row">Sổ hợp tác xã</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Kế toán HTX</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Chi phí, tạm ứng</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Expense</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Expenses</span></td><td><span class="chip warn">Một phần</span><span class="nt">Fintab ghi chi phí và công nợ</span></td></tr>
+<tr><th scope="row">Chữ ký số, nộp thuế, kiểm toán, vay vốn</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Chữ ký số, Thuế điện tử, Kiểm toán, Vay vốn</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Bán hàng &amp; CRM</th></tr>
+<tr><th scope="row">Khách hàng, cơ hội, bảng pipeline, nhập danh bạ</th><td><span class="chip ok">Đã chạy</span><span class="nt">Engage: Khách hàng và Bán hàng</span></td><td><span class="chip ok">Có</span><span class="nt">CRM</span></td><td><span class="chip ok">Có</span><span class="nt">Sales</span></td><td><span class="chip ok">Có</span><span class="nt">Sales Hub, Smart CRM</span></td><td><span class="chip ok">Có</span><span class="nt">CRM</span></td><td><span class="chip ok">Có</span><span class="nt">CRM, hồ sơ khách trong Pancake</span></td></tr>
+<tr><th scope="row">Trang đặt lịch, lịch</th><td><span class="chip ok">Đã chạy</span><span class="nt">trang đặt lịch, Google Calendar</span></td><td><span class="chip warn">Một phần</span><span class="nt">Lịch</span></td><td><span class="chip warn">Một phần</span><span class="nt">Booking (phòng, tài nguyên)</span></td><td><span class="chip ok">Có</span><span class="nt">Meeting Scheduler</span></td><td><span class="chip ok">Có</span><span class="nt">Appointments</span></td><td><span class="chip warn">Một phần</span><span class="nt">lịch hẹn trong CRM</span></td></tr>
+<tr><th scope="row">Báo giá, đơn bán hàng, hợp đồng</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip warn">Một phần</span><span class="nt">CRM, Hợp đồng điện tử</span></td><td><span class="chip ok">Có</span><span class="nt">Commerce, Contract</span></td><td><span class="chip ok">Có</span><span class="nt">Quotes, Revenue Hub</span></td><td><span class="chip ok">Có</span><span class="nt">Sales</span></td><td><span class="chip warn">Một phần</span><span class="nt">đơn trong POS; báo giá chưa rõ</span></td></tr>
+<tr><th scope="row">Thu tiền định kỳ, link thanh toán</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip warn">Một phần</span><span class="nt">Cổng thanh toán</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Subscriptions, Payment Links</span></td><td><span class="chip ok">Có</span><span class="nt">Subscriptions</span></td><td><span class="chip warn">Một phần</span><span class="nt">cổng thanh toán, QR mỗi đơn trong POS</span></td></tr>
+<tr><th scope="row">Bán tại quầy (bán lẻ, nhà hàng)</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Cửa hàng, Nhà hàng</span></td><td><span class="chip warn">Một phần</span><span class="nt">Commerce</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">POS Shop, POS Restaurant</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake POS</span></td></tr>
+<tr><th scope="row">Chốt đơn ngay trong chat</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake: tạo đơn POS trong chat và livestream</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Marketing</th></tr>
+<tr><th scope="row">Đăng bài mạng xã hội, duyệt bài</th><td><span class="chip ok">Đã chạy</span><span class="nt">Engage: Marketing</span></td><td><span class="chip warn">Một phần</span><span class="nt">aiMarketing</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Social Media Management</span></td><td><span class="chip ok">Có</span><span class="nt">Social Marketing</span></td><td><span class="chip mute">Chưa rõ</span><span class="nt">trang nói về trả lời, không nói đăng bài</span></td></tr>
+<tr><th scope="row">Quảng cáo: xem kết quả</th><td><span class="chip ok">Đã chạy</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Ads manager</span></td><td><span class="chip ok">Có</span><span class="nt">Ads Software</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">gửi sự kiện chuyển đổi cho Meta, Google</span></td></tr>
+<tr><th scope="row">Quảng cáo: tạo và chạy chiến dịch</th><td><span class="chip info">Đang làm</span><span class="nt">lát đầu đã có; chạy và tạm dừng đang làm</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span><span class="nt">chỉ đo lường</span></td><td><span class="chip ok">Có</span><span class="nt">Ads Software</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">tối ưu Facebook Ads; chưa rõ có tạo chiến dịch</span></td></tr>
+<tr><th scope="row">Email marketing, chiến dịch</th><td><span class="chip warn">Có kế hoạch</span><span class="nt">kế hoạch đã duyệt, epic ở Icebox</span></td><td><span class="chip ok">Có</span><span class="nt">aiMarketing</span></td><td><span class="chip bad">Không</span><span class="nt">Express sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">Marketing Hub</span></td><td><span class="chip ok">Có</span><span class="nt">Email Marketing</span></td><td><span class="chip warn">Một phần</span><span class="nt">tự động hóa trong CRM</span></td></tr>
+<tr><th scope="row">SMS, WhatsApp, Zalo hàng loạt</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span><span class="nt">Express sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">SMS Marketing, WhatsApp</span></td><td><span class="chip ok">Có</span><span class="nt">SMS Marketing, WhatsApp</span></td><td><span class="chip ok">Có</span><span class="nt">Botcake, POS: Facebook, TikTok, WhatsApp, Zalo</span></td></tr>
+<tr><th scope="row">Website, landing page, biểu mẫu</th><td><span class="chip bad">Chưa có</span><span class="nt">có trang link-in-bio trong Engage</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span><span class="nt">Form sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">Content Hub</span></td><td><span class="chip ok">Có</span><span class="nt">Website, eCommerce</span></td><td><span class="chip ok">Có</span><span class="nt">Webcake: Landing, Storefront</span></td></tr>
+<tr><th scope="row">Khuyến mại, tích điểm</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Khuyến mại</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Marketing Hub</span></td><td><span class="chip ok">Có</span><span class="nt">eCommerce, POS</span></td><td><span class="chip warn">Một phần</span><span class="nt">Botcake gửi ưu đãi trong chat</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">CSKH &amp; hộp thư</th></tr>
+<tr><th scope="row">Một hộp thư cho tin nhắn và bình luận</th><td><span class="chip info">Đang làm</span><span class="nt">Zalo OA đã có; bình luận Facebook và Messenger đang làm</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Prospect</span></td><td><span class="chip ok">Có</span><span class="nt">Shared Inbox</span></td><td><span class="chip warn">Một phần</span><span class="nt">Live Chat, Discuss</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake: mạng xã hội, Zalo, TikTok, WhatsApp, sàn</span></td></tr>
+<tr><th scope="row">Ticket, SLA, help desk</th><td><span class="chip bad">Chưa có</span><span class="nt">chủ động không làm (03/11/2026)</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">Success</span></td><td><span class="chip ok">Có</span><span class="nt">Service Hub</span></td><td><span class="chip ok">Có</span><span class="nt">Helpdesk</span></td><td><span class="chip warn">Một phần</span><span class="nt">thẻ và tự chia việc; ticket, SLA chưa rõ</span></td></tr>
+<tr><th scope="row">Kho kiến thức, cổng khách hàng</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Service Hub</span></td><td><span class="chip warn">Một phần</span><span class="nt">Knowledge, eLearning, Forum</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Live chat và chatbot trên web</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">Live Chat, chatbot</span></td><td><span class="chip ok">Có</span><span class="nt">Live Chat</span></td><td><span class="chip ok">Có</span><span class="nt">Botcake, chat plugin trong Webcake</span></td></tr>
+<tr><th scope="row">Điện thoại, tổng đài</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span><span class="nt">Call sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">VoIP</span></td><td><span class="chip ok">Có</span><span class="nt">VoIP</span></td><td><span class="chip ok">Có</span><span class="nt">ghi âm, lịch sử gọi trong POS</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Công việc &amp; dự án</th></tr>
+<tr><th scope="row">Việc cần làm, việc cá nhân</th><td><span class="chip ok">Đã chạy</span><span class="nt">Công việc, Việc của tôi, Notes</span></td><td><span class="chip ok">Có</span><span class="nt">Công việc</span></td><td><span class="chip ok">Có</span><span class="nt">Task</span></td><td><span class="chip warn">Một phần</span><span class="nt">việc trong CRM</span></td><td><span class="chip ok">Có</span><span class="nt">Project, To-do</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake Work</span></td></tr>
+<tr><th scope="row">Dự án có bảng và danh sách</th><td><span class="chip info">Đang làm</span><span class="nt">ADR-0048 đã duyệt, issue đã mở</span></td><td><span class="chip ok">Có</span><span class="nt">Công việc</span></td><td><span class="chip ok">Có</span><span class="nt">Project</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Project</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake Work: Kanban, Issues</span></td></tr>
+<tr><th scope="row">Ghi chú, tài liệu</th><td><span class="chip ok">Đã chạy</span><span class="nt">Notes</span></td><td><span class="chip ok">Có</span><span class="nt">Ghi chép</span></td><td><span class="chip ok">Có</span><span class="nt">Docs</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Documents, Knowledge</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Phê duyệt, biểu mẫu đề xuất</th><td><span class="chip info">Đang làm</span><span class="nt">mới duyệt đề xuất của AI và bài đăng</span></td><td><span class="chip ok">Có</span><span class="nt">Quy trình</span></td><td><span class="chip ok">Có</span><span class="nt">Request</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Approvals</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Trình tạo quy trình tự động</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Workflow</span></td><td><span class="chip ok">Có</span><span class="nt">Workflow, Automation</span></td><td><span class="chip ok">Có</span><span class="nt">Workflow Automation</span></td><td><span class="chip ok">Có</span><span class="nt">Studio</span></td><td><span class="chip warn">Một phần</span><span class="nt">luồng chatbot, tự động hóa CRM</span></td></tr>
+<tr><th scope="row">Ký điện tử, hợp đồng</th><td><span class="chip warn">Có kế hoạch</span><span class="nt">mô-đun sign trong kế hoạch lõi</span></td><td><span class="chip ok">Có</span><span class="nt">Hợp đồng điện tử</span></td><td><span class="chip ok">Có</span><span class="nt">E-Sign, Contract</span></td><td><span class="chip warn">Một phần</span><span class="nt">chữ ký trên báo giá</span></td><td><span class="chip ok">Có</span><span class="nt">Sign</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Văn thư, công văn</th><td><span class="chip info">Đang làm</span><span class="nt">mới có lưu tệp và bằng chứng</span></td><td><span class="chip ok">Có</span><span class="nt">Văn thư</span></td><td><span class="chip ok">Có</span><span class="nt">E-Office, Drive</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">Documents</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Nhân sự</th></tr>
+<tr><th scope="row">Lương, BHXH, thuế TNCN</th><td><span class="chip info">Đang làm</span><span class="nt">kế hoạch và issue; sẽ là app Ludy Nhân sự</span></td><td><span class="chip ok">Có</span><span class="nt">Tiền lương, BHXH, Thuế TNCN</span></td><td><span class="chip ok">Có</span><span class="nt">Payroll</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">app Payroll; Việt Nam chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Fintab có Tiền lương; độ sâu chưa rõ</span></td></tr>
+<tr><th scope="row">Hồ sơ nhân viên</th><td><span class="chip info">Đang làm</span><span class="nt">danh sách nhân viên trong kế hoạch lương</span></td><td><span class="chip ok">Có</span><span class="nt">Thông tin nhân sự</span></td><td><span class="chip ok">Có</span><span class="nt">HRIS</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Employees</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Chấm công, nghỉ phép</th><td><span class="chip info">Đang làm</span><span class="nt">dữ liệu chấm công và số dư phép cho lương</span></td><td><span class="chip ok">Có</span><span class="nt">Chấm công</span></td><td><span class="chip ok">Có</span><span class="nt">Timesheet</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Time Off, Timesheets</span></td><td><span class="chip ok">Có</span><span class="nt">Chấm công trong Pancake Work</span></td></tr>
+<tr><th scope="row">Tuyển dụng</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Tuyển dụng</span></td><td><span class="chip ok">Có</span><span class="nt">E-Hiring</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Recruitment</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr><th scope="row">Mục tiêu, đánh giá nhân sự</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Mục tiêu, Đánh giá</span></td><td><span class="chip ok">Có</span><span class="nt">Goal, Review</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Appraisals</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Giao tiếp</th></tr>
+<tr><th scope="row">Ghi chú cuộc họp bằng AI</th><td><span class="chip info">Đang làm</span><span class="nt">ADR-0047 đã duyệt, issue đã mở</span></td><td><span class="chip warn">Một phần</span><span class="nt">Phòng họp (đặt phòng)</span></td><td><span class="chip ok">Có</span><span class="nt">Meeting</span></td><td><span class="chip warn">Một phần</span><span class="nt">Conversation Intelligence (cuộc gọi)</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr><th scope="row">Chat nội bộ</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Chat</span></td><td><span class="chip ok">Có</span><span class="nt">Chat</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Discuss</span></td><td><span class="chip ok">Có</span><span class="nt">Pancake Work</span></td></tr>
+<tr><th scope="row">Bảng tin công ty</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Mạng xã hội</span></td><td><span class="chip ok">Có</span><span class="nt">Townhall</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">Discuss</span></td><td><span class="chip warn">Một phần</span><span class="nt">kênh trong Pancake Work</span></td></tr>
+<tr><th scope="row">Hộp thư email</th><td><span class="chip info">Đang làm</span><span class="nt">có địa chỉ nhận và gửi mail; chưa có hộp thư</span></td><td><span class="chip ok">Có</span><span class="nt">Mail</span></td><td><span class="chip bad">Không</span><span class="nt">Mail sắp ra mắt</span></td><td><span class="chip warn">Một phần</span><span class="nt">tích hợp email</span></td><td><span class="chip warn">Một phần</span><span class="nt">Discuss</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Vận hành (kho, mua hàng, sản xuất)</th></tr>
+<tr><th scope="row">Kho và giá vốn</th><td><span class="chip info">Đang làm</span><span class="nt">kế hoạch và issue</span></td><td><span class="chip ok">Có</span><span class="nt">Kho hàng</span></td><td><span class="chip ok">Có</span><span class="nt">Inventory</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Inventory</span></td><td><span class="chip ok">Có</span><span class="nt">Fintab Kho, tồn kho POS; cách tính giá vốn chưa rõ</span></td></tr>
+<tr><th scope="row">Đơn từ sàn (Shopee, TikTok Shop, Lazada)</th><td><span class="chip info">Đang làm</span><span class="nt">kế hoạch và issue</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">POS lấy đơn từ sàn, đồng bộ tồn</span></td></tr>
+<tr><th scope="row">Nối đơn vị vận chuyển, theo dõi giao hàng</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">POS tạo vận đơn, đồng bộ trạng thái, phí ship</span></td></tr>
+<tr><th scope="row">Đơn mua hàng, nhà cung cấp</th><td><span class="chip bad">Chưa có</span><span class="nt">chỉ có hóa đơn mua vào</span></td><td><span class="chip ok">Có</span><span class="nt">Mua hàng</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Purchase</span></td><td><span class="chip warn">Một phần</span><span class="nt">Fintab có Mua hàng; đơn mua chưa rõ</span></td></tr>
+<tr><th scope="row">Sản xuất</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Sản xuất</span></td><td><span class="chip warn">Một phần</span><span class="nt">định mức trong Inventory</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Manufacturing, PLM, Quality</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr><th scope="row">Tài sản vận hành, bảo trì</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">Tài sản</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">Maintenance, Fleet</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">AI</th></tr>
+<tr><th scope="row">AI nằm trong việc hằng ngày</th><td><span class="chip ok">Đã chạy</span><span class="nt">đọc hóa đơn, đối chiếu, soạn bài, nhắc thanh toán, bản tin Vy</span></td><td><span class="chip ok">Có</span><span class="nt">MISA AVA, OneAI</span></td><td><span class="chip warn">Một phần</span><span class="nt">phần lớn sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">Breeze, AI Assistant</span></td><td><span class="chip ok">Có</span><span class="nt">app AI</span></td><td><span class="chip ok">Có</span><span class="nt">Botcake, trợ lý AI trong Fintab</span></td></tr>
+<tr><th scope="row">Mỗi bộ phận một đồng nghiệp AI có tên</th><td><span class="chip ok">Đã chạy</span><span class="nt">Vy và các bạn trong thiết kế; Vy theo từng thành viên mới là đề xuất</span></td><td><span class="chip warn">Một phần</span><span class="nt">AVA, Agentwork</span></td><td><span class="chip bad">Không</span><span class="nt">Agents sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">Agent Hub</span></td><td><span class="chip bad">Không</span></td><td><span class="chip warn">Một phần</span><span class="nt">Botcake, chưa có tên</span></td></tr>
+<tr><th scope="row">AI chỉ đề xuất, có kiểm tra, người duyệt</th><td><span class="chip ok">Đã chạy</span><span class="nt">AI Inbox, kết quả AI bị đánh dấu, duyệt hai người</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">tác tử có giới hạn hành động và chi tiêu</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">Botcake chuyển từ bot sang người</span></td></tr>
+<tr><th scope="row">Hạn mức chi tiêu AI theo tổ chức và module</th><td><span class="chip ok">Đã chạy</span><span class="nt">bộ đo ngân sách AI</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">HubSpot Credits</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Tự dựng ứng dụng hoặc tác tử AI</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip warn">Một phần</span><span class="nt">Agentwork</span></td><td><span class="chip bad">Không</span><span class="nt">Studio sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">AI Studio</span></td><td><span class="chip ok">Có</span><span class="nt">Studio</span></td><td><span class="chip warn">Một phần</span><span class="nt">kịch bản có sẵn, luồng AI trong Botcake</span></td></tr>
+<tr class="grp"><th scope="colgroup" colspan="7">Nền tảng</th></tr>
+<tr><th scope="row">Mã nguồn mở, tự cài</th><td><span class="chip ok">Đã chạy</span><span class="nt">AGPL, docker compose up</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip bad">Không</span></td><td><span class="chip ok">Có</span><span class="nt">bản Community</span></td><td><span class="chip bad">Không</span></td></tr>
+<tr><th scope="row">Nhiều pháp nhân trong một tổ chức</th><td><span class="chip ok">Đã chạy</span><span class="nt">pháp nhân (legal entity)</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">nhiều tài khoản</span></td><td><span class="chip ok">Có</span><span class="nt">multi-company (gói Custom)</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Nhật ký chống sửa, xuất dữ liệu tổ chức</th><td><span class="chip ok">Đã chạy</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip warn">Một phần</span><span class="nt">nhật ký hoạt động</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td></tr>
+<tr><th scope="row">Chợ ứng dụng, API công khai</th><td><span class="chip warn">Có kế hoạch</span><span class="nt">máy chủ OAuth ADR-0032, mới đề xuất</span></td><td><span class="chip ok">Có</span><span class="nt">Chợ ứng dụng</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">app marketplace</span></td><td><span class="chip ok">Có</span><span class="nt">External API (gói Custom)</span></td><td><span class="chip warn">Một phần</span><span class="nt">API mở, báo cáo</span></td></tr>
+<tr><th scope="row">Tùy biến không cần code</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip warn">Một phần</span><span class="nt">dịch vụ viết phần mềm riêng</span></td><td><span class="chip bad">Không</span><span class="nt">Studio sắp ra mắt</span></td><td><span class="chip ok">Có</span><span class="nt">custom objects</span></td><td><span class="chip ok">Có</span><span class="nt">Studio</span></td><td><span class="chip warn">Một phần</span><span class="nt">Webcake cho sửa code</span></td></tr>
+<tr><th scope="row">Gói theo ngành</th><td><span class="chip bad">Chưa có</span></td><td><span class="chip ok">Có</span><span class="nt">20+ giải pháp ngành</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip mute">Chưa rõ</span></td><td><span class="chip ok">Có</span><span class="nt">module theo ngành</span></td><td><span class="chip warn">Một phần</span><span class="nt">giải pháp thời trang, giáo dục, làm đẹp, bán lẻ</span></td></tr>
+</tbody>
+</table>
+</div>
+<p class="muted prose">Đang làm nghĩa là đã có kế hoạch và issue mở (có thể chưa bắt đầu viết mã). Có kế hoạch nghĩa là mới có trong kế hoạch hoặc ADR, chưa có issue, hoặc epic nằm trong Icebox. Chưa có nghĩa là chưa có kế hoạch, ADR hay issue.</p>
+
+<h2>3. Pancake là đối thủ gần nhất</h2>
+<div class="callout prose">Pancake giữ hộp thư và đơn hàng (Pancake, POS, CRM, Botcake) và đặt kế toán ngay cạnh (Fintab: sổ TT133, tiền, bán, mua, hóa đơn điện tử, kho, tài sản, lương, thuế, báo cáo, có trợ lý AI). Trang của hãng nói biến mọi giao dịch bán thành báo cáo kế toán và thuế. Fintab cạnh tranh trực diện với Ludy Kế toán, không chỉ ở sổ hộ kinh doanh. Từ bên ngoài chưa xác nhận được Fintab phát hành hóa đơn điện tử và tính lương sâu đến đâu. MISA AMIS vẫn sâu nhất về thuế Việt Nam. Ludy hiện chưa có đối tượng đơn hàng, nên giao dịch bán chỉ vào sổ qua hóa đơn và file.</div>
+
+<h2>4. Ludy khác ở đâu</h2>
+<ol class="prose">
+  <li><b>Trợ lý AI nằm trong từng việc, kết quả AI là đề xuất đã kiểm tra, người duyệt (đã chạy phần lớn).</b> Mọi kết quả AI là đề xuất qua kiểm tra tất định rồi người duyệt; chữ do AI viết được đánh dấu; mọi lần gọi mô hình đi qua bộ đo ngân sách theo tổ chức. Vy riêng cho từng thành viên mới là đề xuất (ADR-0049). Đối thủ cũng có AI; điều các trang không cho thấy là quy tắc này, nên đó là điểm khác, không phải họ không có AI.</li>
+  <li><b>Mã nguồn mở, tự cài (đã chạy).</b> AGPL, chạy bằng <code>docker compose up</code>. Trong năm đối thủ chỉ Odoo Community mở. Ludy Cloud sắp ra mắt.</li>
+  <li><b>Đặc thù Việt Nam.</b> Đã chạy: TT133, số chứng từ liền mạch, kiểm tra XML hóa đơn (mã cơ quan thuế, chữ số kiểm tra mã số thuế), tờ khai VAT và XML HTKK, báo cáo tài chính, mẫu nhập MISA SME, đối chiếu ngân hàng. Đang làm: phát hành hóa đơn bán ra, bank feed, sổ hộ kinh doanh, lương và BHXH, kho. MISA AMIS và Pancake Fintab ghi các mục này trong menu, nên lợi thế của Ludy là việc đọc có kiểm tra, có người duyệt, và mã nguồn mở, không phải độ phủ.</li>
+  <li><b>Một đường ghi dữ liệu, có duyệt (đã chạy).</b> Mọi thay đổi trạng thái là một lệnh qua một runtime; cô lập từng tổ chức bằng row-level security; nhật ký chỉ thêm, neo vào kho lưu chống sửa; duyệt hai người và MFA mới cho việc rủi ro. Năm đối thủ không công bố điều tương đương trên các trang đã đọc, nên bảng ghi "Chưa rõ" chứ không ghi "Không".</li>
+  <li><b>Kế toán và khách hàng dùng chung danh bạ (đã chạy).</b> Không riêng Ludy: Pancake để các app dưới một tài khoản, Odoo và MISA AMIS cũng là một bộ.</li>
+  <li><b>Điểm yếu thẳng thắn: độ phủ.</b> MISA có hơn 25 phân hệ, Base 69 ứng dụng, Odoo khoảng 60; Ludy có 3 app đã chạy (Kế toán, Engage, Notes) và vài app đang làm.</li>
+</ol>
+
+<h2>5. Ludy còn thiếu</h2>
+<div class="callout warn prose">Mức ưu tiên là gợi ý của người viết cho OPC và SME, AI-first. Anh quyết. Chưa xây gì và chưa mở issue cho đến khi anh đồng ý. Những chỗ đổi vì Pancake có ghi chú trong ngoặc.</div>
+<h3><span class="chip bad">Cao</span> 3 mục</h3>
+<div class="gap">
+  <div class="card"><b>Báo giá và đơn bán hàng từ cơ hội</b><p>Người bán nào cũng báo giá mỗi tuần; hiện cơ hội dừng trước hóa đơn. AI có thể soạn báo giá từ tin nhắn.</p></div>
+  <div class="card"><b>Đơn tạo ngay trong chat (mới, vì Pancake)</b><p>Cách nhiều người bán nhỏ bán thật: khách nhắn Messenger hoặc Zalo, nhân viên gõ đơn vào bảng tính. Dy đề xuất đơn từ cuộc trò chuyện, người duyệt.</p></div>
+  <div class="card"><b>Nhắn hàng loạt cho khách đã đồng ý (trước là Trung bình, vì Pancake)</b><p>Nhắn lại khách cũ là công cụ bán chính của người bán qua mạng xã hội. Có giới hạn của nền tảng và quy định về sự đồng ý; người duyệt từng lần gửi.</p></div>
+</div>
+<h3><span class="chip warn">Trung bình</span> 6 mục</h3>
+<div class="gap">
+  <div class="card"><b>Nối đơn vị vận chuyển, theo dõi giao hàng (mới, vì Pancake)</b><p>Có đơn rồi thì người bán hàng hóa cần tạo vận đơn, theo dõi trạng thái, ghi phí ship. Mỗi bên vận chuyển là một hợp đồng đối tác.</p></div>
+  <div class="card"><b>Chatbot trả lời và nhận đơn không cần người (mới, cần anh quyết)</b><p>Trả lời ngoài giờ giúp bán nhiều hơn, nhưng trái quy tắc hiện nay là người duyệt mọi tin nhắn gửi đi. Cần anh quyết trước khi lên kế hoạch, ví dụ bot chỉ trả lời nội dung cố định (giờ mở cửa, giá, còn hàng).</p></div>
+  <div class="card"><b>Website, landing page, biểu mẫu (trước là Thấp, vì Pancake và việc quảng cáo của Ludy)</b><p>Landing page là nơi khách bấm quảng cáo Facebook vào; Ludy đang xây việc tạo quảng cáo nên thiếu trang đích là thiếu nửa đường. Nên làm trang một màn hình, không làm website đầy đủ.</p></div>
+  <div class="card"><b>Đơn mua hàng và nhà cung cấp</b><p>Đi cùng kho và hóa đơn mua vào.</p></div>
+  <div class="card"><b>Chi phí, tạm ứng</b><p>Đội 5 đến 20 người hay tự ứng tiền; AI đọc biên lai và đề xuất bút toán.</p></div>
+  <div class="card"><b>Link thanh toán, mã QR mỗi đơn, thu tiền định kỳ</b><p>Thu tiền nhanh hơn; cần đối tác thanh toán và anh duyệt chi tiêu. Mã QR mỗi đơn là lát cắt nhỏ, có ích.</p></div>
+</div>
+<h3><span class="chip mute">Thấp</span> 14 mục</h3>
+<div class="gap">
+  <div class="card"><b>Live chat trên website</b><p>Phụ thuộc có website; Zalo OA và Messenger đã đủ cho phần lớn người bán nhỏ.</p></div>
+  <div class="card"><b>Gọi điện có ghi âm, gắn với đơn hoặc cơ hội</b><p>Telesales phổ biến trong bán lẻ nhưng cần hợp đồng tổng đài.</p></div>
+  <div class="card"><b>Cổng khách hàng, kho kiến thức</b><p>Anh đã quyết không làm ticket và SLA.</p></div>
+  <div class="card"><b>Chat nội bộ, bảng tin công ty</b><p>Đội nhỏ đã dùng nhóm Zalo; khó thắng.</p></div>
+  <div class="card"><b>Tuyển dụng</b><p>Đội nhỏ ít tuyển.</p></div>
+  <div class="card"><b>Mục tiêu OKR, đánh giá nhân sự</b><p>Hợp với công ty lớn hơn.</p></div>
+  <div class="card"><b>Trình tạo quy trình tự động</b><p>Các AI đã tự làm trong từng app; thêm trình tạo là thêm cấu hình.</p></div>
+  <div class="card"><b>POS bán tại quầy và nhà hàng</b><p>Khác với đơn online: quầy thu tiền, biên lai, ca làm. MISA, Odoo, Pancake đã chiếm.</p></div>
+  <div class="card"><b>Sản xuất, bảo trì, đội xe</b><p>Thiên về doanh nghiệp lớn, ngoài cổng sàng lọc.</p></div>
+  <div class="card"><b>Sổ sách hợp tác xã</b><p>Thị trường hẹp.</p></div>
+  <div class="card"><b>Chữ ký số (CA), nộp thuế trực tiếp, kiểm toán, vay vốn</b><p>Cần giấy phép hoặc hợp đồng đối tác; ký điện tử đã có kế hoạch.</p></div>
+  <div class="card"><b>Gói theo ngành</b><p>Để sau khi các app lõi chạy.</p></div>
+  <div class="card"><b>Chợ ứng dụng và API công khai</b><p>Cần khi có đối tác muốn tích hợp; máy chủ OAuth mới ở mức đề xuất.</p></div>
+  <div class="card"><b>Công cụ tự dựng AI hoặc ứng dụng</b><p>Không dành cho OPC; các trợ lý có tên mới là sản phẩm.</p></div>
+</div>
+<p class="muted prose">Không lặp lại: ticket và SLA (đã quyết không làm 03/11/2026), ký điện tử (có kế hoạch), email marketing (có kế hoạch, epic ở Icebox). Vì sao Pancake đổi thứ tự: với người bán nhỏ ở Việt Nam, cuộc trò chuyện là nơi chốt đơn, nên đơn hàng, vận chuyển và nhắn hàng loạt nằm ngay cạnh hộp thư; Fintab cũng làm việc chậm đối tượng đơn hàng tốn kém hơn, vì Pancake đã nối giao dịch bán vào sổ.</p>
+
+<h2>6. Báo giá và đơn hàng thuộc về đâu</h2>
+<p class="prose">Chúng thuộc CRM (nhóm Khách hàng và Bán hàng của Engage): cơ hội dẫn đến báo giá, báo giá dẫn đến đơn hàng. Đơn hàng sau đó nối với hai thứ: lần xuất kho (kế hoạch kho) và bản nháp hóa đơn bán ra (kế hoạch phát hành hóa đơn), để một đơn đã xác nhận chạy cả hai và không ai gõ lại. Dịch vụ không có hàng thì bỏ nối kho, đi thẳng từ báo giá sang bản nháp hóa đơn. App POS riêng là việc khác: dành cho bán tại quầy, không dành cho đơn bắt đầu từ cơ hội hay từ chat. Nếu sau này cần POS thì nó nên tạo cùng một đối tượng đơn hàng, không tạo cái thứ hai.</p>
+
+<h2>7. Nguồn</h2>
+<p class="muted prose">Đọc ngày 04/11/2026. Danh sách của mỗi hãng là trang công khai tại ngày đó và đổi không báo trước. Trang Odoo đọc qua bản tóm tắt vì trình duyệt tích hợp không mở được. Giá của Fintab, Botcake và Webcake chưa đọc.</p>
+<ul class="prose">
+  <li><a href="https://amis.misa.vn/">MISA AMIS: menu sản phẩm</a></li>
+  <li><a href="https://amis.misa.vn/bang-gia-bo-giai-phap-quan-tri-hop-nhat-misa-amis/">MISA AMIS: bảng giá</a></li>
+  <li><a href="https://base.vn/app">Base.vn: danh mục 69 ứng dụng</a></li>
+  <li><a href="https://base.vn/bang-gia">Base.vn: bảng giá</a></li>
+  <li><a href="https://www.hubspot.com/products">HubSpot: sản phẩm</a></li>
+  <li><a href="https://www.hubspot.com/pricing">HubSpot: bảng giá</a></li>
+  <li><a href="https://www.hubspot.com/products/commerce">HubSpot: Revenue Hub</a></li>
+  <li><a href="https://www.odoo.com/page/all-apps">Odoo: toàn bộ ứng dụng</a></li>
+  <li><a href="https://www.odoo.com/pricing">Odoo: bảng giá</a></li>
+  <li><a href="https://www.odoo.com/documentation/master/applications/finance/fiscal_localizations/vietnam.html">Odoo: bản địa hóa Việt Nam</a></li>
+  <li><a href="https://pancake.vn/">Pancake: trang chủ</a></li>
+  <li><a href="https://pancake.vn/features">Pancake: tính năng</a></li>
+  <li><a href="https://pancake.vn/pricing">Pancake: bảng giá</a></li>
+  <li><a href="https://pos.pancake.vn/">Pancake POS</a></li>
+  <li><a href="https://crm.pancake.vn/">Pancake CRM</a></li>
+  <li><a href="https://botcake.io/">Botcake</a></li>
+  <li><a href="https://webcake.io/">Webcake</a></li>
+  <li><a href="https://pancakework.vn/">Pancake Work</a></li>
+  <li><a href="https://fintab.pancake.vn/">Fintab (menu cũng được thấy trong app đã đăng nhập tại fintab.pancake.vn)</a></li>
+</ul>
+
+<footer>Ludy · so sánh đối thủ · 04/11/2026 · bản gốc: <a href="competitors.md">competitors.md</a></footer>
+</main>
+</div>
+</body>
+</html>
