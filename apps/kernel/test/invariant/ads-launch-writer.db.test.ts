@@ -168,8 +168,10 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
         await c.query('BEGIN');
         try {
           await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
-          await move(c, org, id, `state = 'live'`);
+          expect((await move(c, org, id, `state = 'live'`)).rowCount).toBe(1);
           await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+          const on = await c.query(`SELECT tgenabled::text AS t FROM pg_trigger WHERE tgrelid = 'crove_ads.ad_launch'::regclass AND tgname = 'launch_guard'`);
+          expect(on.rows).toEqual([{ t: 'A' }]);
           await c.query('COMMIT');
         } catch (inner) {
           await c.query('ROLLBACK');

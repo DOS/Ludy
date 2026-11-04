@@ -144,7 +144,7 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
       await c.query('BEGIN');
       try {
         await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
-        await move(c, org, id, set);
+        expect((await move(c, org, id, set)).rowCount).toBe(1);
         await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
         await c.query('COMMIT');
       } catch (e) {
