@@ -47,6 +47,8 @@ export interface CroveFinanceSchema {
   'crove_finance.bank_party_rule': FinanceBankPartyRuleTable;
   'crove_finance.cash_voucher': FinanceCashVoucherTable;
   'crove_finance.categorization_rule': FinanceCategorizationRuleTable;
+  'crove_finance.channel_order': FinanceChannelOrderTable;
+  'crove_finance.channel_order_line': FinanceChannelOrderLineTable;
   'crove_finance.chart': FinanceChartTable;
   'crove_finance.chart_account': FinanceChartAccountTable;
   'crove_finance.collection_setting': FinanceCollectionSettingTable;
@@ -706,6 +708,37 @@ export interface FinanceCategorizationRuleTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
+/** crove_finance.channel_order_line */
+export interface FinanceChannelOrderLineTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  order_id: ColumnType<string, string, NotGranted>;
+  line_key: ColumnType<string, string, NotGranted>;
+  sku: ColumnType<string | null, string | null, NotGranted>;
+  item_name: ColumnType<string | null, string | null, NotGranted>;
+  quantity: ColumnType<string, string, NotGranted>;
+  unit_price: ColumnType<string | null, string | null, NotGranted>;
+  amount: ColumnType<string | null, string | null, NotGranted>;
+  stage: string;
+  shipped_at: string | null;
+  source_sha256: ColumnType<string | null, string | null, NotGranted>;
+  source_row: ColumnType<number | null, number | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_finance.channel_order */
+export interface FinanceChannelOrderTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  platform: ColumnType<string, string, NotGranted>;
+  order_no: ColumnType<string, string, NotGranted>;
+  ordered_at: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.chart_account */
 export interface FinanceChartAccountTable {
   regime: ColumnType<string, NotGranted, NotGranted>;
@@ -1138,6 +1171,8 @@ export interface FinanceStockMoveTable {
   reverses_move_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string | null, string | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  order_line_id: ColumnType<string | null, string | null, NotGranted>;
+  order_move: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */

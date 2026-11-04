@@ -682,7 +682,7 @@ export const vi = {
     balance: 'Tồn',
     cardValue: 'Giá trị nhập',
     directions: { purchase: 'Mua vào', sale: 'Bán ra' },
-    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo' },
+    sources: { document_line: 'Từ hóa đơn', manual: 'Nhập tay', reversal: 'Đảo', order_line: 'Từ đơn hàng sàn' },
     trades: { goods: 'Hàng hóa', services: 'Dịch vụ', catering: 'Ăn uống', other: 'Khác' },
   },
   salesInvoices: {

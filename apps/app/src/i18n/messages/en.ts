@@ -684,7 +684,7 @@ export const en = {
     balance: 'Balance',
     cardValue: 'Value in',
     directions: { purchase: 'Purchase', sale: 'Sale' },
-    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal' },
+    sources: { document_line: 'From an invoice', manual: 'Entered by hand', reversal: 'Reversal', order_line: 'From a marketplace order' },
     trades: { goods: 'Goods', services: 'Services', catering: 'Catering', other: 'Other' },
   },
   salesInvoices: {
