@@ -15,6 +15,8 @@ export function useMatchText() {
         return t('reason.taxCode');
       case 'invoice':
         return t('reason.invoice', { number });
+      case 'account':
+        return t('reason.account');
       case 'learned':
         return t('reason.learned');
       case 'name':

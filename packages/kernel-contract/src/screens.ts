@@ -46,12 +46,18 @@ const FINANCE_SCREENS = {
     { path: 'bank/matched' },
     { path: 'journal/opening-balances' },
     { path: 'vouchers' },
+    // The drafts of the sales e-invoices a business will issue (#2500).
+    { path: 'sales-invoices' },
+    // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
+    { path: 'stock' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
     { path: 'vat' },
     { path: 'portal-invoices' },
     { path: 'customers' },
+    // The overdue customers and the reminder mails a person sends (#2488).
+    { path: 'payment-reminders' },
     { path: 'vendors' },
     // The Vietnamese quick guide (issue #310), linked from the empty Inbox; it walks through finance screens.
     { path: 'guide', app: 'accounting' },
@@ -60,13 +66,18 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'books', path: 'documents', label: 'documents' },
     { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
+    { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
+    { app: 'accounting', group: 'books', path: 'stock', label: 'stock' },
     { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
     { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
     { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },
-    { app: 'accounting', group: 'tax', path: 'vat', label: 'vat' },
-    { app: 'accounting', group: 'tax', path: 'portal-invoices', label: 'portalList' },
-    { app: 'accounting', group: 'parties', path: 'customers', label: 'customers' },
-    { app: 'accounting', group: 'parties', path: 'vendors', label: 'vendors' },
+    // The VAT and the tax portal's list, then the customers, their reminders and the vendors: in the one group of the app, because a headed group each made the menu longer than a
+    // 1366x768 window holds once "Hàng hóa" joined it.
+    { app: 'accounting', group: 'books', path: 'vat', label: 'vat' },
+    { app: 'accounting', group: 'books', path: 'portal-invoices', label: 'portalList' },
+    { app: 'accounting', group: 'books', path: 'customers', label: 'customers' },
+    { app: 'accounting', group: 'books', path: 'payment-reminders', label: 'paymentReminders' },
+    { app: 'accounting', group: 'books', path: 'vendors', label: 'vendors' },
   ],
 } as const satisfies ModuleScreens;
 
@@ -124,6 +135,8 @@ const CRM_SCREENS = {
     { path: 'deals' },
     { path: 'contacts' },
     { path: 'contacts/import' },
+    // The companies, apart from the people (#2438): the same parties, the kind `organization`.
+    { path: 'companies' },
     { path: 'crm' },
     { path: 'crm/bookings' },
     { path: 'crm/deals' },
@@ -135,6 +148,8 @@ const CRM_SCREENS = {
   nav: [
     // The contacts: the org's parties with search, filters and saved views (K4, #2228).
     { app: 'social', group: 'sales', path: 'contacts', label: 'contacts' },
+    // The companies the people work at (#2438).
+    { app: 'social', group: 'sales', path: 'companies', label: 'companies' },
     // The deals of the org's one pipeline (#2225, docs/plan/crm.md).
     { app: 'social', group: 'sales', path: 'deals', label: 'deals' },
     { app: 'social', group: 'sales', path: 'bookings', label: 'bookings' },

@@ -228,7 +228,7 @@ export function CampaignBuilder({
           </Link>
         </Alert>
       )}
-      {approved && <Alert role="status">{t('campaigns.approvedNote')}</Alert>}
+      {approved && draft && <LaunchNote draft={draft} canManage={canManage} />}
       {draft?.origin === 'ai' && !frozen && <p className="text-sm text-muted-foreground">{t('campaigns.draftedHint')}</p>}
       {moved && dirty && !frozen && draft && (
         <Alert role="status" data-testid="campaign-moved">
@@ -488,5 +488,93 @@ export function CampaignBuilder({
       {submit.error && <ErrorText>{errorMessage(submit.error)}</ErrorText>}
       {discard.error && <ErrorText>{errorMessage(discard.error)}</ErrorText>}
     </form>
+  );
+}
+
+// What an approved plan's launch is (W2-2, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
+// not started, which releases the amount at once, and stop one that has (W2-4a): the commitment stays to at least today, and the ads it made at the platform are paused.
+function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canManage: boolean }) {
+  const t = useTranslations('ads');
+  const f = useFormat();
+  const attempt = useRef<KeyHolder | null>(null);
+  const cancel = useMutation(
+    orpc.ads.cancelLaunch.mutationOptions({
+      onSuccess: async () => {
+        attempt.current = null;
+        await refreshCampaigns();
+        toast(t('campaigns.launchCancelledToast'));
+      },
+    }),
+  );
+  const stop = useMutation(
+    orpc.ads.stopLaunch.mutationOptions({
+      onSuccess: async () => {
+        attempt.current = null;
+        await refreshCampaigns();
+        toast(t('campaigns.launchStoppedToast'));
+      },
+    }),
+  );
+  const launch = draft.launch;
+  if (!launch) return <Alert role="status">{t('campaigns.approvedNote')}</Alert>;
+  if (launch.state === 'cancelled') return <Alert role="status">{t('campaigns.launchCancelled')}</Alert>;
+  const held = { amount: f.money(launch.amount, launch.currency), until: f.date(launch.commitUntil ?? launch.endOn) };
+  const reason = launch.stopReason ?? '-';
+  if (launch.state === 'failed') return <Alert role="status">{t('campaigns.launchFailed', { reason })}</Alert>;
+  if (launch.state === 'stopped') {
+    return (
+      <Alert role="status" data-testid="campaign-launch">
+        <p>{t('campaigns.launchStopped', held)}</p>
+        {launch.windDown && <p data-testid="campaign-wind-down">{t(launch.windDown.state === 'done' ? 'campaigns.launchWindDownDone' : launch.windDown.state === 'gave_up' ? 'campaigns.launchWindDownGaveUp' : 'campaigns.launchWindDownPending')}</p>}
+      </Alert>
+    );
+  }
+  if (launch.state === 'launching' || launch.state === 'needs_attention' || launch.state === 'live') {
+    return (
+      <Alert role="status" data-testid="campaign-launch">
+        <p>
+          {launch.state === 'needs_attention'
+            ? t('campaigns.launchNeedsAttention', { ...held, reason })
+            : t(launch.step === 'paused' ? 'campaigns.launchCreated' : 'campaigns.launchCreating', held)}
+        </p>
+        {canManage && (
+          <ConfirmDialog
+            render={<Button loading={stop.isPending} type="button" variant="destructive" className="mt-2" />}
+            destructive
+            title={t('campaigns.launchStopTitle')}
+            description={t('campaigns.launchStopBody', { name: draft.plan.name })}
+            confirm={t('campaigns.launchStop')}
+            onConfirm={() => {
+              attempt.current = keyFor(attempt.current, launch.id);
+              stop.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
+            }}
+          >
+            {t('campaigns.launchStop')}
+          </ConfirmDialog>
+        )}
+        {stop.error && <ErrorText>{errorMessage(stop.error)}</ErrorText>}
+      </Alert>
+    );
+  }
+  return (
+    <Alert role="status" data-testid="campaign-launch">
+      <p>{t('campaigns.launchQueued', { amount: f.money(launch.amount, launch.currency), from: f.date(launch.startOn), until: f.date(launch.commitUntil ?? launch.endOn) })}</p>
+      {canManage && (
+        <ConfirmDialog
+          render={<Button loading={cancel.isPending} type="button" variant="outline" className="mt-2" />}
+          destructive
+          title={t('campaigns.launchCancelTitle')}
+          description={t('campaigns.launchCancelBody', { name: draft.plan.name })}
+          confirm={t('campaigns.launchCancel')}
+          onConfirm={() => {
+            attempt.current = keyFor(attempt.current, launch.id);
+            cancel.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
+          }}
+        >
+          {t('campaigns.launchCancel')}
+        </ConfirmDialog>
+      )}
+      {cancel.error && <ErrorText>{errorMessage(cancel.error)}</ErrorText>}
+    </Alert>
   );
 }

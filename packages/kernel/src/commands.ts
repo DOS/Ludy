@@ -93,6 +93,8 @@ const PROPOSAL_COMMANDS = new Set([
   'ads.cap.set',
   'ads.launches.unblock',
   'ads.campaign.launch',
+  // Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document, posted to no ledger.
+  'finance.einvoice.issue',
 ]);
 // The proposals a user may ask for and their preparers: PROPOSAL_PREPARERS in proposal-resubmit.ts.
 const ADMINS = ['owner', 'admin'] as const;
@@ -206,9 +208,10 @@ export const changeMemberRole = defineCommand({
     );
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
-    // owner who becomes an admin loses their admin invites (only owners grant admin) and their scoped invites (only
-    // owners scope an invite to legal entities, #1458). Accepting re-checks the inviter's role as well, as a backstop
-    // for any other path (#134, INVITE_SCOPE_STALE).
+    // owner who becomes an admin loses their admin invites (only owners grant admin), their scoped invites (only
+    // owners scope an invite to legal entities, #1458) and their invites with a department role (only owners give roles,
+    // #2611). Accepting re-checks the inviter's role as well, as a backstop for any other path (#134, INVITE_SCOPE_STALE,
+    // INVITE_ROLE_STALE).
     const lostRoles: Array<'admin' | 'member' | 'viewer'> = input.role === 'owner' ? [] : input.role === 'admin' ? ['admin'] : ['admin', 'member', 'viewer'];
     const losesScoped = previousRole === 'owner' && input.role !== 'owner';
     const revokedInvites =
@@ -220,7 +223,7 @@ export const changeMemberRole = defineCommand({
             .where('org_id', '=', ctx.orgId)
             .where('invited_by', '=', input.userId)
             .where('status', '=', 'pending')
-            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null)]) : eb('role', 'in', lostRoles)))
+            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null), eb('role_key', 'is not', null)]) : eb('role', 'in', lostRoles)))
             .returning('id')
             .execute();
     ctx.audit({ revoked_invites: revokedInvites.map((r) => r.id) });
@@ -530,6 +533,32 @@ export function inboundRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOU
 }
 
 export const rotateInbound = inboundRotateCommand();
+
+// Rotates the org's conversation address (#2439, the Inbox's own address): the old token is tombstoned and never issued again, mail to it is dropped by the
+// worker like mail to an unknown token. R3 and owner only, as the document address's rotation is, with the same limits (the definer counts the rotations of
+// this address apart from the document address's).
+export function conversationAddressRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOUND_ROTATE_LIMITS) {
+  assertRotateLimit('perDay', limits.perDay);
+  assertRotateLimit('total', limits.total);
+  return defineCommand({
+    name: 'kernel.conversation.address_rotate',
+    input: z.object({}),
+    risk: 'R3',
+    sideEffect: 'irreversible',
+    access: ['owner'],
+    handler: async (ctx) => {
+      if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới đổi được địa chỉ email của Hộp thư');
+      await sql`SELECT set_config('crove.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('crove.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
+      const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_rotate() AS token`.execute(ctx.trx);
+      if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không đổi được địa chỉ email của Hộp thư');
+      await ctx.activity('kernel.org', ctx.orgId, 'conversation_address.rotated', 'Đổi địa chỉ email của Hộp thư; địa chỉ cũ ngừng nhận thư');
+      return { rotated: true };
+    },
+  });
+}
+
+export const rotateConversationAddress = conversationAddressRotateCommand();
 
 // A user asks for a proposal that is not read from a file, for example reversing a posted journal entry (#138). The
 // requester is its author, so with two or more eligible approvers someone else approves it (P10), and the approval
@@ -845,6 +874,7 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
   'UNSUPPORTED_CURRENCY',
   // A sale no longer the org's own, or a purchase the org issued (#313): the org tax code changed since.
   'NOT_OWN_SALE',
+  'SALE_OTHER_ENTITY',
   'OWN_INVOICE',
   // A line's account against its direction (#430): revenue on a sale line only.
   'NOT_REVENUE_ACCOUNT',
@@ -879,7 +909,7 @@ export const BULK_ITEM_REFUSALS: ReadonlySet<string> = new Set([
 // The proposals approved one at a time, never in a batch: what opens the way to spend on an ad platform (ADR-0043 point 1,
 // #2294). The approver reads what changes on its own card, and one stale item must not decide the rest. A batch refuses them
 // item by item with BULK_NOT_ALLOWED, without running them.
-const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch'];
+const SINGLE_APPROVAL_COMMANDS = ['ads.write.enable', 'ads.account.enable_write', 'ads.cap.set', 'ads.launches.unblock', 'ads.campaign.launch', 'finance.einvoice.issue'];
 
 // Whether a nested approval's error refuses only that item.
 export function isBulkItemRefusal(error: unknown): error is DomainError {
@@ -1186,6 +1216,7 @@ export function buildKernelCommands(
     ...otherKernelCommands,
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
+    options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,
   ];
 }
 

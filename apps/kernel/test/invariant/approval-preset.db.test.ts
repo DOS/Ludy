@@ -286,11 +286,12 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
+    const approvedAudit = await o.audit('kernel.proposal.approve', after);
+    expect(approvedAudit).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
       // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-      // 4: the launch of a drafted campaign was given its approval policy (#2295, W1; the allowance of 3 or 4 that step one gave is gone).
-      policy_version: 4,
+      // 5: issuing a sales e-invoice was given its approval policy (#2502; the allowance of 4 or 5 that step one gave is gone).
+      policy_version: 5,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,

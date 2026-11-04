@@ -106,6 +106,8 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   [`${QUEUES.extract} handler`]: { reason: 'the same file again, once its org is back under its daily limit' },
   // The hourly sweep queues the ad accounts that are due, each linked by an owner or admin through ads.account.link.
   [`${QUEUES.adsSync} handler`]: { command: 'ads.account.link' },
+  // The sweep queues the e-invoices whose time to ask has come, each approved by an owner or admin through finance.einvoice.issue (#2502).
+  [`${QUEUES.einvoiceIssue} handler`]: { command: 'finance.einvoice.issue' },
   // The cron tick of that sweep (boss.schedule in startWorker): the sweep it starts reads only linked accounts.
   startWorker: { command: 'ads.account.link' },
 };
@@ -323,8 +325,11 @@ describe('job egress (#1653)', () => {
       // register() already holds the declared risk at or above the derived one.
       return def?.sideEffect !== undefined && RANK[deriveRisk(def.sideEffect)] >= RANK.R2;
     };
-    expect([...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort()).toEqual(Object.keys(OTHER_SENDS).sort());
-    for (const [site, why] of Object.entries(OTHER_SENDS)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
+    const found = [...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort();
+    // The reviewed sites: those above.
+    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = OTHER_SENDS;
+    expect(found).toEqual(Object.keys(reviewed).sort());
+    for (const [site, why] of Object.entries(reviewed)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
 
     const { commands, runs, problems } = emittersOf(feeds, sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
     expect(problems).toEqual([]);
@@ -340,7 +345,7 @@ describe('job egress (#1653)', () => {
     expect(pendingEmitters.problems).toEqual([]);
     expect(pendingProblems(NO_COMMAND_PENDING, NO_COMMAND, pendingEmitters.commands, new Date().toISOString().slice(0, 10))).toEqual([]);
     // A command that runs one of the commands that decide the other sends, at any depth, declares an external effect.
-    for (const [site, why] of Object.entries(OTHER_SENDS)) {
+    for (const [site, why] of Object.entries(reviewed)) {
       if (!('command' in why)) continue;
       const callers = new Set([why.command]);
       for (let grown = true; grown; ) {

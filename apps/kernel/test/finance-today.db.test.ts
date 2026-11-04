@@ -386,4 +386,24 @@ suite('finance.today: what needs the member in Accounting (#2388)', () => {
     expect(groups.reduce((n, g) => n + (g.count ?? 0), 0)).toBeGreaterThanOrEqual(1000);
     expect(elapsed).toBeLessThan(5000);
   });
+
+  it('flags the sales e-invoices that need a person (#2502): failed, sent back with a reason, or unanswered for an hour; not a fresh send nor a plain draft', async () => {
+    const entity = (await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [otherOrgId])).rows[0]))?.id as string;
+    // Seeded as the database owner with the triggers off: the states and times the job and the clock would make.
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      await c.query('SET LOCAL session_replication_role = replica');
+      const insert = (state: string, extra: string) =>
+        c.query(`INSERT INTO crove_finance.einvoice_draft (org_id, legal_entity_id, state, invoice_date, buyer_kind, subtotal, vat_amount, total, ${extra.split('|')[0]}) VALUES ($1, $2, $3, current_date, 'consumer', 0, 0, 0, ${extra.split('|')[1]})`, [otherOrgId, entity, state]);
+      await insert('failed', "submitted_at, error_code|now() - interval '2 hours', 'PROVIDER_NOT_READY'");
+      await insert('draft', "error_code|'REJECTED_BY_TAX_AUTHORITY'");
+      await insert('pending', "submitted_at, provider_ref|now() - interval '2 hours', 'sbx-old'");
+      await insert('pending', "submitted_at, provider_ref|now() - interval '5 minutes', 'sbx-new'");
+      await insert('draft', 'error_code|NULL');
+      await c.query('COMMIT');
+    });
+    const flag = (items: Awaited<ReturnType<typeof today>>) => items.find((i) => i.id === `einvoice-attention:${entity}`);
+    const seen = flag(await today(users.outsider, otherOrgId));
+    expect(seen).toMatchObject({ kind: 'flag', app: 'finance', count: 3, severity: 'warn', title: { key: 'financeEinvoiceAttention', params: { count: 3 } }, href: '/sales-invoices' });
+  });
 });

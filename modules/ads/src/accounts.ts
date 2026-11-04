@@ -16,6 +16,7 @@ import type { MemberRole } from '@crove/db';
 import { ADS_REQUEST_MIN_SECONDS, ADS_SPEND_SCOPES, isAdProviderId, isAdWriteProviderId, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsAccountLink, zId, type AdAccountView, type AdsSyncRunView } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { historyStart } from './domain.ts';
+import { hasOpenLaunch, openLaunchObjects } from './launch-ledger.ts';
 import { closeWriteConnections } from './write-connection.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
@@ -238,6 +239,9 @@ export const adsAccountDeleteHistory = defineCommand({
       .forUpdate('a')
       .executeTakeFirst();
     if (!row) throw notFound();
+    // A launch that has started must be wound down before its account's history is deleted (ADR-0043 point 2: the ledger goes with the account, and with it what is
+    // needed to pause what the launch made at the platform): stop it first, and delete once its objects are paused.
+    if (await hasOpenLaunch(ctx, row.id)) throw new DomainError('ADS_LAUNCH_NOT_WOUND_DOWN', 409, 'Tài khoản này còn một lần chạy quảng cáo chưa dừng hẳn; hãy dừng nó và chờ các quảng cáo được tạm dừng trước khi xóa lịch sử');
     // The row goes with a closed connection: its write connection must not outlive it holding a sealed token.
     if (row.status === 'revoked') await closeWriteConnections(ctx, { adAccountId: row.id });
     const done = await deleteHistory(ctx, row.id, row.status === 'revoked', ctx.now.toISOString().slice(0, 10));
@@ -257,10 +261,22 @@ export const adsAccountErase = defineCommand({
   target: (input) => ({ type: 'ads.ad_account', id: input.adAccountId }),
   handler: async (ctx, input): Promise<{ adAccountId: string; days: number; runs: number; removed: boolean }> => {
     if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới thực hiện được việc này');
-    // The account's write connection goes with it (the platform asked for the person's data to be deleted): closed, its sealed token dropped.
-    await closeWriteConnections(ctx, { adAccountId: input.adAccountId });
+    // The account's write connection goes with it (the platform asked for the person's data to be deleted): closed, its sealed token dropped. The request is
+    // the read grantor's: a write connection granted by the same person is theirs and has nothing to revoke (they removed the app), but one granted by
+    // another person (or with no grantor recorded) is closed under its own reason and its revoke at the platform is held.
+    const account = await ctx.trx
+      .selectFrom('crove_ads.ad_account')
+      .select(['granted_by_hash', 'write_granted_by_hash'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.adAccountId)
+      .executeTakeFirst();
+    const sameGrantor = account?.write_granted_by_hash != null && account.write_granted_by_hash === account.granted_by_hash;
+    // The platform's own request cannot be refused, and the person who made the grant removed the app, so Ludy has nothing to pause with: the launches that are not
+    // wound down are left behind with the audit row, which lists the platform ids of what they made (bounded) so it can be paused by hand at the platform.
+    const abandoned = await openLaunchObjects(ctx, input.adAccountId);
+    await closeWriteConnections(ctx, { adAccountId: input.adAccountId, otherGrantor: !sameGrantor });
     const done = await deleteHistory(ctx, input.adAccountId, true, ctx.now.toISOString().slice(0, 10));
-    ctx.audit({ adAccountId: input.adAccountId, days: done.days, runs: done.runs, source: 'platform_deletion' });
+    ctx.audit({ adAccountId: input.adAccountId, days: done.days, runs: done.runs, source: 'platform_deletion', ...(abandoned.launches > 0 ? { launchesNotWoundDown: abandoned.launches, objects: abandoned.objects } : {}) });
     return { adAccountId: input.adAccountId, ...done };
   },
 });

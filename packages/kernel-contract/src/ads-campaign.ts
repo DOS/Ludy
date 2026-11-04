@@ -111,6 +111,40 @@ export const ADS_DRAFT_STATUSES = ['draft', 'approved', 'discarded'] as const;
 export type AdsDraftStatus = (typeof ADS_DRAFT_STATUSES)[number];
 export const ADS_DRAFT_ORIGINS = ['human', 'ai'] as const;
 
+// The ledger row an approved plan leaves behind (W2-2, #2296): its commitment against the caps and where it stands. Nothing launches until W2-3's writer
+// runs a queued one; until then a queued launch only holds its amount, and a person can cancel it.
+export const ADS_LAUNCH_STATES = ['queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
+export type AdsLaunchState = (typeof ADS_LAUNCH_STATES)[number];
+export const zAdsLaunchView = z.object({
+  id: zId,
+  draftId: zId,
+  adAccountId: zId,
+  state: z.enum(ADS_LAUNCH_STATES),
+  // Where the writer is (a code), null before it starts.
+  step: z.string().nullable(),
+  attempt: z.number().int(),
+  currency: zCurrency,
+  // The name tag of the objects the launch creates.
+  tag: z.string(),
+  dailyBudget: z.string(),
+  // The largest amount the launch can spend: the budget times the days of the flight.
+  amount: z.string(),
+  startOn: z.string(),
+  endOn: z.string(),
+  // The last day it still commits its budget against the caps; null when it commits nothing any more.
+  commitUntil: z.string().nullable(),
+  stopReason: z.string().nullable(),
+  createdAt: z.string(),
+  finishedAt: z.string().nullable(),
+  // A stopped launch's objects at the platform: being paused, paused (or there was nothing to pause), or Ludy gave up (the code says why) and the person pauses them by
+  // hand there. null for a launch that is not stopped.
+  windDown: z.object({ state: z.enum(['pending', 'done', 'gave_up']), code: z.string().nullable() }).nullable(),
+});
+export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
+export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
+// Stopping a launch that has started (W2-4a): owners and admins; it keeps the commitment to at least today and the objects at the platform are paused.
+export const zAdsLaunchStopCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
+
 // A draft as the builder shows it.
 export const zAdsCampaignDraftView = z.object({
   id: zId,
@@ -130,6 +164,8 @@ export const zAdsCampaignDraftView = z.object({
   issues: z.array(zAdsPlanIssue),
   // The request for approval waiting in the Inbox, if one is (the draft is frozen while it is).
   pendingProposalId: zId.nullable(),
+  // The launch ledger row of an approved draft (W2-2): its commitment and its state; null for a draft that is not approved.
+  launch: zAdsLaunchView.nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

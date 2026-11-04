@@ -318,6 +318,8 @@ export const zOrgDetail = z.object({
   // sets it.
   contactEmail: z.string().nullable(),
   inboundAddress: z.string().nullable(),
+  // The org's conversation address, where customers write to reach the Inbox (#2439): the inbound address with the conversation tag; null when inboundAddress is.
+  conversationAddress: z.string().nullable().optional(),
   // Messages to the org's addresses retired in the last 30 days that were dropped (#139); null when inboundAddress is.
   inboundDroppedCount: z.number().int().nonnegative().nullable(),
   members: z.array(z.object({ userId: zId, email: z.string(), displayName: z.string().nullable(), role: zRole })),
@@ -436,12 +438,17 @@ export const zInvite = z.object({
   mail: zInviteMailStatus.nullable(),
   // The legal entities the invitee will be limited to (#1281), or null for an invite to the whole org.
   legalEntityIds: z.array(zId).nullable(),
+  // The department role the invitee gets on accepting (#2611), or null: a key of the role catalog (roles.ts), a plain string here so
+  // this file does not import roles.ts.
+  roleKey: z.string().nullable(),
 });
 
 // What the invitee consents to before accepting.
 export const zInvitePreview = z.object({
   orgName: z.string(),
   role: zInviteRole,
+  // The department role the invite carries (#2611), or null.
+  roleKey: z.string().nullable(),
   invitedBy: z.string(),
   expiresAt: z.string(),
 });
@@ -584,7 +591,9 @@ export type VoucherLine = z.infer<typeof zVoucherLine>;
 // Why a party is suggested for a statement line, strongest first (finance domain/bank-match.ts): its tax code is in the
 // description; an invoice of the line's amount is named there; its name is there; its open balance equals the amount.
 // `learned` (#2402): the line's words point at a party a person matched by hand before.
-export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'learned', 'name', 'balance'] as const;
+// `account` (#2402): the line's counterparty account number is one a person matched to the party by hand before; a hint like
+// `learned`, weaker than the invoice the text names.
+export const BANK_MATCH_REASONS = ['tax_code', 'invoice', 'account', 'learned', 'name', 'balance'] as const;
 export type BankMatchReason = (typeof BANK_MATCH_REASONS)[number];
 
 // How a voucher from a bank line came to name its party (#2385): the matcher's suggestion that the person took (`suggested`:

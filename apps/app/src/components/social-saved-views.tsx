@@ -10,6 +10,7 @@ import { Button } from '@crove/ui/components/button';
 import { Checkbox } from '@crove/ui/components/checkbox';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOptGroup, NativeSelectOption } from '@crove/ui/components/native-select';
+import { ConfirmDialog } from './confirm-dialog.tsx';
 import { ErrorText } from './ui.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { sameViewFilters, searchOfView, viewFiltersOf, type SocialSearch, type ViewFilters } from '../lib/social.ts';
@@ -126,9 +127,17 @@ export function SavedViews({
           </Button>
         )}
         {picked && picked.canChange && (
-          <Button variant="ghost" disabled={remove.isPending} onClick={() => window.confirm(t('removeConfirm', { name: picked.name })) && remove.mutate(picked)}>
+          <ConfirmDialog
+            render={<Button variant="ghost" />}
+            disabled={remove.isPending}
+            title={t('removeTitle')}
+            description={t('removeConfirm', { name: picked.name })}
+            confirm={t('remove')}
+            destructive
+            onConfirm={() => remove.mutate(picked)}
+          >
             {t('remove')}
-          </Button>
+          </ConfirmDialog>
         )}
       </div>
       {full && (

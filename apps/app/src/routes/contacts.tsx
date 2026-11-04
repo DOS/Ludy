@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Contacts (CRM plan 6, step K4, #2228): the people and companies of the org, which are its parties, as a list to search,
-// filter and save views of. Search ignores Vietnamese marks and finds a phone number written any way ("nguyen" finds
+// Contacts (CRM plan 6, step K4, #2228): the people and companies of the org, which are its parties, as two lists (#2438: Người liên hệ and Công ty, the same
+// screen with the kind fixed) to search, filter and save views of; a person shows the company they work at and a company its people and open deals. Search ignores Vietnamese marks and finds a phone number written any way ("nguyen" finds
 // "Nguyễn"); the tabs above the filter bar open the member's own views and the org's shared ones. Owners, admins and
 // members add a contact and edit one (a tax code can be added, never changed); viewers read. A row opens a panel with the
 // contact's details, its notes (with the notes module) and its timeline.
@@ -14,6 +14,7 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { CompanyPeople, PersonCompany } from '../components/company-link.tsx';
 import { RecordNotesPanel, notesInstalled } from '../components/notes-panel.tsx';
 import { EditParty, refreshParties } from '../components/party-edit.tsx';
 import { DataTable, Empty, ErrorText, FieldError, PageHeader, TableSkeleton, fieldControl, focusFirstInvalid, isEmailAddress, useFieldErrors } from '../components/ui.tsx';
@@ -31,7 +32,6 @@ import {
   sortOfValue,
   sortValue,
   type ContactFilterState,
-  type ContactKind,
   type Tri,
 } from '../lib/contact-filter.ts';
 
@@ -127,7 +127,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
     <TableRow>
       <TableCell colSpan={columns} className="space-y-4 px-4 py-4">
         {editing ? (
-          <EditParty party={contact} ns="contacts" onDone={() => setEditing(false)} />
+          <EditParty party={contact} ns="contacts" kind={contact.kind} onDone={() => setEditing(false)} />
         ) : (
           <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-2">
             {(['address', 'email', 'phone', 'taxCode'] as const).map((key) => (
@@ -143,6 +143,7 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
             {t('edit')}
           </Button>
         )}
+        {contact.kind === 'person' ? <PersonCompany person={contact} canEdit={canEdit} /> : <CompanyPeople company={contact} canEdit={canEdit} />}
         <ContactDeals partyId={contact.id} />
         {notesInstalled() && <RecordNotesPanel slug={slug} target={{ targetType: 'kernel.party', targetId: contact.id }} headingId={`notes-${contact.id}`} label={tn('panel.toggleOf', { name: contact.name })} />}
         <ContactTimeline partyId={contact.id} />
@@ -152,10 +153,10 @@ function ContactPanel({ contact, canEdit, columns }: { contact: Contact; canEdit
 }
 
 // "Thêm liên hệ": a person or a company by hand. The server checks again and names the contact that already has a tax code.
-function AddContact({ onDone }: { onDone: () => void }) {
+function AddContact({ kind, onDone }: { kind: 'person' | 'organization'; onDone: () => void }) {
   const t = useTranslations('contacts');
   const tc = useTranslations('common');
-  const [form, setForm] = useState({ kind: 'person' as 'person' | 'organization', name: '', taxCode: '', address: '', email: '', phone: '' });
+  const [form, setForm] = useState({ kind, name: '', taxCode: '', address: '', email: '', phone: '' });
   const create = useMutation(
     orpc.parties.create.mutationOptions({
       onSuccess: () => {
@@ -201,12 +202,12 @@ function AddContact({ onDone }: { onDone: () => void }) {
   };
   return (
     <form className="mb-4 grid gap-3 rounded-xl border p-4 sm:grid-cols-2" noValidate aria-label={t('add')} onSubmit={submit}>
+      {/* The screen fixes the kind (Người liên hệ are people, Công ty are companies): a contact of the other kind would be made and not show in this list. */}
       <div className="flex flex-col gap-1">
-        <Label htmlFor="add-contact-kind">{t('fields.kind')}</Label>
-        <NativeSelect id="add-contact-kind" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value === 'organization' ? 'organization' : 'person' })}>
-          <NativeSelectOption value="person">{t('kind.person')}</NativeSelectOption>
-          <NativeSelectOption value="organization">{t('kind.organization')}</NativeSelectOption>
-        </NativeSelect>
+        <span className="text-sm font-medium">{t('fields.kind')}</span>
+        <p className="text-sm text-foreground" data-testid="add-contact-kind">
+          {t(`kind.${kind}`)}
+        </p>
       </div>
       {text('name', { maxLength: 300, required: true })}
       {text('taxCode', { maxLength: 20 })}
@@ -232,8 +233,10 @@ function AddContact({ onDone }: { onDone: () => void }) {
 
 const TRI: Tri[] = ['', 'yes', 'no'];
 
-export function ContactsPage() {
+// mode: the people (the default) or the companies (#2438): the kind of party the list holds, set by the screen and not by the filter bar.
+export function ContactsPage({ mode = 'people' }: { mode?: 'people' | 'companies' }) {
   const { slug } = useParams({ strict: false }) as { slug: string };
+  const kind = mode === 'companies' ? ('organization' as const) : ('person' as const);
   const t = useTranslations('contacts');
   const org = useQuery(orpc.org.get.queryOptions());
   const canEdit = org.data?.role === 'owner' || org.data?.role === 'admin' || org.data?.role === 'member';
@@ -246,18 +249,21 @@ export function ContactsPage() {
   // The search waits for a pause in typing; the rest of the bar applies at once.
   const searchTerm = useDebounced(bar.search.trim(), SEARCH_PAUSE_MS);
   const applied: FilterAst = contactFilterToAst({ ...bar, search: searchTerm });
+  // What is asked of the server: the bar's conditions and the screen's kind, which a picked view cannot change.
+  const asked: FilterAst = { ...applied, all: [...applied.all, { field: 'kind', op: 'is', value: kind }] };
   const contacts = useInfiniteQuery(
     orpc.crm.contacts.list.infiniteOptions({
-      input: (cursor: string | undefined) => ({ filters: applied, ...(sort ? { sort } : {}), ...(cursor ? { cursor } : {}) }),
+      input: (cursor: string | undefined) => ({ filters: asked, ...(sort ? { sort } : {}), ...(cursor ? { cursor } : {}) }),
       initialPageParam: undefined as string | undefined,
       getNextPageParam: (page) => page.next ?? undefined,
     }),
   );
   const rows = contacts.data?.pages.flatMap((p) => p.items) ?? [];
   const filtered = filters.all.length > 0;
-  const head = [t('columns.name'), t('columns.taxCode'), t('columns.email'), t('columns.phone'), ''];
+  const head = mode === 'companies' ? [t('columns.name'), t('columns.taxCode'), t('columns.people'), t('columns.openDeals'), ''] : [t('columns.name'), t('columns.company'), t('columns.phone'), t('columns.email'), ''];
   const apply = ({ filters: next, sort: nextSort }: ViewState) => {
-    setBar(astToContactFilter(next));
+    // A view saved on the other screen may carry a kind: the screen's own kind stays.
+    setBar({ ...astToContactFilter(next), kind: '' });
     setSort(nextSort);
     setOpenId(null);
   };
@@ -277,13 +283,13 @@ export function ContactsPage() {
   return (
     <>
       <PageHeader
-        title={t('title')}
-        subtitle={t('subtitle')}
+        title={mode === 'companies' ? t('companiesTitle') : t('title')}
+        subtitle={mode === 'companies' ? t('companiesSubtitle') : t('subtitle')}
         actions={
           canEdit && !adding ? (
             <div className="flex flex-wrap items-center gap-3">
               <Button size="sm" onClick={() => setAdding(true)}>
-                {t('add')}
+                {mode === 'companies' ? t('addCompany') : t('add')}
               </Button>
               <Link to="/o/$slug/contacts/import" params={{ slug }} className="text-sm text-link underline">
                 {t('importFile')}
@@ -292,7 +298,7 @@ export function ContactsPage() {
           ) : undefined
         }
       />
-      {adding && <AddContact onDone={() => setAdding(false)} />}
+      {adding && <AddContact kind={kind} onDone={() => setAdding(false)} />}
       <ViewTabs scope={SCOPE} filters={filters} sort={sort} onApply={apply} />
       <div className="mb-4 flex flex-wrap items-end gap-3" role="search" aria-label={t('filters.label')}>
         <div className="flex min-w-56 max-w-sm flex-1 flex-col gap-1">
@@ -300,16 +306,6 @@ export function ContactsPage() {
             {t('filters.search')}
           </Label>
           <Input id="contact-search" type="search" placeholder={t('search')} maxLength={100} value={bar.search} onChange={(e) => setBar({ ...bar, search: e.target.value })} />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label htmlFor="contact-kind" className="text-xs text-subtle-foreground">
-            {t('fields.kind')}
-          </Label>
-          <NativeSelect id="contact-kind" size="sm" value={bar.kind} onChange={(e) => setBar({ ...bar, kind: (['organization', 'person'] as const).find((k) => k === e.target.value) ?? '' })}>
-            <NativeSelectOption value="">{t('filters.any')}</NativeSelectOption>
-            <NativeSelectOption value="organization">{t('kind.organization')}</NativeSelectOption>
-            <NativeSelectOption value="person">{t('kind.person')}</NativeSelectOption>
-          </NativeSelect>
         </div>
         {triSelect('email', t('filters.hasEmail'))}
         {triSelect('phone', t('filters.hasPhone'))}
@@ -350,12 +346,12 @@ export function ContactsPage() {
       ) : contacts.error && rows.length === 0 ? (
         <ErrorText>{errorMessage(contacts.error)}</ErrorText>
       ) : rows.length === 0 ? (
-        <Empty title={filtered ? t('noMatch') : t('empty')} hint={filtered ? undefined : t('emptyHint')} />
+        <Empty title={filtered ? (mode === 'companies' ? t('companiesNoMatch') : t('noMatch')) : mode === 'companies' ? t('companiesEmpty') : t('empty')} hint={filtered ? undefined : mode === 'companies' ? t('companiesEmptyHint') : t('emptyHint')} />
       ) : (
         <>
           <DataTable head={head}>
             {rows.map((c) => (
-              <ContactRows key={c.id} contact={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} canEdit={canEdit} columns={head.length} />
+              <ContactRows key={c.id} mode={mode} contact={c} open={openId === c.id} onToggle={() => setOpenId(openId === c.id ? null : c.id)} canEdit={canEdit} columns={head.length} />
             ))}
           </DataTable>
           {contacts.error && (
@@ -377,19 +373,33 @@ export function ContactsPage() {
   );
 }
 
-function ContactRows({ contact, open, onToggle, canEdit, columns }: { contact: Contact; open: boolean; onToggle: () => void; canEdit: boolean; columns: number }) {
+// The Companies screen (#2438): the same list with the kind fixed to the companies.
+export function CompaniesPage() {
+  return <ContactsPage mode="companies" />;
+}
+
+function ContactRows({ mode, contact, open, onToggle, canEdit, columns }: { mode: 'people' | 'companies'; contact: Contact; open: boolean; onToggle: () => void; canEdit: boolean; columns: number }) {
   const t = useTranslations('contacts');
-  const kind: ContactKind = contact.kind;
+  const f = useFormat();
   return (
     <>
       <TableRow>
         <TableCell className="min-w-48 px-4 py-3">
           <p className="font-medium text-foreground">{contact.name}</p>
-          <p className="text-xs text-subtle-foreground">{t(`kind.${kind}`)}</p>
         </TableCell>
-        <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{contact.taxCode ?? ''}</TableCell>
-        <TableCell className="px-4 py-3 text-muted-foreground">{contact.email ?? ''}</TableCell>
-        <TableCell className="px-4 py-3 text-muted-foreground">{contact.phone ?? ''}</TableCell>
+        {mode === 'companies' ? (
+          <>
+            <TableCell className="px-4 py-3 font-mono text-xs text-muted-foreground">{contact.taxCode ?? ''}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground tabular-nums">{f.number(contact.peopleCount)}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground tabular-nums">{f.number(contact.openDeals)}</TableCell>
+          </>
+        ) : (
+          <>
+            <TableCell className="px-4 py-3 text-muted-foreground">{contact.company?.name ?? ''}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">{contact.phone ?? ''}</TableCell>
+            <TableCell className="px-4 py-3 text-muted-foreground">{contact.email ?? ''}</TableCell>
+          </>
+        )}
         <TableCell className="px-4 py-3 text-right">
           <Button variant="ghost" size="sm" onClick={onToggle} aria-expanded={open} aria-label={t('openOf', { name: contact.name })}>
             {open ? t('close') : t('open')}

@@ -8,14 +8,16 @@
 // - ads.account.disconnect (owner, admin): closes the read connection of an account and its write connection, dropping both sealed
 //   tokens, and turns its flag off.
 // - closeWriteConnections: what the switch-off commands (ads.write.disable, ads.account.disable_write) and the removal of an account
-//   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The platform's own copy of the
-//   token is revoked by the write queue of W2, which cannot merge without it; until then the owner is told to remove the app in the
-//   platform's settings.
+//   run: it closes the write connections and drops their sealed tokens, with the kernel's own commands. The permission at the platform is
+//   removed by the revoke sweep (W2-1, apps/kernel/src/ads-revoke.ts): the database copies the sealed token into a holding of its own, for
+//   seven days at most, in the transaction that drops the credential (the trigger crove_ads.token_hold, so whatever path drops it is
+//   covered, this file's closers included); where the sweep cannot remove it, the Ads screen tells the owner to remove the app by hand.
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
+import { cancelQueuedLaunches, stopStartedLaunches } from './launch-ledger.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -29,7 +31,7 @@ const notFound = () => new DomainError('ADS_ACCOUNT_NOT_FOUND', 404, 'Không tì
 // attached, so one whose attaching was refused or never ran (a crash, a deploy) is still found, by its provider, and so is the one of an
 // account, by the provider of its twin and its platform account. Switching writing off leaves no spend-capable token behind that no
 // account refers to. `except` spares the connection that was just attached.
-export async function closeWriteConnections(ctx: CommandContext, scope: { adAccountId?: string; except?: string }): Promise<number> {
+export async function closeWriteConnections(ctx: CommandContext, scope: { adAccountId?: string; except?: string; otherGrantor?: boolean }): Promise<number> {
   let query = ctx.trx.selectFrom('crove_kernel.channel_connection as c').select('c.id').where('c.org_id', '=', ctx.orgId).where('c.status', '<>', 'revoked').orderBy('c.id');
   if (scope.adAccountId) {
     const account = await ctx.trx
@@ -53,7 +55,9 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
   if (scope.except) query = query.where('c.id', '<>', scope.except);
   const open = await query.execute();
   const command = ctx.actor.type === 'system' ? 'kernel.channel.revoke_by_platform' : 'kernel.channel.disconnect';
-  for (const row of open) await ctx.run(command, { connectionId: row.id });
+  // The platform's deletion request closes a write connection as the person's own (the person removed the app: nothing to revoke), unless the write grant is
+  // another person's: then it is closed under its own reason and the revoke at the platform is held for it (`otherGrantor`, set by the erasure).
+  for (const row of open) await ctx.run(command, { connectionId: row.id, ...(command === 'kernel.channel.revoke_by_platform' && scope.otherGrantor ? { reason: 'account_erased' } : {}) });
   return open.length;
 }
 
@@ -69,7 +73,7 @@ export async function closeWriteConnections(ctx: CommandContext, scope: { adAcco
 //   at Meta may never have reached Ludy at all (a switch-off between the dialog and its callback, an expired state, a failed
 //   exchange, a closed tab), so the close fails safe: every reading connection of that platform is closed, the ones of people who
 //   never granted it come back with one reconnect, and the person who did must first remove the app in the platform's settings (the
-//   at-platform revoke is W2's). A write connection's row stays after it is closed or its account is removed, so the evidence does
+//   revoke of W2-1 covers a write token and a read token whose recorded scopes hold the permission, and not these). A write connection's row stays after it is closed or its account is removed, so the evidence does
 //   not go with the account; a switch that was on is evidence enough by itself, since the owner could have consented while it was.
 // It is the caller who closes them: the kernel's disconnect.
 const SHARED_APP_WRITE_PROVIDERS = AD_WRITE_PROVIDERS.filter((provider) => provider !== 'sandboxwrite_ads');
@@ -174,7 +178,13 @@ export const adsAccountDisconnect = defineCommand({
     if (account.write_enabled) {
       await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
     }
-    ctx.audit({ adAccountId: account.id, closed });
+    // The launches of the account that have not started are cancelled with it (W2-2), so a plan approved before cannot start after a reconnect.
+    const launchesCancelled = await cancelQueuedLaunches(ctx, 'account_off', account.id);
+    // The launches that have started are stopped with it (W2-4a), keeping their commitments to at least today, and their objects paused afterwards, before the
+    // permission is revoked: the closed write connection leaves the sealed copy of its token, which the revoke sweep pauses with first.
+    const launchesStopped = await stopStartedLaunches(ctx, 'disconnected', { adAccountId: account.id });
+    for (const s of launchesStopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+    ctx.audit({ adAccountId: account.id, closed, launchesCancelled, launchesStopped: launchesStopped.length });
     return { adAccountId: account.id, closed };
   },
 });

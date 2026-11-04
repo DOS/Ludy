@@ -33,6 +33,13 @@ describe('personal-data registry: legal entities (#1312)', () => {
   it('finds a household by its 12-digit national ID number', () => {
     expect(personalDataProbe('0790 9100 1234')).toEqual({ kind: 'digits', digits: '079091001234' });
   });
+
+  it('finds a bank account number of 8 to 20 digits, and no shorter or longer value (#2402)', () => {
+    expect(personalDataProbe('1234 5678 9012 3456 78')).toEqual({ kind: 'digits', digits: '123456789012345678' });
+    expect(personalDataProbe('12345678901234567890')?.kind).toBe('digits');
+    expect(personalDataProbe('123456789012345678901')).toBeNull();
+    expect(personalDataProbe('1234567')).toBeNull();
+  });
 });
 
 // Notes and to-dos (#1874): crove_notes is in the schemas the invariant scan covers, and every column the notes

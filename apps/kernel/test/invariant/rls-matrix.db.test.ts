@@ -39,6 +39,8 @@ const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_defin
 // table owner read or write them. They need RLS enabled (so a later grant stays deny-all until a policy is
 // added) and must be listed here, so a new table cannot quietly become one.
 const MACHINERY = new Set([
+  // The sealed copy of a closed ads connection's token (W2-1, #2296): read only by the revoke worker through a definer.
+  'crove_ads.ad_token_seal',
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
@@ -47,6 +49,8 @@ const MACHINERY = new Set([
   'crove_kernel.outbox_archive',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
+  // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
+  'crove_kernel.subject_key',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -54,6 +58,16 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.channel_order',
+  'crove_finance.channel_order_line',
+  'crove_finance.stock_alias',
+  'crove_finance.stock_count',
+  'crove_finance.stock_count_line',
+  'crove_finance.stock_item',
+  'crove_finance.stock_move',
+  'crove_finance.stock_period',
+  'crove_finance.stock_period_item',
+  'crove_kernel.subject_key',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -152,6 +166,24 @@ interface RowFactory {
 
 const hex64 = () => randomBytes(32).toString('hex');
 const tag = () => randomUUID().slice(0, 8);
+// Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
+let einvoiceSeq = 0;
+const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
+// A provider connection is unique per entity, provider and seller tax code, and the matrix seeds several in one org: each takes the next 10-digit code.
+let einvoiceTaxSeq = 0;
+const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
+// Stock items (#2512) are unique per entity by code, and an alias by its key: each seeded one takes the next.
+let stockSeq = 0;
+const stockCode = () => `SP${(stockSeq++).toString().padStart(5, '0')}`;
+// A closed month of stock (#2513) is unique per entity and month: each seeded one takes the next month from January 2000.
+let stockMonthSeq = 0;
+const stockMonth = () => {
+  const n = stockMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
+};
+// Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
+let channelOrderSeq = 0;
+const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -371,6 +403,79 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (ads.db.test.ts tests it)',
     make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
   },
+  // The launch ledger (W2-2, #2296): the row an approved plan of an ad account leaves behind, with the commitment it holds against the spend caps. The
+  // entity is the account's (b_legal_entity, the composite foreign key). Tenant roles update its state columns only (a column grant; the guard holds the
+  // moves), so the update probes assign the step to itself. A launch is inserted by the execution of the approved proposal of its plan alone.
+  'crove_ads.ad_launch': {
+    update: { set: 'step = step' },
+    noInsertControl: 'only the execution of an approved ads.campaign.launch proposal inserts a launch, in a context of its org; every other context of the org is refused by its guard (ads-launch-ledger.db.test.ts tests it)',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix launch', objective: 'traffic', created_by: o.owner } },
+        ],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          ad_account_id: account,
+          draft_id: draft,
+          proposal_id: randomUUID(),
+          plan_hash: `sha256:${hex64()}`,
+          currency: 'VND',
+          daily_budget: '100000',
+          start_on: '2031-01-01',
+          end_on: '2031-01-10',
+          amount: '1000000',
+          commit_until: '2031-01-10',
+          created_by: o.owner,
+        },
+      };
+    },
+  },
+  // What a launch created at the platform (W2-3, #2296): one row per object of a launch (campaign, ad set, creative, ad) with the platform's id and the name
+  // that carries the launch's tag, written by the launch job's record step alone. The entity is the account's (b_legal_entity, the composite foreign key);
+  // tenant roles update the status columns only (a column grant), so the update probes assign the configured status to itself.
+  'crove_ads.ad_object': {
+    update: { set: 'configured_status = configured_status' },
+    noInsertControl: "only the system inserts an object, in the launch job's record step, for a launch that is running; every other context of the org is refused by its guard (the W2-3 tests cover it)",
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandbox_ads' };
+      const account = randomUUID();
+      const draft = randomUUID();
+      const launch = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
+          { table: 'crove_ads.ad_campaign_draft', values: { org_id: o.id, id: draft, ad_account_id: account, name: 'RLS matrix object', objective: 'traffic', created_by: o.owner } },
+          {
+            table: 'crove_ads.ad_launch',
+            values: {
+              org_id: o.id,
+              id: launch,
+              ad_account_id: account,
+              draft_id: draft,
+              proposal_id: randomUUID(),
+              plan_hash: `sha256:${hex64()}`,
+              currency: 'VND',
+              daily_budget: '100000',
+              start_on: '2031-01-01',
+              end_on: '2031-01-10',
+              amount: '1000000',
+              commit_until: '2031-01-10',
+              created_by: o.owner,
+            },
+          },
+        ],
+        row: { org_id: o.id, id: randomUUID(), ad_account_id: account, launch_id: launch, slot: 'campaign', level: 'campaign', external_id: `rls-${randomUUID()}`, name: 'RLS matrix object ludy:0000000000' },
+      };
+    },
+  },
   // Running ads (ADR-0043, #2294, W0): the org's one row of switches, the write switch and the block on launches. Org-wide, so no
   // entity. Tenant roles update the two switches and who set them only (a column grant), so the update probes assign the write
   // switch to itself.
@@ -423,6 +528,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           { table: 'crove_ads.ad_account', values: { org_id: o.id, id: account, channel_connection_id: connection.id, provider: 'sandbox_ads', external_account_id: connection.external_account_id, name: 'RLS matrix ads', backfill_from: '2025-10-01' } },
         ],
         row: { org_id: o.id, id: randomUUID(), ad_account_id: account, status: 'ok' },
+      };
+    },
+  },
+  // The revoke at the platform of a closed ads connection's token (W2-1, #2296): its state, count and next try, never the token (that is in
+  // crove_ads.ad_token_seal, definer-only). Written by definers alone (the system's command calls one): no tenant role inserts, updates or deletes a row.
+  'crove_ads.ad_token_revoke': {
+    systemWritesOnly: 'only the system context and the revoke definers write the state of a revoke (#2296); a member context is refused',
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' },
+      };
+    },
+  },
+  // The sealed copy of that token (W2-1, #2296): one row per revoke, with the key and the envelope, definer-only like crove_kernel.credential.
+  'crove_ads.ad_token_seal': {
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'sandboxwrite_ads' };
+      const revoke = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_kernel.channel_connection', values: connection },
+          { table: 'crove_ads.ad_token_revoke', values: { org_id: o.id, id: revoke, connection_id: connection.id, provider: 'sandboxwrite_ads', external_account_id: connection.external_account_id, kind: 'write', reason: 'switch_off' } },
+        ],
+        row: { org_id: o.id, revoke_id: revoke, key_id: 'rls-matrix', envelope: '\\x00' },
       };
     },
   },
@@ -593,6 +724,43 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_finance.categorization_rule': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), match_kind: 'keyword', match_text: `rls matrix ${tag()}`, debit_account: '6422' } }),
   },
+  // #2515: an order of a marketplace (ADR-0045 point 5), read from a report a member confirmed: the platform, the platform's order number and the day; it takes the org's default
+  // entity by its trigger, and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_order': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), platform: 'shopee', order_no: channelOrderNo() } }),
+  },
+  // #2515: one line of an order (the SKU, the quantity, the amounts, how far it has got). It takes its order's entity, and the order is seeded with it. Tenant roles read, insert and
+  // move a line's stage forward, so the update probes assign the stage to itself.
+  'crove_finance.channel_order_line': {
+    update: { set: 'stage = stage' },
+    make: (o) => {
+      const order = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } }],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_key: 'RLS-matrix', quantity: '1', stage: 'placed' },
+      };
+    },
+  },
+  // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
+  // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
+  'crove_finance.collection_setting': {
+    update: { set: 'terms_days = terms_days' },
+    noInsertControl: 'one row per org (UNIQUE (org_id)); only an owner or admin of the org writes it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID() } }),
+  },
+  // #2488: what the org set for one customer: its own payment terms, and a date until which no reminder is drafted for it. One row per customer (UNIQUE
+  // (org_id, party_id)), so each row seeds a customer of its own. Tenant roles update the two values and who set them (a column grant).
+  'crove_finance.customer_collection': {
+    update: { set: 'paused_until = paused_until' },
+    noInsertControl: 'one row per customer (UNIQUE (org_id, party_id)); the members who may send reminders write it, through its command (finance-payment-reminders-settings.db.test.ts tests it)',
+    make: (o) => {
+      const party = randomUUID();
+      return {
+        setup: [{ table: 'crove_kernel.party', values: { org_id: o.id, id: party, kind: 'organization', name: `RLS matrix customer ${tag()}` } }],
+        row: { org_id: o.id, id: randomUUID(), party_id: party, terms_days: 45 },
+      };
+    },
+  },
   // Monthly depreciation and allocation of the register (#919): append-only, one row per asset and month, naming the
   // journal entry that posted it. Tenant roles read and insert; nothing updates or deletes a line.
   'crove_finance.depreciation_line': {
@@ -603,6 +771,45 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
         row: { org_id: o.id, id: randomUUID(), asset_id: asset.id, month: '2026-10-01', amount: '1000000', entry_id: randomUUID() },
       };
     },
+  },
+  // #2501: an org's connection to an e-invoice provider (ADR-0044 point 2): the channel connection that holds the sealed credential, the seller's tax code and the
+  // entity it issues for (the org's default, by its trigger). Tenant roles update only the last connection test (a column grant), so the update probes assign
+  // the state to itself.
+  'crove_finance.einvoice_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'einvoice_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: einvoiceTaxCode() },
+      };
+    },
+  },
+  // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
+  'crove_finance.einvoice_draft': {
+    make: (o) => {
+      const series = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_series', values: { org_id: o.id, id: series, provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }],
+        row: { org_id: o.id, id: randomUUID(), series_id: series, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '0', vat_amount: '0', total: '0' },
+      };
+    },
+  },
+  // #2500: a line of a draft; it takes its draft's entity, and the draft is seeded with it.
+  'crove_finance.einvoice_draft_line': {
+    make: (o) => {
+      const draft = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.einvoice_draft', values: { org_id: o.id, id: draft, invoice_date: '2026-11-03', buyer_kind: 'consumer', subtotal: '100', vat_amount: '10', total: '110' } }],
+        row: { org_id: o.id, id: randomUUID(), draft_id: draft, line_no: 1, description: 'RLS matrix', quantity: '1', unit_price: '100', amount: '100', vat_rate: '10%', vat_amount: '10' },
+      };
+    },
+  },
+  // #2500: a series a provider holds (template number and symbol), linked to one entity of the org (the org's default, by its trigger). Tenant roles
+  // update the description and the default flag (a column grant), so the update probes assign the flag to itself. Symbols are unique per entity.
+  'crove_finance.einvoice_series': {
+    update: { set: 'is_default = is_default' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), provider: 'sandbox', template_no: '1', symbol: einvoiceSymbol() } }),
   },
   // The register of fixed assets and prepaid costs (#919): one row per asset, never deleted. Tenant roles update only
   // the end of its schedule (a column grant), so the update probes assign end_reason to itself.
@@ -769,6 +976,75 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           balancingLine(o.id, entry, 1, 'debit'),
           balancingLine(o.id, entry, 2, 'credit'),
         ],
+      };
+    },
+  },
+  // #2512: a name a source uses for an item (a purchase line's description, a marketplace SKU); it takes its item's entity, and the item is seeded with it.
+  'crove_finance.stock_alias': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, alias_key: `rls-matrix-${stockCode()}` },
+      };
+    },
+  },
+  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, note and who confirmed it), so the
+  // update probes assign the note to itself.
+  'crove_finance.stock_count': {
+    update: { set: 'note = note' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), count_date: '2026-11-03' } }),
+  },
+  // #2513: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles read, insert and change the counted quantity while the
+  // count is a draft, so the update probes assign it to itself.
+  'crove_finance.stock_count_line': {
+    update: { set: 'counted_quantity = counted_quantity' },
+    make: (o) => {
+      const item = randomUUID();
+      const count = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_count', values: { org_id: o.id, id: count, count_date: '2026-11-03' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), count_id: count, item_id: item, counted_quantity: '3' },
+      };
+    },
+  },
+  // #2512: an item of stock (ADR-0045 point 1), per legal entity (the org's default, by its trigger); its code is unique per entity. Tenant roles edit its name,
+  // so the update probes assign the name to itself.
+  'crove_finance.stock_item': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }),
+  },
+  // #2512: a move of stock, append-only (signed quantity, date, its source): tenant roles read and insert, and nothing updates or deletes a move. It takes its item's
+  // entity, and the item is seeded with it.
+  'crove_finance.stock_move': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, move_date: '2026-11-03', quantity: '5', source_type: 'manual' },
+      };
+    },
+  },
+  // #2513: a closed month of stock (ADR-0045 point 2): the entity's month whose cost was set from the moves and posted; one per entity and month, with no figure of its own the
+  // moves could not give again. It takes the org's default entity by its trigger. Append-only: tenant roles read and insert, and nothing updates or deletes it.
+  'crove_finance.stock_period': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), period_month: stockMonth() } }),
+  },
+  // #2513: what a closed month held of one item (opening, in, out and closing quantity and value, and the unit cost the month's average gave). It takes its period's entity, and the
+  // period and the item are seeded with it. Append-only like the period.
+  'crove_finance.stock_period_item': {
+    make: (o) => {
+      const item = randomUUID();
+      const period = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_period', values: { org_id: o.id, id: period, period_month: stockMonth() } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), period_id: period, item_id: item },
       };
     },
   },
@@ -1244,6 +1520,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // every row gets its own.
   'crove_kernel.saved_view': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, scope: 'crm.deal', name: `rls-${tag()}`, filters: '{"v":1,"all":[]}' } }),
+  },
+  // #2640: the wrapped data key of a subject (ADR-0017 section 2), the first of which is a payroll employee's. Written and read by definers alone, so no role may touch it.
+  'crove_kernel.subject_key': {
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: `\\x${'00'.repeat(60)}` } }),
   },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),

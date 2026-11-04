@@ -117,6 +117,7 @@ const draft = (over: Partial<AdsCampaignDraftView> = {}): AdsCampaignDraftView =
   days: 7,
   issues: [],
   pendingProposalId: null,
+  launch: null,
   createdAt: at,
   updatedAt: at,
   ...over,
@@ -260,10 +261,88 @@ describe('a draft that is frozen', () => {
     expect(html).not.toContain('Ask for approval');
   });
 
-  it('approved says that nothing is sent to the ad platform yet', () => {
+  it('approved says that nothing is spent yet', () => {
     const html = render(builder({ draft: draft({ status: 'approved' }) }));
-    expect(html).toContain('Approved. Nothing is sent to the ad platform yet.');
+    expect(html).toContain('Approved. Nothing is spent yet.');
     expect(html).not.toContain('Save the draft');
+  });
+
+  // The ledger row of an approved plan (W2-2, #2296): its amount is held against the spend caps until it is cancelled.
+  const launch = (over: Partial<NonNullable<AdsCampaignDraftView['launch']>> = {}): NonNullable<AdsCampaignDraftView['launch']> => ({
+    id: 'l1',
+    draftId: ID,
+    adAccountId: 'a1',
+    state: 'queued',
+    step: null,
+    attempt: 1,
+    currency: 'VND',
+    tag: 'ludy:0123456789',
+    dailyBudget: '100000',
+    amount: '700000',
+    startOn: '2026-11-10',
+    endOn: '2026-11-16',
+    commitUntil: '2026-11-16',
+    stopReason: null,
+    createdAt: at,
+    finishedAt: null,
+    windDown: null,
+    ...over,
+  });
+
+  it('an approved plan with a queued launch says its amount is held against the caps and offers owners and admins to cancel it', () => {
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch() }) }));
+    expect(html).toContain('is held against your spend caps');
+    expect(html).toContain('so nothing is spent yet.');
+    expect(html).toContain('Cancel and release the amount');
+    // A member sees the note and no button.
+    const member = render(builder({ draft: draft({ status: 'approved', launch: launch() }), canManage: false }));
+    expect(member).toContain('is held against your spend caps');
+    expect(member).not.toContain('Cancel and release the amount');
+  });
+
+  it('a cancelled launch says its amount is released, and says it in Vietnamese too', () => {
+    const html = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'cancelled', commitUntil: null }) }) }));
+    expect(html).toContain('This launch was cancelled. The amount held against your spend caps is released.');
+    expect(html).not.toContain('Cancel and release the amount');
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch() }) }), 'vi');
+    expect(vi).toContain('đang được giữ chỗ trong hạn mức chi tiêu');
+    expect(vi).toContain('Hủy và trả lại số tiền');
+  });
+
+  // A launch that has started (W2-4a, #2296): owners and admins can stop it, and a stopped one says where the pause of its ads at the platform stands.
+  it('a launch that has started says what stage it is at, offers owners and admins to stop it, and offers a member nothing', () => {
+    const created = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }) }));
+    expect(created).toContain('every ad is paused: nothing is spent yet.');
+    expect(created).toContain('Stop this launch');
+    const creating = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'ad_set' }) }) }));
+    expect(creating).toContain('is being created at the ad platform');
+    expect(creating).not.toContain('Cancel and release the amount');
+    const attention = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'needs_attention', step: 'campaign', stopReason: 'token_expired' }) }) }));
+    expect(attention).toContain('needs a person to look at it (token_expired)');
+    expect(attention).toContain('Stop this launch');
+    const member = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }), canManage: false }));
+    expect(member).toContain('every ad is paused');
+    expect(member).not.toContain('Stop this launch');
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'launching', step: 'paused' }) }) }), 'vi');
+    expect(vi).toContain('chưa tiêu đồng nào');
+    expect(vi).toContain('Dừng lần chạy này');
+  });
+
+  it('a stopped launch says its commitment stays and where the pause of its ads stands: being paused, paused, or to be paused by hand', () => {
+    const stopped = (windDown: NonNullable<AdsCampaignDraftView['launch']>['windDown']) =>
+      render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'stopped', step: 'paused', stopReason: 'stopped', commitUntil: '2026-11-12', windDown }) }) }));
+    const pending = stopped({ state: 'pending', code: null });
+    expect(pending).toContain('This launch was stopped.');
+    expect(pending).toContain('stays held against your spend caps until');
+    expect(pending).toContain('Its ads are being paused at the ad platform.');
+    expect(pending).not.toContain('Stop this launch');
+    expect(stopped({ state: 'done', code: null })).toContain('Its ads are paused at the ad platform.');
+    const gaveUp = stopped({ state: 'gave_up', code: 'token_refused' });
+    expect(gaveUp).toContain('Ludy could not pause its ads at the ad platform. Pause them by hand');
+    const vi = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'stopped', stopReason: 'stopped', windDown: { state: 'gave_up', code: 'age' } }) }) }), 'vi');
+    expect(vi).toContain('Hãy tự tạm dừng');
+    const failed = render(builder({ draft: draft({ status: 'approved', launch: launch({ state: 'failed', stopReason: 'flight_over', commitUntil: null }) }) }));
+    expect(failed).toContain('could not run (flight_over)');
   });
 });
 

@@ -33,9 +33,9 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
   await test.step('searching without marks finds "Nguyễn Văn An"', async () => {
     await page.getByRole('searchbox').first().fill('nguyen van');
     await expect(page.getByText('Nguyễn Văn An')).toBeVisible();
-    await expect(page.getByText('Công ty ABC')).toHaveCount(0);
+    await expect(page.getByText('Trần Thị Bình')).toHaveCount(0);
     await page.getByRole('searchbox').first().fill('');
-    await expect(page.getByText('Công ty ABC')).toBeVisible();
+    await expect(page.getByText('Trần Thị Bình')).toBeVisible();
   });
 
   await test.step('a filter saved as a view comes back as a tab after a reload', async () => {
@@ -47,7 +47,7 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
     await expect(page.getByRole('tab', { name: 'Khách có email' })).toBeVisible();
     await page.reload();
     await page.getByRole('tab', { name: 'Khách có email' }).click();
-    await expect(page.getByText('Công ty ABC')).toBeVisible();
+    await expect(page.getByText('Nguyễn Văn An')).toBeVisible();
     await expect(page.getByText('Trần Thị Bình')).toHaveCount(0);
   });
 
@@ -78,7 +78,8 @@ test('import contacts, find and save a view, add a deal, move it to Won, read th
   });
 
   await test.step("the contact's panel shows the deal and a timeline of what happened", async () => {
-    await nav.getByRole('link', { name: 'Người liên hệ' }).click();
+    // Công ty ABC has a tax code, so the import made it a company: it is on the Companies screen (#2438).
+    await nav.getByRole('link', { name: 'Công ty', exact: true }).click();
     await page.getByRole('button', { name: 'Mở Công ty ABC' }).click();
     await expect(page.getByTestId('contact-deals')).toContainText('Gói kế toán năm');
     const timeline = page.getByTestId('contact-timeline');

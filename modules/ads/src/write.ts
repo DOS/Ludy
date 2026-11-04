@@ -9,8 +9,8 @@
 //   lets the change through for an owner and for the execution of that approved proposal alone (crove_ads.switch_guard,
 //   cap_guard, approved_execution), so no other path writes it.
 // - What only stops or reduces spend is direct: ads.write.disable (R2, owner), ads.account.disable_write (R2, owner),
-//   ads.pause_all (R2, owner and admin: the kill switch; it blocks launches at once, and the pausing of what was launched comes
-//   with the launch itself, W2, since nothing has been launched yet) and ads.cap.lower (R2, owner).
+//   ads.pause_all (R2, owner and admin: the kill switch; it blocks launches at once and stops every launch that has started, whose objects at the
+//   platform are then paused from the queue, W2-4a) and ads.cap.lower (R2, owner).
 // - ads.write.state and ads.proposal.change (queries, owners and admins): the switches, the current caps and the requests
 //   waiting in the Inbox, and what one Inbox item of an ads kind changes.
 // Module permissions (plan section 5.3) are not defined yet: the commands are the base roles' (owner, admin) until the drafting
@@ -41,6 +41,8 @@ import {
   type AdsWriteState,
 } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
+import { cancelQueuedLaunches, stopStartedLaunches } from './launch-ledger.ts';
+import { tokenRevokeViews } from './token-revoke-commands.ts';
 import { closeSpendCapableReadConnections, closeWriteConnections } from './write-connection.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
@@ -351,9 +353,9 @@ export const adsWriteDisable = defineCommand({
   // app of its own, where no reading token can hold the permission. Left out, the close fails safe.
   input: z.strictObject({ sharedApp: z.boolean().optional() }),
   // Closes the path: every account's flag off, launches blocked, and every write connection of the org closed with its sealed token
-  // dropped (W0b). The platform's own copy of a token is revoked by the write queue of W2, which cannot merge without it; until
-  // then the screen tells the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an
-  // external effect.
+  // dropped (W0b). The permission at the platform is then removed by the revoke sweep from a sealed copy the database made in this
+  // transaction when the credential was dropped (W2-1, crove_ads.token_hold, seven days at most); where it cannot, the screen tells
+  // the owner to remove the app in the platform's settings. A switch-off is never quiet, so it declares an external effect.
   risk: 'R2',
   sideEffect: 'external',
   access: OWNERS,
@@ -363,13 +365,19 @@ export const adsWriteDisable = defineCommand({
     // opening them again is a proposal, on purpose (the stricter way back).
     await ctx.trx.updateTable('crove_ads.ad_org_setting').set({ write_enabled: false, launches_blocked: true }).where('org_id', '=', ctx.orgId).where('id', '=', setting.id).execute();
     const closed = await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false }).where('org_id', '=', ctx.orgId).where('write_enabled', '=', true).returning('id').execute();
+    // The launches that have not started are cancelled with it, so their commitments are released and nothing queued can start later (W2-2); the launches that have
+    // started are stopped (W2-4a: each keeps its commitment to at least today, never cleared) and their objects at the platform are paused from the queue after the commit,
+    // before the permission is revoked: the platform is never called in this transaction, so a platform that is down cannot make the switch-off fail.
+    const launchesCancelled = await cancelQueuedLaunches(ctx, 'switch_off');
+    const launchesStopped = await stopStartedLaunches(ctx, 'switch_off');
+    for (const s of launchesStopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
     // No sealed token that can change campaigns stays: each write connection is closed by the kernel's own command (one audit row each).
     const connectionsClosed = await closeWriteConnections(ctx, {});
     // And no reading connection whose token can change campaigns either (W0b-2): by its recorded scopes, and, when the write app is the
     // read or Pages app, every Meta reading connection once running ads was on or the org has made a Meta write connection, since a Meta
     // permission is the person's for the app and a consent at Meta may never have reached Ludy.
     const readConnectionsClosed = await closeSpendCapableReadConnections(ctx, { switchWasOn: setting.write_enabled, ...(input.sharedApp === undefined ? {} : { sharedApp: input.sharedApp }) });
-    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed, wasEnabled: setting.write_enabled });
+    ctx.audit({ writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed, launchesCancelled, launchesStopped: launchesStopped.length, wasEnabled: setting.write_enabled });
     return { writeEnabled: false, accountsDisabled: closed.length, connectionsClosed, readConnectionsClosed };
   },
 });
@@ -387,9 +395,14 @@ export const adsAccountDisableWrite = defineCommand({
     if (account.write_enabled) {
       await ctx.trx.updateTable('crove_ads.ad_account').set({ write_enabled: false, updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', account.id).execute();
     }
-    // This account's write connection goes with its flag: closed, its sealed token dropped (the other accounts keep their own).
+    // This account's write connection goes with its flag: closed, its sealed token dropped (the other accounts keep their own); and the launches of the
+    // account that have not started are cancelled (W2-2), their commitments released.
     const connectionsClosed = await closeWriteConnections(ctx, { adAccountId: account.id });
-    ctx.audit({ adAccountId: account.id, writeEnabled: false, connectionsClosed });
+    const launchesCancelled = await cancelQueuedLaunches(ctx, 'account_off', account.id);
+    // The account's launches that have started are stopped with it and their objects paused afterwards (W2-4a), as the org's switch-off does.
+    const launchesStopped = await stopStartedLaunches(ctx, 'account_off', { adAccountId: account.id });
+    for (const s of launchesStopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+    ctx.audit({ adAccountId: account.id, writeEnabled: false, connectionsClosed, launchesCancelled, launchesStopped: launchesStopped.length });
     return { adAccountId: account.id, writeEnabled: false, connectionsClosed };
   },
 });
@@ -406,9 +419,15 @@ export const adsPauseAll = defineCommand({
     if (!setting.launches_blocked) {
       await ctx.trx.updateTable('crove_ads.ad_org_setting').set({ launches_blocked: true }).where('org_id', '=', ctx.orgId).where('id', '=', setting.id).execute();
     }
-    // Nothing has been launched from Ludy yet, so there is nothing to pause at a platform: the count is the objects paused.
-    ctx.audit({ launchesBlocked: true, paused: 0 });
-    return { launchesBlocked: true, paused: 0 };
+    // The launches that have not started are cancelled (W2-2): launches are blocked, and their commitments would otherwise hold the caps with nothing to release
+    // them. The launches that have started are stopped, each keeping its commitment to at least today (W2-4a), and everything they made at the platform is paused from
+    // the queue after the commit (the pause job's audit row counts the objects paused and lists any the platform refused, with its reason); `paused` is the number of
+    // launches whose objects are being paused. A launch stopped by the kill switch never resumes: a new plan is a new draft and a new approval.
+    const launchesCancelled = await cancelQueuedLaunches(ctx, 'launches_blocked');
+    const launchesStopped = await stopStartedLaunches(ctx, 'launches_blocked');
+    for (const s of launchesStopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+    ctx.audit({ launchesBlocked: true, paused: launchesStopped.length, launchesCancelled });
+    return { launchesBlocked: true, paused: launchesStopped.length };
   },
 });
 
@@ -533,6 +552,7 @@ export const adsWriteState = defineQuery({
       updatedAt: setting ? new Date(setting.updated_at).toISOString() : null,
       caps,
       pending,
+      tokenRevokes: await tokenRevokeViews(ctx),
     };
   },
 });

@@ -75,12 +75,17 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
     modules: ['ads', 'crm', 'finance', 'notes', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
   },
+  'packages/kernel/src/parties.ts': {
+    modules: ['crm', 'finance'],
+    why: "a party's kind changes only while nothing points at it (#2438): the check reads the books and the deals, bookings and rules that name the party, whatever is installed now, because an earlier install of finance or crm left rows that still read its kind (PARTY_KIND_HOLDERS; a database test lists every foreign key to party)",
+  },
   'packages/kernel/src/personal-data.ts': {
     modules: ['crm', 'finance', 'notes', 'social'],
     why: 'the personal-data registry, find and erase: an erasure reaches data an earlier install of the module left, whatever is installed now; private notes and to-dos are counted through crove_notes.private_matches (#1678)',
   },
   'apps/kernel/src/meta-deletion.ts': { modules: ['ads'], why: "Meta's one data deletion callback fans a verified request out to the Ads side (crove_ads.deletion_request) as well as to the conversations (CV6, #2305): the Ads definers are called only for a secret the deployment holds for the Ads app" },
   'apps/kernel/src/ads-deletion.ts': { modules: ['ads'], why: "Meta's data deletion callback of the Ads connection: its signed request, the status page, and the worker's erasure of the accounts a request names, only when ads is installed (http.ts, worker.ts)" },
+  'apps/kernel/src/ads-revoke.ts': { modules: ['ads'], why: "the revoke at the platform of a closed ads connection's token (#2296, W2-1): the sweep's worker-only definers (crove_ads.token_revoke_due, token_seal_get, token_revoke_expire, write_orphans), worked and scheduled only when ads is installed (worker.ts)" },
   'apps/kernel/src/ads-worker.ts': { modules: ['ads'], why: "the AI coworker's campaign draft job and the worker's sweep of requests nobody answered (crove_ads.campaign_request_sweep, the worker login's definer), worked and scheduled only when ads is installed (worker.ts)" },
   'apps/kernel/src/ads-sync.ts': { modules: ['ads'], why: 'the ad account sync, its hourly sweep and the prune of old runs, worked and scheduled only when ads is installed (worker.ts)' },
   'apps/kernel/src/bank-feed-webhook.ts': { modules: ['finance'], why: 'the bank feed notice route queues the account ids through a finance definer, mounted only when finance is installed (http.ts)' },
@@ -98,7 +103,10 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/report-link.ts': { modules: ['social'], why: 'public report link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/review-link.ts': { modules: ['social'], why: 'public review link routes, registered only when social is installed (http.ts)' },
   'apps/kernel/src/short-link.ts': { modules: ['social'], why: 'the short link route, registered only when social is installed (http.ts)' },
-  'apps/kernel/src/worker.ts': { modules: ['social'], why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise)' },
+  'apps/kernel/src/worker.ts': {
+    modules: ['ads', 'social'],
+    why: 'the publishing sweep claims social posts only when social is installed (no publishers otherwise); the agent sweep, a schedule with no egress, also wipes the sealed copies of closed ads tokens past their age through a worker-only definer (crove_ads.token_revoke_expire), whether or not ads is installed: the hold is a trigger of the database, so a copy can exist with the module switched off and must not outlive its seven days (#2296)',
+  },
 };
 
 // A Crove schema named whole, in quotes: withSchema('crove_finance'), a list of schemas, "crove_finance"."x".

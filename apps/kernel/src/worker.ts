@@ -13,7 +13,7 @@ import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, extractAndPropose, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -53,6 +53,10 @@ import { withJobLogContext } from './log.ts';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
+import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
+import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
+import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
 import { failUndraftable, requestDueConversationDrafts, sweepConversationComposing, sweepConversationDrafts, runConversationDraft, type ConversationDraftJob, dueConversationAttachments, dueConversationSync, failUnsendable, requestConversationAttachments, requestConversationSync, purgeExpiredConversations, runConversationAttachment, runConversationDeletions, runConversationIntake, runConversationJob, runConversationSync, sweepConversationBlobs, sweepStaleReplies, type ConversationAttachmentJob, type ConversationJob, type ConversationSyncJob } from './conversations-worker.ts';
@@ -61,7 +65,8 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
-import type { AdPlatform } from '@crove/ad-platform';
+import type { EInvoiceProvider } from '@crove/einvoice';
+import type { AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -333,10 +338,19 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
 
 // The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
 const BANK_FEED_SYNC_CRON = '30 5 * * *';
+// The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
+const EINVOICE_SWEEP_CRON = '* * * * *';
+const EINVOICE_ISSUE_RETRY_LIMIT = 3;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
 const ADS_SYNC_CRON = '10 * * * *';
+// The revoke at the platform of a closed ads connection's token (#2296, W2-1): every minute, since the first retry waits a minute (ads-revoke.ts).
+const ADS_REVOKE_CRON = '* * * * *';
+// The sweep that queues a waiting launch again (#2296, W2-3): the relay does it at once when a launch is approved, this is the safety net.
+const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
+// The safety net of the pause of stopped launches (#2296, W2-4a): every five minutes, a stopped launch whose objects are not paused yet and whose job was lost or is due again.
+const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -392,9 +406,21 @@ export interface WorkerDeps {
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
+    einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
+    // The one call of an ad platform's writer that removes the app's permissions at the platform (#2296, W2-1), by the provider id of the connection whose
+    // token is held: the narrowed view, never the writer. The revoke sweep alone uses it, with the sealed copy it opens.
+    adRevokers?: Readonly<Record<string, AdRevoker>>;
+    // The calls of a launch of an ad platform's writer (#2296, W2-3), by the provider id of the write connection: a frozen view with the creates (every object
+    // paused), the find by tag and the resolution of targeting names, never the writer. The launch job alone uses it, with the credential it opens. A provider
+    // without one has its launches left queued, untouched (Meta's is built only where ADS_LIVE_LAUNCH is on).
+    adWriters?: Readonly<Record<string, LaunchWriter>>;
+    // The one call of an ad platform's writer that pauses what a stopped launch made (#2296, W2-4a), by the provider id of the write connection: a frozen view that finds the
+    // objects carrying the launch's tag and sets them PAUSED, never the writer. The pause job alone uses it, with the credential it opens.
+    adPausers?: Readonly<Record<string, AdPauser>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -685,6 +711,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
       // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
       // named an account no one had mapped yet) comes with its version and is read the same way.
+      // A marketplace order report (#2515) is tried first: its headers are told apart by words only the platforms use, and a bank statement reader would take any sheet with a date and an
+      // amount. A file that is no order report goes on to the bank statement reader as before.
+      const report = await readMarketplaceFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (report.handled) {
+        console.log(`[extract] file ${fileId}: marketplace order report`);
+        return;
+      }
       const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
       if (statement.handled) {
         console.log(`[extract] file ${fileId}: bank statement`);
@@ -774,7 +807,7 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
         console.log(`[inbound] message ${label}: over the org's daily limit, deferred to ${result.deferred}`);
         return;
       }
-      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
+      console.log(`[inbound] message ${label}: ${'bounce' in result ? `bounce report, ${result.bounce}` : 'conversation' in result ? `conversation mail, ${result.conversation}${result.reason ? ` (${result.reason})` : ''}` : result.duplicate ? 'duplicate' : `${result.fileIds.length} file(s)`}`);
     } catch (error) {
       // A message no org can receive (unknown or closed recipient, invalid content) is dropped, not retried.
       if (!(error instanceof DomainError && error.status !== 409 && error.status < 500)) {
@@ -1100,6 +1133,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await dropCron(QUEUES.bankFeedSync);
   }
 
+  // E-invoices (ADR-0044, #2502): a draft a person's approved issue moved to `submitting`, queued by the relay below, and, every minute, every draft whose time to ask
+  // the provider has come (or whose signed XML is still to store). The adapters are the deployment's; with none on, nothing is queued and nothing is sent.
+  const einvoiceProviders = deps.channels?.einvoiceProviders;
+  const einvoiceBroker = deps.channels?.broker;
+  if (finance && einvoiceProviders && einvoiceBroker && Object.keys(einvoiceProviders).length > 0) {
+    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; draftId: string } | null = null;
+        for (;;) {
+          const page = await einvoiceDue(deps.workerDb, after);
+          for (const row of page) {
+            await boss.send(QUEUES.einvoiceIssue, { orgId: row.orgId, draftId: row.draftId } satisfies EInvoiceIssueJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.einvoiceIssue, row.draftId),
+              retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < EINVOICE_DUE_PAGE) break;
+          after = { orgId: last.orgId, draftId: last.draftId };
+        }
+        return;
+      }
+      const done = await runEInvoiceIssue({ runtime: deps.runtime, broker: einvoiceBroker, store: deps.store, providers: einvoiceProviders }, job.data);
+      console.log(`[einvoice] draft ${job.data.draftId.slice(0, 8)}: ${done.action}, ${done.state}`);
+    });
+    await boss.schedule(QUEUES.einvoiceIssue, EINVOICE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.einvoiceIssue);
+  }
+
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
   // for, and every hour for every active ad account of an active org. The adapters are the deployment's; with none on,
   // the sweep queues nothing.
@@ -1136,6 +1202,62 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsSync, ADS_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.adsSync);
+  }
+
+  // The revoke at the platform of a closed ads connection's token (#2296, W2-1): a sweep with no data, every minute, whether or not a platform is
+  // configured: with no revoker or no credential key the copies wait (nothing is recorded, so a configuration fix restores the revoke) and the seventh day ends them.
+  if (ads) {
+    await boss.work(QUEUES.adsRevoke, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      const done = await runAdsRevoke({ runtime: deps.runtime, workerDb: deps.workerDb, broker: deps.channels?.broker, revokers: deps.channels?.adRevokers ?? {} });
+      if (done.expired + done.closed + done.tried > 0) console.log(`[ads-revoke] ${done.tried} tried, ${done.done} done, ${done.closed} closed (member left), ${done.expired} past their age`);
+    });
+    // retryLimit 0: the policy retries (backoff in the database, each try counted when the copy is opened), never the queue.
+    await boss.schedule(QUEUES.adsRevoke, ADS_REVOKE_CRON, null, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsRevoke);
+  }
+
+  // The launch of an approved campaign at the ad platform (#2296, W2-3): ids only in the job (the org and the launch), queued by the relay below when the approval
+  // wrote ads.launch.queued, and again by a sweep every ten minutes for a launch whose event or job was lost (crove_ads.launch_requeue writes the same event for
+  // the providers this worker has a writer for; the job's begin decides what is due). The writers are the deployment's: the sandbox's offline one, and Meta's
+  // only where ADS_LIVE_LAUNCH is on; a provider without one has its launches left queued, untouched. Every object the job creates is paused.
+  const adWriters = deps.channels?.adWriters;
+  if (ads && adWriters && adsBroker && Object.keys(adWriters).length > 0) {
+    await boss.work<AdsLaunchJob | { sweep: true }>(QUEUES.adsLaunch, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.launch_requeue(${Object.keys(adWriters)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-launch] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsLaunch({ runtime: deps.runtime, broker: adsBroker, writers: adWriters }, job.data);
+      console.log(`[ads-launch] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsLaunch, ADS_LAUNCH_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsLaunch);
+  }
+
+  // The pause of what a stopped launch made at the platform (#2296, W2-4a): ids only in the job (the org and the launch), queued by the relay below when a stop wrote
+  // ads.pause.queued, and again by a sweep every five minutes for a stopped launch whose event or job was lost or whose next run is due (crove_ads.wind_down_requeue writes
+  // the same event; the job's begin decides what is due). The job finds the objects that carry the launch's tag and sets them PAUSED with the credential of the write
+  // connection, and nothing else; a connection that a switch-off closed is paused by the revoke sweep with the sealed copy of its token, before it revokes.
+  const adPausers = deps.channels?.adPausers;
+  if (ads && adPausers && adsBroker && Object.keys(adPausers).length > 0) {
+    await boss.work<AdsPauseJob | { sweep: true }>(QUEUES.adsPause, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.wind_down_requeue(200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-pause] ${rows[0]?.n} stopped launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsPause({ runtime: deps.runtime, broker: adsBroker, pausers: adPausers }, job.data);
+      console.log(`[ads-pause] ${job.data.launchId}: ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsPause, ADS_PAUSE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsPause);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -1269,6 +1391,15 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await Promise.all(rows.map((row) => sendAgentWake(boss, row.org_id, row.agent_id)));
     if (rows.length > 0) console.log(`[agent] sweep woke ${rows.length} agent(s) with pending wake-ups`);
     await aiBudgetSweep();
+    // The sealed copies of closed ads connections' tokens past their seven days or their ten tries (#2296, W2-1): wiped here too, by a sweep with no
+    // egress, so the age limit does not depend on the revoke job running (ads-revoke does the same first thing). By count only.
+    // Whether or not the ads module is installed: the hold is a trigger of the database, so a copy can be made with the module switched off, and it must not
+    // outlive its seven days for that reason.
+    const { rows: wiped } = await sql<{ n: number }>`SELECT crove_ads.token_revoke_expire() AS n`.execute(deps.workerDb).catch((error: unknown) => {
+      console.warn('[ads-revoke] the age sweep failed', error instanceof Error ? error.name : 'error');
+      return { rows: [] as Array<{ n: number }> };
+    });
+    if ((wiped[0]?.n ?? 0) > 0) console.log(`[ads-revoke] ${wiped[0]?.n} sealed copy(ies) past their age or their tries wiped`);
   }));
   await boss.schedule(QUEUES.agentSweep, AGENT_SWEEP_CRON, null, { tz: RETENTION_TZ });
 
@@ -2009,12 +2140,44 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
+              // A sales e-invoice approved for issue (ADR-0044, #2502): its job begins the call, sends or asks, and records the answer. Ids only in the job.
+              if (finance && deps.channels?.einvoiceProviders && Object.keys(deps.channels.einvoiceProviders).length > 0 && row.type === 'finance.einvoice_issue_requested') {
+                const draftId = String(row.payload.draft_id);
+                await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
+                  retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
               // An ad account linked, or a refresh asked for (ADR-0040, #2217): its sync reads the platform.
               if (ads && deps.channels?.adPlatforms && Object.keys(deps.channels.adPlatforms).length > 0 && (row.type === 'ads.account.linked' || row.type === 'ads.sync.requested')) {
                 const connectionId = String(row.payload.connection_id);
                 await boss.send(QUEUES.adsSync, { orgId: row.org_id, connectionId } satisfies AdsSyncJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.adsSync, connectionId),
                   retryLimit: ADS_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // An approved launch (#2296, W2-3): the job creates the plan's objects at the platform, every one paused, and records their ids; ids only in the job. A
+              // deployment with no writer leaves the launch queued, untouched.
+              if (ads && deps.channels?.adWriters && Object.keys(deps.channels.adWriters).length > 0 && row.type === 'ads.launch.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsLaunch, { orgId: row.org_id, launchId } satisfies AdsLaunchJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsLaunch, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A stopped launch (#2296, W2-4a): the job pauses what it made at the platform and records the answer; ids only in the job. A deployment with no pauser has
+              // nothing it could have launched, so the sweep finds nothing either.
+              if (ads && deps.channels?.adPausers && Object.keys(deps.channels.adPausers).length > 0 && row.type === 'ads.pause.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsPause, { orgId: row.org_id, launchId } satisfies AdsPauseJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsPause, launchId),
+                  retryLimit: 2,
                   retryDelay: 30,
                   retryBackoff: true,
                 });

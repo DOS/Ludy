@@ -21,7 +21,9 @@ import type { TodayItem, VatFilingPeriod } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
 import { closingPeriod } from './notifications.ts';
+import { readCollectionSetting } from './collection-settings.ts';
 import { databaseToday } from './period-lock.ts';
+import { remindersToSendThisWeek } from './payment-reminders.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ACTORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -68,8 +70,10 @@ export const financeToday = defineQuery({
     if (ACTORS.includes(ctx.role)) {
       items.push(...(await waitingProposals(ctx, userId, to)));
       items.push(...(await flaggedProposals(ctx, to)));
+      items.push(...(await einvoiceItems(ctx, to)));
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
+      items.push(...(await reminderItems(ctx, entities, today, to)));
     }
     items.push(...(await deadlines(ctx, today, to, entities)));
     return items;
@@ -160,6 +164,25 @@ async function flaggedProposals(ctx: QueryContext, to: Link): Promise<TodayItem[
   return items;
 }
 
+// The sales e-invoices that need a person (#2502): failed, with a code on the draft; sent back to a draft with the reason (a rejection) and not asked for again; sent more than an hour
+// ago and still unanswered, or issued with the signed XML still not stored. One flag per entity with how many.
+async function einvoiceItems(ctx: QueryContext, to: Link): Promise<TodayItem[]> {
+  const { rows } = await sql<{ entity: string; n: string }>`
+    SELECT d.legal_entity_id::text AS entity, pg_catalog.count(*)::text AS n
+    FROM crove_finance.einvoice_draft d
+    WHERE d.org_id = ${ctx.orgId}
+      AND (d.state = 'failed'
+           OR (d.state = 'draft' AND d.error_code IS NOT NULL)
+           OR (d.state IN ('submitting', 'pending') AND d.submitted_at < pg_catalog.now() - interval '1 hour')
+           OR (d.state = 'issued' AND d.signed_file_id IS NULL AND d.issued_at < pg_catalog.now() - interval '1 hour'))
+    GROUP BY 1
+    ORDER BY 1`.execute(ctx.trx);
+  return rows.map((r) => {
+    const count = Number(r.n);
+    return { kind: 'flag', app: 'finance', id: `einvoice-attention:${r.entity}`, title: { key: 'financeEinvoiceAttention', params: { count } }, count, severity: 'warn', href: to('/sales-invoices', r.entity) } satisfies TodayItem;
+  });
+}
+
 // The originals still to fetch (a mail with only a lookup link or code, #2286: the kernel's read answers owners, admins
 // and members of the whole org only) and the originals attached to a posted invoice that differ from it or are not
 // verified, which the caller was told about and has not opened yet (#2335).
@@ -204,6 +227,18 @@ async function bankItems(ctx: QueryContext, entities: readonly string[], to: Lin
     if (open.status !== 'ok') break;
     const lines = open.value.accounts.reduce((n, a) => n + a.open, 0);
     if (lines > 0) items.push({ kind: 'message', app: 'finance', id: `bank-open-lines:${entity}`, title: { key: 'financeBankLinesOpen', params: { count: lines } }, count: lines, href: to('/bank', entity) });
+  }
+  return items;
+}
+
+// The weekly payment reminder item (#2488, slice 3), only where the org turned it on: per entity, how many overdue customers have had no reminder since Monday.
+// It counts and links to Nhắc thu nợ; it drafts and sends nothing, and it clears itself as the week's reminders go out.
+async function reminderItems(ctx: QueryContext, entities: readonly string[], today: string, to: Link): Promise<TodayItem[]> {
+  if (!(await readCollectionSetting(ctx)).weeklyItem) return [];
+  const items: TodayItem[] = [];
+  for (const entity of entities) {
+    const { monday, count } = await remindersToSendThisWeek(ctx, entity, today);
+    if (count > 0) items.push({ kind: 'message', app: 'finance', id: `payment-reminders:${entity}:${monday}`, title: { key: 'financeRemindersDue', params: { count } }, count, href: to('/payment-reminders', entity) });
   }
   return items;
 }

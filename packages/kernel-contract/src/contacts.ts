@@ -43,6 +43,12 @@ export const zContact = z.object({
   // The version an edit sends back (kernel.party.update).
   version: z.number().int(),
   createdAt: z.string(),
+  // The company a person works at (#2438), read through a merge to the company kept; null for a company and for a person with none.
+  company: z.object({ id: zId, name: z.string() }).nullable(),
+  // For a company: the people who work at it (the lists' columns); 0 for a person.
+  peopleCount: z.number().int(),
+  // The open deals of the party (a deal sits on either kind).
+  openDeals: z.number().int(),
 });
 export type Contact = z.infer<typeof zContact>;
 

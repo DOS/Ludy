@@ -11,7 +11,9 @@ import { z } from 'zod';
 // feed: a blog's RSS or Atom feed (#708); its newest items come back read and capped.
 // bank_statement: a bank's statement as .xlsx or CSV (#2142), forwarded by email or dropped in the Inbox; the account
 // number above the lines and the lines come back read, cells as text, and the worker checks them again.
-export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement'] as const;
+// marketplace_orders: a Shopee, TikTok Shop or Lazada order report as .xlsx or CSV (#2515); only an allow-list of columns comes back (order, line, dates, status, SKU, product, quantity,
+// amounts): the buyer's columns are never read, so they never leave the sandbox.
+export const EXTRACT_KINDS = ['einvoice_xml', 'pdf_text', 'mime', 'zip', 'portal_invoice_list', 'dsn', 'html_meta', 'feed', 'bank_statement', 'marketplace_orders'] as const;
 export type ExtractKind = (typeof EXTRACT_KINDS)[number];
 export const zExtractKind = z.enum(EXTRACT_KINDS);
 
@@ -52,6 +54,11 @@ export const EXTRACT_LIMITS = {
   maxPageTextChars: 4000,
   // A mail's text (#779): its text/plain part, or its HTML reduced to text, for an AI draft of a Social post.
   maxMailTextChars: 20_000,
+  // The Message-IDs of a mail's References header that are kept (#2439).
+  maxMailRefs: 50,
+  // The Authentication-Results headers a mail carries (#2439): how many are returned, each cut at this length.
+  maxAuthResults: 5,
+  maxAuthResultChars: 1000,
   // A blog's feed (#708): at most this many bytes, of which the newest items come back.
   maxFeedBytes: 1024 * 1024,
   maxFeedItems: 50,
@@ -64,6 +71,11 @@ export const EXTRACT_LIMITS = {
   maxStatementBytes: 10 * MiB,
   maxStatementRows: 5000,
   maxStatementCellChars: 1000,
+  // A marketplace order report (#2515): a file of at most this size with at most this many lines (the sheet reader takes about 20,000 rows; Lazada has a row per unit sold).
+  maxOrderReportBytes: 10 * MiB,
+  maxOrderLines: 20_000,
+  // Rows of the report that were not read as lines of an order, reported by number.
+  maxOrderSkipped: 1000,
 } as const;
 
 // Why the sandbox did not return an entry of an archive. The whole archive is refused instead (as invalid) when an
@@ -76,6 +88,7 @@ export function maxRequestBytes(kind: ExtractKind): number {
   if (kind === 'mime' || kind === 'dsn') return EXTRACT_LIMITS.maxEmailBytes;
   if (kind === 'portal_invoice_list') return EXTRACT_LIMITS.maxPortalListBytes;
   if (kind === 'bank_statement') return EXTRACT_LIMITS.maxStatementBytes;
+  if (kind === 'marketplace_orders') return EXTRACT_LIMITS.maxOrderReportBytes;
   if (kind === 'html_meta') return EXTRACT_LIMITS.maxHtmlBytes;
   if (kind === 'feed') return EXTRACT_LIMITS.maxFeedBytes;
   return EXTRACT_LIMITS.maxFileBytes;
@@ -192,6 +205,20 @@ export const zExtractedEmail = z.strictObject({
   deliveredTo: zText.nullable(),
   to: z.array(zText).max(EXTRACT_LIMITS.maxRecipients),
   attachments: z.array(z.strictObject({ filename: zText.nullable(), content: z.base64() })).max(EXTRACT_LIMITS.maxAttachments),
+  // What a customer's mail needs beyond the invoice reader's fields (#2439), all optional so a worker accepts an older sandbox's answer: the sender's
+  // display name, the Date header, the Message-IDs it answers (In-Reply-To) and follows (References, "<id>" each, at most maxMailRefs), and whether
+  // it is automated (Auto-Submitted other than "no", Precedence bulk, junk or list, a List-Id or List-Unsubscribe header, an auto-response
+  // suppression header): such a mail opens no conversation and gets no reply.
+  fromName: zText.nullable().optional(),
+  sentAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  inReplyTo: zText.nullable().optional(),
+  references: z.array(zText).max(EXTRACT_LIMITS.maxMailRefs).optional(),
+  automated: z.boolean().optional(),
+  // The From header names more than one mailbox (a list, or several From headers): `from` is only the first of them, so the Inbox ignores the mail.
+  multipleFrom: z.boolean().optional(),
+  // The Authentication-Results headers of the mail, topmost first, as written (RFC 8601): the receiving server's verdict on SPF, DKIM and DMARC. The
+  // sandbox only copies them; the worker believes the topmost one written by its own server (INBOUND_AUTHSERV_ID) and no other.
+  authResults: z.array(z.string().max(EXTRACT_LIMITS.maxAuthResultChars)).max(EXTRACT_LIMITS.maxAuthResults).optional(),
 });
 export type ExtractedEmail = z.infer<typeof zExtractedEmail>;
 
@@ -350,6 +377,7 @@ export const zExtractedBankStatement = z.strictObject({
         date: z.string().max(40),
         description: z.string().max(1000),
         reference: z.string().max(100),
+        counterpartyAccount: z.string().max(40).default(''),
         moneyIn: zStatementCell.nullable(),
         moneyOut: zStatementCell.nullable(),
         balance: zStatementCell.nullable(),
@@ -358,6 +386,48 @@ export const zExtractedBankStatement = z.strictObject({
     .max(EXTRACT_LIMITS.maxStatementRows),
 });
 export type ExtractedBankStatement = z.infer<typeof zExtractedBankStatement>;
+
+// A marketplace order report as the sandbox read it (#2515). recognized is false when the file is no order report of a platform the profiles know: no row names an order number and a
+// quantity, or no header carries a word only one platform uses, or two fit equally; every other field is then empty. The lines are the allow-listed fields only: the buyer's name,
+// phone, email and address are columns of these files and have no field here, so they are not read, not returned and not stored. tooMany: more lines than maxOrderLines; lines is then empty.
+// Every mapping is `confirmed: false` until the golden files of real sellers (#2521) check it.
+export const MARKETPLACE_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
+export const MARKETPLACE_ORDER_STAGES = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
+export const MARKETPLACE_ORDER_FIELDS = ['orderNo', 'lineKey', 'orderedAt', 'shippedAt', 'status', 'returnStatus', 'sku', 'itemName', 'variation', 'quantity', 'unitPrice', 'amount'] as const;
+export const MARKETPLACE_SKIP_REASONS = ['no_order_no', 'bad_quantity', 'bad_amount', 'bad_date', 'bad_id', 'too_long'] as const;
+export const zExtractedMarketplaceOrders = z.strictObject({
+  recognized: z.boolean(),
+  platform: z.enum(MARKETPLACE_PLATFORMS).nullable(),
+  // The profile that read the file: its version and whether a real seller's file confirmed it.
+  profile: z.strictObject({ version: z.string().max(40), confirmed: z.boolean() }).nullable(),
+  // The header the sheet had for each field read (the file's own words for the columns, never a cell of data).
+  columns: z.array(z.strictObject({ field: z.enum(MARKETPLACE_ORDER_FIELDS), header: z.string().max(200) })).max(MARKETPLACE_ORDER_FIELDS.length),
+  tooMany: z.boolean(),
+  lines: z
+    .array(
+      z.strictObject({
+        rowNo: z.number().int().positive().max(1_048_576),
+        orderNo: z.string().min(1).max(64),
+        lineKey: z.string().min(1).max(120),
+        orderedAt: zLocalDate.nullable(),
+        shippedAt: zLocalDate.nullable(),
+        stage: z.enum(MARKETPLACE_ORDER_STAGES),
+        statusLabel: z.string().max(100).nullable(),
+        sku: z.string().max(100).nullable(),
+        itemName: z.string().max(200).nullable(),
+        quantity: z.string().regex(/^\d{1,14}(\.\d{1,6})?$/, 'positive decimal string'),
+        unitPrice: zMoney.nullable(),
+        amount: zMoney.nullable(),
+      }),
+    )
+    .max(EXTRACT_LIMITS.maxOrderLines),
+  skipped: z.array(z.strictObject({ rowNo: z.number().int().positive().max(1_048_576), reason: z.enum(MARKETPLACE_SKIP_REASONS) })).max(EXTRACT_LIMITS.maxOrderSkipped),
+  // Every row skipped, including those past maxOrderSkipped that are not listed.
+  skippedCount: z.number().int().min(0).max(1_048_576),
+  // Status labels the profile does not know (cut, at most 20): their lines have the stage `unknown` and move nothing.
+  unknownStatuses: z.array(z.string().max(100)).max(20),
+});
+export type ExtractedMarketplaceOrders = z.infer<typeof zExtractedMarketplaceOrders>;
 
 export const zExtractFailure = z.strictObject({
   ok: z.literal(false),
@@ -381,6 +451,7 @@ export const zExtractSuccess = z.discriminatedUnion('kind', [
   z.strictObject({ ok: z.literal(true), kind: z.literal('html_meta'), page: zExtractedPage }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('feed'), feed: zExtractedFeed }),
   z.strictObject({ ok: z.literal(true), kind: z.literal('bank_statement'), statement: zExtractedBankStatement }),
+  z.strictObject({ ok: z.literal(true), kind: z.literal('marketplace_orders'), orders: zExtractedMarketplaceOrders }),
 ]);
 export type ExtractSuccess = z.infer<typeof zExtractSuccess>;
 

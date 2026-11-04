@@ -28,7 +28,8 @@ export type PersonalDataHandling = (typeof PERSONAL_DATA_HANDLINGS)[number];
 // What a value is, for the finder: which columns a searched email, phone or code is compared with. free_text: words
 // among which a value may be written (a note's body, an activity line, a comment, a description; #1678, #1948), matched
 // by freeTextMatch below.
-export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'other'] as const;
+// account_number: a bank account number kept as its digits (6 to 20), compared with a searched code of digits (#2402).
+export const PERSONAL_DATA_KINDS = ['email', 'phone', 'address', 'name', 'tax_code', 'email_list', 'free_text', 'account_number', 'other'] as const;
 export type PersonalDataKind = (typeof PERSONAL_DATA_KINDS)[number];
 
 // The handlings of personal data held in the org's own tables: what the finder reports and an erasure reads.
@@ -102,6 +103,18 @@ export const PERSONAL_DATA_COLUMNS = {
     reason:
       'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
   },
+  'crove_kernel.conversation_identity.external_user_id': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason:
+      "For an email conversation the customer's address (#2439), found by a search of that address: erased with its threads by kernel.conversation.erase_contact, the retention purge and the offboarding of the org, as the display name is, so the generic erase leaves it alone",
+  },
+  'crove_kernel.conversation_message.email_refs': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason:
+      'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
+  },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
   'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },
@@ -157,6 +170,14 @@ export const PERSONAL_DATA_COLUMNS = {
     handling: 'keep_legal',
     reason: 'The payer or payee named on a phiếu thu or phiếu chi is part of the accounting voucher',
   },
+  // A sales e-invoice draft (#2500): the buyer as the person typed it or took it from a customer. A draft becomes the record of an invoice, kept like the books.
+  // An e-invoice provider connection (#2501): the tax code of the entity it issues for, which is a household's owner's national ID when the entity is a household. The row
+  // is deleted when the connection is closed and with the org's working rows, so there is nothing to keep.
+  'crove_finance.einvoice_connection.seller_tax_code': { kind: 'tax_code', handling: 'erase', reason: "The tax code of the legal entity an e-invoice provider connection issues for; a household's is its owner's national ID number. Deleted when the connection is closed" },
+  'crove_finance.einvoice_draft.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_name': { kind: 'name', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_address': { kind: 'address', handling: 'keep_legal', reason: 'The buyer on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
+  'crove_finance.einvoice_draft.buyer_email': { kind: 'email', handling: 'keep_legal', reason: 'Where the buyer asked for the invoice on a sales e-invoice draft, which becomes the record of an invoice kept by law (Accounting Law 88/2015, Art. 41)' },
   'crove_finance.portal_invoice_list.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.buyer_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
   'crove_finance.portal_invoice_row.seller_tax_code': { kind: 'tax_code', handling: 'keep_legal', reason: "The tax portal's invoice list, kept like the books" },
@@ -204,6 +225,11 @@ export const PERSONAL_DATA_COLUMNS = {
     kind: 'free_text',
     handling: 'keep_legal',
     reason: "A line of an imported bank statement as the bank wrote it, evidence for the books; append-only and kept by law (Accounting Law 88/2015, Art. 41)",
+  },
+  'crove_finance.bank_line.counterparty_account': {
+    kind: 'account_number',
+    handling: 'keep_legal',
+    reason: "The other side's account number (its digits) on an imported bank statement line (#2402); evidence for the books, append-only and kept by law (Accounting Law 88/2015, Art. 41). Found by a code of 8 to 20 digits: an account of 6 or 7 digits cannot be searched, since such a short value would also match amounts in free text. The learned rule that points at a party by it holds only a keyed hash, and goes when the erasure reaches the party",
   },
   'crove_finance.journal_line.memo': {
     kind: 'free_text',
@@ -260,10 +286,11 @@ export function personalDataProbe(value: string): Probe | null {
   const trimmed = value.trim();
   if (/^[^\s@]+@[^\s@]+$/.test(trimmed)) return { kind: 'email', email: trimmed.toLowerCase() };
   // A phone number (spaces, dots, dashes, brackets and a leading + allowed, as in "(028) 3829 1234"), a tax code (10
-  // digits, or 13 with a branch suffix) or a national ID (12 digits).
-  if (/^[+(\d][\d\s().-]{7,24}$/.test(trimmed)) {
+  // digits, or 13 with a branch suffix), a national ID (12 digits) or a bank account number (8 to 20 digits; the 6 and 7 digit
+  // accounts are out of reach, as such a short value also matches amounts written with dots in free text).
+  if (/^[+(\d][\d\s().-]{7,40}$/.test(trimmed)) {
     const digits = trimmed.replace(/\D/g, '');
-    if (digits.length >= 8 && digits.length <= 15) return { kind: 'digits', digits };
+    if (digits.length >= 8 && digits.length <= 20) return { kind: 'digits', digits };
   }
   return null;
 }
@@ -293,7 +320,7 @@ function columnMatch(kind: PersonalDataKind, probe: Probe, column: RawBuilder<un
     return null;
   }
   const digits = sql`pg_catalog.regexp_replace(${column}, '[^0-9]', '', 'g')`;
-  if (kind === 'tax_code') return sql<boolean>`${digits} = ${probe.digits}`;
+  if (kind === 'tax_code' || kind === 'account_number') return sql<boolean>`${digits} = ${probe.digits}`;
   if (kind === 'phone') {
     const local = probe.digits.startsWith('84') ? `0${probe.digits.slice(2)}` : probe.digits;
     const international = local.startsWith('0') ? `84${local.slice(1)}` : local;
@@ -494,9 +521,9 @@ export const personalDataErase = defineCommand({
 
     // Parties the value identifies, and whether the books name them.
     const partyMatch = sql<boolean>`(${match('email', 'p.email') ?? never} OR ${match('phone', 'p.phone') ?? never} OR ${match('tax_code', 'p.tax_code') ?? never})`;
-    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; documented: boolean }>`
+    const { rows: parties } = await sql<{ id: string; email: boolean; phone: boolean; address: boolean; tax_code: boolean; company: boolean; documented: boolean }>`
       SELECT p.id, p.email IS NOT NULL AS email, p.phone IS NOT NULL AS phone, p.address IS NOT NULL AS address,
-             p.tax_code IS NOT NULL AS tax_code,
+             p.tax_code IS NOT NULL AS tax_code, p.company_id IS NOT NULL AS company,
              (EXISTS (SELECT 1 FROM crove_finance.purchase_document d WHERE d.org_id = p.org_id AND d.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.cash_voucher v WHERE v.org_id = p.org_id AND v.party_id = p.id)
               OR EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = p.org_id AND l.party_id = p.id)) AS documented
@@ -512,6 +539,9 @@ export const personalDataErase = defineCommand({
           email: null,
           phone: null,
           address: null,
+          // The company a person works at (#2438) is a fact about the person, not a line of the books: it goes with the contact details, for a party the books name
+          // (which keeps its name and tax code) as for one they do not (which loses its name too).
+          company_id: null,
           ...(forget ? { tax_code: null, name: ERASED_PARTY_NAME } : {}),
           version: eb('version', '+', 1),
           updated_at: ctx.now,
@@ -519,9 +549,22 @@ export const personalDataErase = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', party.id)
         .execute();
+      // The people who worked at a forgotten company are not left pointing at the placeholder name.
+      if (forget) {
+        // The matched parties count their own link in the loop; the others are counted here.
+        const unlinked = await ctx.trx
+          .updateTable('crove_kernel.party')
+          .set((eb) => ({ company_id: null, version: eb('version', '+', 1), updated_at: ctx.now }))
+          .where('org_id', '=', ctx.orgId)
+          .where('company_id', '=', party.id)
+          .$if(parties.length > 0, (qb) => qb.where('id', 'not in', parties.map((p) => p.id)))
+          .executeTakeFirst();
+        add('crove_kernel.party.company_id', Number(unlinked.numUpdatedRows));
+      }
       add('crove_kernel.party.email', Number(party.email));
       add('crove_kernel.party.phone', Number(party.phone));
       add('crove_kernel.party.address', Number(party.address));
+      add('crove_kernel.party.company_id', Number(party.company));
       if (forget) {
         add('crove_kernel.party.name', 1);
         add('crove_kernel.party.tax_code', Number(party.tax_code));
@@ -573,7 +616,9 @@ export const personalDataErase = defineCommand({
           new_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new'),
           duplicate_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'duplicate'),
           conflict_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'conflict'),
-          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid')
+          invalid_rows = (SELECT count(*)::int FROM crove_crm.import_row r WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'invalid'),
+          new_companies = (SELECT count(DISTINCT crove_kernel.search_fold(r.company_name))::int FROM crove_crm.import_row r
+                           WHERE r.org_id = b.org_id AND r.batch_id = b.id AND r.outcome = 'new' AND r.company_state = 'new')
         WHERE b.org_id = ${ctx.orgId}::uuid AND b.status = 'staged' AND b.id = ANY(${touched}::uuid[])`.execute(ctx.trx);
     }
     for (const r of staged) {

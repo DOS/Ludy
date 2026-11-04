@@ -16,7 +16,8 @@ import { CONVERSATION_CONTACT_MATCHES_MAX } from '@crove/kernel-contract';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 // The part of the reader the API uses; tests give a fake.
-export type ConversationReader = Pick<InboxReader, 'intents' | 'rank'>;
+// reminderWords (the finance coworker's wording of a payment reminder, #2488) rides on the same reader and is optional, so a reader that has none leaves that screen on its template words.
+export type ConversationReader = Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords'>>;
 
 // An answered thread is kept for the hour; "no suggestion" (the model said other, left the thread out or gave nothing) only briefly, so a thread the model
 // skipped is asked again soon.
@@ -107,14 +108,17 @@ export async function suggestIntents(ai: ConversationAi, orgId: string, userId: 
 }
 
 export async function matchContacts(ai: ConversationAi, orgId: string, userId: string, found: ContactCandidates): Promise<ConversationContactMatched> {
+  const email = found.email.map((c) => ({ partyId: c.partyId, name: c.name, reason: 'email' as const }));
   const phone = found.phone.map((c) => ({ partyId: c.partyId, name: c.name, reason: 'phone' as const }));
   const named = (names: ContactCandidates['names']) => names.map((c) => ({ partyId: c.partyId, name: c.name, reason: 'name' as const }));
   const result = (state: ConversationContactMatched['ai'], names: ContactCandidates['names']): ConversationContactMatched => ({
     ai: state,
-    candidates: [...phone, ...named(names)].slice(0, CONVERSATION_CONTACT_MATCHES_MAX),
+    candidates: [...email, ...phone, ...named(names)].slice(0, CONVERSATION_CONTACT_MATCHES_MAX),
   });
   // One name or none needs no ranking: nothing is asked of the model.
   if (found.names.length < 2 || found.customerName === null) return result('used', found.names);
+  // Email and phone matches that already fill the answer leave no room for a name: the model's order would change nothing, so nothing is asked of it.
+  if (found.email.length + found.phone.length >= CONVERSATION_CONTACT_MATCHES_MAX) return result('used', found.names);
   if (!ai.reader) return result('off', found.names);
   const ticket = ai.contactBudget.take(orgId, userId);
   if (!ticket.allowed) return result('busy', found.names);

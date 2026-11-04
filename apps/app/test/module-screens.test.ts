@@ -173,9 +173,24 @@ describe('module screens against the router (#1652)', () => {
       [
         'accounting',
         [
-          ['books', ['/o/$slug/documents', '/o/$slug/journal', '/o/$slug/vouchers', '/o/$slug/bank', '/o/$slug/fixed-assets', '/o/$slug/ledger']],
-          ['tax', ['/o/$slug/vat', '/o/$slug/portal-invoices']],
-          ['parties', ['/o/$slug/customers', '/o/$slug/vendors']],
+          [
+            'books',
+            [
+              '/o/$slug/documents',
+              '/o/$slug/journal',
+              '/o/$slug/vouchers',
+              '/o/$slug/sales-invoices',
+              '/o/$slug/stock',
+              '/o/$slug/bank',
+              '/o/$slug/fixed-assets',
+              '/o/$slug/ledger',
+              '/o/$slug/vat',
+              '/o/$slug/portal-invoices',
+              '/o/$slug/customers',
+              '/o/$slug/payment-reminders',
+              '/o/$slug/vendors',
+            ],
+          ],
         ],
       ],
       // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),
@@ -185,7 +200,7 @@ describe('module screens against the router (#1652)', () => {
         'social',
         [
           ['inbox', ['/o/$slug/social/inbox']],
-          ['sales', ['/o/$slug/contacts', '/o/$slug/deals', '/o/$slug/bookings']],
+          ['sales', ['/o/$slug/contacts', '/o/$slug/companies', '/o/$slug/deals', '/o/$slug/bookings']],
           ['marketing', ['/o/$slug/social', '/o/$slug/social/notifications', '/o/$slug/ads', '/o/$slug/ads/campaigns']],
           ['reports', ['/o/$slug/reports']],
         ],
@@ -196,7 +211,7 @@ describe('module screens against the router (#1652)', () => {
       ['/o/$slug/settings', 'settings'],
     ]);
     expect(ALL_NAV.map((i) => i.label)).toEqual([
-      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'vendors', 'socialInbox', 'contacts', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
+      'overview', 'inbox', 'alerts', 'tasks', 'notes', 'myWork', 'documents', 'journal', 'vouchers', 'salesInvoices', 'stock', 'bank', 'fixedAssets', 'ledger', 'vat', 'portalList', 'customers', 'paymentReminders', 'vendors', 'socialInbox', 'contacts', 'companies', 'deals', 'bookings', 'social', 'notifications', 'ads', 'adsCampaigns', 'reports', 'agents', 'settings',
     ]);
   });
 });
@@ -238,7 +253,7 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
   // The Engage app (#2435): each group and item shows only where its module runs, the reports item where any of the three modules does.
   it('shows the groups and items of the modules that run in the Engage app, and the reports item where any of its modules does', () => {
     const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'social')?.groups.map((g) => [g.id, g.items.map((i) => i.label)]);
-    const SALES = ['contacts', 'deals', 'bookings'];
+    const SALES = ['contacts', 'companies', 'deals', 'bookings'];
     expect(menu(['kernel', 'social', 'crm', 'ads'])).toEqual([
       ['inbox', ['socialInbox']],
       ['sales', SALES],

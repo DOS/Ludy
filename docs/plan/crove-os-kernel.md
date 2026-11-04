@@ -1986,21 +1986,20 @@ Detailed plan, steps and open decisions: [email.md](email.md); architecture: [AD
 
 ### Meeting Notes (6 weeks estimated, added to the roadmap 2026-10-21 per Decision 19; reference: Otter, Fireflies, tl;dv, Google Meet notes)
 
-Not started. A detailed plan and an ADR come before the first PR; until then this section is the scope.
+Not started. Approved by the owner on 2026-11-04: [meetings.md](meetings.md) and [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted) are the detailed scope and list the build issues; this section is their summary.
 
-**Kernel additions:** none required to start. Audio is a `file` (a new upload purpose); transcription and summaries go through the provider-agnostic AI layer with its budgets and kill switches (§4.12); action items become `kernel.task` rows through proposals; follow-up mail uses the Email pipeline (Decision 18).
+**Kernel additions:** none required to start. Audio is a `file` (a new upload purpose); transcription and summaries go through the provider-agnostic AI layer with its budgets and kill switches (§4.12); action items become `kernel.task` rows only when a person accepts them (meetings.md §5.3), not through kernel proposals, whose approvers may not read the meeting (ADR-0047 point 8); follow-up mail uses the Email pipeline (Decision 18).
 
 **Scope:**
-- Record in the browser or upload a recording (audio or video, size and length capped). The recording is parsed and transcoded in the sandbox (T12), never in the API.
+- Capture with the Ludy browser extension, the in-app recorder or an upload (audio, video only when ticked, size and length capped). Media is parsed and transcoded in a media sandbox like T12's, never in the API.
 - A transcript with speakers and timestamps, Vietnamese first; a summary, the decisions taken and action items with an owner and a due date.
-- Link a meeting to parties, a deal (Phase 3) or a calendar event (Phase 3, Meet, Zoom and Teams links); search across an org's meetings.
-- Action items are proposals that create tasks; a follow-up email draft is a proposal sent through the Email module (R2).
-- Later, on demand: a bot that joins Meet, Zoom or Teams calls through a connector, and live notes.
+- Action items become tasks only when a person accepts them (meetings.md §5.3).
+- Later (meetings.md §11): links to parties, a deal or a calendar event; search across an org's meetings; a follow-up email draft sent by a person through the Email module (R2); a bot that joins Meet, Zoom or Teams calls through a connector, and live notes.
 - Consent: the recorder confirms that participants were told (PDPL, T16); the org sets retention for recordings separately from transcripts, and deletion is crypto-shredding like other personal data.
 
 **Exit criteria:**
 - A one-hour Vietnamese meeting is transcribed and summarized within the agreed time; word error rate measured on a fixed eval set of synthetic meetings.
-- No task, email or record change happens without a human approval; prompt injection in a recording cannot raise a proposal's risk or skip approval (red-team cases in CI, as #893 does for documents).
+- No task, email or record change happens without a human approval; prompt injection in a recording cannot raise a risk level or skip a person's click (red-team cases in CI, as #893 does for documents).
 - A recording past its retention is gone from storage and backups within the documented window; the transcript keeps no audio.
 - With `CROVE_MODULES` excluding `meetings`, nothing of it loads.
 
@@ -2178,7 +2177,7 @@ Legend: S = security, F = feasibility and agent DX, O = operations and cost. Sev
 | S27 | Salted PII hashes are reversible; stores missed in deletion; PDPL applies early | M | **Accepted:** <ul><li>crypto-shredding and a deletion map;</li><li>PDPL gate before the first external tenant; accounting/tax legal stays a Finance GA gate.</li></ul> | §4.10, §7.9, §13 |
 | S28 | Tenant data leaking into evals and git | M | **Accepted** | §8.7 |
 | S29 | Realtime hints reach people who left, exposing legal entities and seq | m | **Accepted** with a different design: no Realtime in v0; SSE re-filtered periodically (built in #69: ids only, no sequence, session and membership re-checked every 30 s) | §9 |
-| S30 / S31 | `ctx.query` doesn't re-check permissions / sensitive read audit fails open | m | **Accepted** | §4.4 |
+| S30 / S31 | `ctx.query` doesn't re-check permissions / sensitive read audit fails open | m | **Accepted**; the second part is closed by #2639: a `sensitive` query commits its audit row before it reads and fails closed, and `ctx.query` refuses it (`SENSITIVE_ONLY`) | §4.4 |
 | S32 | UNIQUE(source) blocks re-posting; `period_balance`; voided numbers | m | **Accepted** | §13 2a |
 | S33 | Anyone with `service_role` could make others a Crove admin | m | **Accepted:** privileged permissions come only from Crove `role_assignment`; DOS-23 (2026-10-13: DOS's `service_role` doesn't touch the Crove DB; DOS roles map only to `member`; DOS-23 replaced by DOS-27 events) | §4.6 |
 | F1 | The agent DB loop rests on wrong assumptions | B | **Accepted:** a local DB via SessionStart is the main loop; G3 and Preview are only safety nets | §3.4, §10 |

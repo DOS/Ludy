@@ -17,7 +17,7 @@ test('the Engage app holds the CRM screens in its groups, an old CRM link opens 
     await nav.getByRole('link', { name: 'Engage', exact: true }).click();
     await expect(nav.getByRole('region', { name: 'Hộp thư' }).getByRole('link', { name: 'Hội thoại', exact: true })).toBeVisible();
     const sales = nav.getByRole('region', { name: 'Khách hàng & Bán hàng' });
-    for (const name of ['Người liên hệ', 'Cơ hội', 'Lịch hẹn']) await expect(sales.getByRole('link', { name, exact: true })).toBeVisible();
+    for (const name of ['Người liên hệ', 'Công ty', 'Cơ hội', 'Lịch hẹn']) await expect(sales.getByRole('link', { name, exact: true })).toBeVisible();
     const marketing = nav.getByRole('region', { name: 'Marketing' });
     for (const name of ['Bài đăng', 'Quảng cáo']) await expect(marketing.getByRole('link', { name, exact: true })).toBeVisible();
     await expect(nav.getByRole('region', { name: 'Báo cáo' }).getByRole('link', { name: 'Báo cáo', exact: true })).toBeVisible();
@@ -27,6 +27,7 @@ test('the Engage app holds the CRM screens in its groups, an old CRM link opens 
     for (const [group, name, path] of [
       ['Hộp thư', 'Hội thoại', 'social/inbox'],
       ['Khách hàng & Bán hàng', 'Người liên hệ', 'contacts'],
+      ['Khách hàng & Bán hàng', 'Công ty', 'companies'],
       ['Khách hàng & Bán hàng', 'Cơ hội', 'deals'],
       ['Khách hàng & Bán hàng', 'Lịch hẹn', 'bookings'],
       ['Marketing', 'Bài đăng', 'social'],

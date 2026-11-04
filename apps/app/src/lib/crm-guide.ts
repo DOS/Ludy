@@ -32,9 +32,10 @@ const CRM_GUIDE: readonly CrmGuideStep[] = [
     items: [
       `Ở ${q(vi.nav.contacts)}, bấm ${q(vi.contacts.importFile)}. Bấm ${q(vi.contactImport.choose.template)} nếu muốn xem tệp mẫu.`,
       `Chọn tệp Excel (.xlsx) hoặc CSV, dòng đầu là tiêu đề, tối đa 2.000 dòng. Tệp được đọc ngay trên máy bạn và không được lưu lại.`,
-      `Ở bước ${q(vi.contactImport.steps.map)}, kiểm tra mỗi cột là thông tin nào (tên, mã số thuế, email, điện thoại, địa chỉ). Cột có tiêu đề quen thuộc được chọn sẵn; phải có một cột là ${q(vi.contactImport.field.name)}.`,
+      `Ở bước ${q(vi.contactImport.steps.map)}, kiểm tra mỗi cột là thông tin nào (tên, mã số thuế, email, điện thoại, địa chỉ, công ty). Cột có tiêu đề quen thuộc được chọn sẵn; phải có một cột là ${q(vi.contactImport.field.name)}. Cột ${q(vi.contactImport.field.company)} ghi công ty mỗi người làm việc, bằng tên hoặc mã số thuế của công ty.`,
       `Ở bước ${q(vi.contactImport.steps.preview)}, xem từng dòng: ${q(vi.contactImport.outcome.new)}, ${q(vi.contactImport.outcome.duplicate)} (trùng mã số thuế, email hoặc số điện thoại với liên hệ đã có hoặc với một dòng trước), ${q(vi.contactImport.outcome.conflict)} (khớp với hai liên hệ khác nhau) và ${q(vi.contactImport.outcome.invalid)}. Lúc này chưa có gì được ghi vào danh sách liên hệ.`,
       `Dòng trùng thì bỏ qua, hoặc chỉ điền vào chỗ còn trống của liên hệ đã có; thông tin đã có không bao giờ bị ghi đè.`,
+      `Công ty đã có trong danh sách thì người đó được gắn vào đó. Công ty chưa có chỉ được tạo khi bạn chọn ô tạo công ty mới ở bước xem trước; không chọn thì những người này vẫn được nhập, chỉ chưa gắn công ty.`,
       `Bấm nút nhập để tạo các liên hệ mới. Các dòng chưa nhập tải về được kèm lý do. Lần nhập chưa quyết định sau 7 ngày sẽ bị xóa cùng dữ liệu của nó.`,
     ],
   },

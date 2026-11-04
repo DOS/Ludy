@@ -70,7 +70,8 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { MetaAdsConnector, MetaWriteConnector, adPlatforms, type AdPlatform } from '@crove/ad-platform';
+import { MetaAdsConnector, MetaWriteConnector, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
 import { createCredentialBroker, noCredentialBroker } from './credentials.ts';
@@ -94,6 +95,7 @@ import { createMediaUrls } from './media-urls.ts';
 import { createTaxCodeLookup } from './tax-lookup.ts';
 import { createPortalSync } from './portal-sync.ts';
 import { createTaxPortalClient, testPortalAllowed } from './tax-portal.ts';
+import { setInboundAuthservId } from './inbound.ts';
 import { startWorker, workerApplicationName } from './worker.ts';
 import { configureOpsAlerts, flushOpsAlerts } from './ops-alert.ts';
 
@@ -144,7 +146,7 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
-  inboxReader?: Pick<InboxReader, 'intents' | 'rank'> | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -203,6 +205,7 @@ export function overviewContributions(config: Pick<Config, 'CROVE_MODULES'>): Ov
 export function moduleDefinitions(config: Config): ModuleDefinitions {
   // Mail a module queues (the scheduled report, #704) gets the deployment's Message-ID domain too.
   setMessageIdDomain(messageIdDomain(config));
+  setInboundAuthservId(config.INBOUND_AUTHSERV_ID);
   const all: Record<ModuleId, () => ModuleDefinitions> = {
     kernel: () => ({
       commands: buildKernelCommands({
@@ -256,6 +259,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
+    // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
+    readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
     ...options,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
@@ -303,10 +308,54 @@ export function metaWriteAppShared(config: Pick<Config, 'CHANNEL_META_ADS_WRITE_
   return Boolean(write) && (write === config.CHANNEL_META_ADS_APP_ID || write === config.CHANNEL_META_APP_ID);
 }
 
+// The e-invoice providers this deployment offers, by adapter id (ADR-0044 point 7): the offline sandbox when EINVOICE_SANDBOX is on. A real adapter is added here with
+// its own switch when it is built (#2503); until then no host is ever called.
+export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): Readonly<Record<string, EInvoiceProvider>> {
+  return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
+}
+
 export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
   return adPlatforms({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+  });
+}
+
+// The one call of an ad platform's writer that removes the app's permissions at the platform, by the provider id of the connection whose token is held (#2296,
+// W2-1, ADR-0043 point 4): the narrowed view the revoke sweep is given, never the writer. A write token is proved with the secret of the write app and a read
+// token that holds a spend permission with the secret of the read ads app, each the app that issued it.
+export function adRevokersOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdRevoker>> {
+  return adRevokers({
+    sandbox: config.ADS_SANDBOX === 'true',
+    meta: {
+      ...(config.CHANNEL_META_ADS_WRITE_APP_SECRET ? { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_ADS_APP_SECRET ? { readAppSecret: config.CHANNEL_META_ADS_APP_SECRET } : {}),
+      ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}),
+    },
+  });
+}
+
+// The calls of a launch of an ad platform's writer, by the provider id of the write connection (#2296, W2-3, ADR-0043 points 2 to 5): the narrowed view the launch
+// job is given, never the writer. The offline sandbox's when ADS_SANDBOX is on; Meta's only when the deployment has its write app AND ADS_LIVE_LAUNCH is on
+// (default off, refused on a public deployment): with it off a launch on a Meta account stays queued, untouched. Every object the job creates is paused.
+export function adWritersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, LaunchWriter>> {
+  return adLaunchWriters({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
+// The pause of what a stopped launch made, by the provider id of the write connection (#2296, W2-4a, ADR-0043 points 4 and 7a): the narrowed view the pause job is
+// given, never the writer. The same providers as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, since
+// without it nothing was ever launched there), and it can do one thing: find the objects that carry a launch's tag and set them PAUSED.
+export function adPausersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPauser>> {
+  return adPausers({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
   });
 }
 
@@ -538,7 +587,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
           ),
-          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
+          channels: { broker: resolved.broker, sandbox: config.CHANNEL_SANDBOX === 'true', bankFeedSandbox: config.BANK_FEED_SANDBOX === 'true', einvoiceProviders: einvoiceProvidersOf(config), adsPlatforms: adPlatformsOf(config), adsWriteAppShared: metaWriteAppShared(config), bluesky: config.CHANNEL_BLUESKY === 'true', telegram: config.CHANNEL_TELEGRAM === 'true', mastodon: config.CHANNEL_MASTODON === 'true', discord: config.CHANNEL_DISCORD === 'true', wordpress: config.CHANNEL_WORDPRESS === 'true', connectors: channelConnectors(config), calendars: calendarAdapters(config), publicUrl: appUrl(config), ...(config.MEDIA_PEXELS_API_KEY ? { stockPhotos: createPexels({ apiKey: config.MEDIA_PEXELS_API_KEY, store }) } : {}), mediaUrls: createMediaUrls({ store }), ...(vapid ? { push: { publicKey: vapid.publicKey } } : {}) },
           ...(stream ? { stream } : {}),
           // An API process of its own waits in /readyz for its workers' build (#1952); the single "all" process is its
           // own worker, so it has none to wait for.
@@ -587,7 +636,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

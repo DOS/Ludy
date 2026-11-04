@@ -50,9 +50,14 @@ function csvGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | n
 const cellOut = (cell: StatementCell | undefined) =>
   cell === undefined ? null : { kind: cell.kind === 'number' ? ('number' as const) : ('text' as const), value: cell.value.slice(0, EXTRACT_LIMITS.maxStatementCellChars) };
 
-export function readBankStatement(bytes: Uint8Array): ExtractedBankStatement {
+// The grid of a workbook's first sheet or of a CSV file, by the file's first bytes; null when the bytes are neither (shared with the marketplace order report's reader).
+export function readSheetGrid(bytes: Uint8Array): Map<number, Map<number, StatementCell>> | null {
   const zip = bytes[0] === 0x50 && bytes[1] === 0x4b;
-  const grid = zip ? workbookGrid(bytes) : csvGrid(bytes);
+  return zip ? workbookGrid(bytes) : csvGrid(bytes);
+}
+
+export function readBankStatement(bytes: Uint8Array): ExtractedBankStatement {
+  const grid = readSheetGrid(bytes);
   if (!grid) return NONE;
   const mapping = findColumns(grid);
   if (!mapping) return NONE;
@@ -70,6 +75,7 @@ export function readBankStatement(bytes: Uint8Array): ExtractedBankStatement {
       date: line.date,
       description: line.description,
       reference: line.reference,
+      counterpartyAccount: line.counterpartyAccount,
       moneyIn: cellOut(line.moneyIn),
       moneyOut: cellOut(line.moneyOut),
       balance: cellOut(line.balance),

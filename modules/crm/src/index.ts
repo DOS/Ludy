@@ -1,6 +1,8 @@
 import { crmAgentQueries } from './agent.ts';
 import { bookingFeedCommands, bookingFeedQueries } from './booking-feed.ts';
 import { bookingCommands, bookingQueries } from './bookings.ts';
+import { companySuggestQueries } from './company-suggest.ts';
+export { companyCandidates, companySuggestQueries, domainLabelOf, emailDomainOf, taxCodesIn } from './company-suggest.ts';
 import { contactQueries } from './contacts.ts';
 import { dealCommands, dealQueries } from './deals.ts';
 import { boardQueries, stageCommands } from './stages.ts';
@@ -23,5 +25,5 @@ export { dealSettingGet, dealSettingSet, nextStepCommands, nextStepDone, nextSte
 export { crmToday } from './today.ts';
 
 export const crmCommands = [...eventTypeCommands, ...bookingCommands, ...bookingFeedCommands, ...dealCommands, ...stageCommands, ...importCommands, ...nextStepCommands];
-export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...importQueries, ...nextStepQueries, crmToday];
+export const crmQueries = [...eventTypeQueries, ...bookingQueries, ...crmAgentQueries, ...bookingFeedQueries, ...dealQueries, ...boardQueries, ...contactQueries, ...companySuggestQueries, ...importQueries, ...nextStepQueries, crmToday];
 export { crmManifest } from './manifest.ts';

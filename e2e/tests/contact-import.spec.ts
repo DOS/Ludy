@@ -72,7 +72,51 @@ test('a member imports contacts from a CSV after reading the preview', async ({ 
 
   await test.step('the contacts list shows the new contacts', async () => {
     await page.getByRole('link', { name: 'Về danh sách liên hệ' }).first().click();
+    // The people list holds the people; the company, with its tax code, is on the Companies screen (#2438).
     await expect(page.getByText('Nguyễn Văn An')).toBeVisible();
+    await expect(page.getByText('Công ty ABC')).toHaveCount(0);
+    await page.getByRole('navigation').getByRole('link', { name: 'Công ty', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`/o/${slug}/companies$`));
     await expect(page.getByText('Công ty ABC')).toBeVisible();
+  });
+});
+
+// The Công ty column (#2438, PR 2): the file names the company of each person; one exists, one does not, and a company the file names is made only when the
+// person ticks the box in the preview.
+test('a member imports people with their companies, and a company the file names is made only when asked', async ({ page }) => {
+  const email = newEmail('import-company');
+  await page.goto('/');
+  await signInNewUser(page, email);
+  const slug = await createOrg(page, 'Công ty Nhập Công Ty');
+  exec(`INSERT INTO crove_kernel.party (org_id, name, kind) SELECT org_id, 'Công ty Có Sẵn', 'organization' FROM crove_kernel.tenant WHERE slug = :'slug'`, { slug });
+  const linked = () =>
+    sql<{ name: string; company: string }>(
+      `SELECT p.name, k.name AS company FROM crove_kernel.party p JOIN crove_kernel.party k ON k.org_id = p.org_id AND k.id = p.company_id JOIN crove_kernel.tenant t ON t.org_id = p.org_id WHERE t.slug = :'slug' ORDER BY p.name`,
+      { slug },
+    );
+  const file = ['Họ tên,Công ty,Email', 'An Mới,Công ty Có Sẵn,anmoi@khach.test', 'Bình Mới,Công ty Chưa Có,binhmoi@khach.test'].join('\n');
+
+  await page.getByRole('navigation').getByRole('link', { name: 'Engage', exact: true }).click();
+  await page.getByRole('navigation').getByRole('link', { name: 'Người liên hệ' }).click();
+  await page.getByRole('link', { name: 'Nhập từ tệp' }).click();
+  await page.getByLabel('Tệp Excel hoặc CSV').setInputFiles({ name: 'nguoi-va-cong-ty.csv', mimeType: 'text/csv', buffer: Buffer.from(file, 'utf-8') });
+  await expect(page.getByRole('combobox', { name: 'Thông tin của cột Công ty' })).toHaveValue('company');
+  await page.getByRole('button', { name: 'Xem trước' }).click();
+
+  await test.step('the preview says which company each person goes to, and writes nothing', async () => {
+    await expect(page.getByTestId('import-row')).toHaveCount(2);
+    await expect(page.getByTestId('import-row').filter({ hasText: 'An Mới' })).toContainText('Gắn với Công ty Có Sẵn');
+    await expect(page.getByTestId('import-row').filter({ hasText: 'Bình Mới' })).toContainText('Công ty chưa có trong danh sách');
+    expect(await linked()).toEqual([]);
+  });
+
+  await test.step('ticking the box makes the company the file names, and links both people', async () => {
+    await page.getByRole('checkbox', { name: /Tạo 1 công ty mới/ }).check();
+    await page.getByRole('button', { name: 'Nhập 2 liên hệ mới' }).click();
+    await expect(page.getByRole('status').filter({ hasText: 'Đã gắn công ty cho 2 người, tạo 1 công ty mới.' })).toBeVisible();
+    expect(await linked()).toEqual([
+      { name: 'An Mới', company: 'Công ty Có Sẵn' },
+      { name: 'Bình Mới', company: 'Công ty Chưa Có' },
+    ]);
   });
 });
