@@ -11,7 +11,7 @@ Chủ một công ty một người hoặc một nhóm nhỏ họp hằng tuần
 3. vài phút sau có **bản chép lời** (toàn bộ lời nói thành chữ, tiếng Việt trước, có mốc thời gian, có tách người nói khi nhà cung cấp hỗ trợ), một **tóm tắt** ngắn, các **quyết định** đã chốt và các **việc cần làm** (ai làm, hạn khi nào). Lúc đầu chỉ người ghi thấy; người ghi xem lại, sửa nếu cần, rồi bấm một nút để chia sẻ cho người dự họp;
 4. biến việc cần làm thành việc của nhóm bằng một cú bấm mỗi việc, hoặc một cú bấm cho tất cả các việc "sạch" (đã qua kiểm tra tự động);
 5. giữ cả video nếu tích ô "Ghi cả video" cho cuộc họp đó (mặc định chỉ ghi âm thanh);
-6. yên tâm là âm thanh tự xóa sau 30 ngày, video (nếu giữ) sau 7 ngày, bản chép lời sau thời hạn tổ chức chọn.
+6. yên tâm là âm thanh tự xóa sau 30 ngày kể từ khi có bản chép lời, video (nếu giữ) sau 7 ngày, bản chép lời sau thời hạn tổ chức chọn. Nếu không bao giờ có bản chép lời (tắt AI, hết ngân sách), thời hạn tính từ lúc ghi, nên âm thanh vẫn tự xóa sau 30 ngày kể từ cuộc họp.
 
 ## Ba cách ghi cuộc họp
 

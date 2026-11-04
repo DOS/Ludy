@@ -1986,21 +1986,20 @@ Detailed plan, steps and open decisions: [email.md](email.md); architecture: [AD
 
 ### Meeting Notes (6 weeks estimated, added to the roadmap 2026-10-21 per Decision 19; reference: Otter, Fireflies, tl;dv, Google Meet notes)
 
-Not started. A detailed plan and an ADR come before the first PR; until then this section is the scope. Approved by the owner on 2026-11-04: [meetings.md](meetings.md) and [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted); its build issues are listed there.
+Not started. Approved by the owner on 2026-11-04: [meetings.md](meetings.md) and [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted) are the detailed scope and list the build issues; this section is their summary.
 
-**Kernel additions:** none required to start. Audio is a `file` (a new upload purpose); transcription and summaries go through the provider-agnostic AI layer with its budgets and kill switches (§4.12); action items become `kernel.task` rows through proposals; follow-up mail uses the Email pipeline (Decision 18).
+**Kernel additions:** none required to start. Audio is a `file` (a new upload purpose); transcription and summaries go through the provider-agnostic AI layer with its budgets and kill switches (§4.12); action items become `kernel.task` rows only when a person accepts them (meetings.md §5.3), not through kernel proposals, whose approvers may not read the meeting (ADR-0047 point 8); follow-up mail uses the Email pipeline (Decision 18).
 
 **Scope:**
-- Record in the browser or upload a recording (audio or video, size and length capped). The recording is parsed and transcoded in the sandbox (T12), never in the API.
+- Capture with the Ludy browser extension, the in-app recorder or an upload (audio, video only when ticked, size and length capped). Media is parsed and transcoded in a media sandbox like T12's, never in the API.
 - A transcript with speakers and timestamps, Vietnamese first; a summary, the decisions taken and action items with an owner and a due date.
-- Link a meeting to parties, a deal (Phase 3) or a calendar event (Phase 3, Meet, Zoom and Teams links); search across an org's meetings.
-- Action items are proposals that create tasks; a follow-up email draft is a proposal sent through the Email module (R2).
-- Later, on demand: a bot that joins Meet, Zoom or Teams calls through a connector, and live notes.
+- Action items become tasks only when a person accepts them (meetings.md §5.3).
+- Later (meetings.md §11): links to parties, a deal or a calendar event; search across an org's meetings; a follow-up email draft sent by a person through the Email module (R2); a bot that joins Meet, Zoom or Teams calls through a connector, and live notes.
 - Consent: the recorder confirms that participants were told (PDPL, T16); the org sets retention for recordings separately from transcripts, and deletion is crypto-shredding like other personal data.
 
 **Exit criteria:**
 - A one-hour Vietnamese meeting is transcribed and summarized within the agreed time; word error rate measured on a fixed eval set of synthetic meetings.
-- No task, email or record change happens without a human approval; prompt injection in a recording cannot raise a proposal's risk or skip approval (red-team cases in CI, as #893 does for documents).
+- No task, email or record change happens without a human approval; prompt injection in a recording cannot raise a risk level or skip a person's click (red-team cases in CI, as #893 does for documents).
 - A recording past its retention is gone from storage and backups within the documented window; the transcript keeps no audio.
 - With `CROVE_MODULES` excluding `meetings`, nothing of it loads.
 
