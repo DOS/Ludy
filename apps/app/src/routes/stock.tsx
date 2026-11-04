@@ -256,7 +256,7 @@ function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undef
               <TableCell className={NUM}>{f.money(r.outValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.closingQuantity}</TableCell>
               <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
-              <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 4)}</TableCell>
+              <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 6)}</TableCell>
               <TableCell className="px-4 py-3 text-right">
                 <Button variant="ghost" size="sm" onClick={() => setCardOf({ id: r.itemId, name: r.name, unit: r.unit })} data-testid="stock-report-card">
                   {t('card')}
