@@ -14,7 +14,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
 import { Textarea } from '@crove/ui/components/textarea';
 import { DateInput } from '../components/date-input.tsx';
-import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
+import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
@@ -170,24 +170,38 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
   const t = useTranslations('tasks');
   const tz = browserTimeZone();
   const [title, setTitle] = useState(task.title);
+  const [titleError, setTitleError] = useState(false);
   const [description, setDescription] = useState(task.description ?? '');
   const [assignee, setAssignee] = useState(task.assigneePositionId ?? '');
   const [dueOn, setDueOn] = useState(() => taskDueDay(task.due, tz));
   const [key, setKey] = useState(() => crypto.randomUUID());
   const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
   const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived' || p.id === task.assigneePositionId);
+  const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!title.trim()) return;
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      setTitleError(true);
+      return;
+    }
+    const nextDescription = description.trim() ? description.trim() : null;
+    const nextAssignee = assignee || null;
     const initialDueOn = taskDueDay(task.due, tz);
-    const due = dueOn === initialDueOn ? task.due : taskDueFromDay(dueOn, tz);
+    const patch = {
+      ...(nextTitle !== task.title ? { title: nextTitle } : {}),
+      ...(nextDescription !== task.description ? { description: nextDescription } : {}),
+      ...(nextAssignee !== task.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
+      ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
+    };
+    if (Object.keys(patch).length === 0) {
+      onDone();
+      return;
+    }
     update.mutate(
       {
         id: task.id,
-        title: title.trim(),
-        description: description.trim() ? description.trim() : null,
-        assigneePositionId: assignee || null,
-        due,
+        ...patch,
         idempotencyKey: key,
       },
       {
@@ -200,9 +214,22 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
   };
   return (
     <form onSubmit={submit} className="grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-6" data-testid="task-edit-form">
-      <label className="block text-xs md:col-span-2">
+      <label htmlFor={titleField.id} className="block text-xs md:col-span-2">
         <span className="text-subtle-foreground">{t('newTitle')}</span>
-        <Input required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
+        <Input
+          {...titleField}
+          required
+          maxLength={300}
+          value={title}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (titleError && e.target.value.trim()) setTitleError(false);
+          }}
+          className="mt-1"
+        />
+        <FieldError id={titleField.id} className="mt-1">
+          {titleError ? t('titleRequired') : null}
+        </FieldError>
       </label>
       <label className="block text-xs md:col-span-2">
         <span className="text-subtle-foreground">{t('assignTo')}</span>

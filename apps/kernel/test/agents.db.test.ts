@@ -392,6 +392,19 @@ suite('agent positions, tasks and wake-ups on PostgreSQL (ADR-0029 Phase 1)', ()
     );
     expect(firstNotices.items).toEqual([expect.objectContaining({ kind: 'kernel.task_assigned', subjectId: taskId, detail: { title: 'Kiểm tra sổ quỹ' } })]);
 
+    // An owner who creates a root task is an owner recipient; the actor filter keeps the owner from being notified.
+    const { taskId: rootTaskId } = await app.execute<{ taskId: string }>(
+      'kernel.task.create',
+      { title: 'Việc gốc 2588', assigneePositionId: null },
+      { actor: asUser(owner), orgId },
+    );
+    const rootEvents = await admin((c) =>
+      c.query<{ id: string }>(`SELECT id FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'kernel.task.created' AND payload ->> 'taskId' = $2`, [orgId, rootTaskId]),
+    );
+    for (const e of rootEvents.rows) await worker.execute('kernel.notification.dispatch', { eventId: e.id }, { actor: SYSTEM, orgId });
+    const ownerNotices = await app.query<{ items: Array<{ subjectId: string | null }> }>('kernel.notification.list', {}, { actor: asUser(owner), orgId });
+    expect(ownerNotices.items.filter((n) => n.subjectId === rootTaskId)).toEqual([]);
+
     // Updating title, description, due date and moving to seatB notifies secondHolder.
     await app.execute(
       'kernel.task.update',

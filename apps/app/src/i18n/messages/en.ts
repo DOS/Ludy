@@ -4582,6 +4582,7 @@ export const en = {
     newDescription: 'Description (optional)',
     assignTo: 'Assign to',
     dueLabel: 'Due date',
+    titleRequired: 'Enter a task title to save.',
     create: 'Assign task',
     edit: 'Edit',
     save: 'Save',

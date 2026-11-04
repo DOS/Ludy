@@ -4579,6 +4579,7 @@ export const vi = {
     newDescription: 'Mô tả (không bắt buộc)',
     assignTo: 'Giao cho',
     dueLabel: 'Hạn hoàn thành',
+    titleRequired: 'Nhập tên việc để lưu.',
     create: 'Giao việc',
     edit: 'Sửa',
     save: 'Lưu',

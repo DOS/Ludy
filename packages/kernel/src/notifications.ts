@@ -9,7 +9,7 @@
 // The kernel's own kinds come from kernel.notification.dispatch: a proposal waiting for my approval (the eligible
 // approvers of its command, P12), a file that failed to read (whoever asked for the reading, else the uploader,
 // else, for a mailed file, the owners and admins), a task given or moved to my position (#2588, the target seat's
-// holder, else the owners), and a task a chart or role change moved to someone because its
+// holder, or the owners when the task has no seat), and a task a chart or role change moved to someone because its
 // holder could no longer read its legal entity (the target seat's holder, else the owners; #1799). Members read their own (kernel.notification.list), mark them read
 // and turn kinds off (kernel.notification.mute); a restrictive policy keeps each member to their own rows.
 import { sql } from 'kysely';
@@ -122,7 +122,7 @@ export async function ownersAndAdmins(ctx: Pick<CommandContext, 'trx' | 'orgId'>
 export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, eventId: string) {
   const event = await ctx.trx
     .selectFrom('crove_kernel.outbox_event')
-    .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
+    .select(['id', 'type', 'payload', 'actor_type', 'actor_id', 'created_at'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', eventId)
     .executeTakeFirst();
@@ -214,6 +214,16 @@ export const notificationDispatch = defineCommand({
         // Closed or moved again before the worker got to it: that later move tells its own holder.
         if (!task || ['done', 'cancelled'].includes(task.status)) return { sent: 0 };
         if (e.data.positionId !== undefined && task.assignee_position_id !== e.data.positionId) return { sent: 0 };
+        const superseded = await sql<{ exists: boolean }>`
+          SELECT EXISTS (
+            SELECT 1 FROM crove_kernel.outbox_event o
+            WHERE o.org_id = ${ctx.orgId}::uuid
+              AND o.type = 'kernel.task.assigned'
+              AND o.payload ->> 'taskId' = ${task.id}
+              AND (o.created_at > ${event.created_at}::timestamptz
+                   OR (o.created_at = ${event.created_at}::timestamptz AND o.id > ${event.id}::uuid))
+          ) AS exists`.execute(ctx.trx);
+        if (superseded.rows[0]?.exists) return { sent: 0 };
         let users: string[];
         if (task.assignee_position_id === null) {
           users = (

@@ -670,7 +670,7 @@ async function insertHumanTask(
     .returning(['id', 'tainted', 'request_depth'])
     .executeTakeFirstOrThrow();
   await requestWakeup(ctx, input.assigneePositionId, { taskId: task.id, why: 'assigned' }, task.tainted, task.request_depth);
-  await ctx.emit('kernel.task.created', { taskId: task.id });
+  await ctx.emit('kernel.task.created', { taskId: task.id, positionId: input.assigneePositionId });
   return { taskId: task.id };
 }
 
