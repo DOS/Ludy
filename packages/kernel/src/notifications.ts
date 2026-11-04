@@ -122,7 +122,7 @@ export async function ownersAndAdmins(ctx: Pick<CommandContext, 'trx' | 'orgId'>
 export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, eventId: string) {
   const event = await ctx.trx
     .selectFrom('crove_kernel.outbox_event')
-    .select(['id', 'type', 'payload', 'actor_type', 'actor_id', 'created_at'])
+    .select(['id', 'type', 'payload', 'actor_type', 'actor_id'])
     .where('org_id', '=', ctx.orgId)
     .where('id', '=', eventId)
     .executeTakeFirst();
@@ -216,12 +216,15 @@ export const notificationDispatch = defineCommand({
         if (e.data.positionId !== undefined && task.assignee_position_id !== e.data.positionId) return { sent: 0 };
         const superseded = await sql<{ exists: boolean }>`
           SELECT EXISTS (
-            SELECT 1 FROM crove_kernel.outbox_event o
+            SELECT 1
+            FROM crove_kernel.outbox_event o
+            JOIN crove_kernel.outbox_event cur
+              ON cur.org_id = o.org_id AND cur.id = ${event.id}::uuid
             WHERE o.org_id = ${ctx.orgId}::uuid
+              AND o.id <> cur.id
               AND o.type = 'kernel.task.assigned'
               AND o.payload ->> 'taskId' = ${task.id}
-              AND (o.created_at > ${event.created_at}::timestamptz
-                   OR (o.created_at = ${event.created_at}::timestamptz AND o.id > ${event.id}::uuid))
+              AND (o.created_at, o.id) > (cur.created_at, cur.id)
           ) AS exists`.execute(ctx.trx);
         if (superseded.rows[0]?.exists) return { sent: 0 };
         let users: string[];
