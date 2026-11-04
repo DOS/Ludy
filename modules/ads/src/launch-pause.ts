@@ -210,7 +210,7 @@ export const zPauseResult = z.discriminatedUnion('kind', [
     found: z.array(z.strictObject({ level: zLevel, id: zExternalId, name: z.string().min(1).max(400) })).max(300),
     paused: z.array(z.strictObject({ level: zLevel, id: zExternalId })).max(300),
     failed: z.array(z.strictObject({ level: zLevel, id: zExternalId, kind: zKind, code: zCode.nullable() })).max(300),
-    notTried: z.number().int().min(0).max(300),
+    notTried: z.array(z.strictObject({ level: zLevel, id: zExternalId })).max(300),
     tokenRefused: z.boolean(),
     retryAt: z.iso.datetime({ offset: true }).nullable(),
   }),
@@ -309,7 +309,7 @@ export const adsPauseRecord = defineCommand({
       const pausedNow = new Set(result.paused.map((p) => `${p.level}:${p.id}`));
       const recordedAll = await ctx.trx.selectFrom('crove_ads.ad_object').select(['level', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launchId).execute();
       const notPaused = recordedAll.some((o) => (o.level === 'campaign' || o.level === 'ad_set' || o.level === 'ad') && !pausedNow.has(`${o.level}:${o.external_id}`));
-      const complete = everyLevelListed && result.failed.length === 0 && result.notTried === 0 && youngestAge === null && !notPaused;
+      const complete = everyLevelListed && result.failed.length === 0 && result.notTried.length === 0 && youngestAge === null && !notPaused;
       const waitMs = youngestAge === null ? 0 : Math.max(60, STARTED_STALE_SECONDS - youngestAge + 5) * 1000;
       const retryFromPlatform = result.retryAt ? new Date(result.retryAt) : null;
       const retryAt = retryFromPlatform && retryFromPlatform.getTime() > ctx.now.getTime() + waitMs ? retryFromPlatform : waitMs > 0 ? new Date(ctx.now.getTime() + waitMs) : retryFromPlatform;
@@ -334,7 +334,9 @@ export const adsPauseRecord = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', call.id)
       .execute();
-    // Ids and codes only: the objects the platform refused to pause are listed (bounded) so a person can pause them by hand if Ludy gives up.
+    // Ids, levels and codes only. This row is the one per-object evidence of a run (the run's `external_call` row is one per run, not one per object): which objects the
+    // platform confirmed as paused, which it refused or could not be asked about, and which were not tried, each list as long as the command accepts (300), so after a
+    // refused token or a give-up the record can say which objects may still be running and a person can pause them by hand.
     ctx.audit({
       launchId,
       adAccountId: launch.ad_account_id,
@@ -344,9 +346,9 @@ export const adsPauseRecord = defineCommand({
       code: settlement.code,
       ...(result.kind === 'ran'
         ? {
-            paused: result.paused.length,
-            failed: result.failed.slice(0, 30).map((f) => ({ level: f.level, id: f.id, kind: f.kind, code: f.code })),
-            notTried: result.notTried,
+            paused: result.paused.map((p) => ({ level: p.level, id: p.id })),
+            failed: result.failed.map((f) => ({ level: f.level, id: f.id, kind: f.kind, code: f.code })),
+            notTried: result.notTried.map((p) => ({ level: p.level, id: p.id })),
             found: result.found.length,
             recordedObjects,
             unrecorded: unrecorded.slice(0, 30),
@@ -360,9 +362,10 @@ export const adsPauseRecord = defineCommand({
 
 // The stopped launches of the account a revoke obligation belongs to that are not wound down, oldest first (the revoke sweep pauses what a closed connection's launches
 // made with the sealed copy of its token, before it revokes the permission): ids only, for the system. An obligation of a read token that holds a spend permission, or one
-// with no account, has none (a launch is made with a write connection's token). `blocked` says the revoke must wait for the next try although none of these is left to
+// with no account, lists none (a launch is made with a write connection's token). `blocked` says the revoke must wait for the next try although none of these is left to
 // pause: this account has more launches than one page (the rest are read next time), or an account the same person granted in this org has a stopped launch that is not
-// paused yet, and the revoke is the person's, for the app: it would cut the token that launch still needs (each account pauses its own with its own copy).
+// paused yet, and the revoke is the person's, for the app: it would cut the token that launch still needs (each account pauses its own with its own copy). The read token's
+// obligation lists none but waits the same way: with the default shared app a switch-off makes both obligations, and its revoke would cut the write copy before it paused.
 interface PausePending {
   launches: string[];
   blocked: boolean;
@@ -382,31 +385,50 @@ export const adsPausePending = defineQuery({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.revokeId.toLowerCase())
       .executeTakeFirst();
-    if (!obligation || obligation.kind !== 'write' || !obligation.ad_account_id) return { launches: [], blocked: false, lastChance: false };
+    if (!obligation) return { launches: [], blocked: false, lastChance: false };
     const lastChance = obligation.attempts >= REVOKE_MAX_ATTEMPTS || Date.now() - new Date(obligation.created_at).getTime() >= REVOKE_MAX_AGE_MS - 86_400_000;
-    const rows = await ctx.trx
-      .selectFrom('crove_ads.ad_launch')
-      .select('id')
-      .where('org_id', '=', ctx.orgId)
-      .where('ad_account_id', '=', obligation.ad_account_id)
-      .where('state', '=', 'stopped')
-      .where('started_at', 'is not', null)
-      .where('wound_down_at', 'is', null)
-      .where('wind_down_code', 'is', null)
-      .orderBy('updated_at')
-      .limit(PENDING_PAGE + 1)
-      .execute();
-    let blocked = rows.length > PENDING_PAGE;
+    // A write obligation pauses its own account's launches. A read token that holds a spend permission pauses none (a launch is made with a write connection's token), but
+    // its revoke removes the same person's grant for the app, which the sealed write copy of a closed connection depends on: with the default shared app, a switch-off
+    // makes both obligations, and the read one must not revoke before the write one has paused.
+    const own = obligation.kind === 'write' ? obligation.ad_account_id : null;
+    if (obligation.kind === 'write' && !own) return { launches: [], blocked: false, lastChance: false };
+    let launches: string[] = [];
+    let blocked = false;
+    if (own) {
+      const rows = await ctx.trx
+        .selectFrom('crove_ads.ad_launch')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('ad_account_id', '=', own)
+        .where('state', '=', 'stopped')
+        .where('started_at', 'is not', null)
+        .where('wound_down_at', 'is', null)
+        .where('wind_down_code', 'is', null)
+        .orderBy('updated_at')
+        .limit(PENDING_PAGE + 1)
+        .execute();
+      blocked = rows.length > PENDING_PAGE;
+      launches = rows.slice(0, PENDING_PAGE).map((r) => r.id);
+    }
     if (!blocked && obligation.grantor_hash) {
+      // A launch of the same person's other accounts that is not paused yet: its account either still has a write connection the person granted, or has closed it and holds a
+      // write obligation of its own that is pending (closing a connection clears the account's hash, so the obligation is the only trace of whose grant it was). A given-up
+      // launch does not hold (it has a code), and a launch of this obligation's own account is its list above.
       const { rows: others } = await sql<{ n: number }>`
         SELECT count(*)::int AS n
         FROM crove_ads.ad_launch l
-        JOIN crove_ads.ad_account a ON a.org_id = l.org_id AND a.id = l.ad_account_id
-        WHERE l.org_id = ${ctx.orgId}::uuid AND a.id <> ${obligation.ad_account_id}::uuid AND a.write_granted_by_hash = ${obligation.grantor_hash}
-          AND l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL`.execute(ctx.trx);
+        WHERE l.org_id = ${ctx.orgId}::uuid
+          AND l.ad_account_id IS DISTINCT FROM ${own}::uuid
+          AND l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL
+          AND (
+            EXISTS (SELECT 1 FROM crove_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id AND a.write_granted_by_hash = ${obligation.grantor_hash})
+            OR EXISTS (
+              SELECT 1 FROM crove_ads.ad_token_revoke r
+              WHERE r.org_id = l.org_id AND r.ad_account_id = l.ad_account_id AND r.kind = 'write' AND r.state = 'pending' AND r.grantor_hash = ${obligation.grantor_hash})
+          )`.execute(ctx.trx);
       blocked = (others[0]?.n ?? 0) > 0;
     }
-    return { launches: rows.slice(0, PENDING_PAGE).map((r) => r.id), blocked, lastChance };
+    return { launches, blocked, lastChance };
   },
 });
 

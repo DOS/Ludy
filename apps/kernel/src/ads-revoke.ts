@@ -36,6 +36,9 @@ export const ADS_ORPHAN_PAGE = 200;
 export const ADS_ORPHAN_MAX_PAGES = 5;
 // The launches of one obligation that are paused in one try (W2-4a); the rest wait for the next.
 const PAUSES_PER_TRY = 5;
+// No pause is begun after this long into a try: a pause may take up to three minutes at a slow platform (ads-pause-run.ts), so a try is over in five at the most, well
+// inside the ten minutes of the claim's lease, and the other orgs' obligations of the sweep are not left to wait for this one.
+export const PAUSE_BUDGET_MS = 120_000;
 
 export interface AdsRevokeDeps {
   runtime: Runtime;
@@ -44,6 +47,8 @@ export interface AdsRevokeDeps {
   // configured or the seventh day ends them.
   broker: CredentialBroker | undefined;
   revokers: Readonly<Record<string, AdRevoker>>;
+  // The clock of the pause budget, in milliseconds (the system's by default; a test moves it).
+  now?: () => number;
 }
 
 export interface AdsRevokeResult {
@@ -97,9 +102,12 @@ async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; l
 // closes the write connection in the same transaction, so the sealed copy this sweep holds is the only token left to pause with, and a revoke first would leave them
 // running with nothing to stop them. The secret is handed to the narrowed pause of the revoker (`pauseWork`) and nowhere else. True while a launch is not paused yet
 // (a run is in flight, the platform failed, or a create of the launch may still land): the revoke waits for the next try. A launch Ludy gives up on (the token is refused,
-// ten runs, seven days) does not hold the revoke, and its person is told to pause by hand.
-async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string }, secret: string, revoker: AdRevoker): Promise<boolean> {
+// ten runs, seven days) does not hold the revoke, and its person is told to pause by hand. One try spends at most the pause budget before it begins a pause, and the
+// pauses it did not reach wait for the next try.
+export async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string }, secret: string, revoker: AdRevoker): Promise<boolean> {
   const options = { actor: SYSTEM, orgId: row.orgId };
+  const now = deps.now ?? Date.now;
+  const startedAt = now();
   // The launches of the account to pause now, and whether others wait on this obligation: more than one page of this account's, or a launch of another account the
   // same person granted that is not paused yet (the revoke is the person's, for the app: it would cut the token that account's launches still need).
   const pending = await deps.runtime.query<{ launches: string[]; blocked: boolean; lastChance: boolean }>('ads.pause.pending', { revokeId: row.id }, options);
@@ -107,15 +115,27 @@ async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string
   // A few launches at a time: each pause may take minutes at a slow platform, and one account must not hold the sweep (the claims of the others run out in ten minutes).
   if (pending.launches.length > PAUSES_PER_TRY) waiting = true;
   for (const launchId of pending.launches.slice(0, PAUSES_PER_TRY)) {
-    const work = await deps.runtime.execute<PauseBegin>('ads.pause.begin', { launchId, via: 'copy' }, options);
-    if (work.action === 'none') {
-      // Another run holds the launch: its pause is not over, and this token must not be revoked under it.
-      if (work.reason === 'in_flight') waiting = true;
-      continue;
+    if (now() - startedAt >= PAUSE_BUDGET_MS) {
+      waiting = true;
+      break;
     }
-    const result = await pauseWork(revoker, secret, work);
-    const recorded = await deps.runtime.execute<PauseRecorded>('ads.pause.record', { launchId, callKey: work.callKey, via: 'copy', result }, options);
-    if (!recorded.recorded || recorded.state === 'pending') waiting = true;
+    try {
+      const work = await deps.runtime.execute<PauseBegin>('ads.pause.begin', { launchId, via: 'copy' }, options);
+      if (work.action === 'none') {
+        // Another run holds the launch: its pause is not over, and this token must not be revoked under it.
+        if (work.reason === 'in_flight') waiting = true;
+        continue;
+      }
+      const result = await pauseWork(revoker, secret, work);
+      const recorded = await deps.runtime.execute<PauseRecorded>('ads.pause.record', { launchId, callKey: work.callKey, via: 'copy', result }, options);
+      if (!recorded.recorded || recorded.state === 'pending') waiting = true;
+    } catch (error) {
+      // A failure of the pause (a database error, a record that is refused) is for the next try to find again, except on the obligation's last: a token must never be
+      // dropped unrevoked, so the revoke below is made whatever the pause came to. By code only; the launch is not wound down, and once the copy is gone its wind-down
+      // ends as `no_token`, which tells the person to pause by hand.
+      if (!pending.lastChance) throw error;
+      console.warn(`[ads-revoke] a pause failed on the last try of its revoke: ${codeOf(error)}`);
+    }
   }
   // The obligation's last try revokes whatever the pause came to (see `lastChance` of ads.pause.pending): the permission is removed at the platform, and a launch still
   // not paused is told to the person by its wind-down, who pauses it by hand.

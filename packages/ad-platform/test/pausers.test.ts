@@ -78,7 +78,7 @@ describe('pausing what a launch made', () => {
     expect(writer.statusCalls.map((c) => [c.level, c.id])).toEqual([['campaign', mine.campaign], ['ad_set', mine.adSet], ['ad', mine.ad]]);
     expect(out.paused).toEqual([{ level: 'campaign', id: mine.campaign }, { level: 'ad_set', id: mine.adSet }, { level: 'ad', id: mine.ad }]);
     expect(out.failed).toEqual([]);
-    expect(out.notTried).toBe(0);
+    expect(out.notTried).toEqual([]);
     expect(out.tokenRefused).toBe(false);
     // What the tag found is reported, with the name each carries, so the caller can record what it had not.
     expect(out.found.map((o) => [o.level, o.id, o.name.includes(TAG)])).toEqual([['campaign', mine.campaign, true], ['ad_set', mine.adSet, true], ['ad', mine.ad, true]]);
@@ -110,7 +110,7 @@ describe('pausing what a launch made', () => {
     const out = await pauserOf(writer).pauseLaunch(s, ACCOUNT_REF, { tag: TAG, known: [] });
     expect(out.failed).toEqual([{ level: 'ad_set', id: mine.adSet, kind: 'bad_request', code: 'OBJECT_GONE' }]);
     expect(out.paused.map((p) => p.id)).toEqual([mine.campaign, mine.ad]);
-    expect(out.notTried).toBe(0);
+    expect(out.notTried).toEqual([]);
   });
 
   it('stops at a refused token: nothing more is tried and the token is reported refused', async () => {
@@ -122,7 +122,7 @@ describe('pausing what a launch made', () => {
     expect(out.tokenRefused).toBe(true);
     expect(out.failed).toEqual([{ level: 'campaign', id: mine.campaign, kind: 'token_expired', code: 'TOKEN' }]);
     expect(out.paused).toEqual([]);
-    expect(out.notTried).toBe(2);
+    expect(out.notTried).toEqual([{ level: 'ad_set', id: mine.adSet }, { level: 'ad', id: mine.ad }]);
   });
 
   it('stops at a rate limit, reports when to ask again, and does not ask again now', async () => {
@@ -134,7 +134,7 @@ describe('pausing what a launch made', () => {
     const out = await pauserOf(writer).pauseLaunch(s, ACCOUNT_REF, { tag: TAG, known: [] });
     expect(out.retryAt).toEqual(retryAt);
     expect(out.tokenRefused).toBe(false);
-    expect(out.notTried).toBe(2);
+    expect(out.notTried.map((p) => p.level)).toEqual(['ad_set', 'ad']);
     expect(out.paused).toEqual([]);
   });
 

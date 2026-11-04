@@ -39,8 +39,8 @@ export interface PauseResult {
   // The objects the platform confirmed as paused, and the ones it refused or could not be asked about.
   paused: ReadonlyArray<{ level: PauseLevel; id: string }>;
   failed: readonly PauseFailure[];
-  // The objects not tried because the run stopped early (the token was refused, or the platform asked to wait).
-  notTried: number;
+  // The objects not tried because the run stopped early (the token was refused, or the platform asked to wait): the ids, so the audit can say which are still running.
+  notTried: ReadonlyArray<{ level: PauseLevel; id: string }>;
   // The token was refused (`token_expired`): nothing more can be paused with it.
   tokenRefused: boolean;
   // The platform's own time to wait, when it named one.
@@ -85,12 +85,12 @@ export async function pauseLaunchWith(writer: Pick<AdWriter, 'findByTag' | 'setS
   }
   const paused: Array<{ level: PauseLevel; id: string }> = [];
   const failed: PauseFailure[] = [];
-  let notTried = 0;
+  const notTried: Array<{ level: PauseLevel; id: string }> = [];
   let stopped = tokenRefused;
   for (const level of PAUSE_LEVELS) {
     for (const id of [...(targets.get(level) ?? [])].sort()) {
       if (stopped) {
-        notTried += 1;
+        notTried.push({ level, id });
         continue;
       }
       try {

@@ -6,7 +6,7 @@
 // recorded, and nothing of the credential reaches an answer, an audit row or an event. The pure rules are unit-tested in
 // modules/ads/test/domain.test.ts and the adapter in packages/ad-platform/test/sandbox.test.ts.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run creates and drops its own database.
-import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { SignJWT } from 'jose';
 import { sql } from 'kysely';
@@ -2336,11 +2336,10 @@ suite('ads on PostgreSQL (#2217)', () => {
               const calls1 = w.statusCalls.length;
               expect(await pauseRun(w, launch.id)).toEqual({ ran: false, ended: 'wound_down' });
               expect(w.statusCalls).toHaveLength(calls1);
-              // The audit says how many were paused, and the token is in no audit row or ledger row.
+              // The audit lists which objects were paused (level and id, the one per-object evidence), none failed or left untried, and the token is in no audit row or ledger row.
               const audited = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.pause.record' AND detail ->> 'launchId' = $2`, [orgId, launch.id]);
               expect(audited).toHaveLength(1);
-              expect(audited[0]?.detail).toMatchObject({ outcome: 'done', via: 'connection', tries: 1, paused: calls1, failed: [], notTried: 0, listed: { campaign: true, ad_set: true, ad: true } });
-              const leaks = await row<{ n: string }>(`SELECT ((SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbxw_%') + (SELECT count(*) FROM crove_kernel.external_call WHERE org_id = $1 AND (key || coalesce(error_code, '')) LIKE '%sbxw_%'))::text AS n`, [orgId]);
+              expect(audited[0]?.detail).toMatchObject({ outcome: 'done', via: 'connection', tries: 1, paused: w.statusCalls.map((c) => ({ level: c.level, id: c.id })), failed: [], notTried: [], listed: { campaign: true, ad_set: true, ad: true } });              const leaks = await row<{ n: string }>(`SELECT ((SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbxw_%') + (SELECT count(*) FROM crove_kernel.external_call WHERE org_id = $1 AND (key || coalesce(error_code, '')) LIKE '%sbxw_%'))::text AS n`, [orgId]);
               expect(leaks[0]?.n).toBe('0');
             });
 
@@ -2481,6 +2480,59 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(await obligation()).toMatchObject({ state: 'done' });
               const how = await row<{ how_done: string | null }>(`SELECT how_done FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]);
               expect(how[0]?.how_done).toBe('sandbox');
+            });
+
+            it('on a switch-off with the app shared, holds the read token\'s revoke until the write copy has paused what the launch made (the revoke is the person\'s, for the app)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await startedNow('Ứng dụng dùng chung', w);
+              expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+              // The default setup of Meta: one app, so the same person's read token holds a spend permission and has its own obligation, with the sealed copy of its token.
+              const hash = createHash('sha256').update(randomUUID()).digest('hex');
+              const readLogin = sandboxWriteLogin({ externalAccountId: 'sbxads-shared-read', currency: 'VND' });
+              const readSeal = vault.seal(readLogin.secret, { orgId, provider: readLogin.provider, externalAccountId: readLogin.externalAccountId });
+              const readId = randomUUID();
+              await admin(async (c) => {
+                await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+                try {
+                  await c.query(`UPDATE crove_ads.ad_token_revoke SET grantor_hash = $3 WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write'`, [orgId, account, hash]);
+                } finally {
+                  await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+                }
+                await c.query(
+                  `INSERT INTO crove_ads.ad_token_revoke (org_id, id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
+                   VALUES ($1, $2, $3, $4, $5, $6, 'read_spend', 'disconnected', $7, $8)`,
+                  [orgId, readId, randomUUID(), account, readLogin.provider, readLogin.externalAccountId, hash, owner.userId],
+                );
+                await c.query(`INSERT INTO crove_ads.ad_token_seal (org_id, revoke_id, key_id, envelope) VALUES ($1, $2, $3, $4)`, [orgId, readId, readSeal.keyId, readSeal.envelope]);
+              });
+              const state = async (id: string) => (await row<{ state: string; attempts: number; last_error_code: string | null }>(`SELECT state, attempts, last_error_code FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+              // Every revoke call, and whether the launch had been wound down when it was made.
+              const base = revokerOf(w);
+              const revokedWhen: boolean[] = [];
+              const revoker = {
+                pauseLaunch: base.pauseLaunch,
+                revokeToken: async (secret: string) => {
+                  revokedWhen.push(Boolean((await windDown(launch.id))?.wound_down_at));
+                  return base.revokeToken(secret);
+                },
+              };
+              const sweep = () => runAdsRevoke({ runtime: worker, workerDb, broker: vault, revokers: { sandboxwrite_ads: revoker } });
+              // The first pause is incomplete (one ad could not be paused). The write obligation waits for the next try, and the read token's must not revoke in the same sweep:
+              // its revoke would remove the person's grant for the app and the sealed write copy with it.
+              w.inject({ level: 'ad', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
+              await sweep();
+              expect(revokedWhen).toEqual([]);
+              expect(await state(readId)).toMatchObject({ state: 'pending', attempts: 1, last_error_code: 'PAUSE_PENDING' });
+              expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 1 });
+              // Due again: the launch is wound down with the write copy, and both revokes are made after it.
+              for (let n = 0; n < 3 && (await state(readId))?.state !== 'done'; n += 1) {
+                await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+                await dueNow(launch.id);
+                await sweep();
+              }
+              expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              expect(await state(readId)).toMatchObject({ state: 'done' });
+              expect(revokedWhen).toEqual([true, true]);
             });
 
             it('refuses to delete an account\'s history while a launch is not wound down, and says what the platform\'s own deletion request leaves behind', async () => {

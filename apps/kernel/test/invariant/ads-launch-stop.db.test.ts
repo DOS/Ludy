@@ -541,6 +541,68 @@ suite('the stop of a launch and the wind-down of what it made (#2296, W2-4a)', (
       expect(await pending(read)).toEqual({ launches: [], blocked: false, lastChance: false });
     });
 
+    it('holds a read token’s revoke while a write obligation of the same person has a launch that is not paused, though the accounts have closed their connections (the shared app of a switch-off)', async () => {
+      const org = await makeOrg();
+      const a = await started(org, 'live');
+      const b = await started(org, 'live');
+      const hash = createHash('sha256').update(randomUUID()).digest('hex');
+      const other = createHash('sha256').update(randomUUID()).digest('hex');
+      // A switch-off closed every write connection in its own transaction: no account carries the person's hash any more, and what is left of whose grant it was is the
+      // hash on each write obligation (and on the read token's, since the app is shared).
+      const make = async (accountId: string, kind: 'write' | 'read_spend', grantor: string | null) =>
+        (
+          await rows<{ id: string }>(
+            `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
+             VALUES ($1, $2, $3, 'sandboxwrite_ads', 'acct-x', $4, 'disconnected', $5, $6) RETURNING id`,
+            [org.orgId, randomUUID(), accountId, kind, grantor, org.owner],
+          )
+        )[0]?.id as string;
+      const forA = await make(a.account, 'write', hash);
+      const forB = await make(b.account, 'write', hash);
+      const read = await make(a.account, 'read_spend', hash);
+      const otherPerson = await make(a.account, 'read_spend', other);
+      const unknownPerson = await make(a.account, 'read_spend', null);
+      const pending = (revokeId: string) => workerRuntime.query('ads.pause.pending', { revokeId }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
+      // Nothing stopped yet: nothing to wait for.
+      expect(await pending(read)).toEqual({ launches: [], blocked: false, lastChance: false });
+      await stop(org, 'owner', a.id);
+      await stop(org, 'owner', b.id);
+      // The read token lists none of its own, but its revoke would remove the grant the sealed write copies depend on: it waits. So does each write obligation for the other's
+      // launch (that account closed its connection too, so only its obligation says whose grant it was). Another person's token, or one with no grantor known, waits for nothing.
+      expect(await pending(read)).toEqual({ launches: [], blocked: true, lastChance: false });
+      expect(await pending(forA)).toEqual({ launches: [a.id], blocked: true, lastChance: false });
+      expect(await pending(forB)).toEqual({ launches: [b.id], blocked: true, lastChance: false });
+      expect(await pending(otherPerson)).toEqual({ launches: [], blocked: false, lastChance: false });
+      expect(await pending(unknownPerson)).toEqual({ launches: [], blocked: false, lastChance: false });
+      // The obligation's last try revokes whatever the pause came to, so a pause that cannot finish does not keep the permission valid for good.
+      await admin(async (c) => {
+        await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+        try {
+          await c.query(`UPDATE crove_ads.ad_token_revoke SET attempts = 10 WHERE org_id = $1 AND id = $2`, [org.orgId, read]);
+        } finally {
+          await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+        }
+      });
+      expect(await pending(read)).toEqual({ launches: [], blocked: true, lastChance: true });
+      // One launch is wound down, the other not: the read token still waits, and the wound-down account's obligation waits for the other's.
+      await inContext(
+        org,
+        'system',
+        async (c) => {
+          await c.query(`SELECT crove_ads.wind_down_take($1::uuid, $2::uuid, 600)`, [org.orgId, b.id]);
+          await c.query(`SELECT crove_ads.wind_down_settle($1::uuid, $2::uuid, true, NULL, NULL)`, [org.orgId, b.id]);
+        },
+        true,
+      );
+      expect(await pending(read)).toMatchObject({ launches: [], blocked: true });
+      expect(await pending(forA)).toEqual({ launches: [a.id], blocked: false, lastChance: false });
+      expect(await pending(forB)).toEqual({ launches: [], blocked: true, lastChance: false });
+      // The last launch is given up on (it has a code): nothing is held.
+      await inContext(org, 'system', (c) => c.query(`SELECT crove_ads.wind_down_settle($1::uuid, $2::uuid, false, NULL, 'token_refused')`, [org.orgId, a.id]), true);
+      expect(await pending(read)).toMatchObject({ launches: [], blocked: false });
+      expect(await pending(forB)).toEqual({ launches: [], blocked: false, lastChance: false });
+    });
+
     it('says when this is the obligation’s last try, the tenth or past six of its seven days: the revoke is then made whatever the pause came to', async () => {
       const org = await makeOrg();
       const l = await started(org, 'live');

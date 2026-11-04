@@ -22,7 +22,7 @@ function report(out: PauseResult): PauseResultInput {
     found: found.slice(0, 300),
     paused: out.paused.slice(0, 300).map((p) => ({ level: p.level, id: p.id })),
     failed: out.failed.slice(0, 300).map((f) => ({ level: f.level, id: f.id, kind: f.kind, code: f.code })),
-    notTried: Math.min(out.notTried, 300),
+    notTried: out.notTried.slice(0, 300).map((p) => ({ level: p.level, id: p.id })),
     tokenRefused: out.tokenRefused,
     retryAt: out.retryAt ? out.retryAt.toISOString() : null,
   };

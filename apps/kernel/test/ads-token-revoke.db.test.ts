@@ -125,7 +125,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
 
   const sandboxRevokers = adRevokers({ sandbox: true });
   // What a revoker answers to the pause of a launch (W2-4a) when none is behind the connection: nothing found, nothing to pause. The stand-ins below only say how a revoke ends.
-  const nothingToPause: AdRevoker['pauseLaunch'] = async () => ({ listed: { campaign: { ok: true }, ad_set: { ok: true }, ad: { ok: true } }, found: [], paused: [], failed: [], notTried: 0, tokenRefused: false, retryAt: null });
+  const nothingToPause: AdRevoker['pauseLaunch'] = async () => ({ listed: { campaign: { ok: true }, ad_set: { ok: true }, ad: { ok: true } }, found: [], paused: [], failed: [], notTried: [], tokenRefused: false, retryAt: null });
   type StandIn = Pick<AdRevoker, 'revokeToken'> & Partial<Pick<AdRevoker, 'pauseLaunch'>>;
   const sweep = (revokers: Readonly<Record<string, StandIn>> = sandboxRevokers, broker: CredentialVault | undefined = vault): Promise<AdsRevokeResult> =>
     runAdsRevoke({ runtime: worker, workerDb, broker, revokers: Object.fromEntries(Object.entries(revokers).map(([provider, r]) => [provider, { pauseLaunch: nothingToPause, ...r }])) });
