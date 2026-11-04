@@ -2011,6 +2011,15 @@ export const vi = {
       expiry: 'Kết nối kéo dài khoảng 60 ngày, sau đó Meta sẽ yêu cầu bạn kết nối lại.',
       reconnect: 'Kết nối lại với Meta',
     },
+    // Google Ads accounts, connected through the deployment's own Google Cloud OAuth client, read only (#2220).
+    connectGoogle: {
+      title: 'Quảng cáo Google',
+      action: 'Kết nối tài khoản Google Ads',
+      another: 'Kết nối thêm tài khoản Google Ads',
+      note: 'Quyền Google Ads duy nhất của Google (https://www.googleapis.com/auth/adwords) gồm cả đọc và ghi ở phía Google; {brand} chỉ gọi các điểm đọc báo cáo (customers:listAccessibleCustomers và googleAds:searchStream), không bao giờ tạo hay sửa chiến dịch.',
+      expiry: 'Hãy bật khóa truy cập (passkey) hoặc xác minh 2 bước cho tài khoản Google của bạn. Nếu màn hình cấp quyền Google Cloud còn ở chế độ Testing, mã làm mới sẽ hết hạn sau 7 ngày; hãy chuyển sang Production để kết nối duy trì lâu dài.',
+      reconnect: 'Kết nối lại với Google',
+    },
     // Running ads from Ludy (ADR-0043, #2294, W0a): the switches and the spend caps. What opens the way to spend is a request
     // that someone approves in the Inbox; nothing here spends yet.
     write: {
@@ -2346,6 +2355,8 @@ export const vi = {
     },
     canRunAds: 'Chạy được quảng cáo: tài khoản này có một kết nối có thể thay đổi chiến dịch. Mỗi lần chạy vẫn cần người duyệt, và nằm trong hạn mức.',
     readOnly: 'Chỉ đọc: {brand} chỉ đọc báo cáo của tài khoản này.',
+    googleReadOnly: 'Chỉ đọc trong {brand}: quyền adwords của Google gồm cả đọc và ghi ở phía Google, còn {brand} chỉ gọi các điểm đọc báo cáo (customers:listAccessibleCustomers và googleAds:searchStream).',
+    connectionExpiresSoon: 'Mã làm mới của kết nối này sẽ hết hạn vào {when} (màn hình cấp quyền Google Cloud ở chế độ Testing cấp mã 7 ngày). Hãy chuyển màn hình cấp quyền sang Production trong Google Cloud Console hoặc kết nối lại trước thời điểm đó để không bị gián đoạn cập nhật.',
     extraScopes: 'Kết nối của tài khoản này làm được nhiều hơn đọc báo cáo quảng cáo: mã truy cập còn giữ thêm quyền {list}. Ludy chỉ đọc; muốn bỏ các quyền thừa, hãy kết nối qua một ứng dụng Meta riêng cho quảng cáo.',
     accountLabel: 'Tài khoản quảng cáo',
     sandboxBadge: 'Thử nghiệm (số liệu mẫu)',
@@ -2405,7 +2416,7 @@ export const vi = {
     notFinal: 'chưa chốt',
     notFinalHint: 'Số liệu những ngày gần đây có thể còn đổi vì nền tảng quảng cáo điều chỉnh sau. Ngày ghi "chưa chốt" chưa phải số cuối.',
     reachHint: 'Số người tiếp cận không cộng được qua nhiều ngày (một người có thể xem nhiều ngày), nên chỉ hiện theo từng ngày.',
-    resultKinds: { purchase: 'Mua hàng', lead: 'Khách để lại thông tin' },
+    resultKinds: { purchase: 'Mua hàng', lead: 'Khách để lại thông tin', conversion: 'Chuyển đổi' },
     settings: {
       title: 'Cài đặt tài khoản quảng cáo',
       resultKind: 'Loại kết quả được tính',
@@ -2455,6 +2466,17 @@ export const vi = {
       failed: 'Thất bại',
       window: 'Số liệu từ {from} đến {to}',
       rows: '{count, number} dòng số liệu',
+    },
+    weeklyNote: {
+      title: 'Ghi chú so sánh 7 ngày của {marketing}',
+      hint: 'Tính từ số liệu đã lưu bằng quy tắc cố định, không dùng mô hình AI. Các loại tiền không bao giờ được quy đổi hay cộng gộp với nhau.',
+      window: '7 ngày hoàn tất gần nhất ({recentFrom} đến {recentTo}) so với 7 ngày trước đó ({priorFrom} đến {priorTo}): tổng chi phí {recentSpend} so với {priorSpend} ({spendDelta}).',
+      platformSpend: '{provider}: chi {recentSpend} so với {priorSpend} ({spendDelta}).',
+      platformWithCpr: '{provider}: chi {recentSpend} so với {priorSpend} ({spendDelta}); chi phí mỗi {resultKind} {recentCpr} so với {priorCpr} ({cprDelta}, {results} kết quả).',
+      topMover: 'Chiến dịch thay đổi chi phí nhiều nhất: “{campaign}” trên {account} ({provider}), {recentSpend} so với {priorSpend} ({spendDelta}).',
+      skipped: 'Chưa tính trong {currency}: các tài khoản chưa cập nhật đến hôm qua ({count}).',
+      error: 'Không đọc được ghi chú so sánh 7 ngày.',
+      retry: 'Thử lại',
     },
   },
   memberRoles: {
@@ -7990,6 +8012,8 @@ export const vi = {
       OAUTH_STATE_EXPIRED: 'Lượt kết nối đã hết hạn, hãy bắt đầu lại',
       OAUTH_CODE_REJECTED: 'Nền tảng từ chối mã cấp quyền (đã dùng hoặc hết hạn), hãy kết nối lại',
       OAUTH_WRITE_PERMISSION: 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read',
+      OAUTH_GOOGLE_MANAGER_ONLY: 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo',
+      OAUTH_GOOGLE_PROJECT_TEST_ONLY: 'Dự án Google Cloud này đang ở mức Test nên chỉ đọc được tài khoản thử nghiệm; hãy xin cấp mức Explorer trong Google Cloud Console cho tài khoản thực',
       OAUTH_PERMISSION_MISSING: 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền',
       OAUTH_PROVIDER_FAILED: 'Nền tảng không phản hồi đúng, hãy thử lại sau',
       CHANNEL_NO_ACCOUNTS: 'Không có tài khoản nào bạn được quyền đăng bài trong lần cấp quyền này',
@@ -8101,6 +8125,7 @@ export const vi = {
       token_revoke: {
         record: 'Ghi kết quả một lần gỡ quyền của ứng dụng ở nền tảng',
       },
+      weekly_note: 'Xem nhận xét so sánh chi tiêu và kết quả quảng cáo theo tuần giữa các nền tảng',
       write: {
         disable: 'Tắt chạy quảng cáo cho tổ chức',
         enable: 'Bật chạy quảng cáo cho tổ chức (đề nghị đã duyệt)',

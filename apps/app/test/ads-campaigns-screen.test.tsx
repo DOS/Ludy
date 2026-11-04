@@ -70,6 +70,7 @@ const account = (over: Partial<AdAccountView> = {}): AdAccountView => ({
   connectionStatus: 'active',
   pausedSince: null,
   pausedReason: null,
+  connectionExpiresAt: null,
   writeEnabled: true,
   writeConnectionStatus: 'active',
   canRunAds: true,

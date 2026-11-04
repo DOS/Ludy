@@ -3,7 +3,8 @@
 // channel layer only, the contract on neither): the contract's constants (AD_WRITE_PROVIDERS, ADS_SPEND_SCOPES, READ_PROVIDER_OF_WRITE)
 // and the adapters' own. This is the one place that depends on both, and keeps them equal (ADR-0043, #2294, W0b).
 import { describe, expect, it } from 'vitest';
-import { metaWriteAppShared } from '../src/kernel.ts';
+import { loadConfig } from '../src/config.ts';
+import { adPlatformsOf, channelConnectors, metaWriteAppShared } from '../src/kernel.ts';
 import { META_FORBIDDEN_SCOPES, META_WRITE_PROVIDER, META_WRITE_SCOPES, SANDBOX_WRITE_PROVIDER, SANDBOX_WRITE_SCOPES } from '@crove/ad-platform';
 import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdProviderId, isAdWriteProviderId } from '@crove/kernel-contract';
 
@@ -56,3 +57,46 @@ describe('whether the write Meta app is shared', () => {
     expect(metaWriteAppShared(config(undefined, '1', '1'))).toBe(false);
   });
 });
+
+describe('Google Ads configuration and wiring (#2220)', () => {
+  const baseEnv = {
+    DATABASE_URL: 'postgres://u:p@localhost:5432/ludy',
+    PUBLIC_URL: 'http://localhost:8787',
+    AUTH_ISSUER: 'http://localhost:9999/auth/v1',
+    AUTH_JWT_SECRET: 'a'.repeat(32),
+    AUTH_UPSTREAM_URL: 'http://localhost:9999',
+  };
+  const validClientId = '123456789012-abcdef0123456789.apps.googleusercontent.com';
+
+  it('requires both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET or neither, and checks the Google web client id format', () => {
+    expect(() => loadConfig({ ...baseEnv, CHANNEL_GOOGLE_ADS_CLIENT_ID: validClientId })).toThrow(
+      'set both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET, or neither',
+    );
+    expect(() => loadConfig({ ...baseEnv, CHANNEL_GOOGLE_ADS_CLIENT_SECRET: 'secret-1' })).toThrow(
+      'set both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET, or neither',
+    );
+    expect(() =>
+      loadConfig({
+        ...baseEnv,
+        CHANNEL_GOOGLE_ADS_CLIENT_ID: 'not-a-google-client-id',
+        CHANNEL_GOOGLE_ADS_CLIENT_SECRET: 'secret-1',
+      }),
+    ).toThrow('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
+  });
+
+  it('registers google_ads in adPlatformsOf and channelConnectors only when both Google Ads OAuth credentials are set', () => {
+    const unconfigured = loadConfig(baseEnv);
+    expect(Object.keys(adPlatformsOf(unconfigured))).not.toContain('google_ads');
+    expect(Object.keys(channelConnectors(unconfigured))).not.toContain('google_ads');
+
+    const configured = loadConfig({
+      ...baseEnv,
+      CHANNEL_GOOGLE_ADS_CLIENT_ID: validClientId,
+      CHANNEL_GOOGLE_ADS_CLIENT_SECRET: 'secret-1',
+    });
+    expect(Object.keys(adPlatformsOf(configured))).toContain('google_ads');
+    expect(adPlatformsOf(configured).google_ads?.capabilities.resultKinds).toEqual(['conversion']);
+    expect(Object.keys(channelConnectors(configured))).toContain('google_ads');
+  });
+});
+

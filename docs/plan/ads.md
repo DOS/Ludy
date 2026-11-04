@@ -281,7 +281,7 @@ Each adapter's fetch is bound to its hosts and follows no redirect (`allowlisted
 | **A1** | `docker compose up`, connect the `sandbox` ad platform, see daily spend and results per campaign, month totals, cost per result and the books strip | module, migration, adapter interface, sandbox, screens. Protected paths: the migration, the manifest, the job queue list, `rls-matrix` rows; independent security review |
 | **A2** | Connect a real Meta ad account and see real numbers | Meta adapter, OAuth connect through the channel layer, 13-month backfill, hourly and daily sync, errors and limits, recorded-answer tests, an `ads-live-check` runbook like [social-live-check.md](../runbooks/social-live-check.md) (the live run is the PO's with the owner) |
 | **A3** | A stale or expired token pauses the account and says so; the owner is alerted; reconnecting resumes | refresh sweep integration, notifications, `delete_history`, the deletion callback |
-| **B** | Google Ads, self-host bring-your-own project | adapter, the Cloud-project and consent-screen runbook, access-level notes |
+| **B** | Google Ads, self-host bring-your-own project | adapter, the Cloud-project and consent-screen runbook ([ads-google-live-check.md](../runbooks/ads-google-live-check.md)), access-level notes |
 | **C** | TikTok Ads | after a human reads the portal (section 4) |
 | **D** | Which month has no invoice or receipt; platform charges beside card lines | `ad_invoice`, Google `ListInvoices` (needs monthly invoicing on the account) [C]; Meta has no invoice edge [C], so Meta documents come through normal intake |
 | **E** | Zalo Ads by CSV or manual entry | **dropped by the owner (Q6, 2026-11-01)**; not built |

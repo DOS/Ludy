@@ -23,6 +23,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { AdsBooksStrip } from '../components/ads-books-strip.tsx';
 import { AdsFlagSettingsCard } from '../components/ads-flag-settings.tsx';
 import { AdsFlagsCard } from '../components/ads-flags.tsx';
+import { AdsWeeklyNoteCard } from '../components/ads-weekly-note.tsx';
 import { AdsRevokeNotice, AdsWriteCard } from '../components/ads-write.tsx';
 import { ConfirmDialog } from '../components/confirm-dialog.tsx';
 import { CardSkeleton, DataTable, Empty, ErrorText, Field, focusFirstInvalid, PageHeader, TableSkeleton, useFieldErrors } from '../components/ui.tsx';
@@ -68,12 +69,13 @@ type SandboxCurrency = (typeof ADS_SANDBOX_CURRENCIES)[number];
 const RESULT_KIND_FIELD = 'ads-result-kind';
 
 const refreshAccounts = () => queryClient.invalidateQueries({ queryKey: orpc.ads.accounts.key() });
-// The spend flags are worked out from the same figures and caps, so they follow them.
+// The spend flags and 7-day comparison note are worked out from the same figures and caps, so they follow them.
 const refreshFigures = () =>
   Promise.all([
     queryClient.invalidateQueries({ queryKey: orpc.ads.summary.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.syncRuns.key() }),
     queryClient.invalidateQueries({ queryKey: orpc.ads.flags.key() }),
+    queryClient.invalidateQueries({ queryKey: orpc.ads.weeklyNote.key() }),
   ]);
 
 // The name of a result kind: our own words for the kinds the sandbox offers, the platform's key for any other.
@@ -211,19 +213,49 @@ export function ConnectMeta({ slug, another = false, reconnect = false }: { slug
   );
 }
 
+// Connecting a Google Ads account (#2220): Google's sign-in dialog runs in this tab and returns to the callback screen.
+// Drawn only when the deployment has CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET configured
+// (`google_ads` among /api/config's channels.oauth). States clearly that Google's single adwords scope grants read and
+// write on Google's side while Ludy calls only the read endpoints.
+export function ConnectGoogle({ slug, another = false, reconnect = false }: { slug: string; another?: boolean; reconnect?: boolean }) {
+  const t = useTranslations('ads');
+  const headingId = useId();
+  const start = useAdOAuthStart(slug, 'google_ads');
+  return (
+    <div className="space-y-3" role="group" aria-labelledby={another ? undefined : headingId}>
+      {!another && (
+        <h2 id={headingId} className={H2}>
+          {t('connectGoogle.title')}
+        </h2>
+      )}
+      <p className="text-sm text-muted-foreground">{t('connectGoogle.note')}</p>
+      <p className="text-xs text-subtle-foreground">{t('connectGoogle.expiry')}</p>
+      <div>
+        <Button loading={start.isPending} type="button" variant={another ? 'outline' : 'default'} size="lg" onClick={() => start.mutate()}>
+          {reconnect ? t('connectGoogle.reconnect') : another ? t('connectGoogle.another') : t('connectGoogle.action')}
+        </Button>
+      </div>
+      {start.error && <ErrorText>{errorMessage(start.error)}</ErrorText>}
+    </div>
+  );
+}
+
 // No ad account yet: what Ads shows, and, for owners and admins, how to connect one: a test account where the sandbox
 // platform is on, a Meta ad account where the deployment has its Meta ads app (`meta` names the org the dialog is started
-// for). Members and viewers read the explanation only; with no ad platform on the deployment, everyone is told so.
+// for), and a Google Ads account where the deployment has its Google Ads OAuth client (`google`). Members and viewers read
+// the explanation only; with no ad platform on the deployment, everyone is told so.
 export function AdsEmpty({
   canManage,
   sandbox,
   meta,
+  google,
   entities,
   onConnected,
 }: {
   canManage: boolean;
   sandbox: boolean;
   meta?: { slug: string } | undefined;
+  google?: { slug: string } | undefined;
   entities: readonly LegalEntity[];
   onConnected: (adAccountId: string) => void;
 }) {
@@ -231,7 +263,7 @@ export function AdsEmpty({
   return (
     <div className="space-y-6">
       <Empty title={t('emptyTitle')} hint={t('emptyHint')} />
-      {!sandbox && !meta ? (
+      {!sandbox && !meta && !google ? (
         <p className="text-sm text-muted-foreground" role="status">
           {t('noPlatform')}
         </p>
@@ -240,6 +272,11 @@ export function AdsEmpty({
           {meta && (
             <Card className="block p-4">
               <ConnectMeta slug={meta.slug} />
+            </Card>
+          )}
+          {google && (
+            <Card className="block p-4">
+              <ConnectGoogle slug={google.slug} />
             </Card>
           )}
           {sandbox && (
@@ -280,8 +317,15 @@ function SyncStatus({ account }: { account: AdAccountView }) {
         <p className="text-warning" role="status">
           {t('extraScopes', { list: account.extraScopes.join(', ') })}
         </p>
+      ) : account.provider === 'google_ads' ? (
+        <p className="text-muted-foreground">{t('googleReadOnly')}</p>
       ) : (
         <p className="text-muted-foreground">{t('readOnly')}</p>
+      )}
+      {active && account.provider === 'google_ads' && account.connectionExpiresAt && (
+        <p className="text-warning" role="status">
+          {t('connectionExpiresSoon', { when: f.date(account.connectionExpiresAt) })}
+        </p>
       )}
       {account.connectionStatus !== 'active' && (
         <p className={account.connectionStatus === 'revoked' ? 'text-muted-foreground' : 'text-warning'} role="status">
@@ -789,6 +833,7 @@ function AccountPanel({
   entities,
   financeOn,
   reconnect,
+  googleReconnect,
   onRequested,
 }: {
   account: AdAccountView;
@@ -799,6 +844,8 @@ function AccountPanel({
   financeOn: boolean;
   // Where a paused Meta account is connected again: the org's address, when the deployment has its Meta ads app (#2219).
   reconnect: { slug: string } | undefined;
+  // Where a paused Google Ads account is connected again (#2220).
+  googleReconnect?: { slug: string } | undefined;
   onRequested: () => void;
 }) {
   const t = useTranslations('ads');
@@ -818,6 +865,11 @@ function AccountPanel({
       {reconnect && canManage && account.provider === 'meta_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
         <Card className="block p-4">
           <ConnectMeta slug={reconnect.slug} another reconnect />
+        </Card>
+      )}
+      {googleReconnect && canManage && account.provider === 'google_ads' && account.connectionStatus !== 'active' && account.pausedReason !== 'platform_deletion' && (
+        <Card className="block p-4">
+          <ConnectGoogle slug={googleReconnect.slug} another reconnect />
         </Card>
       )}
       {account.connectionStatus !== 'active' && !canManage && account.pausedReason !== 'platform_deletion' && (
@@ -871,8 +923,10 @@ export function AdsPage() {
   const search: AdsSearch = useSearch({ strict: false });
   const config = getConfig();
   const sandbox = Boolean(config.ads?.sandbox);
-  // Connecting an ad account for reading offers Meta alone; connecting one to run ads is offered apart, to the owner, on the card of running ads.
-  const metaOffered = adReadOAuthProviders(config).includes('meta_ads');
+  // Connecting an ad account for reading offers Meta and Google where configured; connecting one to run ads is offered apart, to the owner, on the card of running ads.
+  const readOAuth = adReadOAuthProviders(config);
+  const metaOffered = readOAuth.includes('meta_ads');
+  const googleOffered = readOAuth.includes('google_ads');
   const writeOffer = adWriteOffer(config);
   const financeOn = config.modules.includes('finance');
   const me = useQuery(orpc.me.get.queryOptions());
@@ -928,7 +982,7 @@ export function AdsPage() {
         <div className="space-y-8">
           {/* A permission still being removed at the platform stays on screen when the last ad account is gone (disconnect, then erase). */}
           {canManage && <AdsRevokeNotice />}
-          <AdsEmpty canManage={canManage} sandbox={sandbox} meta={metaOffered ? { slug } : undefined} entities={entities.data ?? []} onConnected={connected} />
+          <AdsEmpty canManage={canManage} sandbox={sandbox} meta={metaOffered ? { slug } : undefined} google={googleOffered ? { slug } : undefined} entities={entities.data ?? []} onConnected={connected} />
         </div>
       ) : (
         <div className="space-y-8">
@@ -938,6 +992,8 @@ export function AdsPage() {
             </Card>
           )}
           {canManage && metaOffered && <ConnectMeta slug={slug} another />}
+          {canManage && googleOffered && <ConnectGoogle slug={slug} another />}
+          <AdsWeeklyNoteCard />
           {canManage && <AdsFlagsCard />}
           {canManage && <AdsFlagSettingsCard />}
           {canManage && <AdsWriteCard role={role} accounts={list} slug={slug} offer={writeOffer} />}
@@ -963,6 +1019,7 @@ export function AdsPage() {
             entities={entities.data ?? []}
             financeOn={financeOn}
             reconnect={metaOffered ? { slug } : undefined}
+            googleReconnect={googleOffered ? { slug } : undefined}
             onRequested={() => setWatchUntil(Date.now() + REFRESH_WATCH_MS)}
           />
         </div>

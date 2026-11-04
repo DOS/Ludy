@@ -2013,6 +2013,15 @@ export const en = {
       expiry: 'The connection lasts about 60 days, then Meta asks you to connect again.',
       reconnect: 'Reconnect with Meta',
     },
+    // Google Ads accounts, connected through the deployment's own Google Cloud OAuth client, read only (#2220).
+    connectGoogle: {
+      title: 'Google Ads',
+      action: 'Connect a Google Ads account',
+      another: 'Connect another Google Ads account',
+      note: 'Google’s single Ads permission (https://www.googleapis.com/auth/adwords) grants read and write on Google’s side; {brand} calls only the read endpoints (customers:listAccessibleCustomers and googleAds:searchStream) and never creates or changes a campaign.',
+      expiry: 'Keep your Google account protected with a passkey or 2-Step Verification. If your Google Cloud consent screen is still in Testing mode, refresh tokens expire after 7 days; publish it to Production so the connection stays active.',
+      reconnect: 'Reconnect with Google',
+    },
     // Running ads from Ludy (ADR-0043, #2294, W0a): the switches and the spend caps. What opens the way to spend is a request
     // that someone approves in the Inbox; nothing here spends yet.
     write: {
@@ -2350,6 +2359,8 @@ export const en = {
     },
     canRunAds: 'Can run ads: this account has a connection that can change campaigns. Every launch still needs a person to approve it, within the caps.',
     readOnly: 'Read only: {brand} only reads this account’s reports.',
+    googleReadOnly: 'Read only in {brand}: Google’s adwords scope grants read and write on Google’s side, and {brand} calls only the read endpoints (customers:listAccessibleCustomers and googleAds:searchStream).',
+    connectionExpiresSoon: 'The refresh token of this connection expires on {when} (a Google Cloud consent screen in Testing mode issues 7-day tokens). Publish the consent screen in Google Cloud Console or reconnect before then so updates do not stop.',
     extraScopes: 'The connection of this account can do more than read ad reports: its token also holds {list}. Ludy only reads; to remove the extra permissions, connect through a Meta app of its own for ads.',
     accountLabel: 'Ad account',
     sandboxBadge: 'Sandbox (sample figures)',
@@ -2409,7 +2420,7 @@ export const en = {
     notFinal: 'not final',
     notFinalHint: 'The figures of recent days can still change because the ad platform revises them later. A day marked "not final" is not the last figure.',
     reachHint: 'Reach cannot be added across days (one person may see ads on several days), so it shows by day only.',
-    resultKinds: { purchase: 'Purchases', lead: 'Leads' },
+    resultKinds: { purchase: 'Purchases', lead: 'Leads', conversion: 'Conversions' },
     settings: {
       title: 'Ad account settings',
       resultKind: 'Result type counted',
@@ -2459,6 +2470,17 @@ export const en = {
       failed: 'Failed',
       window: 'Figures from {from} to {to}',
       rows: '{count, plural, one {# row of figures} other {# rows of figures}}',
+    },
+    weeklyNote: {
+      title: '{marketing}’s 7-day comparison',
+      hint: 'Worked out from your stored figures with fixed rules and no model. Currencies are never converted or added together.',
+      window: 'Last 7 completed days ({recentFrom} to {recentTo}) compared with the 7 days before ({priorFrom} to {priorTo}): total spend {recentSpend} vs {priorSpend} ({spendDelta}).',
+      platformSpend: '{provider}: spent {recentSpend} vs {priorSpend} ({spendDelta}).',
+      platformWithCpr: '{provider}: spent {recentSpend} vs {priorSpend} ({spendDelta}); cost per {resultKind} {recentCpr} vs {priorCpr} ({cprDelta}, {results} results).',
+      topMover: 'Largest campaign spend change: “{campaign}” on {account} ({provider}), {recentSpend} vs {priorSpend} ({spendDelta}).',
+      skipped: 'Not counted in {currency}: accounts that have not read up to yesterday ({count}).',
+      error: 'The 7-day comparison note could not be read.',
+      retry: 'Try again',
     },
   },
   memberRoles: {
@@ -7993,6 +8015,8 @@ export const en = {
       OAUTH_STATE_EXPIRED: 'This connect attempt expired; start again',
       OAUTH_CODE_REJECTED: 'The platform refused the authorization code (used or expired); connect again',
       OAUTH_WRITE_PERMISSION: 'This Meta app holds a permission to change ads (ads_management or business_management) that you granted it before. Remove this app in your Facebook settings (Business integrations), then connect again, or use a Meta app of its own with only ads_read',
+      OAUTH_GOOGLE_MANAGER_ONLY: 'This Google account only reaches manager accounts (MCC), with no direct ad account; sign in with a Google account that reaches the ad account directly',
+      OAUTH_GOOGLE_PROJECT_TEST_ONLY: 'This Google Cloud project is at Test access and can read only test accounts; apply for Explorer access in Google Cloud Console to read production accounts',
       OAUTH_PERMISSION_MISSING: 'Some permissions needed were not granted in the platform dialog; connect again and accept all of them',
       OAUTH_PROVIDER_FAILED: 'The platform did not answer as expected; try again later',
       CHANNEL_NO_ACCOUNTS: 'This grant covers no account you can post to',
@@ -8104,6 +8128,7 @@ export const en = {
       token_revoke: {
         record: 'Record the result of one removal of the app’s permissions at the platform',
       },
+      weekly_note: 'Read the weekly comparison of ad spend and results across platforms',
       write: {
         disable: 'Turn off running ads for the org',
         enable: 'Turn on running ads for the org (an approved request)',

@@ -10,6 +10,7 @@ import { flagQueries } from './spend-flags.ts';
 import { summaryQueries } from './summary.ts';
 import { syncCommands, syncQueries } from './sync.ts';
 import { todayQueries } from './today.ts';
+import { weeklyNoteQueries } from './weekly-note.ts';
 import { writeCommands, writeQueries } from './write.ts';
 import { tokenRevokeCommands } from './token-revoke-commands.ts';
 import { writeConnectionCommands, writeConnectionQueries } from './write-connection.ts';
@@ -31,8 +32,9 @@ export * from './spend-flags.ts';
 export * from './summary.ts';
 export * from './sync.ts';
 export * from './today.ts';
+export * from './weekly-note.ts';
 export * from './write.ts';
 
 export const adsCommands = [...accountCommands, ...syncCommands, ...writeConnectionCommands, ...tokenRevokeCommands, ...writeCommands, ...flagSettingCommands, ...campaignCommands, ...campaignRequestCommands, ...launchRunCommands, ...launchPauseCommands, ...launchActivateCommands];
-export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...campaignQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...launchPauseQueries];
+export const adsQueries = [...accountQueries, ...syncQueries, ...summaryQueries, ...flagQueries, ...flagSettingQueries, ...todayQueries, ...weeklyNoteQueries, ...campaignQueries, ...campaignRequestQueries, ...writeConnectionQueries, ...writeQueries, ...launchPauseQueries];
 export { adsManifest } from './manifest.ts';

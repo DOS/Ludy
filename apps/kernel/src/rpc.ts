@@ -271,6 +271,12 @@ function connectorFailure(error: unknown): DomainError {
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
       return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
     }
+    if (error.kind === 'denied' && error.code === 'MANAGER_ACCOUNT_UNSUPPORTED') {
+      return new DomainError('OAUTH_GOOGLE_MANAGER_ONLY', 422, 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo');
+    }
+    if (error.kind === 'denied' && error.code === 'CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION') {
+      return new DomainError('OAUTH_GOOGLE_PROJECT_TEST_ONLY', 422, 'Dự án Google Cloud này đang ở mức Test nên chỉ đọc được tài khoản thử nghiệm; hãy xin cấp mức Explorer trong Google Cloud Console cho tài khoản thực');
+    }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
   }
@@ -2621,6 +2627,8 @@ export function createRpcHandler(
       // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
       // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins.
       flags: os.ads.flags.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flags', {}, { actor, orgId }))),
+      // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads.
+      weeklyNote: os.ads.weeklyNote.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.weekly_note', {}, { actor, orgId }))),
       // The thresholds of those flags (#2378): owners and admins read and set them.
       flagSettings: os.ads.flagSettings.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flag_settings', {}, { actor, orgId }))),
       setFlagSettings: os.ads.setFlagSettings.handler(({ context, input }) =>
