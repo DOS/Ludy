@@ -8180,11 +8180,13 @@ export const en = {
         save: 'Save a sales invoice draft',
       },
       marketplace: {
+        assign: 'Assign a marketplace order line to an item',
         confirm: 'Import a marketplace order report',
         preview: 'Preview a marketplace order report',
         reject: 'Skip a marketplace order report',
         orders: 'View the marketplace orders',
         staged: 'View the order reports waiting to be imported',
+        unassigned: 'View the marketplace order lines not assigned to an item',
       },
       stock: {
         assign: 'Assign an invoice line to an item',

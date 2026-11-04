@@ -2280,6 +2280,13 @@ export function createRpcHandler(
         }),
       ),
       orders: os.marketplace.orders.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.orders', input ?? {}, { actor, orgId }))),
+      unassigned: os.marketplace.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.marketplace.assign.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
     },
     stock: {
       items: {

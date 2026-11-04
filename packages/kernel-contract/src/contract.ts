@@ -189,7 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
-import { zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged } from './marketplace.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -1643,6 +1643,10 @@ export const contract = {
     confirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceConfirmResult),
     reject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
     orders: oc.input(zMarketplaceOrdersInput.optional()).output(z.array(zMarketplaceOrder)),
+    // The order lines that move stock and name no item yet, newest first, and the assignment of one: the shipment (and the return) move stock through the item, once.
+    // MARKETPLACE_LINE_ASSIGNED, MARKETPLACE_LINE_NOT_SHIPPED (409), MARKETPLACE_LINE_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH (422), STOCK_ITEM_INACTIVE (409).
+    unassigned: oc.input(zMarketplaceUnassignedInput.optional()).output(z.array(zMarketplaceUnassignedLine)),
+    assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

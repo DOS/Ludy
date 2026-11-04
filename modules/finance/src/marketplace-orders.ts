@@ -14,12 +14,12 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, type ExtractClient } from '@crove/extract-contract';
 import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceOrdersInput, zMarketplaceSummary, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSummary, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
-import { moveQuantity, movableQuantity, normalizeAlias } from './domain/stock.ts';
-import { writeStockMove } from './stock.ts';
+import { moveQuantity, movableQuantity, normalizeAlias, plainQuantity } from './domain/stock.ts';
+import { loadItem, writeStockMove } from './stock.ts';
 
 export const MARKETPLACE_ACTOR = { type: 'system' as const, component: 'finance.marketplace' };
 const IMPORTERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -297,9 +297,9 @@ export const marketplaceOrders = defineQuery({
           lineKey: l.line_key,
           sku: l.sku,
           itemName: l.item_name,
-          quantity: String(l.quantity),
-          unitPrice: l.unit_price === null ? null : String(l.unit_price),
-          amount: l.amount === null ? null : String(l.amount),
+          quantity: plainQuantity(String(l.quantity)),
+          unitPrice: l.unit_price === null ? null : plainQuantity(String(l.unit_price)),
+          amount: l.amount === null ? null : plainQuantity(String(l.amount)),
           stage: l.stage,
           shippedAt: l.shipped_at === null ? null : String(l.shipped_at).slice(0, 10),
           itemCode: codes.get(l.id) ?? null,
@@ -340,6 +340,8 @@ async function moveLineStock(
   line: { id: string; stage: Stage; quantity: string; shippedAt: string | null; orderedAt: string | null; sku: string | null },
   matches: ReadonlyMap<string, ItemMatch>,
   today: string,
+  // An item a person chose for the line (the assignment): used instead of looking the SKU up.
+  explicit?: ItemMatch,
 ): Promise<number> {
   if (!MOVES_STOCK.has(line.stage)) return 0;
   const made = await ctx.trx.selectFrom('crove_finance.stock_move').select(['order_move', 'item_id', 'quantity']).where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).execute();
@@ -349,7 +351,7 @@ async function moveLineStock(
   let moves = 0;
   let shipped = ship ? { itemId: ship.item_id, quantity: String(ship.quantity) } : null;
   if (!shipped) {
-    const match = line.sku ? matches.get(normalizeAlias(line.sku)) : undefined;
+    const match = explicit ?? (line.sku ? matches.get(normalizeAlias(line.sku)) : undefined);
     const quantity = movableQuantity(line.quantity);
     const signed = match && quantity !== null ? moveQuantity('sale', quantity, match.factor) : null;
     if (!match || signed === null) return 0;
@@ -559,5 +561,83 @@ export function recordMarketplaceReadFailure(runtime: Runtime, orgId: string, fi
   );
 }
 
-export const marketplaceCommands = [marketplaceConfirm, marketplaceReject];
-export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders];
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// The lines that name no item
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+export const marketplaceUnassigned = defineQuery({
+  name: 'finance.marketplace.unassigned',
+  input: zMarketplaceUnassignedInput,
+  access: ['owner', 'admin', 'member', 'viewer'],
+  handler: async (ctx, input): Promise<MarketplaceUnassignedLine[]> => {
+    let query = ctx.trx
+      .selectFrom('crove_finance.channel_order_line as l')
+      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.item_name', 'l.quantity', 'l.stage', 'o.platform', 'o.order_no', 'o.ordered_at'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.stage', 'in', ['shipped', 'completed', 'returned'])
+      .where(sql<boolean>`NOT EXISTS (SELECT 1 FROM crove_finance.stock_move AS m WHERE m.org_id = l.org_id AND m.order_line_id = l.id AND m.order_move = 'ship')`)
+      .orderBy('o.ordered_at', sql`desc nulls last`)
+      .orderBy('o.id')
+      .orderBy('l.line_key')
+      .limit(input.limit ?? 200);
+    if (input.legalEntityId) query = query.where('l.legal_entity_id', '=', input.legalEntityId);
+    return (await query.execute()).map((r) => ({
+      lineId: r.id,
+      legalEntityId: r.legal_entity_id,
+      platform: r.platform,
+      orderNo: r.order_no,
+      orderedAt: r.ordered_at === null ? null : String(r.ordered_at).slice(0, 10),
+      sku: r.sku,
+      itemName: r.item_name,
+      quantity: plainQuantity(String(r.quantity)),
+      stage: r.stage,
+    }));
+  },
+});
+
+export const marketplaceAssign = defineCommand({
+  name: 'finance.marketplace.assign',
+  input: zMarketplaceAssign,
+  // Records the stock an order line moved, through the item a person chose, and teaches the SKU: no posting (R1).
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: IMPORTERS,
+  target: (input) => ({ type: 'finance.stock_item', id: input.itemId }),
+  handler: async (ctx, input): Promise<{ moves: number }> => {
+    await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.lineId}`}, 0))`.execute(ctx.trx);
+    const line = await ctx.trx
+      .selectFrom('crove_finance.channel_order_line as l')
+      .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
+      .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.quantity', 'l.stage', 'l.shipped_at', 'o.platform', 'o.ordered_at'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.id', '=', input.lineId)
+      .executeTakeFirst();
+    if (!line) throw new DomainError('MARKETPLACE_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng đơn hàng này');
+    const item = await loadItem(ctx, input.itemId);
+    if (!item.active) throw new DomainError('STOCK_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng, hãy bật lại trước khi gán');
+    if (item.legal_entity_id !== line.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và đơn hàng thuộc hai pháp nhân khác nhau');
+    if (!MOVES_STOCK.has(line.stage)) throw new DomainError('MARKETPLACE_LINE_NOT_SHIPPED', 409, 'Dòng này chưa giao nên chưa có gì để ghi kho');
+    const shipped = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).where('order_move', '=', 'ship').executeTakeFirst();
+    if (shipped) throw new DomainError('MARKETPLACE_LINE_ASSIGNED', 409, 'Dòng này đã được gán cho một mặt hàng');
+    const today = await databaseToday(ctx.trx);
+    const moves = await moveLineStock(
+      ctx,
+      { id: line.id, stage: line.stage, quantity: String(line.quantity), shippedAt: line.shipped_at === null ? null : String(line.shipped_at).slice(0, 10), orderedAt: line.ordered_at === null ? null : String(line.ordered_at).slice(0, 10), sku: line.sku },
+      new Map(),
+      today,
+      { itemId: item.id, factor: input.factor },
+    );
+    if (moves === 0) throw new DomainError('MARKETPLACE_LINE_NO_QUANTITY', 422, 'Số lượng của dòng này không ghi kho được');
+    let taught = false;
+    if (input.teach && line.sku && normalizeAlias(line.sku) !== '') {
+      await ctx.run('finance.stock_alias.teach', { itemId: item.id, source: line.platform, key: line.sku, factor: input.factor });
+      taught = true;
+    }
+    ctx.audit({ lineId: line.id, itemId: item.id, platform: line.platform, moves, taught });
+    return { moves };
+  },
+});
+
+export const marketplaceCommands = [marketplaceConfirm, marketplaceReject, marketplaceAssign];
+export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders, marketplaceUnassigned];

@@ -4,6 +4,7 @@
 // never reads the report's buyer columns.
 import { z } from 'zod';
 import { zId, zLocalDate } from './schemas.ts';
+import { zStockFactor } from './stock.ts';
 
 export const MARKETPLACE_PLATFORM_KEYS = ['shopee', 'tiktok_shop', 'lazada'] as const;
 export const MARKETPLACE_STAGE_KEYS = ['placed', 'shipped', 'completed', 'cancelled', 'returned', 'unknown'] as const;
@@ -90,3 +91,23 @@ export const zMarketplaceOrder = z.object({
   ),
 });
 export type MarketplaceOrder = z.infer<typeof zMarketplaceOrder>;
+
+// The order lines that move stock (shipped, completed or returned) and name no item yet: they wait in "Chưa gán hàng" for a person to assign them (finance.marketplace.assign), which also
+// teaches the SKU for the platform so the next report moves it by itself.
+export const zMarketplaceUnassignedInput = z.strictObject({ legalEntityId: zId.optional(), limit: z.number().int().min(1).max(500).optional() });
+export const zMarketplaceUnassignedLine = z.object({
+  lineId: zId,
+  legalEntityId: zId,
+  platform: zMarketplacePlatform,
+  orderNo: z.string(),
+  orderedAt: zLocalDate.nullable(),
+  sku: z.string().nullable(),
+  itemName: z.string().nullable(),
+  quantity: z.string(),
+  stage: zMarketplaceStage,
+});
+export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLine>;
+
+// factor: how many of the item's units one unit of the report's is (a carton of 12). teach: remember the SKU for this platform and item.
+export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(true) });
+export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;

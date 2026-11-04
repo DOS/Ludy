@@ -199,6 +199,44 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, item)).toBe('0');
   });
 
+  it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    const first = await read(o, report(row('U1', 'Đang giao', 'LẠ-7', 3), row('U2', 'Hoàn thành', 'QC-1', 1), row('U3', 'Chờ xác nhận', 'LẠ-8', 1)));
+    await confirm(o, first.fileId);
+    // The orders: every role reads them, newest first, with the item a shipped line moved and no buyer value.
+    const orders = await query<Array<{ orderNo: string; platform: string; stage: string; lines: Array<{ id: string; sku: string | null; itemCode: string | null; stage: string }> }>>(o, 'finance.marketplace.orders', {}, o.viewer);
+    expect(orders.map((r) => [r.orderNo, r.stage]).sort()).toEqual([
+      ['U1', 'shipped'],
+      ['U2', 'completed'],
+      ['U3', 'placed'],
+    ]);
+    expect(orders.find((r) => r.orderNo === 'U2')?.lines[0]).toMatchObject({ sku: 'QC-1', itemCode: 'QC-1' });
+    for (const value of Object.values(BUYER)) expect(JSON.stringify(orders)).not.toContain(value);
+    expect((await query<unknown[]>(o, 'finance.marketplace.orders', { stage: 'placed' }, o.viewer)).length).toBe(1);
+    expect((await query<unknown[]>(o, 'finance.marketplace.orders', { platform: 'lazada' }, o.viewer)).length).toBe(0);
+    // The shipped line that names no item waits; the placed one is not listed (it moves nothing yet).
+    const open = await query<Array<{ lineId: string; sku: string | null; stage: string; quantity: string }>>(o, 'finance.marketplace.unassigned', {}, o.viewer);
+    expect(open.map((l) => [l.sku, l.stage, l.quantity])).toEqual([['LẠ-7', 'shipped', '3']]);
+    const line = open[0]?.lineId as string;
+    await expect(execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item, factor: '2' }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // A line that has not shipped has nothing to move.
+    const placed = orders.find((r) => r.orderNo === 'U3')?.lines[0]?.id as string;
+    await expect(execute(o, 'finance.marketplace.assign', { lineId: placed, itemId: item }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_NOT_SHIPPED' });
+    // Assigned at a factor of two bottles to the unit: three units are six, taken out once, and the SKU is taught for the platform.
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item, factor: '2' }, o.member)).toEqual({ moves: 1 });
+    expect(await onHand(o, item)).toBe('-7');
+    expect(await query(o, 'finance.marketplace.unassigned', {}, o.member)).toEqual([]);
+    await expect(execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_ASSIGNED' });
+    // Next time the same SKU moves by itself, at the same factor.
+    const second = await read(o, report(row('U4', 'Đang giao', 'LẠ-7', 1)));
+    expect(await confirm(o, second.fileId)).toMatchObject({ newLines: 1, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('-9');
+    // A return of the assigned line brings back what the shipment took, through the same item.
+    expect(await confirm(o, (await read(o, report(row('U1', 'Đã hoàn trả', 'LẠ-7', 3)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('-3');
+  });
+
   it('applies the factor of a name taught for the platform, and reads a SKU as an item code without case', async () => {
     const o = await org();
     const item = await makeItem(o, 'Nuoc-Chai', { unit: 'chai' });

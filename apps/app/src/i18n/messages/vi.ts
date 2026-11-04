@@ -8177,11 +8177,13 @@ export const vi = {
         save: 'Lưu bản nháp hóa đơn bán ra',
       },
       marketplace: {
+        assign: 'Gán dòng đơn hàng của sàn cho mặt hàng',
         confirm: 'Nhập báo cáo đơn hàng của sàn',
         preview: 'Xem trước báo cáo đơn hàng của sàn',
         reject: 'Bỏ qua báo cáo đơn hàng của sàn',
         orders: 'Xem các đơn hàng của sàn',
         staged: 'Xem các báo cáo đơn hàng chờ nhập',
+        unassigned: 'Xem các dòng đơn hàng của sàn chưa gán mặt hàng',
       },
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
