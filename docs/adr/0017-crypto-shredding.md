@@ -199,3 +199,12 @@ From now on only. Nothing already written is rewritten by this decision. What st
 5. Q1 to Q3 follow when they are answered, each as its own issue.
 
 With review feedback moved to #1959, this build seals no product column: step 2 keeps values out instead. The mechanism ships tested through a test-only command whose audit fact is sealed (the tests' own manifests, never registered in a deployment). Its first product use is #1959, or an answer to Q1 or Q2.
+
+## Addendum 2026-11-04: the build of #2640 (first product use: payroll)
+
+The mechanism is built in #2640, for the payroll identity number and bank account (ADR-0046 point 4). Where it is smaller than this ADR, or differs, by the Platform PO's review:
+
+- **Wrapping key.** The subject key is wrapped under a key derived with HKDF-SHA256 from the credential key (info `crove.subject.v1|wrap`), and from `CREDENTIAL_KEY_PREVIOUS` the same way, not under the credential key itself. The AAD is as section 3; every wrap and every seal draws a fresh 96-bit nonce.
+- **Definers.** `subject_key_ensure`, `subject_key_wrapped` and `subject_key_shred`, EXECUTE for the API login only. **The worker gets no definer**: sealing and opening happen only in a user's command or query (`ctx.seal`, `ctx.open`), never in a job, an agent or the system context. `ensure` takes the subject's id from the runtime (the wrap binds it) and answers the stored row when two seals race.
+- **Not built, left for later:** the reseal pass of section 7 (a follow-up issue, P1, which blocks switching payroll on in Ludy Cloud; until it lands `CREDENTIAL_KEY_PREVIOUS` must stay set while any subject key names the old key), the archive-store refs and `kernel-shred-replay` of section 8, and the #923 erase wired to shred `contact:` and `member:` refs (no value is sealed under them yet). A new `employee:<id>` subject kind comes with payroll.
+- **The org purge** deletes the org's subject keys with the org. A backup taken before an erasure holds the wrapped key until it is deleted (30 days for a nightly run, about four weeks for WAL), recorded in the personal data runbook.

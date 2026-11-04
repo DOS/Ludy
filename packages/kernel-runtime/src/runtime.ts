@@ -3,6 +3,7 @@
 import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Transaction } from 'kysely';
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
+import { SubjectVault, parseSealed } from './subject-vault.ts';
 import type { z } from 'zod';
 import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
 import { DomainError, toDomainError } from './errors.ts';
@@ -294,7 +295,22 @@ export interface QueryContext {
   installed(module: string): boolean;
   // A registered command's risk, access and agent approvers, or null when none is registered under that name.
   command(name: string): CommandInfo | null;
+  // Opens a personal value sealed under its subject's key (ctx.seal, ADR-0017): the value, or { erased: true } when the subject's key was
+  // shredded. Only a user's query opens one (an agent, the system and the worker never do), and the deployment needs its credential key
+  // (BROKER_NOT_CONFIGURED otherwise). `place` is where the value is stored (`<schema>.<table>.<column>`): a value read from another place does not open.
+  open(sealed: string, place: string): Promise<string | ErasedValue>;
+  // open() for many values at once: one key lookup for all of them, in the order given.
+  openMany(items: readonly { sealed: string; place: string }[]): Promise<(string | ErasedValue)[]>;
 }
+
+// What a sealed value reads as once its subject's key is gone.
+export interface ErasedValue {
+  erased: true;
+}
+
+// A subject reference (`employee:<id>`) and the place of a sealed value (`crove_hr.payroll_employee.national_id`).
+const SUBJECT_REF = /^[a-z_]+:[A-Za-z0-9._-]{1,128}$/;
+const SEAL_PLACE = /^[a-z][a-z0-9_.:-]{2,120}$/;
 
 export interface CommandContext extends QueryContext {
   commandId: string;
@@ -317,6 +333,10 @@ export interface CommandContext extends QueryContext {
   // user let in by role or by an org-wide permission passes for any. Such a command run by an entity holder that names
   // no entity fails once its handler returns. A no-op for every other command.
   permissionEntity(legalEntityId: string): void;
+  // Seals a personal value under the key of the subject `ref` (`employee:<id>`, `member:<user_id>`, `contact:<hmac>`), creating the key when the subject has
+  // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
+  // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
+  seal(ref: string, place: string, value: string): Promise<string>;
   // Runs another registered command in the same transaction (audited on its own row).
   run<O>(name: string, input: unknown, options?: { proposalId?: string }): Promise<O>;
   // Runs another registered command as run() does, inside a savepoint, for a command that goes on when that one is
@@ -483,6 +503,9 @@ export interface RuntimeOptions {
   // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's crove_kernel.enter_context, until step 2
   // of #1822 requires the key.
   contextTokenKey?: string | null;
+  // Seals personal values under per-subject keys (ctx.seal, ctx.open; ADR-0017, #2640): the wrap keys derive from the credential key
+  // (apps/kernel serverRuntime). Absent, null: both answer 503 BROKER_NOT_CONFIGURED.
+  subjectVault?: SubjectVault | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -1131,6 +1154,8 @@ export class Runtime {
   readonly #manifestTables: ReadonlyMap<string, Readonly<Record<string, string>>>;
   // The context token key (RuntimeOptions.contextTokenKey), or null: never logged, never in an error.
   readonly #contextTokenKey: Buffer | null;
+  // The subject vault (RuntimeOptions.subjectVault), or null.
+  readonly #subjectVault: SubjectVault | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
   readonly #cells: CellResolver;
   readonly #sessions: SessionStatusSource | null;
@@ -1168,6 +1193,7 @@ export class Runtime {
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
+    this.#subjectVault = options.subjectVault ?? null;
     Object.freeze(this);
   }
 
@@ -1310,6 +1336,8 @@ export class Runtime {
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
       command: (name) => this.commandInfo(name),
+      open: async (sealed, place) => (await this.openSealed(trx, orgId, actor, [{ sealed, place }]))[0] as string | ErasedValue,
+      openMany: (items) => this.openSealed(trx, orgId, actor, items),
     };
   }
 
@@ -1845,6 +1873,11 @@ export class Runtime {
               .execute(),
           );
         }),
+      seal: (ref, place, value) =>
+        pending(async () => {
+          refuseClosed('ctx.seal');
+          return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
+        }),
       permissionEntity: (legalEntityId) => {
         refuseClosed('ctx.permissionEntity');
         if (permissionEntities === null) return;
@@ -2342,6 +2375,61 @@ export class Runtime {
       });
       if (contextTaint(tallyError)) logInternal(`execute ${name} refusal tally`, tallyError, { orgId, actor });
       return true;
+    }
+  }
+
+  // The vault of the subject keys for an actor that may use it: a signed-in user, in a deployment with its credential key.
+  private subjectVaultFor(actor: Actor): SubjectVault {
+    if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng được niêm phong hoặc mở dữ liệu cá nhân', { rule: 'subject_user_only' });
+    if (!this.#subjectVault) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+    return this.#subjectVault;
+  }
+
+  // ctx.seal: the subject's key (created from a fresh data key when the org has none under `ref`; two concurrent seals converge on the stored one), then the value.
+  private async sealSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, place: string, value: string): Promise<string> {
+    const vault = this.subjectVaultFor(actor);
+    if (!SUBJECT_REF.test(ref)) throw new Error(`ctx.seal: ${ref} is not a subject reference`);
+    if (!SEAL_PLACE.test(place)) throw new Error(`ctx.seal: ${place} is not a place`);
+    const subjectId = uuidv7();
+    const fresh = vault.newDataKey(orgId, subjectId);
+    let dataKey = fresh.dataKey;
+    try {
+      const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`
+        SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key_ensure(${subjectId}::uuid, ${ref}, ${fresh.keyId}, ${fresh.wrapped})`.execute(trx);
+      const stored = rows[0];
+      if (!stored) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      if (stored.id !== subjectId) {
+        dataKey.fill(0);
+        dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
+      }
+      return vault.seal(dataKey, orgId, stored.id, place, value);
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+
+  // ctx.open and ctx.openMany: one lookup of the wrapped keys of the subjects named, then the values opened here. A subject with no key row reads as erased.
+  private async openSealed(trx: Transaction<Database>, orgId: string, actor: Actor, items: readonly { sealed: string; place: string }[]): Promise<(string | ErasedValue)[]> {
+    const vault = this.subjectVaultFor(actor);
+    const parsed = items.map((item) => {
+      const p = parseSealed(item.sealed);
+      if (!p) throw new Error('ctx.open: not a sealed value');
+      if (!SEAL_PLACE.test(item.place)) throw new Error(`ctx.open: ${item.place} is not a place`);
+      return { ...p, place: item.place };
+    });
+    const ids = [...new Set(parsed.map((p) => p.subjectId))];
+    const keys = new Map<string, Buffer>();
+    try {
+      if (ids.length > 0) {
+        const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key_wrapped(${ids}::uuid[])`.execute(trx);
+        for (const row of rows) keys.set(row.id, vault.unwrap(orgId, row.id, row.key_id, row.wrapped_key));
+      }
+      return parsed.map((p) => {
+        const dataKey = keys.get(p.subjectId);
+        return dataKey ? vault.open(dataKey, orgId, p.subjectId, p.place, p.packed) : { erased: true as const };
+      });
+    } finally {
+      for (const key of keys.values()) key.fill(0);
     }
   }
 

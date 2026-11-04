@@ -107,4 +107,4 @@ docker compose run --rm --no-deps worker org-purge <org slug or id> --reason "Ow
 | `crove_kernel.legal_entity` | **Kept** | Same as the tenant row | The companies and branches the books are kept for (#1278): name, kind, tax code and parent, the same public business data as the tenant row. The ledger will reference them (ADR-0021), and no role deletes one. |
 | AI payloads, DLQ payloads, eval store | Delete by org prefix | After the export | Plan §7.9 step 3 (none of these stores exist in the open-source core yet). |
 
-Crypto-shredding of personal data inside immutable stores (plan §4.10, `subject_key`) is not built yet; until it is, personal data in kept records stays as long as the records do.
+Crypto-shredding of personal data inside immutable stores (plan §4.10, ADR-0017, #2640) is built for values sealed under a person's key (`crove_kernel.subject_key`, no column sealed until payroll ships): the org purge deletes the org's subject keys with the org (`crove_kernel.subject_key` is in its first list), so a purged org's sealed values become unreadable. Personal data in kept records that is not sealed stays as long as the records do.

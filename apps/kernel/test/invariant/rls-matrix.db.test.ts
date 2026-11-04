@@ -67,7 +67,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
-  'crove_kernel.subject_key',
   'crove_notes.link',
   'crove_notes.note',
 ]);
