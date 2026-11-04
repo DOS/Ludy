@@ -39,3 +39,11 @@ The survey of the plan (section 4) found one first-party public specification (M
 3. **One aggregator (SePay, Pay2S) as the only integration.** Rejected as the first path: it adds a second company between Ludy and the seller's provider, its documented operations are narrower (SePay has no cancel; Pay2S no adjust or replace), and its terms are a new dependency. It stays possible as one adapter behind the same port for a seller whose provider has no API of its own.
 4. **The seller's USB token signing on the client.** Rejected: needs a person and a PC for each invoice, which is not a server path; a provider with HSM or remote signing is the supported route.
 5. **Webhook-first status.** Not possible: no provider found documents callbacks. If one does, its adapter adds a receiver behind the same `status` contract, and the poll stays as the safety net.
+
+## Addendum (#2502, slice A1): who approves the issue
+
+Point 3 names "owners, admins and members who may approve sales". Slice A1 builds the narrower rule the Platform PO ruled on, and records the difference here:
+
+- **Owners and admins approve** a request to issue a sales e-invoice (`finance.einvoice.issue`, R3), with a fresh second factor, the four-eyes rule and the one-person path of policy P10: where no other owner or admin exists, the one who asked may approve their own request. A **member may request but not approve**; the request waits in the Inbox for an owner or admin.
+- **Member approval of sales stays out.** Letting a member approve the issue of a legal document would be a change to who approves what, which is an invariant of the approval policy and an owner decision; it goes through the two-step route if the owner ever wants it. Until then the narrower rule is the one the database enforces (`einvoice_submit` checks the role of the approving user, and the approval policy version 5 lists the command for owners and admins).
+- The approval is the legal act. The job that follows runs as the system and is R2: it sends what the approval named (the draft's content hash is part of the request, and a change after the request is refused) and never decides anything. The posting of the sale from the signed XML waits for an ordinary approval until the matching rule of point 3 lands as its own build step.
