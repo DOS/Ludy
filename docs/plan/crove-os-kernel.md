@@ -2177,7 +2177,7 @@ Legend: S = security, F = feasibility and agent DX, O = operations and cost. Sev
 | S27 | Salted PII hashes are reversible; stores missed in deletion; PDPL applies early | M | **Accepted:** <ul><li>crypto-shredding and a deletion map;</li><li>PDPL gate before the first external tenant; accounting/tax legal stays a Finance GA gate.</li></ul> | §4.10, §7.9, §13 |
 | S28 | Tenant data leaking into evals and git | M | **Accepted** | §8.7 |
 | S29 | Realtime hints reach people who left, exposing legal entities and seq | m | **Accepted** with a different design: no Realtime in v0; SSE re-filtered periodically (built in #69: ids only, no sequence, session and membership re-checked every 30 s) | §9 |
-| S30 / S31 | `ctx.query` doesn't re-check permissions / sensitive read audit fails open | m | **Accepted** | §4.4 |
+| S30 / S31 | `ctx.query` doesn't re-check permissions / sensitive read audit fails open | m | **Accepted**; the second part is closed by #2639: a `sensitive` query commits its audit row before it reads and fails closed, and `ctx.query` refuses it (`SENSITIVE_ONLY`) | §4.4 |
 | S32 | UNIQUE(source) blocks re-posting; `period_balance`; voided numbers | m | **Accepted** | §13 2a |
 | S33 | Anyone with `service_role` could make others a Crove admin | m | **Accepted:** privileged permissions come only from Crove `role_assignment`; DOS-23 (2026-10-13: DOS's `service_role` doesn't touch the Crove DB; DOS roles map only to `member`; DOS-23 replaced by DOS-27 events) | §4.6 |
 | F1 | The agent DB loop rests on wrong assumptions | B | **Accepted:** a local DB via SessionStart is the main loop; G3 and Preview are only safety nets | §3.4, §10 |

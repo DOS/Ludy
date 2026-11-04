@@ -13,7 +13,7 @@ import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, extractAndPropose, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -53,6 +53,7 @@ import { withJobLogContext } from './log.ts';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
+import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
@@ -64,6 +65,7 @@ import { CALENDAR_SYNC_SWEEP_MS, runCalendarWriteBack, syncCalendars, type Calen
 import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhook.ts';
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
+import type { EInvoiceProvider } from '@crove/einvoice';
 import type { AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
@@ -336,6 +338,9 @@ export function sendExtractJob(boss: JobSender, row: OutboxRow, priority: number
 
 // The daily pull of every bank feed (ADR-0039), early morning in Vietnam; a sync retries a few times, then dead-letters.
 const BANK_FEED_SYNC_CRON = '30 5 * * *';
+// The sweep that queues the e-invoices whose time to ask has come (finance.einvoice_due), every minute; the relay queues a draft the moment it is approved.
+const EINVOICE_SWEEP_CRON = '* * * * *';
+const EINVOICE_ISSUE_RETRY_LIMIT = 3;
 const BANK_FEED_SYNC_RETRY_LIMIT = 3;
 // The hourly sweep of every ad account (ADR-0040, #2217), at ten past; a sync retries a few times, then dead-letters. The
 // sweep also prunes the old sync runs (an indexed delete of what is past 90 days, nothing most hours).
@@ -401,6 +406,8 @@ export interface WorkerDeps {
     publishers: Readonly<Record<string, Publisher>>;
     refreshers?: Readonly<Record<string, Refresher>>;
     bankFeeds?: Readonly<Record<string, BankFeedProvider>>;
+    // The e-invoice provider adapters this deployment offers (ADR-0044, #2502), by adapter id; the worker alone uses them, with the credentials it opens.
+    einvoiceProviders?: Readonly<Record<string, EInvoiceProvider>>;
     // The ad platform adapters this deployment offers (ADR-0040, #2217), by provider id: read-only, the worker alone uses
     // them, with the credentials it opens.
     adPlatforms?: Readonly<Record<string, AdPlatform>>;
@@ -704,6 +711,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
       // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
       // named an account no one had mapped yet) comes with its version and is read the same way.
+      // A marketplace order report (#2515) is tried first: its headers are told apart by words only the platforms use, and a bank statement reader would take any sheet with a date and an
+      // amount. A file that is no order report goes on to the bank statement reader as before.
+      const report = await readMarketplaceFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (report.handled) {
+        console.log(`[extract] file ${fileId}: marketplace order report`);
+        return;
+      }
       const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
       if (statement.handled) {
         console.log(`[extract] file ${fileId}: bank statement`);
@@ -1117,6 +1131,39 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.bankFeedSync, BANK_FEED_SYNC_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
   } else {
     await dropCron(QUEUES.bankFeedSync);
+  }
+
+  // E-invoices (ADR-0044, #2502): a draft a person's approved issue moved to `submitting`, queued by the relay below, and, every minute, every draft whose time to ask
+  // the provider has come (or whose signed XML is still to store). The adapters are the deployment's; with none on, nothing is queued and nothing is sent.
+  const einvoiceProviders = deps.channels?.einvoiceProviders;
+  const einvoiceBroker = deps.channels?.broker;
+  if (finance && einvoiceProviders && einvoiceBroker && Object.keys(einvoiceProviders).length > 0) {
+    await boss.work<EInvoiceIssueJob | { sweep: true }>(QUEUES.einvoiceIssue, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        let after: { orgId: string; draftId: string } | null = null;
+        for (;;) {
+          const page = await einvoiceDue(deps.workerDb, after);
+          for (const row of page) {
+            await boss.send(QUEUES.einvoiceIssue, { orgId: row.orgId, draftId: row.draftId } satisfies EInvoiceIssueJob, {
+              singletonKey: jobKey(row.orgId, QUEUES.einvoiceIssue, row.draftId),
+              retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
+              retryDelay: 30,
+              retryBackoff: true,
+            });
+          }
+          const last = page.at(-1);
+          if (!last || page.length < EINVOICE_DUE_PAGE) break;
+          after = { orgId: last.orgId, draftId: last.draftId };
+        }
+        return;
+      }
+      const done = await runEInvoiceIssue({ runtime: deps.runtime, broker: einvoiceBroker, store: deps.store, providers: einvoiceProviders }, job.data);
+      console.log(`[einvoice] draft ${job.data.draftId.slice(0, 8)}: ${done.action}, ${done.state}`);
+    });
+    await boss.schedule(QUEUES.einvoiceIssue, EINVOICE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once' });
+  } else {
+    await dropCron(QUEUES.einvoiceIssue);
   }
 
   // Ads (ADR-0040, #2217): an ad account's sync, queued by the relay below when an account is linked or a refresh is asked
@@ -2089,6 +2136,16 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 await boss.send(QUEUES.bankFeedSync, { orgId: row.org_id, connectionId } satisfies BankFeedSyncJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.bankFeedSync, connectionId),
                   retryLimit: BANK_FEED_SYNC_RETRY_LIMIT,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A sales e-invoice approved for issue (ADR-0044, #2502): its job begins the call, sends or asks, and records the answer. Ids only in the job.
+              if (finance && deps.channels?.einvoiceProviders && Object.keys(deps.channels.einvoiceProviders).length > 0 && row.type === 'finance.einvoice_issue_requested') {
+                const draftId = String(row.payload.draft_id);
+                await boss.send(QUEUES.einvoiceIssue, { orgId: row.org_id, draftId } satisfies EInvoiceIssueJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.einvoiceIssue, draftId),
+                  retryLimit: EINVOICE_ISSUE_RETRY_LIMIT,
                   retryDelay: 30,
                   retryBackoff: true,
                 });

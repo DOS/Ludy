@@ -64,9 +64,9 @@ export const ADMIN_ITEMS: readonly NavItem[] = MODULES.flatMap(([module, screens
 
 // The groups that carry a heading in the menu: the Engage app's three areas of work and the accounting groups after its
 // first. The reports group is one item, and the first group of the other apps is named by the app itself.
-export type HeadedGroupId = 'tax' | 'parties' | 'inbox' | 'sales' | 'marketing';
+export type HeadedGroupId = 'inbox' | 'sales' | 'marketing';
 export function isHeadedGroup(id: AppGroupId): id is HeadedGroupId {
-  return id === 'tax' || id === 'parties' || id === 'inbox' || id === 'sales' || id === 'marketing';
+  return id === 'inbox' || id === 'sales' || id === 'marketing';
 }
 
 // Every screen of the menus, apps first, for the command palette (Ctrl K searches all of them, whatever the app).

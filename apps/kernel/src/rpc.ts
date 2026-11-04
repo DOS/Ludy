@@ -2262,7 +2262,51 @@ export function createRpcHandler(
         check: os.einvoice.drafts.check.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice_draft.check', input, { actor, orgId }))),
         save: os.einvoice.drafts.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.save', input, { actor, orgId }))),
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
+        issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
       },
+    },
+    marketplace: {
+      staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
+      preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
+      confirm: os.marketplace.confirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      reject: os.marketplace.reject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      orders: os.marketplace.orders.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.orders', input ?? {}, { actor, orgId }))),
+      unassigned: os.marketplace.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.marketplace.assign.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+    },
+    stock: {
+      items: {
+        list: os.stock.items.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_item.list', input ?? {}, { actor, orgId }))),
+        save: os.stock.items.save.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.save', input, { actor, orgId }))),
+        setActive: os.stock.items.setActive.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_item.set_active', input, { actor, orgId }))),
+      },
+      aliases: {
+        teach: os.stock.aliases.teach.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.teach', input, { actor, orgId }))),
+        forget: os.stock.aliases.forget.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_alias.forget', input, { actor, orgId }))),
+      },
+      moves: {
+        list: os.stock.moves.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_move.list', input, { actor, orgId }))),
+        reverse: os.stock.moves.reverse.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_move.reverse', input, { actor, orgId }))),
+      },
+      unassigned: os.stock.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.stock.assign.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.assign', input, { actor, orgId }))),
+      report: os.stock.report.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.report', input, { actor, orgId }))),
+      card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
