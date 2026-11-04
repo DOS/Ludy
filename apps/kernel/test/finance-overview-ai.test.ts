@@ -16,6 +16,7 @@ const OVERVIEW: FinanceOverview = {
   to: '2026-11-04',
   previousFrom: '2026-09-06',
   previousTo: '2026-10-05',
+  comparison: 'days',
   empty: false,
   cash: figure('11800000', '10000000'),
   profit: figure('1500000', '2500000'),

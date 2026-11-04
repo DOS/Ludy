@@ -29,7 +29,7 @@ test('the Kế toán app opens on Tổng quan, with every card at 0 for a new or
     ] as const) {
       const cardBox = page.getByTestId(`overview-card-${card}`);
       await expect(cardBox).toContainText(label);
-      await expect(cardBox).toContainText('Kỳ trước:');
+      await expect(cardBox).toContainText('30 ngày trước đó:');
     }
     await expect(page.getByText('Chưa có số liệu để hiển thị')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Tải hóa đơn lên' })).toBeVisible();

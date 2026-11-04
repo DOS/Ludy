@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // The Tổng quan of the Kế toán app (#2631) as pure functions. The four cards read the lines the financial statements read (B01-DNN's 110 cash on 111 and 112,
 // 131 receivables and 311 payables at the period's end; B02-DNN's 50 profit before tax for the period), so each card equals its statement line for the same
-// entity and dates. The comparison is the period of the same length right before, and the balance cards the same balance at that period's last day.
+// entity and dates. The comparison is like with like (see overviewPeriods), and the balance cards the same balance at that period's last day.
 // Money is decimal strings and decimal.js throughout.
 import { money, type DecimalValue } from '@crove/l10n-vn';
-import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@crove/kernel-contract';
+import { OVERVIEW_EXPENSE_GROUPS, OVERVIEW_MONTHS, type FinanceOverview, type OverviewComparison, type OverviewExpense, type OverviewFigure, type OverviewMonth, type OverviewRange } from '@crove/kernel-contract';
 import { canonical } from './money.ts';
 import { B01_LINES, B02_LINES, buildB01, buildB02, type Report, type ReportEntry } from './tt133-reports.ts';
 
@@ -13,6 +13,7 @@ export interface OverviewPeriods {
   to: string;
   previousFrom: string;
   previousTo: string;
+  comparison: OverviewComparison;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -29,23 +30,47 @@ const addDays = (date: string, days: number): string => format(parse(date) + day
 const daysBetween = (from: string, to: string): number => Math.round((parse(to) - parse(from)) / DAY_MS) + 1;
 const lastDayOf = (year: number, month: number): string => format(Date.UTC(year, month, 0));
 
-// The period a picker choice stands for on `today` (YYYY-MM-DD, Vietnam), both days included, and the period of the same length right before it. The last 30
-// days end today; this month, this quarter and this year run from their first day to today; last month is the whole month before.
+// The first day of the month `delta` months from the one of `date`, and the same day number there, kept inside that month (31 March is 28 or 29 February).
+function monthsBack(date: string, delta: number): { first: string; sameDay: string } {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  const index = year * 12 + (month - 1) - delta;
+  const y = Math.floor(index / 12);
+  const m = (index % 12) + 1;
+  const last = Number(lastDayOf(y, m).slice(8));
+  return { first: `${y}-${pad(m)}-01`, sameDay: `${y}-${pad(m)}-${pad(Math.min(day, last))}` };
+}
+
+// The period a picker choice stands for on `today` (YYYY-MM-DD, Vietnam), both days included, and the one it is compared with: like with like, up to the same
+// day. The last 30 days are compared with the 30 days before; this month so far with last month up to the same day number (kept inside its last day); last
+// month with the month before it; this quarter so far with the previous quarter for the same number of days (kept inside it); this year so far with the same
+// dates of last year (29 February is 28 February there).
 export function overviewPeriods(range: OverviewRange, today: string): OverviewPeriods {
-  const [year, month] = today.split('-').map(Number) as [number, number];
-  let from: string;
-  let to = today;
-  if (range === 'last_30_days') from = addDays(today, -29);
-  else if (range === 'this_month') from = `${year}-${pad(month)}-01`;
-  else if (range === 'last_month') {
+  const [year, month, day] = today.split('-').map(Number) as [number, number, number];
+  if (range === 'last_30_days') {
+    const from = addDays(today, -29);
+    const previousTo = addDays(from, -1);
+    return { from, to: today, previousFrom: addDays(previousTo, -29), previousTo, comparison: 'days' };
+  }
+  if (range === 'this_month') {
+    const before = monthsBack(today, 1);
+    return { from: `${year}-${pad(month)}-01`, to: today, previousFrom: before.first, previousTo: before.sameDay, comparison: 'month' };
+  }
+  if (range === 'last_month') {
     const [y, m] = month === 1 ? [year - 1, 12] : [year, month - 1];
-    from = `${y}-${pad(m)}-01`;
-    to = lastDayOf(y, m);
-  } else if (range === 'this_quarter') from = `${year}-${pad(Math.floor((month - 1) / 3) * 3 + 1)}-01`;
-  else from = `${year}-01-01`;
-  const length = daysBetween(from, to);
-  const previousTo = addDays(from, -1);
-  return { from, to, previousFrom: addDays(previousTo, -(length - 1)), previousTo };
+    const before = monthsBack(`${y}-${pad(m)}-01`, 1);
+    return { from: `${y}-${pad(m)}-01`, to: lastDayOf(y, m), previousFrom: before.first, previousTo: lastDayOf(Number(before.first.slice(0, 4)), Number(before.first.slice(5, 7))), comparison: 'month' };
+  }
+  if (range === 'this_quarter') {
+    const first = Math.floor((month - 1) / 3) * 3 + 1;
+    const from = `${year}-${pad(first)}-01`;
+    const before = monthsBack(from, 3);
+    const beforeLast = Number(before.first.slice(5, 7)) + 2;
+    const quarterEnd = lastDayOf(Number(before.first.slice(0, 4)), beforeLast);
+    const sameDays = addDays(before.first, daysBetween(from, today) - 1);
+    return { from, to: today, previousFrom: before.first, previousTo: sameDays > quarterEnd ? quarterEnd : sameDays, comparison: 'quarter' };
+  }
+  const sameDate = `${year - 1}-${pad(month)}-${pad(Math.min(day, Number(lastDayOf(year - 1, month).slice(8))))}`;
+  return { from: `${year}-01-01`, to: today, previousFrom: `${year - 1}-01-01`, previousTo: sameDate, comparison: 'year' };
 }
 
 // The months the results chart shows: the OVERVIEW_MONTHS ending with the month of `to`, oldest first, each with its first and last day.

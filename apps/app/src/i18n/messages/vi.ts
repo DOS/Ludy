@@ -265,10 +265,13 @@ export const vi = {
   // The Tổng quan of the Kế toán app (#2631): the first screen of the app.
   financeOverview: {
     title: 'Tổng quan',
-    subtitle: 'Tiền, lợi nhuận, công nợ phải thu và phải trả của pháp nhân đang chọn, so với kỳ liền trước.',
+    subtitle: 'Tiền, lợi nhuận, công nợ phải thu và phải trả của pháp nhân đang chọn, so với kỳ cùng loại trước đó.',
     retry: 'Thử lại',
     period: 'Kỳ này: {from} đến {to}. Kỳ so sánh: {previousFrom} đến {previousTo}.',
-    before: 'Kỳ trước: {amount}',
+    before: '{label}: {amount}',
+    against: { days: 'so với 30 ngày trước đó', month: 'so với tháng trước', quarter: 'so với quý trước', year: 'so với cùng kỳ năm trước' },
+    was: { days: '30 ngày trước đó', month: 'tháng trước', quarter: 'quý trước', year: 'cùng kỳ năm trước' },
+    wasCap: { days: '30 ngày trước đó', month: 'Tháng trước', quarter: 'Quý trước', year: 'Cùng kỳ năm trước' },
     unmapped: '{count, plural, other {# số dư}} của kỳ chưa nằm trong dòng nào của báo cáo kết quả, nên lợi nhuận có thể chưa đủ. Xem ở Sổ sách, Báo cáo tài chính.',
     range: {
       label: 'Kỳ xem',
@@ -285,11 +288,11 @@ export const vi = {
       payables: { label: 'Nợ nhà cung cấp', open: 'Mở Nhà cung cấp' },
     },
     change: {
-      up: 'Tăng {percent}% so với kỳ trước',
-      down: 'Giảm {percent}% so với kỳ trước',
-      flat: 'Không đổi so với kỳ trước',
-      upNew: 'Tăng {amount}, kỳ trước bằng 0',
-      downNew: 'Giảm {amount}, kỳ trước bằng 0',
+      up: 'Tăng {percent}% {against}',
+      down: 'Giảm {percent}% {against}',
+      flat: 'Không đổi {against}',
+      upNew: 'Tăng {amount}, {was} bằng 0',
+      downNew: 'Giảm {amount}, {was} bằng 0',
     },
     explain: {
       title: '{finance} nhận xét',

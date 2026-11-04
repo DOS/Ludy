@@ -9,6 +9,12 @@ export const OVERVIEW_RANGES = ['last_30_days', 'this_month', 'last_month', 'thi
 export const zOverviewRange = z.enum(OVERVIEW_RANGES);
 export type OverviewRange = z.infer<typeof zOverviewRange>;
 
+// What the period is compared with, as the screen says it: the 30 days before, last month (also for this month so far), last quarter (for this quarter so far) or
+// the same dates of last year (for this year so far).
+export const OVERVIEW_COMPARISONS = ['days', 'month', 'quarter', 'year'] as const;
+export const zOverviewComparison = z.enum(OVERVIEW_COMPARISONS);
+export type OverviewComparison = z.infer<typeof zOverviewComparison>;
+
 // The account groups the expense mix reads (B02's cost of goods sold, selling, administration, financial and other expenses), largest first on the screen.
 export const OVERVIEW_EXPENSE_GROUPS = ['632', '641', '642', '635', '811'] as const;
 export const zOverviewExpenseGroup = z.enum(OVERVIEW_EXPENSE_GROUPS);
@@ -40,6 +46,7 @@ export const zFinanceOverview = z.object({
   to: zLocalDate,
   previousFrom: zLocalDate,
   previousTo: zLocalDate,
+  comparison: zOverviewComparison,
   // True while the entity's books hold no entry at all: the screen then points at the first steps instead of empty charts.
   empty: z.boolean(),
   // Cash 111 + 112 at the period's end (B01 line 110), profit before tax for the period (B02 line 50), receivables from customers (B01 line 131) and

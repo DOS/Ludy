@@ -267,10 +267,13 @@ export const en = {
   // The Tổng quan of the Kế toán app (#2631): the first screen of the app.
   financeOverview: {
     title: 'Overview',
-    subtitle: 'Cash, profit, receivables and payables of the chosen legal entity, against the period right before.',
+    subtitle: 'Cash, profit, receivables and payables of the chosen legal entity, against the period of the same kind before.',
     retry: 'Try again',
     period: 'This period: {from} to {to}. Compared with: {previousFrom} to {previousTo}.',
-    before: 'Period before: {amount}',
+    before: '{label}: {amount}',
+    against: { days: 'on the 30 days before', month: 'on last month', quarter: 'on last quarter', year: 'on the same period last year' },
+    was: { days: 'the 30 days before', month: 'last month', quarter: 'last quarter', year: 'the same period last year' },
+    wasCap: { days: 'The 30 days before', month: 'Last month', quarter: 'Last quarter', year: 'Same period last year' },
     unmapped: '{count, plural, one {# balance} other {# balances}} of the period sit in no line of the income statement, so the profit may be incomplete. See Ledger, Financial statements.',
     range: {
       label: 'Period',
@@ -287,11 +290,11 @@ export const en = {
       payables: { label: 'Owed to suppliers', open: 'Open Vendors' },
     },
     change: {
-      up: 'Up {percent}% on the period before',
-      down: 'Down {percent}% on the period before',
-      flat: 'Unchanged on the period before',
-      upNew: 'Up {amount}, the period before was 0',
-      downNew: 'Down {amount}, the period before was 0',
+      up: 'Up {percent}% {against}',
+      down: 'Down {percent}% {against}',
+      flat: 'Unchanged {against}',
+      upNew: 'Up {amount}, {was} was 0',
+      downNew: 'Down {amount}, {was} was 0',
     },
     explain: {
       title: '{finance} notes',

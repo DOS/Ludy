@@ -15,20 +15,49 @@ const entry = (entryDate: string, lines: Array<[string, string, string]>, revers
 });
 
 describe('overviewPeriods', () => {
-  it('ends the last 30 days today and compares them with the 30 days right before', () => {
-    expect(overviewPeriods('last_30_days', '2026-11-04')).toEqual({ from: '2026-10-06', to: '2026-11-04', previousFrom: '2026-09-06', previousTo: '2026-10-05' });
+  const periods = (range: Parameters<typeof overviewPeriods>[0], today: string) => {
+    const p = overviewPeriods(range, today);
+    return [p.from, p.to, p.previousFrom, p.previousTo, p.comparison];
+  };
+
+  it('compares the last 30 days with the 30 days right before', () => {
+    expect(periods('last_30_days', '2026-11-04')).toEqual(['2026-10-06', '2026-11-04', '2026-09-06', '2026-10-05', 'days']);
+    expect(periods('last_30_days', '2028-03-01')).toEqual(['2028-02-01', '2028-03-01', '2028-01-02', '2028-01-31', 'days']);
   });
 
-  it('runs this month, this quarter and this year from their first day to today, against the same number of days before', () => {
-    expect(overviewPeriods('this_month', '2026-11-04')).toEqual({ from: '2026-11-01', to: '2026-11-04', previousFrom: '2026-10-28', previousTo: '2026-10-31' });
-    expect(overviewPeriods('this_quarter', '2026-11-04')).toEqual({ from: '2026-10-01', to: '2026-11-04', previousFrom: '2026-08-27', previousTo: '2026-09-30' });
-    expect(overviewPeriods('this_year', '2026-03-01')).toEqual({ from: '2026-01-01', to: '2026-03-01', previousFrom: '2025-11-02', previousTo: '2025-12-31' });
+  it('compares this month so far with last month up to the same day number, kept inside last month', () => {
+    expect(periods('this_month', '2026-11-04')).toEqual(['2026-11-01', '2026-11-04', '2026-10-01', '2026-10-04', 'month']);
+    expect(periods('this_month', '2026-03-31')).toEqual(['2026-03-01', '2026-03-31', '2026-02-01', '2026-02-28', 'month']);
+    expect(periods('this_month', '2028-03-31')).toEqual(['2028-03-01', '2028-03-31', '2028-02-01', '2028-02-29', 'month']);
+    expect(periods('this_month', '2028-03-29')).toEqual(['2028-03-01', '2028-03-29', '2028-02-01', '2028-02-29', 'month']);
+    expect(periods('this_month', '2026-05-31')).toEqual(['2026-05-01', '2026-05-31', '2026-04-01', '2026-04-30', 'month']);
+    expect(periods('this_month', '2027-01-15')).toEqual(['2027-01-01', '2027-01-15', '2026-12-01', '2026-12-15', 'month']);
+    expect(periods('this_month', '2026-03-01')).toEqual(['2026-03-01', '2026-03-01', '2026-02-01', '2026-02-01', 'month']);
   });
 
-  it('takes last month whole, also across a year end and in a leap year', () => {
-    expect(overviewPeriods('last_month', '2026-11-04')).toMatchObject({ from: '2026-10-01', to: '2026-10-31' });
-    expect(overviewPeriods('last_month', '2027-01-15')).toEqual({ from: '2026-12-01', to: '2026-12-31', previousFrom: '2026-10-31', previousTo: '2026-11-30' });
-    expect(overviewPeriods('last_month', '2028-03-02')).toMatchObject({ from: '2028-02-01', to: '2028-02-29' });
+  it('takes last month whole, against the month before it, across a year end and in a leap year', () => {
+    expect(periods('last_month', '2026-11-04')).toEqual(['2026-10-01', '2026-10-31', '2026-09-01', '2026-09-30', 'month']);
+    expect(periods('last_month', '2027-01-15')).toEqual(['2026-12-01', '2026-12-31', '2026-11-01', '2026-11-30', 'month']);
+    expect(periods('last_month', '2026-02-10')).toEqual(['2026-01-01', '2026-01-31', '2025-12-01', '2025-12-31', 'month']);
+    expect(periods('last_month', '2028-03-02')).toEqual(['2028-02-01', '2028-02-29', '2028-01-01', '2028-01-31', 'month']);
+    expect(periods('last_month', '2028-04-02')).toEqual(['2028-03-01', '2028-03-31', '2028-02-01', '2028-02-29', 'month']);
+  });
+
+  it('compares this quarter so far with the previous quarter for the same number of days, kept inside it', () => {
+    expect(periods('this_quarter', '2026-11-04')).toEqual(['2026-10-01', '2026-11-04', '2026-07-01', '2026-08-04', 'quarter']);
+    expect(periods('this_quarter', '2026-10-01')).toEqual(['2026-10-01', '2026-10-01', '2026-07-01', '2026-07-01', 'quarter']);
+    expect(periods('this_quarter', '2026-02-15')).toEqual(['2026-01-01', '2026-02-15', '2025-10-01', '2025-11-15', 'quarter']);
+    // The last day of Q2 is day 91, and Q1 has 90 days (91 in a leap year): the comparison stops at the end of Q1.
+    expect(periods('this_quarter', '2026-06-30')).toEqual(['2026-04-01', '2026-06-30', '2026-01-01', '2026-03-31', 'quarter']);
+    expect(periods('this_quarter', '2028-06-30')).toEqual(['2028-04-01', '2028-06-30', '2028-01-01', '2028-03-31', 'quarter']);
+    expect(periods('this_quarter', '2026-12-31')).toEqual(['2026-10-01', '2026-12-31', '2026-07-01', '2026-09-30', 'quarter']);
+  });
+
+  it('compares this year so far with the same dates of last year, 29 February included', () => {
+    expect(periods('this_year', '2026-11-04')).toEqual(['2026-01-01', '2026-11-04', '2025-01-01', '2025-11-04', 'year']);
+    expect(periods('this_year', '2028-02-29')).toEqual(['2028-01-01', '2028-02-29', '2027-01-01', '2027-02-28', 'year']);
+    expect(periods('this_year', '2029-02-28')).toEqual(['2029-01-01', '2029-02-28', '2028-01-01', '2028-02-28', 'year']);
+    expect(periods('this_year', '2026-01-01')).toEqual(['2026-01-01', '2026-01-01', '2025-01-01', '2025-01-01', 'year']);
   });
 });
 

@@ -163,13 +163,13 @@ suite('the Kế toán Tổng quan (#2631)', () => {
 
   it('equals the statements for the same entity and dates: last month is October, read as B01 at its last day and B02 for it', async () => {
     const view = await overview('last_month');
-    expect(view).toMatchObject({ from: '2026-10-01', to: '2026-10-31', previousFrom: '2026-08-31', previousTo: '2026-09-30' });
+    expect(view).toMatchObject({ from: '2026-10-01', to: '2026-10-31', previousFrom: '2026-09-01', previousTo: '2026-09-30', comparison: 'month' });
     const october = await statements('2026-10');
     expect(view.cash.amount).toBe(lineOf(october.b01.lines, '110'));
     expect(view.receivables.amount).toBe(lineOf(october.b01.lines, '131'));
     expect(view.payables.amount).toBe(lineOf(october.b01.lines, '311'));
     expect(view.profit.amount).toBe(lineOf(october.b02.lines, '50'));
-    // The period before holds nothing on 31 August, so it is September's own statements.
+    // The period before is the month before it: September's own statements.
     const september = await statements('2026-09');
     expect(view.cash.previous).toBe(lineOf(september.b01.lines, '110'));
     expect(view.receivables.previous).toBe(lineOf(september.b01.lines, '131'));
@@ -177,12 +177,14 @@ suite('the Kế toán Tổng quan (#2631)', () => {
     expect(view.profit.previous).toBe(lineOf(september.b02.lines, '50'));
   });
 
-  it('knows the period picker: this month, this quarter and this year run to today', async () => {
-    expect(await overview('this_month')).toMatchObject({ from: '2026-11-01', to: TODAY, previousFrom: '2026-10-28', previousTo: '2026-10-31' });
-    expect(await overview('this_quarter')).toMatchObject({ from: '2026-10-01', to: TODAY, previousFrom: '2026-08-27', previousTo: '2026-09-30' });
+  it('knows the period picker: this month, this quarter and this year run to today, each against the same days of the one before', async () => {
+    expect(await overview('this_month')).toMatchObject({ from: '2026-11-01', to: TODAY, previousFrom: '2026-10-01', previousTo: '2026-10-04', comparison: 'month' });
+    expect(await overview('this_quarter')).toMatchObject({ from: '2026-10-01', to: TODAY, previousFrom: '2026-07-01', previousTo: '2026-08-04', comparison: 'quarter' });
     const year = await overview('this_year');
-    expect(year).toMatchObject({ from: '2026-01-01', to: TODAY });
-    expect(year.profit.amount).toBe('9300000');
+    expect(year).toMatchObject({ from: '2026-01-01', to: TODAY, previousFrom: '2025-01-01', previousTo: '2025-11-04', comparison: 'year' });
+    expect(year.profit).toMatchObject({ amount: '9300000', previous: '0' });
+    // The 30 days are compared with the 30 days before.
+    expect(await overview('last_30_days')).toMatchObject({ comparison: 'days' });
   });
 
   it('is open to every role of the org and reads nothing across orgs', async () => {

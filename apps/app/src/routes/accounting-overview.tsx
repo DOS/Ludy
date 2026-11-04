@@ -7,7 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useParams } from '@tanstack/react-router';
 import { useLocale, useTranslations } from 'use-intl';
-import { OVERVIEW_RANGES, type FinanceOverview, type OverviewFigure, type OverviewRange } from '@crove/kernel-contract';
+import { OVERVIEW_RANGES, type FinanceOverview, type OverviewComparison, type OverviewFigure, type OverviewRange } from '@crove/kernel-contract';
 import { buttonVariants } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
@@ -31,19 +31,22 @@ function CardLink({ card, slug, label }: { card: OverviewCard; slug: string; lab
   return <Link to="/o/$slug/vendors" params={{ slug }} className={className}>{label}</Link>;
 }
 
-function FigureCard({ card, figure, slug }: { card: OverviewCard; figure: OverviewFigure; slug: string }) {
+function FigureCard({ card, figure, slug, comparison }: { card: OverviewCard; figure: OverviewFigure; slug: string; comparison: OverviewComparison }) {
   const t = useTranslations('financeOverview');
   const f = useFormat();
   const direction = directionOf(figure);
   const percent = percentSize(figure);
   const tone = TONE_CLASS[toneOf(card, direction)];
-  // The change in words: the size in percent of the period before, or the amount when the period before was 0.
+  // The change in words: the size in percent of the period it is compared with (named: the 30 days before, last month, last quarter, the same period last year), or the
+  // amount when that period was 0.
+  const against = t(`against.${comparison}`);
+  const was = t(`was.${comparison}`);
   const change =
     direction === 'flat'
-      ? t('change.flat')
+      ? t('change.flat', { against })
       : percent !== null
-        ? t(`change.${direction}`, { percent: f.decimal(percent, 1) })
-        : t(`change.${direction}New`, { amount: f.money(figure.change.replace(/^-/, '')) });
+        ? t(`change.${direction}`, { percent: f.decimal(percent, 1), against })
+        : t(`change.${direction}New`, { amount: f.money(figure.change.replace(/^-/, '')), was });
   return (
     <Card className="flex h-full flex-col gap-1.5 p-4" data-testid={`overview-card-${card}`}>
       <span className="text-sm font-medium text-muted-foreground">{t(`cards.${card}.label`)}</span>
@@ -52,7 +55,7 @@ function FigureCard({ card, figure, slug }: { card: OverviewCard; figure: Overvi
         <span aria-hidden="true">{ARROW[direction]} </span>
         {change}
       </span>
-      <span className="text-xs text-subtle-foreground">{t('before', { amount: f.money(figure.previous) })}</span>
+      <span className="text-xs text-subtle-foreground">{t('before', { label: t(`wasCap.${comparison}`), amount: f.money(figure.previous) })}</span>
       <CardLink card={card} slug={slug} label={t(`cards.${card}.open`)} />
     </Card>
   );
@@ -254,7 +257,7 @@ export function AccountingOverviewPage() {
           <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {OVERVIEW_CARDS.map((card) => (
               <li key={card}>
-                <FigureCard card={card} figure={data[card]} slug={slug} />
+                <FigureCard card={card} figure={data[card]} slug={slug} comparison={data.comparison} />
               </li>
             ))}
           </ul>
