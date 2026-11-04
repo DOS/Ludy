@@ -22,8 +22,8 @@
 --   invite_for_user holds on their row, and role_assignment_check must still pass; any failure refuses the whole accept
 --   with INVITE_ROLE_STALE (never the base role alone). The assignment is written as the inviter, as in #1281. That a
 --   module of the role is still installed is checked by the accept command (the database does not know the modules).
--- invite_peek (re-created with a role_key column, same arguments and grants): the invitee sees which role they get, never
---   what permissions it carries: the call is reachable before membership.
+-- invite_role_key (new, next to the unchanged invite_peek): the invitee sees which role they get, never what permissions
+--   it carries: the call is reachable before membership. Same token and email checks as invite_peek; API login role only.
 SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_kernel.member_invite ADD COLUMN IF NOT EXISTS role_key text;
@@ -236,28 +236,23 @@ BEGIN
 END $$;
 
 -- ---------------------------------------------------------------------------
--- What the invitee sees: the role's key, never its permissions
+-- What the invitee sees: the role's key, never its permissions. A function of its own, because invite_peek's result
+-- shape cannot change: every migration file is re-applied after the later ones (packages/db migrate.db.test.ts), and an
+-- older file's CREATE OR REPLACE of invite_peek would meet a different result type.
 -- ---------------------------------------------------------------------------
--- crove:contract adr=0049
-DROP FUNCTION IF EXISTS crove_kernel.invite_peek(uuid, text, boolean);
-CREATE FUNCTION crove_kernel.invite_peek(p_user_id uuid, p_token text, p_upstream boolean)
-RETURNS TABLE (org_name text, role text, role_key text, invited_by_email text, invited_by_name text, expires_at timestamptz)
-LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+CREATE OR REPLACE FUNCTION crove_kernel.invite_role_key(p_user_id uuid, p_token text, p_upstream boolean)
+RETURNS text LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_invite crove_kernel.member_invite := crove_kernel.invite_for_user(p_user_id, p_token, false, p_upstream);
 BEGIN
-  RETURN QUERY
-  SELECT t.name, v_invite.role, v_invite.role_key, u.email, u.display_name, v_invite.expires_at
-  FROM crove_kernel.tenant t
-  JOIN crove_kernel.user_account u ON u.id = v_invite.invited_by
-  WHERE t.org_id = v_invite.org_id;
+  RETURN v_invite.role_key;
 END $$;
 
 -- ---------------------------------------------------------------------------
--- EXECUTE matrix: the guards and the check callable by nobody; invite_accept and invite_peek only by the API login role.
+-- EXECUTE matrix: the guards and the check callable by nobody; invite_accept, invite_peek and invite_role_key only by the API login role.
 -- ---------------------------------------------------------------------------
 REVOKE ALL ON FUNCTION crove_kernel.member_invite_role_guard(), crove_kernel.member_invite_guard()
 FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-REVOKE ALL ON FUNCTION crove_kernel.invite_accept(uuid, text, boolean), crove_kernel.invite_peek(uuid, text, boolean)
+REVOKE ALL ON FUNCTION crove_kernel.invite_accept(uuid, text, boolean), crove_kernel.invite_role_key(uuid, text, boolean)
 FROM PUBLIC, crove_tenant, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_kernel.invite_accept(uuid, text, boolean), crove_kernel.invite_peek(uuid, text, boolean) TO crove_app;
+GRANT EXECUTE ON FUNCTION crove_kernel.invite_accept(uuid, text, boolean), crove_kernel.invite_role_key(uuid, text, boolean) TO crove_app;

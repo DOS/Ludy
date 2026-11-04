@@ -205,10 +205,11 @@ suite('invites that carry a department role on PostgreSQL (#2611)', () => {
       { id: created.inviteId, role: 'member', roleKey: 'finance.chief_accountant', legalEntityIds: null },
     ]);
     expect(await auditOf(o.orgId, 'kernel.member.invite.create', o.owner.id)).toMatchObject({ invite_id: created.inviteId, role: 'member', role_key: 'finance.chief_accountant' });
-    // The preview names the role's key and nothing of what it grants (it is reachable before membership).
+    // The preview names the role's key and nothing of what it grants (it is reachable before membership); invite_peek itself is unchanged.
     const peek = await admin(async (c) => (await c.query<Record<string, unknown>>('SELECT * FROM crove_kernel.invite_peek($1::uuid, $2, false)', [invitee.id, tokenOf(created)])).rows[0]);
-    expect(peek).toMatchObject({ role: 'member', role_key: 'finance.chief_accountant' });
-    expect(Object.keys(peek ?? {}).sort()).toEqual(['expires_at', 'invited_by_email', 'invited_by_name', 'org_name', 'role', 'role_key']);
+    expect(Object.keys(peek ?? {}).sort()).toEqual(['expires_at', 'invited_by_email', 'invited_by_name', 'org_name', 'role']);
+    const roleKey = await admin(async (c) => (await c.query<Record<string, unknown>>('SELECT * FROM crove_kernel.invite_role_key($1::uuid, $2, false)', [invitee.id, tokenOf(created)])).rows[0]);
+    expect(roleKey).toEqual({ invite_role_key: 'finance.chief_accountant' });
     await expect(accept(tokenOf(created), invitee.id)).resolves.toMatchObject({ orgId: o.orgId, role: 'member' });
     expect(await assignments(o.orgId, invitee.id)).toEqual([{ role_key: 'finance.chief_accountant', legal_entity_id: null, granted_by: o.owner.id }]);
     expect(await auditOf(o.orgId, 'kernel.member.invite.accept', invitee.id)).toMatchObject({ role_key: 'finance.chief_accountant', role_applied: true, role: 'member' });
@@ -298,6 +299,7 @@ suite('invites that carry a department role on PostgreSQL (#2611)', () => {
     const functions = [
       'crove_kernel.invite_accept(uuid,text,boolean)',
       'crove_kernel.invite_peek(uuid,text,boolean)',
+      'crove_kernel.invite_role_key(uuid,text,boolean)',
       'crove_kernel.invite_for_user(uuid,text,boolean,boolean)',
       'crove_kernel.member_invite_guard()',
       'crove_kernel.member_invite_role_guard()',
@@ -314,12 +316,13 @@ suite('invites that carry a department role on PostgreSQL (#2611)', () => {
     expect(matrix).toEqual({
       'crove_kernel.invite_accept(uuid,text,boolean)': ['crove_app'],
       'crove_kernel.invite_peek(uuid,text,boolean)': ['crove_app'],
+      'crove_kernel.invite_role_key(uuid,text,boolean)': ['crove_app'],
       'crove_kernel.invite_for_user(uuid,text,boolean,boolean)': [],
       'crove_kernel.member_invite_guard()': [],
       'crove_kernel.member_invite_role_guard()': [],
       'crove_kernel.role_assignment_check(uuid,uuid,text,text,uuid)': [],
     });
-    // The guard keeps its search_path pinned, and the old three-argument peek is gone (one peek, with the role key).
+    // The guard and the check keep their search_path pinned.
     const catalog = await admin(
       async (c) =>
         (

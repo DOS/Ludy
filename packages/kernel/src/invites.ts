@@ -551,7 +551,8 @@ export async function previewInvite(db: Db, userId: string, token: string, optio
       invited_by_email: string;
       invited_by_name: string | null;
       expires_at: Date;
-    }>`SELECT org_name, role, role_key, invited_by_email, invited_by_name, expires_at FROM crove_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream})`.execute(db);
+    }>`SELECT p.org_name, p.role, crove_kernel.invite_role_key(${userId}::uuid, ${token}, ${options.upstream}) AS role_key, p.invited_by_email, p.invited_by_name, p.expires_at
+      FROM crove_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream}) p`.execute(db);
     const row = rows[0];
     if (!row) throw new DomainError('INVITE_NOT_FOUND', 404, 'Không tìm thấy lời mời, hãy kiểm tra lại liên kết');
     return {
