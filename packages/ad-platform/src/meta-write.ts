@@ -140,7 +140,11 @@ export class MetaAdWriter implements AdWriter {
         const read = await this.graph.call<{ id?: unknown; currency?: unknown }>('GET', account.externalAccountId, { token, params: { fields: 'id,currency' }, timeoutMs: CALL_TIMEOUT_MS });
         // A budget goes to Meta in the minor unit of the account's currency, so an account whose currency is not the one the plan was approved in (it changed since
         // the last sync) must not be given one: a budget in dong read as dollars would be a hundred times off.
-        if (account.currency !== undefined && typeof read.currency === 'string' && read.currency !== account.currency) throw new AdPlatformError('bad_request', 'CURRENCY_MISMATCH');
+        // An answer with no currency is no answer: the check is asked for, so it is refused too (`CURRENCY_UNKNOWN`), never skipped.
+        if (account.currency !== undefined) {
+          if (typeof read.currency !== 'string') throw new AdPlatformError('bad_request', 'CURRENCY_UNKNOWN');
+          if (read.currency !== account.currency) throw new AdPlatformError('bad_request', 'CURRENCY_MISMATCH');
+        }
       }
       return { canRunAds, scopes };
     } catch (error) {

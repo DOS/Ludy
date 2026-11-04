@@ -2136,6 +2136,44 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(w.received).toEqual([]);
           });
 
+          it('fails a launch whose flight is already over in the account\'s zone before any call: nothing is created and its commitment is released', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Hết hạn trước khi chạy');
+            // The days pass while it waits (the ledger's guard is off for the statement: the plan and its days never change otherwise): the flight ended last month.
+            await admin(async (c) => {
+              await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+              try {
+                await c.query(`UPDATE crove_ads.ad_launch SET start_on = start_on - 30, end_on = end_on - 30, commit_until = commit_until - 30 WHERE org_id = $1 AND id = $2`, [orgId, launch.id]);
+              } finally {
+                await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+              }
+            });
+            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'flight_over' });
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'failed', stop_reason: 'flight_over', commit_until: null });
+            expect(w.received).toEqual([]);
+            expect(await calls(launch.id)).toEqual([]);
+          });
+
+          it('does not arm another create when the owner stops while a reconcile looks: the stop conditions are read again before the call, and the next begin stops the launch', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Dừng khi đang đối soát');
+            w.inject({ level: 'campaign', when: 'before' });
+            expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            await age(launch.id, 61);
+            const writers = [{ provider: 'sandboxwrite_ads', objectives: ['traffic', 'engagement', 'messenger'], currencies: null, media: true }];
+            const options = { actor: SYSTEM, orgId };
+            const first = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: launch.id, writers }, options);
+            expect(first).toMatchObject({ action: 'reconcile', step: 'campaign' });
+            // The owner switches writing off while the lookup runs; the lookup finds nothing, and the job still holds the token it opened.
+            expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+            const missing = { launchId: launch.id, callKey: first.callKey, phase: 'reconcile', result: { kind: 'missing' } };
+            expect(await worker.execute('ads.launch.record', missing, options)).toMatchObject({ recorded: true, next: 'stop' });
+            expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'ambiguous', calls: 1 });
+            expect(w.received).toEqual(['campaign']);
+            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'switch_off' });
+            expect(w.received).toEqual(['campaign']);
+          });
+
           it('cancels a queued launch before its first call when a cap was lowered since the approval, and releases its commitment', async () => {
             const w = new SandboxAdWriter();
             const { account, launch } = await queued('Hạ hạn mức trước khi chạy', { dailyBudget: '150000' });

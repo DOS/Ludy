@@ -173,6 +173,11 @@ describe('MetaAdWriter.verify', () => {
     const { writer: w, calls } = writer([granted, { body: { id: 'act_1001', currency: 'USD' } }]);
     const error = await rejection(w.verify(SECRET, { externalAccountId: 'act_1001', currency: 'VND' }));
     expect([error.kind, error.code]).toEqual(['bad_request', 'CURRENCY_MISMATCH']);
+    // An answer with no currency is refused too when the caller asked for the check: it is never skipped.
+    for (const body of [{ id: 'act_1001' }, { id: 'act_1001', currency: null }, { id: 'act_1001', currency: 840 }]) {
+      const missing = await rejection(writer([granted, { body }]).writer.verify(SECRET, { externalAccountId: 'act_1001', currency: 'VND' }));
+      expect([missing.kind, missing.code], JSON.stringify(body)).toEqual(['bad_request', 'CURRENCY_UNKNOWN']);
+    }
     // The same currency passes, and a caller that names none is not asked.
     expect(await writer([granted, { body: { id: 'act_1001', currency: 'VND' } }]).writer.verify(SECRET, { externalAccountId: 'act_1001', currency: 'VND' })).toMatchObject({ canRunAds: true });
     expect(await writer([granted, { body: { id: 'act_1001', currency: 'USD' } }]).writer.verify(SECRET, { externalAccountId: 'act_1001' })).toMatchObject({ canRunAds: true });

@@ -260,10 +260,10 @@ describe('a draft that is frozen', () => {
     expect(html).not.toContain('Save the draft');
     expect(html).not.toContain('Ask for approval');
   });
-
+  it('approved says that nothing is spent yet', () => {
   it('approved says that nothing is sent to the ad platform yet', () => {
     const html = render(builder({ draft: draft({ status: 'approved' }) }));
-    expect(html).toContain('Approved. Nothing is sent to the ad platform yet.');
+    expect(html).toContain('Approved. Nothing is spent yet.');
     expect(html).not.toContain('Save the draft');
   });
 
@@ -291,7 +291,7 @@ describe('a draft that is frozen', () => {
   it('an approved plan with a queued launch says its amount is held against the caps and offers owners and admins to cancel it', () => {
     const html = render(builder({ draft: draft({ status: 'approved', launch: launch() }) }));
     expect(html).toContain('is held against your spend caps');
-    expect(html).toContain('Nothing is sent to the ad platform yet.');
+    expect(html).toContain('so nothing is spent yet.');
     expect(html).toContain('Cancel and release the amount');
     // A member sees the note and no button.
     const member = render(builder({ draft: draft({ status: 'approved', launch: launch() }), canManage: false }));
