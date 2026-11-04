@@ -2561,6 +2561,7 @@ suite('ads on PostgreSQL (#2217)', () => {
           // W2-4b (#2296): retry and activation. The activation is the last steps of the approved launch (no second approval): the database refuses the move to live unless the
           // stamped approval, the recorded objects, the settled activations, the switches and the flight hold, and begin re-checks everything before each call.
           describe('retry and activation (W2-4b)', () => {
+            const stopAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
             const activate = (w: SandboxAdWriter, launchId: string) => runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId });
             // A launch whose flight began today, with its objects created and paused (the launch job ran): it waits for the activation.
             const created = async (name: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => {
