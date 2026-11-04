@@ -27,7 +27,7 @@ const suite = ADMIN ? describe : describe.skip;
 const SYSTEM = { type: 'system' as const, component: 'ads' };
 
 // What the member wrote in these tests: none of it may be found in an audit row, an event or a log.
-const BRIEF = 'Quán cà phê Mộc mở thêm chi nhánh ở Quận 3 (bí mật của quán 4242), cần thêm khách vào buổi sáng';
+const BRIEF = 'Quán cà phê Mộc mở thêm chi nhánh ở Quận 3 (bí mật của quán qzk4242), cần thêm khách vào buổi sáng';
 
 suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () => {
   const dbName = `crove_test_ads_campaign_request_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -166,7 +166,7 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     const audits = await rows<{ detail: Record<string, unknown> }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.campaign.draft_request'", [o.orgId]);
     expect(audits.length).toBeGreaterThanOrEqual(4);
     expect(audits.find((a) => a.detail.requestId === asked.id)?.detail).toMatchObject({ requestId: asked.id, adAccountId: o.accountId, objective: 'traffic', briefLength: BRIEF.length });
-    expect(JSON.stringify([events, audits])).not.toContain('4242');
+    expect(JSON.stringify([events, audits])).not.toContain('qzk4242');
     // A member reads their own requests (the brief is theirs); another member's are not in the list; a viewer reads none.
     expect((await requestsOf(o)).map((r) => r.id)).toContain(asked.id);
     expect((await requestsOf(o, o.other)).map((r) => r.id)).not.toContain(asked.id);
@@ -215,7 +215,7 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     expect((await ask(o, o.member)).state).toBe('requested');
     // Nothing the member wrote is in an audit row.
     const audits = await rows<{ detail: unknown }>("SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command IN ('ads.campaign.draft_record', 'ads.campaign.draft_request')", [o.orgId]);
-    expect(JSON.stringify(audits)).not.toContain('4242');
+    expect(JSON.stringify(audits)).not.toContain('qzk4242');
     expect(JSON.stringify(audits)).not.toContain('Cà phê Mộc');
   });
 
@@ -240,7 +240,7 @@ suite('the AI coworker’s campaign drafts on PostgreSQL (ads W1b, #2295)', () =
     expect(await code(one.id)).toMatchObject({ state: 'none', code: 'FIGURES', draftId: null });
     // A model that fails leaves no draft and no error text anywhere; the request can be made again at once.
     const two = await ask(o, o.member);
-    expect(await run(o, model(new Error('boom: the prompt said 4242')).writer, two.id)).toBe('error');
+    expect(await run(o, model(new Error('boom: the prompt said qzk4242')).writer, two.id)).toBe('error');
     expect(await code(two.id)).toMatchObject({ state: 'none', code: 'AI_ERROR' });
     // The per-minute budget of AI drafts of the org (ai-draft-limit.ts): the second request in the minute is refused and the member can ask again.
     const budget = new DraftBudget({ perOrgPerMinute: 1 });
