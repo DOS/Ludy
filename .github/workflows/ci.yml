@@ -44,7 +44,7 @@ jobs:
       # Every module, also one the kernel does not import yet: typecheck and unit tests run over all of them, and the
       # marketing site, which pnpm typecheck covers with its tests (#1629).
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "./modules/*" --filter "@crove/e2e" --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
 
       - name: Lint
         run: pnpm lint
@@ -289,7 +289,7 @@ jobs:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static, knip, web, db]
+    needs: [static, knip, web, db, media-image]
     if: always()
     steps:
       - name: Every part passed
@@ -298,9 +298,10 @@ jobs:
           KNIP: ${{ needs.knip.result }}
           WEB: ${{ needs.web.result }}
           DB: ${{ needs.db.result }}
+          MEDIA: ${{ needs.media-image.result }}
         run: |
-          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB"
-          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success
+          echo "static: $STATIC, knip: $KNIP, marketing site: $WEB, database tests: $DB, media: $MEDIA"
+          test "$STATIC" = success && test "$KNIP" = success && test "$WEB" = success && test "$DB" = success && test "$MEDIA" = success
 
   # The migrations and the definer hardening guard (External-tenant gate T17) on the Supabase Postgres image that
   # hosted Supabase runs (issue #179): its extensions, its roles and the supautils hooks, with migrations run as
@@ -515,6 +516,70 @@ jobs:
         run: |
           docker logs crove-extract || true
           docker rm -f crove-extract || true
+          docker network rm "$NET" || true
+
+  # The crove-media image as compose runs it (AI Meeting Notes M3, #2577, ADR-0047): audio and video are
+  # normalized, probed and split inside the container with ffmpeg, the service refuses an environment outside
+  # its allowlist, and nothing inside it reaches the outside.
+  media-image:
+    name: crove-media image (process in the container, no egress)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      IMAGE: crove-media:ci
+      NET: crove-media-ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build the crove-media image
+        run: docker build -f apps/media/Dockerfile -t "$IMAGE" .
+
+      - name: Refuses to start with a variable outside its allowlist, whatever NODE_ENV says
+        run: |
+          for node_env in production development test ''; do
+            if docker run --rm -e NODE_ENV="$node_env" -e EXTRA_SETTING=1 "$IMAGE" > refused.txt 2>&1; then
+              cat refused.txt; echo "::error::crove-media started with EXTRA_SETTING (NODE_ENV='$node_env')"; exit 1
+            fi
+            cat refused.txt
+            grep -q 'remove EXTRA_SETTING' refused.txt
+          done
+
+      - name: Start it as compose does, on an internal network
+        run: |
+          docker network create --internal "$NET"
+          docker run -d --name crove-media --network "$NET" --read-only --tmpfs /tmp:size=64m,noexec,nosuid \
+            --tmpfs /data/scratch:rw,noexec,nosuid,uid=1000,gid=1000,mode=0700,size=512m --cap-drop ALL \
+            --security-opt no-new-privileges:true --memory 2g --memory-swap 2g --cpus 1 --pids-limit 128 "$IMAGE"
+          for i in $(seq 1 60); do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' crove-media)" = healthy ]; then exit 0; fi
+            sleep 1
+          done
+          docker logs crove-media
+          echo "::error::crove-media did not become healthy"; exit 1
+
+      - name: Process media inside the real container
+        run: |
+          docker run --rm --network "$NET" --read-only --tmpfs /tmp:size=64m,noexec,nosuid \
+            --tmpfs /data/scratch:rw,noexec,nosuid,uid=1000,gid=1000,mode=0700,size=512m --cap-drop ALL -v "$PWD/apps/media/test:/t:ro" \
+            --entrypoint node "$IMAGE" /t/container/smoke.mjs http://crove-media:8095
+
+      - name: No egress from the container
+        run: |
+          # In the network namespace of the running service: every probe must fail.
+          docker run --rm --network container:crove-media -v "$PWD/apps/media/test:/t:ro" \
+            --entrypoint node "$IMAGE" /t/container/egress.mjs blocked
+          # Control on an ordinary network: the same probes succeed, so the check above is not vacuous.
+          docker run --rm -v "$PWD/apps/media/test:/t:ro" --entrypoint node "$IMAGE" /t/container/egress.mjs control
+
+      - name: Service log and cleanup
+        if: always()
+        run: |
+          docker logs crove-media || true
+          docker rm -f crove-media || true
           docker network rm "$NET" || true
 
   # External-tenant gate T7 (#108): `api` and `worker` as separate containers of the same image, STORAGE=s3 against

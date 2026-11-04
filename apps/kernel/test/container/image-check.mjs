@@ -208,6 +208,7 @@ for (const name of existsSync(tools) ? readdirSync(tools) : []) {
   if (name !== 'install-git-hooks.mjs') failures.push(`tooling is in the image: ${join(tools, name)}`);
 }
 if (existsSync(join(root, 'apps/extract'))) failures.push('apps/extract is in the kernel image');
+if (existsSync(join(root, 'apps/media'))) failures.push('apps/media is in the kernel image');
 if (!existsSync(join(root, 'apps/app/dist/index.html'))) failures.push('the web app build (apps/app/dist) is missing');
 
 // 4. exceljs carries no build that bundles or loads saxes (dist/ holds the browser and ES5 builds). Whether its
