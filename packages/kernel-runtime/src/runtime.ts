@@ -263,6 +263,14 @@ export interface QueryDef<I = unknown, O = unknown> {
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
   stream?: true;
+  // A read of data the org keeps narrow (a salary, an identity number): the kernel commits an audit row of the read in its
+  // own transaction BEFORE the handler runs, and a failed audit write stops the read (plan section 4.4, "Query"). The
+  // row names the actor, the query and the hash of its input, never a value. It runs only through Runtime.query() and
+  // Runtime.stream(): ctx.query refuses it (SENSITIVE_ONLY), because a nested read could not be audited first.
+  sensitive?: true;
+  // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
+  // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
+  target?: (input: I) => { type: string; id: string } | null;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -483,6 +491,11 @@ export interface RuntimeOptions {
   // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's crove_kernel.enter_context, until step 2
   // of #1822 requires the key.
   contextTokenKey?: string | null;
+  // The key that hashes the input of a sensitive read into its audit row (QueryDef.sensitive): 32 bytes derived from a
+  // deployment secret that lives in the environment, never in the database (the server derives it from CREDENTIAL_KEY, apps/kernel
+  // serverRuntime). The hash is HMAC-SHA256 under it ('h1:<hex>'), so whoever reads the database or an archive cannot confirm a
+  // guessed input (an employee id and a month). Without a key the row stores no hash ('none'), never a plain one.
+  readAuditKey?: Buffer | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -714,6 +727,14 @@ export const STREAM_IDLE_MINUTES = 10;
 // A streamed query answers only through Runtime.stream(), which gives it a sink and a single snapshot.
 function refuseStreamed(def: QueryDef<unknown, unknown>): void {
   if (def.stream) throw new DomainError('STREAM_ONLY', 400, `Truy vấn ${def.name} chỉ đọc theo luồng`);
+}
+
+// The type a sensitive read's audit row names its record by (QueryDef.target): a name, never free text.
+const TARGET_TYPE = /^[a-z][a-z0-9_.]{0,63}$/;
+
+// A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
+function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
+  if (def.sensitive) throw new DomainError('SENSITIVE_ONLY', 400, `Truy vấn ${def.name} chỉ đọc qua cổng có ghi nhật ký`);
 }
 
 function isCellResolver(value: CellResolver | Db): value is CellResolver {
@@ -1131,6 +1152,8 @@ export class Runtime {
   readonly #manifestTables: ReadonlyMap<string, Readonly<Record<string, string>>>;
   // The context token key (RuntimeOptions.contextTokenKey), or null: never logged, never in an error.
   readonly #contextTokenKey: Buffer | null;
+  // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
+  readonly #readAuditKey: Buffer | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
   readonly #cells: CellResolver;
   readonly #sessions: SessionStatusSource | null;
@@ -1168,6 +1191,7 @@ export class Runtime {
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
+    this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
     Object.freeze(this);
   }
 
@@ -1332,6 +1356,7 @@ export class Runtime {
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
+    refuseSensitiveLookup(def);
     const value = (await def.handler(this.queryContext(trx, orgId, actor, entered), input)) as O;
     return { status: 'ok', value };
   }
@@ -1581,6 +1606,8 @@ export class Runtime {
       target: { type: string; id: string } | null;
       proposalId: string | null;
       detail?: Record<string, unknown>;
+      // The hash to store instead of the command input hash: a sensitive read's (sensitiveReadHash).
+      inputHash?: string;
     },
   ): Promise<void> {
     // Only the ok row of the proposal's own command (access 'proposal', which requireProposalState admitted for this
@@ -1604,11 +1631,18 @@ export class Runtime {
         outcome: row.outcome,
         target_type: row.target?.type ?? null,
         target_id: row.target?.id ?? null,
-        input_sha256: this.inputHashOf(row.actor, row.command, row.input),
+        input_sha256: row.inputHash ?? this.inputHashOf(row.actor, row.command, row.input),
         proposal_id: ownsProposal ? proposalId : null,
         detail: JSON.stringify(detail),
       })
       .execute();
+  }
+
+  // The hash a sensitive read's audit row stores for its input: HMAC-SHA256 under the environment's key over the org, the actor
+  // key, the query and the canonical input; 'none' when no key is configured. Never a hash anyone can compute without a secret.
+  private sensitiveReadHash(orgId: string, actor: Actor, query: string, canonical: string): string {
+    if (this.#readAuditKey === null) return 'none';
+    return `h1:${createHmac('sha256', this.#readAuditKey).update(['crove.audit.read.v1', orgId, actorKey(actor), query, canonical].join(' ')).digest('hex')}`;
   }
 
   // The input hash of a command's audit or idempotency row (RuntimeOptions.inputHash): in 'keyed' mode an expression
@@ -2345,13 +2379,74 @@ export class Runtime {
     }
   }
 
+  // The audit row of a sensitive read (QueryDef.sensitive), committed in its own transaction before the read starts. The
+  // transaction checks the session, enters the context and the access of the query first, so a caller who may not read
+  // leaves no row and gets the refusal; then it writes one row (the query's name, the actor, the hash of its input, no
+  // value) and commits. Any failure propagates: the handler never runs without its row.
+  // `onEntered` runs once the context is entered, so a refusal after it is not counted as a pre-membership one (as in query()).
+  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }, onEntered: () => void): Promise<void> {
+    // Only a signed-in person reads sensitive data: an agent or the system never does (the Vy of an org reads no payroll). The
+    // refusal is noted as a security event (system actors are not), and writes no audit row.
+    if (options.actor.type !== 'user') {
+      onEntered();
+      await this.noteSecurityEvent(def.name, options.actor, options.orgId, 'FORBIDDEN');
+      throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    }
+    // The record the read is about, named by a type of a fixed shape: a query's declaration cannot carry free text into the audit row.
+    const target = def.target?.(input) ?? null;
+    if (target !== null && !TARGET_TYPE.test(target.type)) throw new Error(`query ${def.name}: ${target.type} is not a target type`);
+    const db = await this.#cells.resolveTenant(options.orgId);
+    const refused: { by: DomainError | null } = { by: null };
+    try {
+      await db.transaction().execute(async (trx) => {
+        const entered = await this.enter(trx, options.actor, options.orgId);
+        onEntered();
+        try {
+          this.authorizeQuery(def, options.actor, entered);
+        } catch (error) {
+          // Kept to be noted once the transaction is rolled back (below): noting needs a second connection, and a single-cell deployment
+          // shares one pool between the cell and the control plane, so a refused caller would hold one while waiting for another.
+          refused.by = toDomainError(error);
+          throw error;
+        }
+        await this.writeAudit(trx, {
+          orgId: options.orgId,
+          actor: options.actor,
+          command: def.name,
+          commandId: uuidv7(),
+          outcome: 'ok',
+          input: stableStringify(input),
+          target,
+          proposalId: null,
+          // The row says a read was started: the handler may still fail after it.
+          detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
+        });
+      });
+    } catch (error) {
+      // A refusal of an established member is a security event (per caller, sampled), never an audit row; no input value goes with it.
+      if (refused.by !== null) await this.noteSecurityEvent(def.name, options.actor, options.orgId, refused.by.code);
+      throw error;
+    }
+  }
+
   async query<O = unknown>(name: string, rawInput: unknown, options: { actor: Actor; orgId: string }): Promise<O> {
     const def = this.#queries.get(name);
     if (!def) throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    // Whether the audit row of a sensitive read committed: a refusal the read itself then meets is noted too.
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        refuseStreamed(def);
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db.transaction().execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
@@ -2365,6 +2460,7 @@ export class Runtime {
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
       throw domain;
     }
@@ -2382,8 +2478,16 @@ export class Runtime {
     if (!def.stream) throw new DomainError('NOT_STREAMED', 400, `Truy vấn ${name} không đọc theo luồng`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db
         .transaction()
         .setIsolationLevel('repeatable read')
@@ -2401,6 +2505,7 @@ export class Runtime {
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`stream ${name}`, error, options);
       throw domain;
     }
