@@ -19,7 +19,7 @@ ADR-0037 made a private note readable by its author only, and its decision N-6 (
 
 In the technical text below "Vy in company mode" and "Vy in member mode" name these two modes; the code names (`member_vy` and the `member_vy_*` tables) belong to member mode.
 
-What has to be decided is how member mode is built so that it is never more than the member (in the database and in the runtime), never leaks into org-wide outputs or into any sink the write guard does not see, and cannot be turned into a way around the guards company mode lives under. The seven points of the Platform PO's plan on #1677 (comment "Plan for N8, agreed with the Platform PO on 2026-11-03") are decisions 1 to 7; decision 8 sets how a job's output lands for reuse by meetings.
+What has to be decided is how member mode is built so that it is never more than the member (in the database and in the runtime), never leaks into org-wide outputs or into any sink the write guard does not see, and cannot be turned into a way around the guards company mode lives under. The seven points of the Platform PO's plan on #1677 (comment "Plan for N8, agreed with the Platform PO on 2026-11-03") are decisions 1 to 7; decision 8 sets how a job's output lands for reuse by meetings; decision 9 records the owner's decision of 2026-11-04 on where Vy's knowledge and memory come from.
 
 ## Decision drivers
 
@@ -159,6 +159,7 @@ Each stage ships as: (a) an invariant-only PR that the suite can run, merged by 
 - **A5. The `member_vy` agent row and its binding:** `agent.kind` and `member_user_id` exist from stage A, so `enter_agent_context` must refuse a `member_vy` agent from the day the first one exists. Cases: a `member_vy` agent is inserted only with `member_user_id = ctx_user_id()`, the template and no position; `kind` and `member_user_id` are immutable; its `ai_run` is inserted only in that member's context; `position` refuses it as holder. The org chart, agent lists and budget screens leave `member_vy` agents out of the org's positions and counts.
 - **A6. Sinks:** the audit `detail` test with planted text, and tests that the store command writes no activity, outbox payload text, notification text, idempotency text or job payload text.
 - **A7. The static boundary tests** of "The write boundary of stage A" and of decision 4's layer 3.
+- **A8. The provider ports** (decision 9): the fake-provider test (nothing the member cannot read, no other member's memory, `forget` on erasure and removal) and the static test that features import the ports, not a vendor client.
 - **No change** to `notes-private.db.test.ts`, the agents' allowlist or any notes policy in stage A.
 
 **Stage B (background runs):**
@@ -175,6 +176,22 @@ Each stage ships as: (a) an invariant-only PR that the suite can run, merged by 
 A background job (the meetings plan: transcript, summary, decisions, action items) is a member-Vy run like any other, and its output lands in the recorder's own `member_vy_result`, readable by the recorder alone. The recorder publishes it to the meeting's attendees with one click: a command of the recorder, as the recorder, with the exact text on screen, creating the meeting's attendee-visible rows `tainted` with a `source_ref` while the text is unedited (the rule of decision 4). No `member_vy` context writes into a table another member reads, so decision 2's catalog needs no meeting table.
 
 Rejected for the first slice: a "subject-audience sink" rule, where a `member_vy` run may write into its subject's own tables when its inputs were exactly that subject, the sink's readers are exactly the subject's readers, and the rows stay tainted. It changes a line of "Not changed", so the owner would have to sign it off; it can be reopened if one click proves too much friction. ADR-0047 section 3 (PR #2554) is updated by the Frontend PO to point here; this ADR's PR does not touch it.
+
+### 9. Vy's brain sits behind a provider interface; the permission boundary stays in Ludy (owner, 2026-11-04)
+
+Vy's "brain" is a knowledge base of the org's shared data plus a long-term memory per member, with a model on top. The owner decided on 2026-11-04 that a hosted provider may supply it in Ludy Cloud while Ludy itself keeps the permission boundary.
+
+- **A provider interface in `packages/agent`.** Three ports: the model (the OpenAI-compatible endpoint of decision D9, as today), **memory** (read, write and forget a member's long-term entries) and **knowledge** (retrieve passages of shared org data for a question). Features call the ports, never a vendor.
+- **The built-in implementation.** Self-hosted Ludy ships one, with no outside service: memory is `member_vy_memory` (decision 3), and knowledge is a set of declared queries run in the member's own context (decision 1), so a deployment on `docker compose up` has a working Vy. A richer index (search over shared notes, documents and the books) is a later feature of that implementation, still reading only through declared queries.
+- **A hosted provider in Ludy Cloud.** Ludy Cloud may plug in a hosted provider for any of the ports through the private Cloud layer, which is outside this repository (AGENTS.md). Nothing here names it, and nothing in the open-source code depends on it.
+- **The boundary does not move, whatever the provider:**
+  - Retrieval is filtered by the member's own rights **before anything reaches the provider**: the knowledge port is fed by declared queries run in the member's context, so the provider never sees data the member cannot read, and a result that fails decision 3's "member can still read the subject" test is not sent.
+  - One member's memory is never served to another: a provider's memory is keyed by `(org, member)`, and Ludy asks it only for the member the run acts for.
+  - The provider holds no permission logic of its own and Ludy never relies on one: the answer to "may this member see this?" is Ludy's, decided before the call. A provider that keeps an index of org data does so only from text Ludy sent for a member who could read it, and its store is never queried for another member.
+  - Memory writes stay the member's click (decision 3, "Memory is not a channel"), whatever the provider. Output from any port is untrusted and tainted like a model's (decision 5), and the private-read flag counts a provider's memory and knowledge passages as private sources when they came from private data (decision 4).
+  - Deletion reaches the provider: the port has `forget(org, member)` and `forget(source)`, called by member removal, the 30-day purge, source deletion, erasure and the org purge. A provider that cannot delete is not eligible. Its use is metered like any model call (decision 6) and its calls pass the same kill switches.
+  - What leaves the deployment is only what the member's context could read, sent for a feature the member asked for (the operator note of decision 3 applies to a hosted provider too, and the button says so).
+- **Tests (stage A):** a fake provider that records every input it is given. Cases: nothing a member cannot read ever appears in it; another member's memory is never requested; an erasure and a removal call `forget`; with the built-in implementation the same feature tests pass. A static test fails when a feature module imports a vendor client instead of the ports (the pattern of `meter-coverage.test.ts`).
 
 ## Options considered
 
