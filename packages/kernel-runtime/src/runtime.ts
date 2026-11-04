@@ -491,6 +491,11 @@ export interface RuntimeOptions {
   // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's crove_kernel.enter_context, until step 2
   // of #1822 requires the key.
   contextTokenKey?: string | null;
+  // The key that hashes the input of a sensitive read into its audit row (QueryDef.sensitive): 32 bytes derived from a
+  // deployment secret that lives in the environment, never in the database (the server derives it from CREDENTIAL_KEY, apps/kernel
+  // serverRuntime). The hash is HMAC-SHA256 under it ('h1:<hex>'), so whoever reads the database or an archive cannot confirm a
+  // guessed input (an employee id and a month). Without a key the row stores no hash ('none'), never a plain one.
+  readAuditKey?: Buffer | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -1144,6 +1149,8 @@ export class Runtime {
   readonly #manifestTables: ReadonlyMap<string, Readonly<Record<string, string>>>;
   // The context token key (RuntimeOptions.contextTokenKey), or null: never logged, never in an error.
   readonly #contextTokenKey: Buffer | null;
+  // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
+  readonly #readAuditKey: Buffer | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
   readonly #cells: CellResolver;
   readonly #sessions: SessionStatusSource | null;
@@ -1181,6 +1188,7 @@ export class Runtime {
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
+    this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
     Object.freeze(this);
   }
 
@@ -1595,6 +1603,8 @@ export class Runtime {
       target: { type: string; id: string } | null;
       proposalId: string | null;
       detail?: Record<string, unknown>;
+      // The hash to store instead of the command input hash: a sensitive read's (sensitiveReadHash).
+      inputHash?: string;
     },
   ): Promise<void> {
     // Only the ok row of the proposal's own command (access 'proposal', which requireProposalState admitted for this
@@ -1618,11 +1628,18 @@ export class Runtime {
         outcome: row.outcome,
         target_type: row.target?.type ?? null,
         target_id: row.target?.id ?? null,
-        input_sha256: this.inputHashOf(row.actor, row.command, row.input),
+        input_sha256: row.inputHash ?? this.inputHashOf(row.actor, row.command, row.input),
         proposal_id: ownsProposal ? proposalId : null,
         detail: JSON.stringify(detail),
       })
       .execute();
+  }
+
+  // The hash a sensitive read's audit row stores for its input: HMAC-SHA256 under the environment's key over the org, the actor
+  // key, the query and the canonical input; 'none' when no key is configured. Never a hash anyone can compute without a secret.
+  private sensitiveReadHash(orgId: string, actor: Actor, query: string, canonical: string): string {
+    if (this.#readAuditKey === null) return 'none';
+    return `h1:${createHmac('sha256', this.#readAuditKey).update(['crove.audit.read.v1', orgId, actorKey(actor), query, canonical].join(' ')).digest('hex')}`;
   }
 
   // The input hash of a command's audit or idempotency row (RuntimeOptions.inputHash): in 'keyed' mode an expression
@@ -2365,11 +2382,24 @@ export class Runtime {
   // value) and commits. Any failure propagates: the handler never runs without its row.
   // `onEntered` runs once the context is entered, so a refusal after it is not counted as a pre-membership one (as in query()).
   private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }, onEntered: () => void): Promise<void> {
+    // Only a signed-in person reads sensitive data: an agent or the system never does (the Vy of an org reads no payroll). The
+    // refusal is noted as a security event (system actors are not), and writes no audit row.
+    if (options.actor.type !== 'user') {
+      onEntered();
+      await this.noteSecurityEvent(def.name, options.actor, options.orgId, 'FORBIDDEN');
+      throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    }
     const db = await this.#cells.resolveTenant(options.orgId);
     await db.transaction().execute(async (trx) => {
       const entered = await this.enter(trx, options.actor, options.orgId);
       onEntered();
-      this.authorizeQuery(def, options.actor, entered);
+      try {
+        this.authorizeQuery(def, options.actor, entered);
+      } catch (refusal) {
+        // A refusal of an established member is a security event (per caller, sampled), never an audit row; no input value goes with it.
+        await this.noteSecurityEvent(def.name, options.actor, options.orgId, toDomainError(refusal).code);
+        throw refusal;
+      }
       await this.writeAudit(trx, {
         orgId: options.orgId,
         actor: options.actor,
@@ -2381,6 +2411,7 @@ export class Runtime {
         proposalId: null,
         // The row says a read was started: the handler may still fail after it.
         detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+        inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
       });
     });
   }

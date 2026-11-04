@@ -4,7 +4,7 @@
 // who may not read leaves no row, no value reaches the row, and ctx.query refuses the query because a nested read could not be audited first.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its own database.
 // Part of the invariant suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md).
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -29,6 +29,8 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   let pool: pg.Pool;
   let workerPool: pg.Pool;
   let rt: Runtime;
+  // The same queries with no audit key configured.
+  let keylessRt: Runtime;
   let workerRt: Runtime;
   // What each probe handler saw, per org and query: how many audit rows of its own name were already committed, seen from another connection, when it ran.
   const seen = new Map<string, number[]>();
@@ -86,7 +88,6 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
       },
     }),
     gated: probe('t2639.gated', ['owner']),
-    system: probe('t2639.system_read', 'system'),
     streamed: probe('t2639.streamed', ['owner'], {
       stream: true,
       handler: async (_ctx, input, sink) => {
@@ -142,7 +143,8 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     pool = createPool({ connectionString: url.toString(), max: 4 });
     const queries = [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...Object.values(QUERIES)];
     const commands = [...kernelCommands, ...financeCommands];
-    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands, queries });
+    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS, readAuditKey: randomBytes(32) }).register({ commands, queries });
+    keylessRt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands, queries });
     // The system and agent contexts are entered by the worker's login role only.
     url.username = 'crove_worker';
     url.password = 'test-worker-pw';
@@ -177,7 +179,8 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ actor_type: 'user', actor_id: o.owner, outcome: 'ok', detail: { read: 'sensitive', stage: 'before_read' }, target_type: 't2639.record', target_id: recordId });
-    expect(rows[0]?.input_sha256).toMatch(/^(k1:)?[0-9a-f]{64}$/);
+    // An HMAC under the key of the environment, never the plain hash of the input.
+    expect(rows[0]?.input_sha256).toMatch(/^h1:[0-9a-f]{64}$/);
   });
 
   it('writes one row per read, so two reads leave two rows', async () => {
@@ -196,22 +199,41 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
 
   it('leaves no row, and never runs the handler, for a caller the query does not admit', async () => {
     const o = await org();
-    // A member without the role, someone who is not a member at all, and a user on a query only the system may run.
+    // A member without the role, and someone who is not a member at all.
     await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.outsider), orgId: o.orgId })).rejects.toBeInstanceOf(DomainError);
-    await expect(rt.query('t2639.system_read', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(ranCount(o.orgId, 't2639.gated')).toBe(0);
-    expect(ranCount(o.orgId, 't2639.system_read')).toBe(0);
     expect(await committedRows(o.orgId, 't2639.gated')).toBe(0);
-    expect(await committedRows(o.orgId, 't2639.system_read')).toBe(0);
   });
 
-  it('does not note an established member refused by the role as a pre-membership security event', async () => {
+  it('notes a refusal of an established member in security_event (the query and the code only), once, and writes no audit row', async () => {
     const o = await org();
-    const count = () => withAdmin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.security_event')).rows[0]?.n));
-    const before = await count();
-    await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(await count()).toBe(before);
+    const events = (caller: string) =>
+      withAdmin(async (c) => (await c.query<{ command: string; code: string; target_org: string; refusals: string }>('SELECT command, code, target_org, refusals FROM crove_kernel.security_event WHERE caller = $1', [caller])).rows);
+    await expect(rt.query('t2639.gated', { orgId: o.orgId, note: SECRET }, { actor: user(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const rows = await events(`user:${o.member}`);
+    expect(rows).toEqual([{ command: 't2639.gated', code: 'FORBIDDEN', target_org: o.orgId, refusals: '1' }]);
+    expect(JSON.stringify(rows)).not.toContain(SECRET);
+    expect(await committedRows(o.orgId, 't2639.gated')).toBe(0);
+  });
+
+  it('stores no hash, not a plain one, when no audit key is configured', async () => {
+    const o = await org();
+    await keylessRt.query('t2639.owner_read', { orgId: o.orgId, note: 'low entropy' }, { actor: user(o.owner), orgId: o.orgId });
+    const rows = await withAdmin(async (c) => (await c.query<{ input_sha256: string }>("SELECT input_sha256 FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.owner_read'", [o.orgId])).rows);
+    expect(rows).toEqual([{ input_sha256: 'none' }]);
+  });
+
+  it('refuses a sensitive query for an agent and for the system, with no row and no run of the handler', async () => {
+    const o = await org();
+    const agent = await liveAgent(o.orgId, o.owner);
+    await expect(workerRt.query('t2639.owner_read', { orgId: o.orgId }, { actor: agent, orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'sensitive_user_only' } });
+    await expect(workerRt.query('t2639.owner_read', { orgId: o.orgId }, { actor: SYSTEM, orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN', details: { rule: 'sensitive_user_only' } });
+    expect(ranCount(o.orgId, 't2639.owner_read')).toBe(0);
+    expect(await committedRows(o.orgId, 't2639.owner_read')).toBe(0);
+    // The agent's refusal is a security event of its caller; the system's is not noted (system actors never are).
+    const noted = await withAdmin(async (c) => (await c.query<{ code: string }>('SELECT code FROM crove_kernel.security_event WHERE caller = $1 AND command = $2', [`agent:${agent.agentId}`, 't2639.owner_read'])).rows);
+    expect(noted).toEqual([{ code: 'FORBIDDEN' }]);
   });
 
   it('fails closed: with the audit write refused, the handler does not run and nothing is read', async () => {
@@ -230,25 +252,16 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     }
   });
 
-  it('audits a system actor with its component, an agent with its run, and a streamed read as well', async () => {
+  it('writes one audit row when a stream starts, not one per batch', async () => {
     const o = await org();
-    const rows = (name: string) =>
-      withAdmin(async (c) => (await c.query<{ actor_type: string; actor_id: string | null; detail: Record<string, unknown> }>('SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [o.orgId, name])).rows);
-    await workerRt.query('t2639.system_read', { orgId: o.orgId }, { actor: SYSTEM, orgId: o.orgId });
-    // The database stamps the worker process on a system row (workerInstance).
-    const system = await rows('t2639.system_read');
-    expect(system).toHaveLength(1);
-    expect(system[0]).toMatchObject({ actor_type: 'system', detail: { component: 't2639-worker', read: 'sensitive' } });
-    const agent = await liveAgent(o.orgId, o.owner);
-    await workerRt.query('t2639.owner_read', { orgId: o.orgId }, { actor: agent, orgId: o.orgId });
-    const agentRows = await rows('t2639.owner_read');
-    expect(agentRows).toHaveLength(1);
-    expect(agentRows[0]).toMatchObject({ actor_type: 'agent', actor_id: agent.agentId, detail: { agentRun: agent.runId, read: 'sensitive' } });
-    expect(seen.get(key(o.orgId, 't2639.owner_read'))).toEqual([1]);
     const batches: unknown[] = [];
-    await rt.stream('t2639.streamed', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId }, async (b) => void batches.push(b));
+    await rt.stream('t2639.streamed', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId }, async (b) => {
+      batches.push(b);
+      await expect(committedRows(o.orgId, 't2639.streamed')).resolves.toBe(1);
+    });
     expect(batches).toEqual([{ batch: 1 }]);
     expect(seen.get(key(o.orgId, 't2639.streamed'))).toEqual([1]);
+    expect(await committedRows(o.orgId, 't2639.streamed')).toBe(1);
   });
 
   it('refuses a streamed sensitive query on the plain path before any audit', async () => {
