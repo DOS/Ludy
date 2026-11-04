@@ -107,6 +107,8 @@ describe('what stops a launch, and what is fed by it (#2296, W2-4a)', () => {
       const stops = count(file, 'await stopStartedLaunches(');
       // One loop that writes the event for each launch stopped, with the event named as a literal (the job-egress invariant reads the names from the source).
       expect(count(file, "ctx.emit('ads.pause.queued'"), path).toBe(stops);
+      // And each call is followed at once by its own loop, so an emit cannot move to another command of the file and still pass.
+      expect([...file.matchAll(/await stopStartedLaunches\([^\n]*\n\s*for \(const \w+ of \w+\) await ctx\.emit\('ads\.pause\.queued', \{ launchId: \w+\.id, adAccountId: \w+\.adAccountId \}\);/g)], path).toHaveLength(stops);
     }
     // The job's own stop of a launch a condition stopped while it ran writes it too.
     expect(code('modules/ads/src/launch-run.ts')).toContain("ctx.emit('ads.pause.queued'");
@@ -114,6 +116,24 @@ describe('what stops a launch, and what is fed by it (#2296, W2-4a)', () => {
     const worker = code('apps/kernel/src/worker.ts');
     expect(worker).toMatch(/row\.type === 'ads\.pause\.queued'/);
     expect(worker).toMatch(/boss\.send\(QUEUES\.adsPause, \{ orgId: row\.org_id, launchId \} satisfies AdsPauseJob/);
+  });
+
+  it('pauses before it revokes in the revoke sweep, with the one sealed copy it opens, and revokes only once the pause has had its say', () => {
+    const sweep = code('apps/kernel/src/ads-revoke.ts');
+    // Order in the file's one attempt: the copy is opened, the pause runs, a shared grant ends, and only then the revoke is called.
+    const open = sweep.indexOf('deps.broker.open(');
+    const paused = sweep.indexOf('await pausedFirst(deps, row, secret, revoker)');
+    const shared = sweep.indexOf("if (shared) return { kind: 'done', how: 'shared_grant' }");
+    const revoke = sweep.indexOf('revoker.revokeToken(secret)');
+    expect(open).toBeGreaterThan(-1);
+    expect(paused).toBeGreaterThan(open);
+    expect(shared).toBeGreaterThan(paused);
+    expect(revoke).toBeGreaterThan(shared);
+    expect(count(sweep, 'revoker.revokeToken('), 'one revoke call').toBe(1);
+    // The pause waits for a launch that is not paused, for another account of the same person, and for a page it has not read.
+    const pending = code('modules/ads/src/launch-pause.ts');
+    expect(pending).toContain('grantor_hash');
+    expect(pending).toContain('lastChance');
   });
 
   it('names the queue in the schema, the worker and the migration only, with the egress of the ad platform and nothing else, and the definers where they are used', () => {

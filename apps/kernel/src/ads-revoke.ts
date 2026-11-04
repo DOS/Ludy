@@ -34,6 +34,8 @@ export const ADS_REVOKE_MAX_BATCHES = 5;
 // The orphan connections one page reads, and how many pages one sweep reads at most (the rest waits for the next sweep).
 export const ADS_ORPHAN_PAGE = 200;
 export const ADS_ORPHAN_MAX_PAGES = 5;
+// The launches of one obligation that are paused in one try (W2-4a); the rest wait for the next.
+const PAUSES_PER_TRY = 5;
 
 export interface AdsRevokeDeps {
   runtime: Runtime;
@@ -98,9 +100,13 @@ async function openCopy(deps: AdsRevokeDeps, row: { orgId: string; id: string; l
 // ten runs, seven days) does not hold the revoke, and its person is told to pause by hand.
 async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string }, secret: string, revoker: AdRevoker): Promise<boolean> {
   const options = { actor: SYSTEM, orgId: row.orgId };
-  const launches = await deps.runtime.query<string[]>('ads.pause.pending', { revokeId: row.id }, options);
-  let waiting = false;
-  for (const launchId of launches) {
+  // The launches of the account to pause now, and whether others wait on this obligation: more than one page of this account's, or a launch of another account the
+  // same person granted that is not paused yet (the revoke is the person's, for the app: it would cut the token that account's launches still need).
+  const pending = await deps.runtime.query<{ launches: string[]; blocked: boolean; lastChance: boolean }>('ads.pause.pending', { revokeId: row.id }, options);
+  let waiting = pending.blocked;
+  // A few launches at a time: each pause may take minutes at a slow platform, and one account must not hold the sweep (the claims of the others run out in ten minutes).
+  if (pending.launches.length > PAUSES_PER_TRY) waiting = true;
+  for (const launchId of pending.launches.slice(0, PAUSES_PER_TRY)) {
     const work = await deps.runtime.execute<PauseBegin>('ads.pause.begin', { launchId, via: 'copy' }, options);
     if (work.action === 'none') {
       // Another run holds the launch: its pause is not over, and this token must not be revoked under it.
@@ -111,7 +117,9 @@ async function pausedFirst(deps: AdsRevokeDeps, row: { orgId: string; id: string
     const recorded = await deps.runtime.execute<PauseRecorded>('ads.pause.record', { launchId, callKey: work.callKey, via: 'copy', result }, options);
     if (!recorded.recorded || recorded.state === 'pending') waiting = true;
   }
-  return waiting;
+  // The obligation's last try revokes whatever the pause came to (see `lastChance` of ads.pause.pending): the permission is removed at the platform, and a launch still
+  // not paused is told to the person by its wind-down, who pauses it by hand.
+  return pending.lastChance ? false : waiting;
 }
 
 // One try of one obligation: opens the copy, calls the revoker, and says what came of it, or null when there is nothing to record (the copy is gone).
@@ -126,8 +134,9 @@ async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; pr
   // copy first would count a try and wipe the copy as one that does not open.
   if (!revoker) return null;
   if (!deps.broker || deps.broker.id === 'none') return null;
-  // The person's permission is the person's across orgs: when another live connection of the same person needs it, no call is made and the copy goes.
-  if (await sharedGrant(deps, row)) return { kind: 'done', how: 'shared_grant' };
+  // The person's permission is the person's across orgs: when another live connection of the same person needs it, no revoke call is made and the copy goes, but not
+  // before what this account's launches made is paused with it (W2-4a): the copy is the only token the closed connection has left.
+  const shared = await sharedGrant(deps, row);
   // A database failure while opening the copy is thrown: it leaves the claim to run out and the obligation to be claimed again.
   const sealed = await openCopy(deps, row);
   if (!sealed) return null;
@@ -136,12 +145,14 @@ async function attempt(deps: AdsRevokeDeps, row: { orgId: string; id: string; pr
     // The binding is the one stored on the obligation when the copy was made, never the live connection's.
     secret = deps.broker.open({ keyId: sealed.keyId, envelope: sealed.envelope }, { orgId: row.orgId, provider: sealed.provider, externalAccountId: sealed.externalAccountId });
   } catch {
-    // A copy that no longer opens (a key that was removed too early) cannot be revoked from: given up, wiped, revoke by hand.
-    return unrevocable('OPEN_FAILED');
+    // A copy that no longer opens (a key that was removed too early) cannot be revoked from, nor paused with: given up, wiped, revoke by hand (and no revoke was needed when
+    // another connection of the same person holds the grant).
+    return shared ? { kind: 'done', how: 'shared_grant' } : unrevocable('OPEN_FAILED');
   }
   // What the account's launches made is paused first, with this same copy; the revoke waits for the next try while any is not (the policy's backoff and its ten tries and
   // seven days apply). A database failure here is thrown like one while opening the copy: the claim runs out and the obligation is claimed again.
   if (await pausedFirst(deps, row, secret, revoker)) return failed('transient', 'PAUSE_PENDING');
+  if (shared) return { kind: 'done', how: 'shared_grant' };
   try {
     const revoked = await revoker.revokeToken(secret);
     return { kind: 'done', how: revoked.how };

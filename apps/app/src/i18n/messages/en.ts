@@ -7449,6 +7449,8 @@ export const en = {
       ADS_SPEND_CAP: 'This plan, together with the campaigns already approved, would pass a spend cap. Lower the budget, shorten the flight, or cancel a launch that has not started.',
       ADS_LAUNCH_NOT_FOUND: 'This launch was not found.',
       ADS_LAUNCH_NOT_QUEUED: 'This launch has already started or ended, so it can no longer be cancelled.',
+      ADS_LAUNCH_NOT_RUNNING: 'This launch has not started, or has already stopped or ended, so it cannot be stopped.',
+      ADS_LAUNCH_NOT_WOUND_DOWN: 'This account still has an ad launch that is not fully stopped. Stop it and wait for its ads to be paused before deleting the history.',
       ADS_DRAFT_REQUEST_NOT_FOUND: 'This request for a draft was not found.',
       ADS_DRAFT_REQUEST_OPEN: 'You already have a request for a draft waiting for an answer. Wait for it, then ask again.',
       ACCOUNT_CODE_TAKEN: 'This account code is already in the chart of accounts.',
@@ -7862,6 +7864,7 @@ export const en = {
       pause: {
         begin: 'Claim a stopped ad launch to pause what it made at the platform',
         record: 'Record the result of pausing what a stopped ad launch made',
+        pending: 'List the stopped ad launches of an account that are not paused yet',
       },
       launches: {
         prepare_unblock: 'Ask to open ad launches again',

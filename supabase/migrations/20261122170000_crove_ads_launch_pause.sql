@@ -244,6 +244,10 @@ BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
+  -- The org is the one the command runs in: a definer that trusted its parameter would let a context of one org claim the launch of another.
+  IF p_org IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
   UPDATE crove_ads.ad_launch l
   SET wind_down_tries = l.wind_down_tries + 1,
       wind_down_next_at = pg_catalog.clock_timestamp() + pg_catalog.make_interval(secs => LEAST(GREATEST(COALESCE(p_lease_seconds, 600), 60), 3600))
@@ -259,6 +263,10 @@ CREATE OR REPLACE FUNCTION crove_ads.wind_down_settle(p_org uuid, p_launch uuid,
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+    RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
+  END IF;
+  -- The org is the one the command runs in: a definer that trusted its parameter would let a context of one org settle the launch of another.
+  IF p_org IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
     RAISE EXCEPTION 'ADS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
   IF p_done AND p_code IS NOT NULL THEN
@@ -292,6 +300,12 @@ BEGIN
     WHERE l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL
       AND (l.wind_down_next_at IS NULL OR l.wind_down_next_at <= pg_catalog.clock_timestamp())
       AND l.updated_at < pg_catalog.now() - pg_catalog.make_interval(secs => 60)
+      -- A launch whose account has a revoke obligation still open (a switch-off closed the connection) is the revoke sweep's, which pauses it with its sealed copy on its own
+      -- schedule: asking the pause job again every five minutes would only find it closed.
+      AND NOT EXISTS (
+        SELECT 1 FROM crove_ads.ad_token_revoke r
+        WHERE r.org_id = l.org_id AND r.ad_account_id = l.ad_account_id AND r.kind = 'write' AND r.state = 'pending'
+      )
     ORDER BY l.updated_at
     LIMIT LEAST(GREATEST(COALESCE(p_limit, 1), 1), 1000)
   LOOP

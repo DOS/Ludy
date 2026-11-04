@@ -15,7 +15,7 @@
 //   5. `crove_ads.launch_today`, the one definition of today that the guard and the commands share.
 // Keep this directory self-contained: import code under test, not fixtures from outside it. Set CROVE_TEST_ADMIN_URL to a superuser URL; the run creates and drops its
 // own database.
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -52,6 +52,9 @@ suite('the stop of a launch and the wind-down of what it made (#2296, W2-4a)', (
   let workerUrl = '';
   let pool: pg.Pool;
   let runtime: Runtime;
+  // The worker's own login and runtime, for the system queries and commands the pause path runs as the system.
+  let workerPool: pg.Pool;
+  let workerRuntime: Runtime;
 
   async function withClient<T>(url: string, fn: (c: pg.Client) => Promise<T>): Promise<T> {
     const c = new pg.Client({ connectionString: url });
@@ -185,9 +188,12 @@ suite('the stop of a launch and the wind-down of what it made (#2296, W2-4a)', (
     workerUrl = loginUrl('crove_worker', 'test-worker-pw');
     pool = createPool({ connectionString: appUrl, max: 4 });
     runtime = new Runtime(createDb(pool), { manifests: [...TEST_MANIFESTS, adsManifest.tables] }).register({ commands: [...kernelCommands, ...adsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...adsQueries] });
+    workerPool = createPool({ connectionString: workerUrl, max: 2 });
+    workerRuntime = new Runtime(createDb(workerPool), { manifests: [...TEST_MANIFESTS, adsManifest.tables] }).register({ commands: [...kernelCommands, ...adsCommands], queries: [...kernelQueries({ inboundDomain: null }), ...adsQueries] });
   }, 300_000);
 
   afterAll(async () => {
+    await workerPool?.end();
     await pool?.end();
     if (!adminUrl) return;
     const root = new pg.Client({ connectionString: ADMIN });
@@ -455,6 +461,140 @@ suite('the stop of a launch and the wind-down of what it made (#2296, W2-4a)', (
       for (const l of [leased, done, gaveUp, live]) expect(await own(l.id), l.id).toBe(before[l.id]);
       const events = await rows<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued' AND payload ->> 'launchId' = $2`, [org.orgId, open.id]);
       for (const e of events) expect(Object.keys(e.payload).sort()).toEqual(['adAccountId', 'launchId']);
+    });
+  });
+
+  describe('the definers of the wind-down are bound to the org of the context', () => {
+    it('refuse to claim or settle the launch of another org, though the caller is the worker', async () => {
+      const mine = await makeOrg();
+      const other = await makeOrg();
+      const theirs = await started(other, 'live');
+      await stop(other, 'owner', theirs.id);
+      // A context of one org names the other org in the parameter: the definer trusts nothing but the context.
+      await inContext(mine, 'system', (c) => refused(c, `SELECT crove_ads.wind_down_take($1::uuid, $2::uuid, 600)`, [other.orgId, theirs.id], 'ADS_WORKER_ONLY'));
+      await inContext(mine, 'system', (c) => refused(c, `SELECT crove_ads.wind_down_settle($1::uuid, $2::uuid, true, NULL, NULL)`, [other.orgId, theirs.id], 'ADS_WORKER_ONLY'));
+      expect(await get(other, theirs.id)).toMatchObject({ wind_down_tries: 0, wound_down_at: null, wind_down_code: null });
+    });
+  });
+
+  describe('ads.pause.pending, the revoke sweep’s list', () => {
+    it('lists the stopped launches of the obligation’s account, and blocks the revoke while another account the same person granted has one that is not paused, or while there is more than a page', async () => {
+      const org = await makeOrg();
+      const a = await started(org, 'live');
+      const b = await started(org, 'live');
+      const hash = createHash('sha256').update(randomUUID()).digest('hex');
+      // Both accounts were granted by the same person: each has its own write connection, and the keyed hash of the person is on the account (the guard of the write
+      // connection is for a person's sign-in, not for a test's setup).
+      for (const accountId of [a.account, b.account]) {
+        const write = randomUUID();
+        await owner(`INSERT INTO crove_kernel.channel_connection (org_id, id, provider, external_account_id, display_name, scopes, connected_by) VALUES ($1, $2, 'sandboxwrite_ads', $3, 'Ghi', '{ads_read,ads_management}', $4)`, [
+          org.orgId,
+          write,
+          `acct-${write.slice(0, 8)}`,
+          org.owner,
+        ]);
+        await admin(async (c) => {
+          await c.query('ALTER TABLE crove_ads.ad_account DISABLE TRIGGER write_connection_guard');
+          try {
+            await c.query(`UPDATE crove_ads.ad_account SET write_connection_id = $3, write_granted_by_hash = $4 WHERE org_id = $1 AND id = $2`, [org.orgId, accountId, write, hash]);
+          } finally {
+            await c.query('ALTER TABLE crove_ads.ad_account ENABLE ALWAYS TRIGGER write_connection_guard');
+          }
+        });
+      }
+      const obligation = async (accountId: string, kind = 'write') =>
+        (
+          await rows<{ id: string }>(
+            `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
+             VALUES ($1, $2, $3, 'sandboxwrite_ads', 'acct-x', $4, 'disconnected', $5, $6) RETURNING id`,
+            [org.orgId, randomUUID(), accountId, kind, hash, org.owner],
+          )
+        )[0]?.id as string;
+      const forA = await obligation(a.account);
+      const forB = await obligation(b.account);
+      const pending = (revokeId: string) => workerRuntime.query('ads.pause.pending', { revokeId }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId });
+      // Nothing is stopped yet: nothing to pause, nothing to wait for.
+      expect(await pending(forA)).toEqual({ launches: [], blocked: false, lastChance: false });
+      await stop(org, 'owner', a.id);
+      await stop(org, 'owner', b.id);
+      // Each obligation lists its own account's launch, and waits for the other's: the revoke is the person's, for the app.
+      expect(await pending(forA)).toEqual({ launches: [a.id], blocked: true, lastChance: false });
+      expect(await pending(forB)).toEqual({ launches: [b.id], blocked: true, lastChance: false });
+      // B's launch is wound down (done): A pauses its own and may revoke; B has nothing left and waits for nothing.
+      await inContext(
+        org,
+        'system',
+        async (c) => {
+          await c.query(`SELECT crove_ads.wind_down_take($1::uuid, $2::uuid, 600)`, [org.orgId, b.id]);
+          await c.query(`SELECT crove_ads.wind_down_settle($1::uuid, $2::uuid, true, NULL, NULL)`, [org.orgId, b.id]);
+        },
+        true,
+      );
+      expect(await pending(forA)).toEqual({ launches: [a.id], blocked: false, lastChance: false });
+      expect(await pending(forB)).toEqual({ launches: [], blocked: true, lastChance: false });
+      // A launch Ludy gave up on does not hold the revoke.
+      await inContext(org, 'system', (c) => c.query(`SELECT crove_ads.wind_down_settle($1::uuid, $2::uuid, false, NULL, 'token_refused')`, [org.orgId, a.id]), true);
+      expect(await pending(forA)).toEqual({ launches: [], blocked: false, lastChance: false });
+      expect(await pending(forB)).toEqual({ launches: [], blocked: false, lastChance: false });
+      // A read token that holds a spend permission has no launches, whatever the account has.
+      const read = await obligation(a.account, 'read_spend');
+      expect(await pending(read)).toEqual({ launches: [], blocked: false, lastChance: false });
+    });
+
+    it('says when this is the obligation’s last try, the tenth or past six of its seven days: the revoke is then made whatever the pause came to', async () => {
+      const org = await makeOrg();
+      const l = await started(org, 'live');
+      await stop(org, 'owner', l.id);
+      const make = async () =>
+        (
+          await rows<{ id: string }>(
+            `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, connected_by)
+             VALUES ($1, $2, $3, 'sandboxwrite_ads', 'acct-x', 'write', 'disconnected', $4) RETURNING id`,
+            [org.orgId, randomUUID(), l.account, org.owner],
+          )
+        )[0]?.id as string;
+      const pending = (revokeId: string) => workerRuntime.query('ads.pause.pending', { revokeId }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId }) as Promise<{ lastChance: boolean }>;
+      // The obligation's guard is for the definers that write it: a test puts a count or a clock back with the guard off for the statement.
+      const tweak = (id: string, set: string) =>
+        admin(async (c) => {
+          await c.query('ALTER TABLE crove_ads.ad_token_revoke DISABLE TRIGGER ad_token_revoke_guard');
+          try {
+            await c.query(`UPDATE crove_ads.ad_token_revoke SET ${set} WHERE org_id = $1 AND id = $2`, [org.orgId, id]);
+          } finally {
+            await c.query('ALTER TABLE crove_ads.ad_token_revoke ENABLE ALWAYS TRIGGER ad_token_revoke_guard');
+          }
+        });
+      const fresh = await make();
+      expect((await pending(fresh)).lastChance).toBe(false);
+      await tweak(fresh, 'attempts = 9');
+      expect((await pending(fresh)).lastChance).toBe(false);
+      await tweak(fresh, 'attempts = 10');
+      expect((await pending(fresh)).lastChance).toBe(true);
+      const old = await make();
+      await tweak(old, `created_at = now() - interval '6 days 1 hour'`);
+      expect((await pending(old)).lastChance).toBe(true);
+    });
+
+    it('reads one page at a time and blocks the revoke while there is more than one', async () => {
+      const org = await makeOrg();
+      const acct = await account(org);
+      const hash = createHash('sha256').update(randomUUID()).digest('hex');
+      const revoke = (
+        await rows<{ id: string }>(
+          `INSERT INTO crove_ads.ad_token_revoke (org_id, connection_id, ad_account_id, provider, external_account_id, kind, reason, grantor_hash, connected_by)
+           VALUES ($1, $2, $3, 'sandboxwrite_ads', 'acct-x', 'write', 'disconnected', $4, $5) RETURNING id`,
+          [org.orgId, randomUUID(), acct, hash, org.owner],
+        )
+      )[0]?.id as string;
+      const today = await todayIn('Asia/Ho_Chi_Minh');
+      for (let n = 0; n < 51; n += 1) {
+        const id = await launch(org, acct, addDays(today, -3), addDays(today, 10));
+        await inContext(org, 'system', (c) => move(c, org, id, `state = 'launching'`), true);
+        await stop(org, 'owner', id);
+      }
+      const page = (await workerRuntime.query('ads.pause.pending', { revokeId: revoke }, { actor: { type: 'system', component: 'test' }, orgId: org.orgId })) as { launches: string[]; blocked: boolean };
+      expect(page.launches).toHaveLength(50);
+      expect(page.blocked).toBe(true);
     });
   });
 

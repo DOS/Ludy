@@ -426,9 +426,9 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     };
     await dueNow();
     await sweep(counting);
-    // Revoking would cut the other connection's grant too: no call, done as a shared grant, the copy wiped, no try counted.
+    // Revoking would cut the other connection's grant too: no call, done as a shared grant, the copy wiped (it is opened first, to pause what the account's launches made with it, W2-4a: the try is counted).
     expect(calls).toBe(0);
-    expect(await obligation(write)).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 0, seals: '0' });
+    expect(await obligation(write)).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 1, seals: '0' });
 
     // The same, with the other connection closed first: the person's grant is not needed by anyone, so the call is made.
     await app.execute('ads.account.disconnect', { adAccountId: other.adAccountId }, { actor: asUser(owner), orgId });
