@@ -289,16 +289,13 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     const approvedAudit = await o.audit('kernel.proposal.approve', after);
     expect(approvedAudit).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
+      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+      // 5: issuing a sales e-invoice was given its approval policy (#2502; the allowance of 4 or 5 that step one gave is gone).
+      policy_version: 5,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
-    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 4: the launch of a drafted campaign was given its approval policy (#2295, W1). This is a dated allowance for #2502 (issuing a sales e-invoice): 4, as before, or 5, which
-    // the issue command raises it to with the approval policy of finance.einvoice.issue. The step-two change of #2502 pins 5 and removes this allowance; it expires with that PR
-    // and, failing that, fails on 2026-12-15.
-    expect(Date.now(), 'the allowance of #2502 for policy_version 4 or 5 has expired: pin the number').toBeLessThan(Date.parse('2026-12-15T00:00:00Z'));
-    expect([4, 5]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
