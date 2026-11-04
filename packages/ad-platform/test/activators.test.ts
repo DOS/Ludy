@@ -5,7 +5,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { Fetch } from '@crove/channel';
-import { AdPlatformError, MetaAdActivator, SandboxAdActivator, SandboxAdWriter, activatorOf, adActivators, sandboxWriteLogin } from '../src/index.ts';
+import { MetaAdActivator } from '../src/meta-activate.ts';
+import { AdPlatformError, SandboxAdActivator, SandboxAdWriter, activatorOf, adActivators, sandboxWriteLogin } from '../src/index.ts';
 
 const ACCOUNT = 'sbxads-0123456789abcdef';
 const ACCOUNT_REF = { externalAccountId: ACCOUNT, currency: 'VND' };

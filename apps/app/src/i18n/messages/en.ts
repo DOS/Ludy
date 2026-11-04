@@ -7867,10 +7867,15 @@ export const en = {
       flag_settings: 'Read the thresholds of the spend flags',
       flag_settings_set: 'Set the thresholds of the spend flags',
       flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
+      activate: {
+        begin: 'Decide the next activation call of an approved ad launch, after re-checking the stop conditions, the plan and the caps',
+        record: 'Record the result of switching on one ad object of a launch',
+      },
       launch: {
         begin: 'Decide the next platform call of an approved ad launch',
         cancel: 'Cancel a launch that has not started and release its amount',
         record: 'Record the result of one platform call of an ad launch',
+        retry: 'Run an ad launch that is waiting for someone again',
         stop: 'Stop an ad launch that has started',
       },
       pause: {

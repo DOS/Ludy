@@ -39,7 +39,7 @@ export function activatorOf(activator: AdActivator): AdActivator {
     return { level: object.level, id: object.id };
   };
   return Object.freeze({
-    activate: (secret: string, object: ActivateTarget) => activator.activate(secret, checked(object)),
-    readStatus: (secret: string, object: ActivateTarget) => activator.readStatus(secret, checked(object)),
+    activate: async (secret: string, object: ActivateTarget) => activator.activate(secret, checked(object)),
+    readStatus: async (secret: string, object: ActivateTarget) => activator.readStatus(secret, checked(object)),
   });
 }

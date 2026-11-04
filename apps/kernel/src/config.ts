@@ -797,7 +797,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
     // the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. Turning it on in production is a step the owner approves.
     if (config.ADS_LIVE_LAUNCH === 'true') {
-      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only and a public deployment refuses it until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false');
+      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta and switch them on, which spends real money; it is for the owner\'s own live check only and a public deployment refuses it until the live-check runbook is done and the owner has approved the production step list: set ADS_LIVE_LAUNCH=false');
     }
     // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
     // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A
