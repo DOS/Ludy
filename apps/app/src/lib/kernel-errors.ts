@@ -507,6 +507,8 @@ export const KERNEL_ERROR_CODES = [
   'AGENT_RETIRED',
   'INVALID_TARGET',
   'TASK_NOT_FOUND',
+  'TASK_CHECKED_OUT',
+  'OUTSIDE_LEGAL_ENTITY',
   // Crove Social and connected channels.
   'POST_NOT_FOUND',
   'POST_ARCHIVED',
