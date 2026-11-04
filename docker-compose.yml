@@ -362,6 +362,36 @@ services:
     networks:
       - extract
 
+  # Media processing sandbox for AI Meeting Notes (plan §6, ADR-0047, #2577). Bytes in, normalized Opus and segments out;
+  # only the worker calls it. No credentials on purpose: it refuses to start with any variable outside its allowlist.
+  # Its only network is `media`, which has no route out, and no port is published.
+  # Profiles 'media': M4 wires the worker meetings job and the deploy image override; until then, deploy.sh ignores it.
+  crove-media:
+    profiles:
+      - media
+    build:
+      context: .
+      dockerfile: apps/media/Dockerfile
+    image: crove-media:local
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    volumes:
+      - media-scratch:/data/scratch
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    memswap_limit: 2g
+    cpus: 1
+    pids_limit: 128
+    environment:
+      MEDIA_CONCURRENCY: ${MEDIA_CONCURRENCY:-1}
+    networks:
+      - media
+
   # Health prober and alerts (plan §4.13), off by default: `docker compose --profile prober up -d`. Checks every
   # PROBER_INTERVAL_SECONDS and posts to ALERT_WEBHOOK_URL (stdout when unset). Test the path with
   # `docker compose run --rm prober prober --test-alert`; one check with `docker compose run --rm prober prober`.
@@ -467,6 +497,8 @@ networks:
   # Internal: containers on it reach each other, never the internet.
   extract:
     internal: true
+  media:
+    internal: true
 
 volumes:
   db-data:
@@ -475,3 +507,4 @@ volumes:
   keys:
   # The prober's last result for the status page (#678): written by the prober, read by the API.
   status:
+  media-scratch:
