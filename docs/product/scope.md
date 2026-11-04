@@ -46,3 +46,16 @@ AI is a coworker, never an "assistant". Vy is the general manager across every a
 ### 5. Proportionate security
 
 Tenancy, the ledger's rules, approvals, authentication and data protection are never weakened. Security work beyond the current milestone's checklist waits, as "Picking up work" in AGENTS.md says.
+
+### 6. Reference products
+
+The owner decided on 2026-11-04 which products Ludy measures itself against.
+
+- **Main references: the all-in-one suites.** Odoo, MISA AMIS and Base.vn are the direct competitors. Look at them first when deciding how apps, modules, roles and shared data fit together.
+  - Odoo is closest in how Ludy is built: open source, one platform and one database, apps installed on top that declare what they depend on, self-hosted or cloud.
+  - MISA AMIS is closest in customers and work: Vietnamese SMEs and household businesses, TT133, e-invoices and tax filing, with apps grouped by area (AMIS Kế toán, AMIS Nhân sự, AMIS Tiền lương) under one account.
+  - Base.vn is an all-in-one suite for Vietnamese businesses (people, work, sales) without accounting.
+- **Secondary references: the large vendors.** SAP, Oracle, Workday and Microsoft Dynamics show how a full suite splits its areas. Xero and QuickBooks show small-business accounting; where they offer payroll, it sits inside the accounting app.
+- What the suites share: one sign-in, one people list and one database across apps. HR and payroll are an app of their own with their own roles, and post their totals to accounting.
+
+[ai-first-reference-study.md](../research/ai-first-reference-study.md) compares what these products do with AI.
