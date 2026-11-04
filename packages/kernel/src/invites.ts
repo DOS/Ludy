@@ -6,10 +6,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { sql, type RawBuilder } from 'kysely';
 import { z } from 'zod';
 import type { Db, MemberRole } from '@crove/db';
-import { zId, zInviteLegalEntityIds, zInviteRole, zInviteToken } from '@crove/kernel-contract';
+import { zBuiltinRoleKey, zId, zInviteLegalEntityIds, zInviteRole, zInviteToken } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type SessionStatusSource } from '@crove/kernel-runtime';
 import { createMailMessage, type DirectMail } from './mail.ts';
 import { memberProfiles } from './profiles.ts';
+import { ROLE_LABELS, roleRefusal } from './roles.ts';
 
 // How long an invite stays valid. The table allows at most 30 days.
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -70,6 +71,15 @@ const INVITE_ERRORS: Record<string, DomainError> = {
   INVITE_EXPIRED: new DomainError('INVITE_EXPIRED', 409, 'Lời mời này đã hết hạn, hãy nhờ người mời gửi lại'),
   // A scoped invite (#1281) whose inviter is no longer an owner, or one of whose legal entities was removed.
   INVITE_SCOPE_STALE: new DomainError('INVITE_SCOPE_STALE', 409, 'Lời mời này không còn dùng được vì phạm vi pháp nhân đã thay đổi; hãy nhờ chủ sở hữu mời lại'),
+  // A department role (#2611): the inviter is no longer an owner, or the role no longer passes the rules of a grant (or its module is
+  // gone). The whole accept is refused, never the base role alone.
+  INVITE_ROLE_STALE: new DomainError('INVITE_ROLE_STALE', 409, 'Lời mời này không còn dùng được vì vai trò kèm theo đã thay đổi; hãy nhờ chủ sở hữu mời lại'),
+  // Like a scoped invite, a role never changes an existing member's access.
+  INVITE_ROLE_ALREADY_MEMBER: new DomainError(
+    'INVITE_ROLE_ALREADY_MEMBER',
+    409,
+    'Bạn đã là thành viên của tổ chức này; lời mời kèm vai trò không đổi được quyền của bạn, hãy nhờ chủ sở hữu giao vai trò',
+  ),
   // A scoped invite never changes an existing member's access (#1459): refused rather than accepted with its scope ignored.
   INVITE_SCOPE_ALREADY_MEMBER: new DomainError(
     'INVITE_SCOPE_ALREADY_MEMBER',
@@ -228,7 +238,7 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
   }
   return defineCommand({
     name: 'kernel.member.invite.create',
-    input: z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional() }),
+    input: z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional(), roleKey: zBuiltinRoleKey.optional() }),
     risk: 'R3',
     sideEffect: 'external',
     access: ADMINS,
@@ -255,6 +265,23 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
           .where('id', 'in', legalEntityIds)
           .execute();
         if (found.length !== legalEntityIds.length) throw new DomainError('LEGAL_ENTITY_NOT_FOUND', 422, 'Không tìm thấy pháp nhân này trong tổ chức');
+      }
+      // A department role (#2611) is granted when the invite is accepted, which only owners do (role.assign is owner only), and it
+      // never goes with an entity limit (an org-wide role would lift an entity-limited member to every entity). The role must exist,
+      // be of scope org and of a module this deployment runs; member_invite_role_guard checks the owner and the rest of the
+      // grant rules (a viewer gets no role that grants a permission) again in the database.
+      const roleKey = input.roleKey ?? null;
+      if (roleKey) {
+        if (role !== 'owner') throw new DomainError('INVITE_ROLE_OWNER_ONLY', 403, 'Chỉ chủ sở hữu mới mời được kèm vai trò theo bộ phận');
+        if (legalEntityIds) {
+          throw new DomainError('INVITE_ROLE_WITH_ENTITIES', 422, 'Lời mời giới hạn theo pháp nhân đã có vai trò Kế toán thuê ngoài, không kèm thêm vai trò khác được');
+        }
+        const catalog = await ctx.trx.selectFrom('crove_kernel.role').select(['module', 'scope']).where('key', '=', roleKey).executeTakeFirst();
+        if (!catalog) throw new DomainError('ROLE_NOT_FOUND', 422, 'Không có vai trò này');
+        if (catalog.scope !== 'org') throw new DomainError('ROLE_SCOPE_REQUIRED', 422, 'Vai trò này cần chọn một pháp nhân; hãy dùng lời mời giới hạn theo pháp nhân');
+        if (catalog.module !== 'kernel' && !ctx.installed(catalog.module)) {
+          throw new DomainError('ROLE_MODULE_NOT_INSTALLED', 422, 'Hệ thống này chưa cài phân hệ của vai trò này');
+        }
       }
       const email = normalizeEmail(input.email);
 
@@ -302,23 +329,31 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
 
       const token = newInviteToken();
       const expiresAt = new Date(ctx.now.getTime() + INVITE_TTL_MS);
-      const invite = await ctx.trx
-        .insertInto('crove_kernel.member_invite')
-        .values({
-          org_id: ctx.orgId,
-          email,
-          role: input.role,
-          token_sha256: inviteTokenHash(token),
-          invited_by: actorId,
-          legal_entity_ids: legalEntityIds,
-          // The database's clock, the clock of the daily window (#270), not ctx.now. The expiry stays ctx.now plus the
-          // TTL; only an API clock more than the TTL behind would make it precede the database's clock, and then the
-          // invite is born expired and dated just before its expiry, so the row stays valid (expires_at > created_at).
-          created_at: sql<Date>`LEAST(pg_catalog.clock_timestamp(), ${expiresAt}::timestamptz - interval '1 millisecond')`,
-          expires_at: expiresAt,
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
+      let invite: { id: string };
+      try {
+        invite = await ctx.trx
+          .insertInto('crove_kernel.member_invite')
+          .values({
+            org_id: ctx.orgId,
+            email,
+            role: input.role,
+            token_sha256: inviteTokenHash(token),
+            invited_by: actorId,
+            legal_entity_ids: legalEntityIds,
+            role_key: roleKey,
+            // The database's clock, the clock of the daily window (#270), not ctx.now. The expiry stays ctx.now plus the
+            // TTL; only an API clock more than the TTL behind would make it precede the database's clock, and then the
+            // invite is born expired and dated just before its expiry, so the row stays valid (expires_at > created_at).
+            created_at: sql<Date>`LEAST(pg_catalog.clock_timestamp(), ${expiresAt}::timestamptz - interval '1 millisecond')`,
+            expires_at: expiresAt,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+      } catch (error) {
+        // The grant rules of member_invite_role_guard (P0001, the code as message), as domain errors.
+        if ((error as { code?: string } | null)?.code === 'P0001' && (error as { message?: string }).message?.startsWith('ROLE_')) roleRefusal(error);
+        throw error;
+      }
       const message = await createMailMessage(ctx, {
         stream: 'system',
         source: 'kernel.member.invite.create',
@@ -328,14 +363,16 @@ export function inviteCreateCommand(limits: InviteLimits = DEFAULT_INVITE_LIMITS
         status: 'sending',
         messageIdDomain: mail.messageIdDomain,
       });
-      ctx.audit({ invite_id: invite.id, role: input.role, legal_entity_ids: legalEntityIds, replaced: replaced.map((r) => r.id), mail: message.status });
+      ctx.audit({ invite_id: invite.id, role: input.role, role_key: roleKey, legal_entity_ids: legalEntityIds, replaced: replaced.map((r) => r.id), mail: message.status });
       await ctx.activity(
         'kernel.member_invite',
         invite.id,
         'invite.created',
         legalEntityIds
           ? `Mời một người tham gia với vai trò ${ROLE_LABEL[input.role]}, làm kế toán bên ngoài cho ${legalEntityIds.length} pháp nhân`
-          : `Mời một người tham gia với vai trò ${ROLE_LABEL[input.role]}`,
+          : roleKey
+            ? `Mời một người tham gia với vai trò ${ROLE_LABEL[input.role]}, kèm vai trò ${ROLE_LABELS[roleKey]}`
+            : `Mời một người tham gia với vai trò ${ROLE_LABEL[input.role]}`,
       );
       return {
         inviteId: invite.id,
@@ -421,7 +458,7 @@ export const acceptInvite = defineCommand({
     const userId = ctx.actor.userId;
     const invite = await ctx.trx
       .selectFrom('crove_kernel.member_invite')
-      .select(['id', 'email', 'role', 'invited_by', 'accepted_at', 'legal_entity_ids'])
+      .select(['id', 'email', 'role', 'invited_by', 'accepted_at', 'legal_entity_ids', 'role_key'])
       .where('org_id', '=', ctx.orgId)
       .where('token_sha256', '=', inviteTokenHash(input.token))
       .where('status', '=', 'accepted')
@@ -438,6 +475,27 @@ export const acceptInvite = defineCommand({
       .select(['org_id', 'slug', 'name'])
       .where('org_id', '=', ctx.orgId)
       .executeTakeFirstOrThrow();
+    // A department role (#2611) was granted by invite_accept under the rules of role.assign; the database does not know which
+    // modules this deployment runs, so that one check is here. Failing throws, which rolls the whole accept back: never the
+    // base role alone.
+    let roleApplied = false;
+    if (invite.role_key) {
+      const catalog = await ctx.trx.selectFrom('crove_kernel.role').select('module').where('key', '=', invite.role_key).executeTakeFirst();
+      if (!catalog || (catalog.module !== 'kernel' && !ctx.installed(catalog.module))) {
+        throw new DomainError('INVITE_ROLE_STALE', 409, 'Lời mời này không còn dùng được vì vai trò kèm theo đã thay đổi; hãy nhờ chủ sở hữu mời lại');
+      }
+      const granted = await ctx.trx
+        .selectFrom('crove_kernel.role_assignment')
+        .select('id')
+        .where('org_id', '=', ctx.orgId)
+        .where('user_id', '=', userId)
+        .where('role_key', '=', invite.role_key)
+        .where('legal_entity_id', 'is', null)
+        .where('granted_by', '=', invite.invited_by)
+        .executeTakeFirst();
+      if (!granted) throw new DomainError('INVITE_ROLE_STALE', 409, 'Lời mời này không còn dùng được vì vai trò kèm theo đã thay đổi; hãy nhờ chủ sở hữu mời lại');
+      roleApplied = true;
+    }
     // A user who already belonged to the org keeps their role; the membership row then predates this transaction.
     const alreadyMember = invite.accepted_at !== null && membership.created_at.getTime() < invite.accepted_at.getTime();
     // A membership change records target_user, role and previous_role like a role change (#88). The target is the
@@ -454,6 +512,9 @@ export const acceptInvite = defineCommand({
       // a scoped invite is refused (#1459), so scope_applied is false only for an unscoped invite.
       legal_entity_ids: invite.legal_entity_ids,
       scope_applied: invite.legal_entity_ids !== null,
+      // A department role (#2611): which one, and whether it was granted (as the inviter, like the entity roles).
+      role_key: invite.role_key,
+      role_applied: roleApplied,
     });
     await ctx.activity(
       'kernel.member',
@@ -461,7 +522,9 @@ export const acceptInvite = defineCommand({
       'member.joined',
       alreadyMember
         ? `Chấp nhận lời mời (đã là thành viên, giữ vai trò ${ROLE_LABEL[membership.role]})`
-        : `Chấp nhận lời mời và tham gia với vai trò ${ROLE_LABEL[membership.role]}`,
+        : invite.role_key
+          ? `Chấp nhận lời mời và tham gia với vai trò ${ROLE_LABEL[membership.role]}, kèm vai trò ${ROLE_LABELS[invite.role_key as keyof typeof ROLE_LABELS] ?? invite.role_key}`
+          : `Chấp nhận lời mời và tham gia với vai trò ${ROLE_LABEL[membership.role]}`,
     );
     return { orgId: tenant.org_id, slug: tenant.slug, name: tenant.name, role: membership.role };
   },
@@ -470,6 +533,8 @@ export const acceptInvite = defineCommand({
 export interface InvitePreview {
   orgName: string;
   role: 'admin' | 'member' | 'viewer';
+  // The department role the invite carries (#2611), or null: its key only, never the permissions it holds.
+  roleKey: string | null;
   invitedBy: string;
   expiresAt: string;
 }
@@ -482,15 +547,17 @@ export async function previewInvite(db: Db, userId: string, token: string, optio
     const { rows } = await sql<{
       org_name: string;
       role: InvitePreview['role'];
+      role_key: string | null;
       invited_by_email: string;
       invited_by_name: string | null;
       expires_at: Date;
-    }>`SELECT org_name, role, invited_by_email, invited_by_name, expires_at FROM crove_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream})`.execute(db);
+    }>`SELECT org_name, role, role_key, invited_by_email, invited_by_name, expires_at FROM crove_kernel.invite_peek(${userId}::uuid, ${token}, ${options.upstream})`.execute(db);
     const row = rows[0];
     if (!row) throw new DomainError('INVITE_NOT_FOUND', 404, 'Không tìm thấy lời mời, hãy kiểm tra lại liên kết');
     return {
       orgName: row.org_name,
       role: row.role,
+      roleKey: row.role_key,
       invitedBy: row.invited_by_name ? `${row.invited_by_name} (${row.invited_by_email})` : row.invited_by_email,
       expiresAt: row.expires_at.toISOString(),
     };
@@ -505,7 +572,7 @@ export const invitesList = defineQuery({
   handler: async (ctx) => {
     const rows = await ctx.trx
       .selectFrom('crove_kernel.member_invite')
-      .select(['id', 'email', 'role', 'status', 'expires_at', 'created_at', 'invited_by', 'legal_entity_ids'])
+      .select(['id', 'email', 'role', 'status', 'expires_at', 'created_at', 'invited_by', 'legal_entity_ids', 'role_key'])
       .where('org_id', '=', ctx.orgId)
       .where('status', '=', 'pending')
       .orderBy('created_at', 'desc')
@@ -539,6 +606,7 @@ export const invitesList = defineQuery({
       expiresAt: r.expires_at.toISOString(),
       mail: mails.get(r.id) ?? null,
       legalEntityIds: r.legal_entity_ids,
+      roleKey: r.role_key,
     }));
   },
 });
