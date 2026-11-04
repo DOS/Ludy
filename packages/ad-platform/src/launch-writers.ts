@@ -5,6 +5,7 @@
 // creates leave every object PAUSED, so the launch job cannot spend: a launch ends W2-3 as objects created, paused. A test pins both the view and the source of
 // this file.
 import { MetaAdWriter } from './meta-write.ts';
+import { pauserOf, type AdPauser } from './pausers.ts';
 import { sandboxAdWriter, type SandboxAdWriter } from './sandbox-write.ts';
 import type { AdWriter } from './writer.ts';
 
@@ -44,4 +45,20 @@ export function adLaunchWriters(options: LaunchWritersOptions): Readonly<Record<
     writers[meta.provider] = launchWriterOf(meta);
   }
   return Object.freeze(writers);
+}
+
+// The pausers of a deployment (W2-4a), by the provider id of the write connection they work with: the narrowed view the pause job is given of the same writers
+// (pausers.ts): it finds the objects that carry a launch's tag and sets them PAUSED, and nothing else. A provider without a writer has none. The map is frozen too.
+export function adPausers(options: LaunchWritersOptions): Readonly<Record<string, AdPauser>> {
+  const pausers: Record<string, AdPauser> = {};
+  if (options.sandbox) {
+    const sandbox = options.sandbox === true ? sandboxAdWriter : options.sandbox;
+    pausers[sandbox.provider] = pauserOf(sandbox);
+  }
+  if (options.meta) {
+    const graphVersion = options.meta.graphVersion;
+    const meta = new MetaAdWriter({ appSecret: options.meta.writeAppSecret, ...(graphVersion ? { graphVersion } : {}) });
+    pausers[meta.provider] = pauserOf(meta);
+  }
+  return Object.freeze(pausers);
 }

@@ -72,6 +72,9 @@ export interface CroveFinanceSchema {
   'crove_finance.purchase_document_void': FinancePurchaseDocumentVoidTable;
   'crove_finance.purchase_line': FinancePurchaseLineTable;
   'crove_finance.purchase_tax_rate': FinancePurchaseTaxRateTable;
+  'crove_finance.stock_alias': FinanceStockAliasTable;
+  'crove_finance.stock_item': FinanceStockItemTable;
+  'crove_finance.stock_move': FinanceStockMoveTable;
   'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
   'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
 }
@@ -319,6 +322,10 @@ export interface AdsAdLaunchTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  wound_down_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  wind_down_tries: ColumnType<number, number | undefined, NotGranted>;
+  wind_down_next_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  wind_down_code: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_ads.ad_object */
@@ -1099,6 +1106,54 @@ export interface FinancePurchaseTaxRateTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
+/** crove_finance.stock_alias */
+export interface FinanceStockAliasTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  item_id: ColumnType<string, string, NotGranted>;
+  source: ColumnType<string, string | undefined, NotGranted>;
+  alias_key: ColumnType<string, string, NotGranted>;
+  factor: ColumnType<string, string | undefined, NotGranted>;
+  source_unit: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.stock_item */
+export interface FinanceStockItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  code: ColumnType<string, string, NotGranted>;
+  name: string;
+  unit: string;
+  kind: ColumnType<string, string | undefined, NotGranted>;
+  stock_account: string;
+  trade: Generated<string>;
+  active: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_finance.stock_move */
+export interface FinanceStockMoveTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  item_id: ColumnType<string, string, NotGranted>;
+  move_date: ColumnType<string, string, NotGranted>;
+  quantity: ColumnType<string, string, NotGranted>;
+  source_type: ColumnType<string, string, NotGranted>;
+  document_id: ColumnType<string | null, string | null, NotGranted>;
+  line_no: ColumnType<number | null, number | null, NotGranted>;
+  line_attempt: ColumnType<number | null, number | null, NotGranted>;
+  reverses_move_id: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.vat_return_filed */
 export interface FinanceVatReturnFiledTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1715,6 +1770,8 @@ export interface KernelMemberInviteTable {
   revoked_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   revoked_by: string | null;
   legal_entity_ids: ColumnType<string[] | null, string[] | null, NotGranted>;
+  role_key: ColumnType<string | null, string | null, NotGranted>;
+  role_scope: ColumnType<string | null, never, NotGranted>;
 }
 
 /** crove_kernel.notification_mute */

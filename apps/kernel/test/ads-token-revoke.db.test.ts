@@ -124,9 +124,13 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
   };
 
   const sandboxRevokers = adRevokers({ sandbox: true });
-  const sweep = (revokers: Readonly<Record<string, AdRevoker>> = sandboxRevokers, broker: CredentialVault | undefined = vault): Promise<AdsRevokeResult> => runAdsRevoke({ runtime: worker, workerDb, broker, revokers });
+  // What a revoker answers to the pause of a launch (W2-4a) when none is behind the connection: nothing found, nothing to pause. The stand-ins below only say how a revoke ends.
+  const nothingToPause: AdRevoker['pauseLaunch'] = async () => ({ listed: { campaign: { ok: true }, ad_set: { ok: true }, ad: { ok: true } }, found: [], paused: [], failed: [], notTried: [], tokenRefused: false, retryAt: null });
+  type StandIn = Pick<AdRevoker, 'revokeToken'> & Partial<Pick<AdRevoker, 'pauseLaunch'>>;
+  const sweep = (revokers: Readonly<Record<string, StandIn>> = sandboxRevokers, broker: CredentialVault | undefined = vault): Promise<AdsRevokeResult> =>
+    runAdsRevoke({ runtime: worker, workerDb, broker, revokers: Object.fromEntries(Object.entries(revokers).map(([provider, r]) => [provider, { pauseLaunch: nothingToPause, ...r }])) });
   // A stand-in for the platform that answers with what a failure is: no network.
-  const failing = (error: () => AdPlatformError): Readonly<Record<string, AdRevoker>> => ({
+  const failing = (error: () => AdPlatformError): Readonly<Record<string, StandIn>> => ({
     sandboxwrite_ads: {
       revokeToken: async () => {
         throw error();
@@ -412,7 +416,7 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     expect(await obligation(write)).toMatchObject({ state: 'pending', seals: '1' });
     expect((await rows<{ grantor_hash: string | null }>('SELECT grantor_hash FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND connection_id = $2', [orgId, write]))[0]?.grantor_hash).toBe(HASH);
     let calls = 0;
-    const counting: Readonly<Record<string, AdRevoker>> = {
+    const counting: Readonly<Record<string, StandIn>> = {
       sandboxwrite_ads: {
         revokeToken: async () => {
           calls++;
@@ -422,9 +426,9 @@ suite('the revoke at the platform of a closed ads connection token (#2296, W2-1)
     };
     await dueNow();
     await sweep(counting);
-    // Revoking would cut the other connection's grant too: no call, done as a shared grant, the copy wiped, no try counted.
+    // Revoking would cut the other connection's grant too: no call, done as a shared grant, the copy wiped (it is opened first, to pause what the account's launches made with it, W2-4a: the try is counted).
     expect(calls).toBe(0);
-    expect(await obligation(write)).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 0, seals: '0' });
+    expect(await obligation(write)).toMatchObject({ state: 'done', how_done: 'shared_grant', attempts: 1, seals: '0' });
 
     // The same, with the other connection closed first: the person's grant is not needed by anyone, so the call is made.
     await app.execute('ads.account.disconnect', { adAccountId: other.adAccountId }, { actor: asUser(owner), orgId });

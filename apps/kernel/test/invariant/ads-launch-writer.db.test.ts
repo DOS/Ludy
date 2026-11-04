@@ -153,6 +153,33 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
     );
     return { id, account, draft, start, end };
   }
+  // The system's move of a launching launch to live. W2-4b makes the database refuse it (ADS_LAUNCH_ACTIVATION) unless the launch's own approval is stamped, every
+  // object is recorded and the switches are on: the activation job meets those conditions, a fixture of this file (a made-up proposal, no objects) does not. So the
+  // move is made as the system first, and when the database refuses it for the activation's reasons only, the fixture is put in the state by the table's owner with
+  // the guard off for that one statement, as a backfill would (the way launch() above attaches a write connection). This file tests the stop, the sweep and the
+  // pause on launches that are already live; the activation's own rule has its tests in W2-4b.
+  async function goLive(org: Org, id: string) {
+    try {
+      await inContext(org, 'system', (c) => move(c, org, id, `state = 'live'`), true);
+    } catch (e) {
+      const refusal = e as { code?: string; message?: string };
+      if (refusal.code !== '42501' || !String(refusal.message).includes('ADS_LAUNCH_ACTIVATION')) throw e;
+      await admin(async (c) => {
+        await c.query('BEGIN');
+        try {
+          await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+          expect((await move(c, org, id, `state = 'live'`)).rowCount).toBe(1);
+          await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+          const on = await c.query(`SELECT tgenabled::text AS t FROM pg_trigger WHERE tgrelid = 'crove_ads.ad_launch'::regclass AND tgname = 'launch_guard'`);
+          expect(on.rows).toEqual([{ t: 'A' }]);
+          await c.query('COMMIT');
+        } catch (inner) {
+          await c.query('ROLLBACK');
+          throw inner;
+        }
+      });
+    }
+  }
   // A launch of an account in the zone that is running (made by the system's moves, as the job makes them): launching, needs attention or live, for a flight that
   // started three days ago and has ten days to go in that zone.
   async function started(org: Org, state: 'launching' | 'needs_attention' | 'live', zone: string | null = 'Asia/Ho_Chi_Minh') {
@@ -166,10 +193,11 @@ suite('the launch writer of running ads (#2296, W2-3)', () => {
       'system',
       async (c) => {
         await move(c, org, l.id, `state = 'launching'`);
-        if (state !== 'launching') await move(c, org, l.id, `state = '${state}'`);
+        if (state === 'needs_attention') await move(c, org, l.id, `state = 'needs_attention'`);
       },
       true,
     );
+    if (state === 'live') await goLive(org, l.id);
     return { ...l, today: expected };
   }
   const get = async (org: Org, id: string) =>

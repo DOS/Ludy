@@ -70,7 +70,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { MetaAdsConnector, MetaWriteConnector, adLaunchWriters, adPlatforms, adRevokers, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { MetaAdsConnector, MetaWriteConnector, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -338,6 +338,18 @@ export function adRevokersOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_
 // (default off, refused on a public deployment): with it off a launch on a Meta account stays queued, untouched. Every object the job creates is paused.
 export function adWritersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, LaunchWriter>> {
   return adLaunchWriters({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
+// The pause of what a stopped launch made, by the provider id of the write connection (#2296, W2-4a, ADR-0043 points 4 and 7a): the narrowed view the pause job is
+// given, never the writer. The same providers as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, since
+// without it nothing was ever launched there), and it can do one thing: find the objects that carry a launch's tag and set them PAUSED.
+export function adPausersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPauser>> {
+  return adPausers({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
       ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
@@ -622,7 +634,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

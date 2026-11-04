@@ -19,6 +19,7 @@ import { zJournalReversal, type DocumentDirection, type JournalReversal } from '
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { OPENING_BALANCE_SOURCE } from './domain/opening-balance.ts';
 import { postNewEntry } from './ledger.ts';
+import { reverseDocumentStock } from './stock-lines.ts';
 
 export { zJournalReversal, type JournalReversal };
 
@@ -204,6 +205,7 @@ export async function postReversal(
   });
   // A purchase entry: void Crove's record of its document, naming this reversal (the database checks the link).
   const voidedDocumentId = entry.source_type === PURCHASE_SOURCE ? entry.source_id : null;
+  let stockReversed = 0;
   if (voidedDocumentId) {
     await ctx.trx
       .insertInto('crove_finance.purchase_document_void')
@@ -220,8 +222,10 @@ export async function postReversal(
     const voided = direction === 'sale' ? 'Hủy chứng từ bán do đảo bút toán' : 'Hủy chứng từ mua do đảo bút toán';
     await ctx.activity('finance.purchase_document', voidedDocumentId, direction === 'sale' ? 'sale.voided' : 'purchase.voided', voided);
     await ctx.emit('finance.purchase.voided', { documentId: voidedDocumentId, reversalEntryId: journalEntryId, direction });
+    // The stock the document made goes back on the same date (#2512).
+    stockReversed = await reverseDocumentStock(ctx, voidedDocumentId, entryDate);
   }
-  ctx.audit({ reversed_entry_id: entry.id, reversal_entry_id: journalEntryId, voided_document_id: voidedDocumentId });
+  ctx.audit({ reversed_entry_id: entry.id, reversal_entry_id: journalEntryId, voided_document_id: voidedDocumentId, ...(stockReversed > 0 ? { stock_moves_reversed: stockReversed } : {}) });
   await ctx.activity('finance.journal_entry', entry.id, 'journal_entry.reversed', 'Đảo bút toán');
   await ctx.emit('finance.journal_entry.reversed', { entryId: entry.id, reversalEntryId: journalEntryId });
   return { journalEntryId, reversedEntryId: entry.id, ...(voidedDocumentId ? { voidedDocumentId } : {}) };

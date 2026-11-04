@@ -208,9 +208,10 @@ export const changeMemberRole = defineCommand({
     );
     // Pending invites the member could no longer issue are revoked in the same transaction, after the membership locks
     // (the order every invite path uses): an admin or owner who becomes a member or viewer loses every invite, an
-    // owner who becomes an admin loses their admin invites (only owners grant admin) and their scoped invites (only
-    // owners scope an invite to legal entities, #1458). Accepting re-checks the inviter's role as well, as a backstop
-    // for any other path (#134, INVITE_SCOPE_STALE).
+    // owner who becomes an admin loses their admin invites (only owners grant admin), their scoped invites (only
+    // owners scope an invite to legal entities, #1458) and their invites with a department role (only owners give roles,
+    // #2611). Accepting re-checks the inviter's role as well, as a backstop for any other path (#134, INVITE_SCOPE_STALE,
+    // INVITE_ROLE_STALE).
     const lostRoles: Array<'admin' | 'member' | 'viewer'> = input.role === 'owner' ? [] : input.role === 'admin' ? ['admin'] : ['admin', 'member', 'viewer'];
     const losesScoped = previousRole === 'owner' && input.role !== 'owner';
     const revokedInvites =
@@ -222,7 +223,7 @@ export const changeMemberRole = defineCommand({
             .where('org_id', '=', ctx.orgId)
             .where('invited_by', '=', input.userId)
             .where('status', '=', 'pending')
-            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null)]) : eb('role', 'in', lostRoles)))
+            .where((eb) => (losesScoped ? eb.or([eb('role', 'in', lostRoles), eb('legal_entity_ids', 'is not', null), eb('role_key', 'is not', null)]) : eb('role', 'in', lostRoles)))
             .returning('id')
             .execute();
     ctx.audit({ revoked_invites: revokedInvites.map((r) => r.id) });

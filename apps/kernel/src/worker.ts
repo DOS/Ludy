@@ -55,6 +55,7 @@ import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
+import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
 import { failUnaskable, runAdsCampaignDraft, sweepAdsCampaignRequests, type AdsCampaignDraftJob } from './ads-worker.ts';
@@ -65,7 +66,7 @@ import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhoo
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
-import type { AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
+import type { AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -348,6 +349,8 @@ const ADS_SYNC_CRON = '10 * * * *';
 const ADS_REVOKE_CRON = '* * * * *';
 // The sweep that queues a waiting launch again (#2296, W2-3): the relay does it at once when a launch is approved, this is the safety net.
 const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
+// The safety net of the pause of stopped launches (#2296, W2-4a): every five minutes, a stopped launch whose objects are not paused yet and whose job was lost or is due again.
+const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -415,6 +418,9 @@ export interface WorkerDeps {
     // paused), the find by tag and the resolution of targeting names, never the writer. The launch job alone uses it, with the credential it opens. A provider
     // without one has its launches left queued, untouched (Meta's is built only where ADS_LIVE_LAUNCH is on).
     adWriters?: Readonly<Record<string, LaunchWriter>>;
+    // The one call of an ad platform's writer that pauses what a stopped launch made (#2296, W2-4a), by the provider id of the write connection: a frozen view that finds the
+    // objects carrying the launch's tag and sets them PAUSED, never the writer. The pause job alone uses it, with the credential it opens.
+    adPausers?: Readonly<Record<string, AdPauser>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -1224,6 +1230,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsLaunch, ADS_LAUNCH_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsLaunch);
+  }
+
+  // The pause of what a stopped launch made at the platform (#2296, W2-4a): ids only in the job (the org and the launch), queued by the relay below when a stop wrote
+  // ads.pause.queued, and again by a sweep every five minutes for a stopped launch whose event or job was lost or whose next run is due (crove_ads.wind_down_requeue writes
+  // the same event; the job's begin decides what is due). The job finds the objects that carry the launch's tag and sets them PAUSED with the credential of the write
+  // connection, and nothing else; a connection that a switch-off closed is paused by the revoke sweep with the sealed copy of its token, before it revokes.
+  const adPausers = deps.channels?.adPausers;
+  if (ads && adPausers && adsBroker && Object.keys(adPausers).length > 0) {
+    await boss.work<AdsPauseJob | { sweep: true }>(QUEUES.adsPause, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.wind_down_requeue(200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-pause] ${rows[0]?.n} stopped launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsPause({ runtime: deps.runtime, broker: adsBroker, pausers: adPausers }, job.data);
+      console.log(`[ads-pause] ${job.data.launchId}: ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsPause, ADS_PAUSE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsPause);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -2132,6 +2159,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                 const launchId = String(row.payload.launchId);
                 await boss.send(QUEUES.adsLaunch, { orgId: row.org_id, launchId } satisfies AdsLaunchJob, {
                   singletonKey: jobKey(row.org_id, QUEUES.adsLaunch, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
+              // A stopped launch (#2296, W2-4a): the job pauses what it made at the platform and records the answer; ids only in the job. A deployment with no pauser has
+              // nothing it could have launched, so the sweep finds nothing either.
+              if (ads && deps.channels?.adPausers && Object.keys(deps.channels.adPausers).length > 0 && row.type === 'ads.pause.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsPause, { orgId: row.org_id, launchId } satisfies AdsPauseJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsPause, launchId),
                   retryLimit: 2,
                   retryDelay: 30,
                   retryBackoff: true,
