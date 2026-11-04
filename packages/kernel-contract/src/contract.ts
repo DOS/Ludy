@@ -498,7 +498,7 @@ export const contract = {
     // provider sends it back to /channels/oauth/:provider/callback, and that screen finishes the attempt with the code
     // and state. Finish connects every account the grant covers (for Facebook, the Pages picked in Meta's dialog).
     oauthStart: oc
-      .input(z.object({ provider: zOAuthProvider }))
+      .input(z.object({ provider: zOAuthProvider, comments: z.boolean().optional() }))
       .output(z.object({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     oauthFinish: oc
       .input(z.object({ provider: zOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))

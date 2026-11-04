@@ -11,7 +11,14 @@
 // Sending. A reply or a hide is begun (the call row is committed as started), made with the credential the API sealed, and
 // recorded. A reply is never repeated after an unclear answer (no platform send call has an idempotency key); a hide is
 // idempotent, so its job may repeat it.
-import { ConversationNoticeError, parseSandboxNotice, parseZaloNotice, type ConversationAdapter, type ConversationNotice } from '@crove/channel';
+import {
+  ConversationNoticeError,
+  parseFacebookNotices,
+  parseSandboxNotice,
+  parseZaloNotice,
+  type ConversationAdapter,
+  type ConversationNotice,
+} from '@crove/channel';
 import { sql } from 'kysely';
 import type { Db } from '@crove/db';
 import { BlobConflictError, DomainError, putFile, sha256Hex, type BlobStore, type CredentialBroker, type Runtime } from '@crove/kernel-runtime';
@@ -30,9 +37,11 @@ export const CONVERSATION_CLAIM = 20;
 
 // The providers whose notices the worker can read: each turns a verified notice into events. A provider with no parser here
 // has its notices dropped.
-type NoticeParser = (body: Uint8Array) => ConversationNotice;
+type NoticeParser = (body: Uint8Array) => ConversationNotice | readonly ConversationNotice[];
 export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   sandbox: parseSandboxNotice,
+  // Facebook Page comments (#2307): X-Hub-Signature-256 was checked by the route before the body was parked.
+  facebook_page: parseFacebookNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
 };
@@ -89,37 +98,41 @@ export async function runConversationIntake(deps: IntakeDeps): Promise<{ stored:
       continue;
     }
     const parse = Object.hasOwn(NOTICE_PARSERS, notice.provider) ? NOTICE_PARSERS[notice.provider] : undefined;
-    let parsed: ConversationNotice | null = null;
+    let parsedList: readonly ConversationNotice[] | null = null;
     try {
-      parsed = parse ? parse(notice.body) : null;
+      const raw = parse ? parse(notice.body) : null;
+      parsedList = raw === null ? null : Array.isArray(raw) ? raw : [raw as ConversationNotice];
     } catch (error) {
       if (!(error instanceof ConversationNoticeError)) throw error;
     }
-    // A notice with no event (Zalo's follow or seen): nothing to store.
-    if (parsed && parsed.events.length === 0) {
-      await finishNotice(deps.workerDb, notice.seq);
-      continue;
-    }
-    if (!parsed) {
+    if (!parsedList) {
       // Not a notice we can read: nothing to retry, so nothing to keep.
       await finishNotice(deps.workerDb, notice.seq);
       out.dropped++;
       log(`dropped notice ${notice.seq} (${notice.provider}): unreadable, ${notice.body.byteLength} bytes`);
       continue;
     }
+    const nonEmpty = parsedList.filter((p) => p.events.length > 0);
+    // A notice with no event (Zalo's follow or seen, or a Facebook Page status/like event): nothing to store.
+    if (nonEmpty.length === 0) {
+      await finishNotice(deps.workerDb, notice.seq);
+      continue;
+    }
     let failed = false;
-    const targets = (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId);
-    // No active connection holds this account (expired, revoked, offboarding, or none): the platforms keep no history to pull, so the
-    // notice is gone; the count says so.
-    if (targets.length === 0) log(`notice ${notice.seq} (${notice.provider}) names no active connection: dropped after storing nothing`);
-    for (const target of targets) {
-      try {
-        const done = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: target.connectionId, events: parsed.events }, { actor: SYSTEM, orgId: target.orgId });
-        out.stored += done.stored;
-      } catch (error) {
-        // The notice's own fault is logged by its code only; a transient one leaves the notice to its lease.
-        if (isPermanent(error)) log(`a ${notice.provider} notice was refused by ingest (${(error as DomainError).code})`);
-        else failed = true;
+    for (const parsed of nonEmpty) {
+      const targets = (await connectionsFor(deps.workerDb, notice.provider, parsed.accountId)).filter((t) => !parsed.connectionId || t.connectionId === parsed.connectionId);
+      // No active connection holds this account (expired, revoked, offboarding, or none): the platforms keep no history to pull, so the
+      // notice is gone; the count says so.
+      if (targets.length === 0) log(`notice ${notice.seq} (${notice.provider}) names no active connection: dropped after storing nothing`);
+      for (const target of targets) {
+        try {
+          const done = await deps.runtime.execute<{ stored: number }>('kernel.conversation.ingest', { connectionId: target.connectionId, events: parsed.events }, { actor: SYSTEM, orgId: target.orgId });
+          out.stored += done.stored;
+        } catch (error) {
+          // The notice's own fault is logged by its code only; a transient one leaves the notice to its lease.
+          if (isPermanent(error)) log(`a ${notice.provider} notice was refused by ingest (${(error as DomainError).code})`);
+          else failed = true;
+        }
       }
     }
     if (!failed) await finishNotice(deps.workerDb, notice.seq);

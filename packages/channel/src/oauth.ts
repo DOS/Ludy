@@ -12,6 +12,9 @@ export interface AuthorizeInput {
   redirectUri: string;
   // S256 challenge of the attempt's verifier; null when the connector does not use PKCE.
   codeChallenge: string | null;
+  // Facebook Pages (CV2, #2307): the member ticked "also read and answer comments" on the Channels screen, so the dialog asks for the
+  // comment-reading and webhook-subscription permissions besides the publishing ones.
+  comments?: boolean;
 }
 
 export interface ExchangeInput {

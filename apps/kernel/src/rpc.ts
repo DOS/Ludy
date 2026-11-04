@@ -1647,7 +1647,12 @@ export function createRpcHandler(
             { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
             { actor, orgId },
           );
-          const authorizeUrl = connector.authorizeUrl({ state: attempt.state, redirectUri: oauthRedirectUri(input.provider), codeChallenge: attempt.codeChallenge });
+          const authorizeUrl = connector.authorizeUrl({
+            state: attempt.state,
+            redirectUri: oauthRedirectUri(input.provider),
+            codeChallenge: attempt.codeChallenge,
+            ...(input.comments ? { comments: true } : {}),
+          });
           return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
         }),
       ),
@@ -1716,6 +1721,7 @@ export function createRpcHandler(
               scopes: account.scopes,
               expiresAt: account.expiresAt?.toISOString() ?? null,
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              ...(account.grantedByHash ? { grantedByHash: account.grantedByHash } : {}),
             };
             try {
               const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
