@@ -2624,14 +2624,16 @@ suite('ads on PostgreSQL (#2217)', () => {
               // The write connection closed between the creates and the activation, as no stop command saw it: begin stops the launch, keeping its commitment to today, and
               // the pause job is queued (ids only).
               const b = await created('Kết nối đóng', w);
-              await row(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT write_connection_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2)`, [orgId, b.account]);
+              const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, b.account]))[0];
+              await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
               expect(await activate(w, b.launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
               expect(await launchNow(b.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed', commit_until: inDays(0) });
               expect((await events('ads.pause.queued', b.launch.id)).length).toBe(1);
               expect((await activations(b.launch.id)).length).toBe(0);
               // A cap of the account lowered below the launch after it was created: needs attention, nothing called.
               const c = await created('Hạ hạn mức trước khi bật', w);
-              expect((await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'account', adAccountId: c.account, period: 'daily', amount: '90000' })).status).toBe(200);
+              // (A cap lowered through the command cannot go below what is committed, so the row is put in by the database owner, as the clock test does.)
+              await row(`INSERT INTO crove_ads.ad_spend_cap (org_id, id, scope, ad_account_id, period, amount, currency, set_by) VALUES ($1, '03bb2cc3-d800-7000-8000-000000000001', 'account', $2, 'daily', '90000', 'VND', $3)`, [orgId, c.account, owner.userId]);
               expect(await activate(w, c.launch.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
               expect(await launchNow(c.launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'cap_lowered' });
               expect((await activations(c.launch.id)).length).toBe(0);
