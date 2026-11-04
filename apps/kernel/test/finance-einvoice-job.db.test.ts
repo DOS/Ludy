@@ -430,6 +430,40 @@ suite('the issue job of a sales e-invoice (#2502)', () => {
     expect(control.calls.filter((c) => c.startsWith('issue'))).toHaveLength(1);
   });
 
+  it('fetches the files of an issued invoice again only after a wait, says why a missing connection stops it, and makes no fetch the ledger has closed', async () => {
+    const o = await org();
+    const draftId = await submitted(o);
+    const { provider } = createSandboxEInvoiceProvider();
+    expect(await run(o, draftId, provider)).toEqual({ action: 'issue', state: 'issued' });
+    const key = (await draftRow(o, draftId)).idempotency_key;
+    const sweep = async () => (await rows<{ draft_id: string }>('SELECT draft_id FROM crove_finance.einvoice_due(NULL, NULL, 100) WHERE org_id = $1', [o.orgId])).map((r) => r.draft_id);
+    const files = (step: unknown) => worker.execute<{ ok: boolean; signedFileId: string | null }>('finance.einvoice.job_files', { draftId, step }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
+    const begin = () => worker.execute<{ action: string; reason?: string }>('finance.einvoice.job_begin', { draftId }, { actor: { type: 'system', component: 'finance.einvoice' }, orgId: o.orgId });
+    // The evidence was stored; take it away again, as if the fetch had never succeeded, and age the invoice so the sweep sees it.
+    await fixture("UPDATE crove_finance.einvoice_draft SET signed_file_id = NULL, pdf_file_id = NULL, issued_at = pg_catalog.now() - interval '1 hour' WHERE org_id = $1 AND id = $2", [o.orgId, draftId]);
+    await fixture("DELETE FROM crove_kernel.external_call WHERE org_id = $1 AND key = $2", [o.orgId, `einvoice:files:${key}`]);
+    expect(await sweep()).toContain(draftId);
+    // A fetch that failed: the next one waits, and the sweep leaves the draft alone until then.
+    expect(await files({ kind: 'begin' })).toMatchObject({ ok: true });
+    expect(await files({ kind: 'failed' })).toMatchObject({ ok: false });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'issued', error_code: 'FILES_UNAVAILABLE' });
+    expect((await draftRow(o, draftId)).next_check_at).not.toBeNull();
+    expect(await sweep()).not.toContain(draftId);
+    expect(await begin()).toEqual({ action: 'none', reason: 'NOT_DUE' });
+    // Once the wait has passed it is fetched again.
+    await due(o, draftId);
+    expect(await sweep()).toContain(draftId);
+    expect(await begin()).toMatchObject({ action: 'files' });
+    // The connection it was sent through stops working: the draft stays issued and says why, instead of showing only that it is saving the original.
+    await rows("UPDATE crove_kernel.channel_connection SET status = 'expired' WHERE org_id = $1", [o.orgId]);
+    await due(o, draftId);
+    expect(await begin()).toEqual({ action: 'none', reason: 'PROVIDER_NOT_READY' });
+    expect(await draftRow(o, draftId)).toMatchObject({ state: 'issued', error_code: 'PROVIDER_NOT_READY' });
+    // A key the ledger has closed (1000 calls) is not fetched: the call has to be on record first.
+    await fixture("UPDATE crove_kernel.external_call SET calls = 1000, state = 'ambiguous' WHERE org_id = $1 AND key = $2", [o.orgId, `einvoice:files:${key}`]);
+    expect(await files({ kind: 'begin' })).toMatchObject({ ok: false, signedFileId: null });
+  });
+
   it('leaves a send that started a moment ago alone (it is in flight) and asks about it once it is old enough', async () => {
     const o = await org();
     const draftId = await submitted(o);

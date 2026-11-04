@@ -105,6 +105,8 @@ suite('org purge on PostgreSQL (#1024)', () => {
       { actor: asMfa(member), orgId: org.orgId },
     );
     const loose = await ingest(org.orgId, owner, new TextEncoder().encode(`<loose>${tag}</loose>`), 'loose.xml');
+    // The signed XML of the issued sales e-invoice below (#2502): the legal original of an output invoice, kept with the books after the draft that names it is deleted.
+    const signed = await ingest(org.orgId, owner, new TextEncoder().encode(`<signed>${tag}</signed>`), 'signed.xml');
 
     const partyEmail = `seller-${tag}@purge.test`;
     const ids = await admin(async (c) => {
@@ -261,6 +263,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
       await job.query('BEGIN');
       await job.query('SELECT crove_kernel.enter_system_context($1::uuid)', [org.orgId]);
       await job.query(`UPDATE crove_finance.einvoice_draft SET state = 'issued', provider_ref = 'sbx-purge', issued_number = 'C26TSB/1', issued_at = pg_catalog.now() WHERE org_id = $1 AND id = $2`, [org.orgId, ids.einvoiceDraft]);
+      await job.query('UPDATE crove_finance.einvoice_draft SET signed_file_id = $3 WHERE org_id = $1 AND id = $2', [org.orgId, ids.einvoiceDraft, signed.fileId]);
       await job.query('COMMIT');
     } catch (error) {
       await job.query('ROLLBACK').catch(() => undefined);
@@ -268,7 +271,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
     } finally {
       job.release();
     }
-    return { org, owner, ownerEmail, member, booked, loose, partyEmail, proposalId, ...ids };
+    return { org, owner, ownerEmail, member, booked, loose, signed, partyEmail, proposalId, ...ids };
   }
 
   // Moves the org to offboarding as staff, with the owner's request and the export recorded at the given ages.
@@ -432,10 +435,11 @@ suite('org purge on PostgreSQL (#1024)', () => {
     expect(after['crove_kernel.outbox_event']).toBe(before['crove_kernel.outbox_event']);
     expect(after['crove_kernel.inbound_address']).toBe(before['crove_kernel.inbound_address']);
     expect(after['crove_kernel.audit_event']).toBe((before['crove_kernel.audit_event'] ?? 0) + 1);
-    // The booked file and its blob stay; the loose one goes with its blob.
-    expect(after['crove_kernel.file']).toBe(1);
-    expect(await one('SELECT id FROM crove_kernel.file WHERE org_id = $1', [s.org.orgId])).toEqual({ id: s.booked.fileId });
+    // The booked file and its blob stay, and so does the signed XML of the issued sales invoice though its draft is gone; the loose one goes with its blob.
+    expect(after['crove_kernel.file']).toBe(2);
+    expect((await admin(async (c) => (await c.query<{ id: string }>('SELECT id FROM crove_kernel.file WHERE org_id = $1', [s.org.orgId])).rows)).map((r) => r.id).sort()).toEqual([s.booked.fileId, s.signed.fileId].sort());
     expect(store.blobs.has(s.booked.storageKey)).toBe(true);
+    expect(store.blobs.has(s.signed.storageKey)).toBe(true);
     expect(store.blobs.has(s.loose.storageKey)).toBe(false);
     // A customer's images (CV5c): both rows and the stored one's blob go in the same command; the pending image's key waits in the queue of
     // doomed blobs for the worker (nothing was written under it), and the other org's image and blob stay.
@@ -536,7 +540,7 @@ suite('org purge on PostgreSQL (#1024)', () => {
           }),
           pinned: expect.objectContaining({ 'crove_kernel.task_comment': 0, 'crove_kernel.task': 0, 'crove_kernel.position': 0, 'crove_social.post_approval': 0, 'crove_social.post_variant': 0, 'crove_finance.stock_item': 1 }),
           anonymized: { 'crove_kernel.party': 2 },
-          keptFiles: 1,
+          keptFiles: 2,
           keptParties: 2,
           keptProposals: 1,
         },

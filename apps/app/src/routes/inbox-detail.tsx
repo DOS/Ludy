@@ -411,6 +411,8 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
   const ads = detail.data ? isAdsProposalKind(detail.data.kind) : false;
   // A request to issue a sales e-invoice (#2502) posts nothing either; its card shows the invoice the approval would send.
   const issue = detail.data ? isEInvoiceIssueKind(detail.data.kind) : false;
+  // The invoice the approval would send. Approving waits for it: with no view of the invoice (still loading, or the read failed) nothing can be approved.
+  const issueView = useQuery({ ...orpc.einvoice.drafts.issueRequest.queryOptions({ input: { proposalId: id } }), enabled: issue });
   const lines = useMemo(
     () => (payload?.lines ?? []).map((l) => ({ ...l, debitAccount: lineAccounts[l.lineNo] ?? l.debitAccount })),
     [payload, lineAccounts],
@@ -525,7 +527,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
     pending &&
     item.canApprove &&
     !busy &&
-    (plain ? true : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
+    (plain ? !issue || !!issueView.data : !dirty && !!payload && !blocked && unclassified === 0 && (failed === 0 || acceptFailed) && (!unverified || acceptUnverified) && latePostingValid);
   const submitApproval = () => {
     if (!item) return;
     if (plain) {
@@ -720,7 +722,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         )}
         {/* Every status in words, in its one chip (DESIGN.md §4.4, #2000). */}
         <Badge variant={PROPOSAL_STATUS_VARIANT[item.status]}>
-          {item.status === 'executed' ? t('executedAt', { at: f.dateTime(item.decidedAt) }) : t(`status.${item.status}`)}
+          {item.status === 'executed' ? t(issue ? 'issueExecutedAt' : 'executedAt', { at: f.dateTime(item.decidedAt) }) : t(`status.${item.status}`)}
         </Badge>
         {item.voided && <Badge variant="destructive">{t('voidedBadge')}</Badge>}
         {/* DESIGN.md §5.1: every decision links to its audit log entry. By id alone, the log lists the decision (the
@@ -861,7 +863,7 @@ function InboxDetail({ slug, id, split }: { slug: string; id: string; split: boo
         <div className="mb-6">
           {pending && !item.canApprove && item.approveReason === 'four_eyes' && <p className="mb-4 text-sm text-muted-foreground">{t('issueFourEyes')}</p>}
           {pending && !item.canApprove && item.approveReason === 'not_eligible' && <p className="mb-4 text-sm text-subtle-foreground">{t('issueNotEligible')}</p>}
-          <EInvoiceIssueCard id={item.id} title={item.title} slug={slug} pending={pending} />
+          <EInvoiceIssueCard view={issueView} title={item.title} slug={slug} pending={pending} />
         </div>
       )}
       {reading && (

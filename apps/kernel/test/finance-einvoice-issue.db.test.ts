@@ -258,6 +258,13 @@ suite('issuing a sales e-invoice (#2502)', () => {
     const { proposalId } = await request(o, draft.id, o.member);
     const view = (user: string) => rt.query<Record<string, unknown>>('finance.einvoice.issue_request', { proposalId }, { actor: asUser(user), orgId: o.orgId });
     expect(await view(o.admin ?? '')).toMatchObject({ draftId: draft.id, state: 'draft', total: '274000', currency: 'VND', lineCount: 2, buyerKind: 'business', buyerName: 'Công ty Mua Thử', current: true });
+    // The card shows what the approval sends besides the total: the buyer's tax code, every line with its VAT rate, the subtotal and the VAT.
+    expect(await view(o.admin ?? '')).toMatchObject({
+      buyerTaxCode: expect.any(String),
+      subtotal: '250000',
+      vatAmount: '24000',
+      lines: [expect.objectContaining({ lineNo: 1, description: 'Hàng A', vatRate: '10%', amount: '200000', vatAmount: '20000' }), expect.objectContaining({ lineNo: 2, description: 'Hàng B', vatRate: '8%' })],
+    });
     // Edited after the request: the card says the request is stale; an approval would be refused the same way.
     await save(o, series, { draftId: draft.id, lines: [{ description: 'Hàng A', unit: 'cái', quantity: '3', unitPrice: '100000', vatRate: '10%' }] });
     expect(await view(o.admin ?? '')).toMatchObject({ total: '330000', lineCount: 1, current: false });

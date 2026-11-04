@@ -275,9 +275,10 @@ BEGIN
   END IF;
 
   IF OLD.state = 'issued' THEN
-    -- Terminal: only the evidence is added after it, once the files are fetched and stored: the two file links (each set once, from empty) and the error code of that step.
+    -- Terminal: only the evidence is added after it, once the files are fetched and stored: the two file links (each set once, from empty), the error code of that step and when
+    -- it is tried again (a schedule: nothing of the invoice itself).
     IF NEW.state = 'issued'
-       AND pg_catalog.to_jsonb(NEW) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'updated_at'] = pg_catalog.to_jsonb(OLD) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'updated_at']
+       AND pg_catalog.to_jsonb(NEW) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'next_check_at', 'updated_at'] = pg_catalog.to_jsonb(OLD) - ARRAY['signed_file_id', 'pdf_file_id', 'error_code', 'next_check_at', 'updated_at']
        AND (OLD.signed_file_id IS NULL OR NEW.signed_file_id IS NOT DISTINCT FROM OLD.signed_file_id)
        AND (OLD.pdf_file_id IS NULL OR NEW.pdf_file_id IS NOT DISTINCT FROM OLD.pdf_file_id) THEN
       RETURN NEW;

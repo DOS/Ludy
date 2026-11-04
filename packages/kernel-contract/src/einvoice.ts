@@ -244,7 +244,12 @@ export const zEInvoiceIssueView = z.object({
   lineCount: z.number().int(),
   buyerKind: z.string(),
   buyerName: z.string().nullable(),
+  buyerTaxCode: z.string().nullable(),
   series: z.string().nullable(),
+  // What the approval puts to the provider besides the total: every line and the VAT, as the draft holds them now.
+  subtotal: z.string(),
+  vatAmount: z.string(),
+  lines: z.array(zEInvoiceDraftLine),
   // False once the draft was edited after the request, or has left `draft`: an approval then fails with EINVOICE_DRAFT_CHANGED.
   current: z.boolean(),
 });

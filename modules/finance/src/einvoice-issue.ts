@@ -165,7 +165,11 @@ export const einvoiceIssueRequest = defineQuery({
       lineCount: draft.lines.length,
       buyerKind: draft.buyer.kind,
       buyerName: draft.buyer.name,
+      buyerTaxCode: draft.buyer.taxCode,
       series: series ? `${series.template_no}/${series.symbol}` : null,
+      subtotal: draft.subtotal,
+      vatAmount: draft.vatAmount,
+      lines: draft.lines,
       current: draft.state === 'draft' && hash === payload.data.contentHash,
     };
   },

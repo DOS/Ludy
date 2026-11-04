@@ -20,7 +20,7 @@ import type { EInvoiceRequest } from '@crove/einvoice';
 import { zId } from '@crove/kernel-contract';
 import { defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { money } from '@crove/l10n-vn';
-import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
+import { AMBIGUOUS_RETRY_SECONDS, EINVOICE_ERROR_CODES, FILES_RETRY_SECONDS, IN_FLIGHT_SECONDS, nextCheckDelaySeconds, rejectionCode, statusDeadlinePassed } from './domain/einvoice-job.ts';
 import { computeDraft } from './domain/einvoice-draft.ts';
 
 const plain = (value: string): string => money(value).toFixed();
@@ -235,14 +235,22 @@ export const einvoiceJobBegin = defineCommand({
       if (issue.state === 'started' && ctx.now.getTime() - new Date(issue.updated_at).getTime() < IN_FLIGHT_SECONDS * 1000) return none('IN_FLIGHT');
       action = 'ask';
     } else return none('CALL_ENDED');
-    // Never asked faster than the check time the last answer set.
-    if (action !== 'files' && draft.next_check_at !== null && new Date(draft.next_check_at).getTime() > ctx.now.getTime()) return none('NOT_DUE');
+    // Never asked faster than the check time the last answer set (a failed fetch of the files sets it too).
+    if (draft.next_check_at !== null && new Date(draft.next_check_at).getTime() > ctx.now.getTime()) return none('NOT_DUE');
     const target = await connectionFor(ctx, draft, action === 'issue');
     if ('code' in target) {
-      // An issued invoice is never failed: its evidence waits for the connection to be made again. One the provider has or may have is held, never ended; only a send
-      // that was never made goes back to a draft.
+      // An issued invoice is never failed: its evidence waits for the connection to be made again, with the reason on the draft. One the provider has or may have is held, never
+      // ended; only a send that was never made goes back to a draft.
       if (action === 'issue') await releaseDraft(ctx, draft, target.code);
-      else if (action !== 'files') await holdDraft(ctx, draft, target.code);
+      else if (action === 'files') {
+        await ctx.trx
+          .updateTable('crove_finance.einvoice_draft')
+          .set({ error_code: target.code, next_check_at: new Date(ctx.now.getTime() + FILES_RETRY_SECONDS * 1000), updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', draft.id)
+          .execute();
+      }
+      else await holdDraft(ctx, draft, target.code);
       return none(target.code);
     }
     const { request, consistent } = await requestFor(ctx, draft, target);
@@ -440,17 +448,25 @@ export const einvoiceJobFiles = defineCommand({
     const step = input.step;
     if (step.kind === 'begin') {
       if (draft.signed_file_id) return { ok: false, ref: draft.provider_ref, signedFileId: draft.signed_file_id };
-      await startCall(ctx, { key, target: target?.provider ?? 'einvoice', step: 'files', safety: 'safe' });
+      // The ledger closes a key after 1000 calls and records nothing then: the fetch is not made without a call on record.
+      const started = await startCall(ctx, { key, target: target?.provider ?? 'einvoice', step: 'files', safety: 'safe' });
+      if (started === 'closed') return { ok: false, ref: draft.provider_ref, signedFileId: null };
       return { ok: true, ref: draft.provider_ref, signedFileId: null };
     }
     if (step.kind === 'failed') {
       await endCall(ctx, key, { state: 'ambiguous', kind: 'transient', code: 'FILES_UNAVAILABLE' });
-      await ctx.trx.updateTable('crove_finance.einvoice_draft').set({ error_code: 'FILES_UNAVAILABLE', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('id', '=', draft.id).execute();
+      // Fetched again after a wait, not on every sweep.
+      await ctx.trx
+        .updateTable('crove_finance.einvoice_draft')
+        .set({ error_code: 'FILES_UNAVAILABLE', next_check_at: new Date(ctx.now.getTime() + FILES_RETRY_SECONDS * 1000), updated_at: ctx.now })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', draft.id)
+        .execute();
       return { ok: false, ref: draft.provider_ref, signedFileId: null };
     }
     await ctx.trx
       .updateTable('crove_finance.einvoice_draft')
-      .set({ signed_file_id: step.signedFileId, pdf_file_id: step.pdfFileId, error_code: null, updated_at: ctx.now })
+      .set({ signed_file_id: step.signedFileId, pdf_file_id: step.pdfFileId, error_code: null, next_check_at: null, updated_at: ctx.now })
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', draft.id)
       .execute();
