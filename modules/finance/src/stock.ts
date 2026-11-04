@@ -31,7 +31,12 @@ export interface StockMoveWrite {
   date: string;
   // Signed decimal string, not zero.
   quantity: string;
-  source: { type: 'document_line'; documentId: string; lineNo: number } | { type: 'manual' } | { type: 'reversal'; reversesMoveId: string };
+  source:
+    | { type: 'document_line'; documentId: string; lineNo: number }
+    | { type: 'manual' }
+    | { type: 'reversal'; reversesMoveId: string }
+    // A shipment (out) or a return (in) of a marketplace order line (#2515), each once per line.
+    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return' };
 }
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
@@ -63,6 +68,8 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       document_id: move.source.type === 'document_line' ? move.source.documentId : null,
       line_no: move.source.type === 'document_line' ? move.source.lineNo : null,
       line_attempt: attempt,
+      order_line_id: move.source.type === 'order_line' ? move.source.orderLineId : null,
+      order_move: move.source.type === 'order_line' ? move.source.move : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,
     })
@@ -230,6 +237,8 @@ export const stockMoveReverse = defineCommand({
       .executeTakeFirst();
     if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
     if (move.source_type === 'reversal') throw new DomainError('STOCK_MOVE_IS_REVERSAL', 409, 'Đây đã là một phát sinh đảo, không đảo thêm được');
+    // The stock an order line moved follows the line's own stage (a return brings it back); reversing it alone would leave the line shipped with nothing to move again.
+    if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao');
     const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');
     // Two reversals at once: the second meets the unique index (a move is reversed once), and the move rows cannot be locked here (the tenant role only reads and inserts).

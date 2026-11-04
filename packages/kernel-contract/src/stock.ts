@@ -7,7 +7,7 @@ import { zId } from './schemas.ts';
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTradeKey = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line'] as const;
 export type StockMoveSourceKey = (typeof STOCK_MOVE_SOURCES)[number];
 
 // A signed decimal quantity with at most six decimals, not zero.

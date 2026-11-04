@@ -18,6 +18,7 @@ export * from './bank-statement.ts';
 export * from './payment-reminder.ts';
 export * from './einvoice.ts';
 export * from './stock.ts';
+export * from './marketplace.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
