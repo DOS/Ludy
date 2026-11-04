@@ -14,7 +14,7 @@ import { sql } from 'kysely';
 import { z } from 'zod';
 import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, type ExtractClient } from '@crove/extract-contract';
 import type { MemberRole } from '@crove/db';
-import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceSummary, type MarketplaceConfirmResult, type MarketplacePreview, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
+import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceOrdersInput, zMarketplaceSummary, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -234,6 +234,78 @@ export const marketplacePreview = defineQuery({
     const staged = await stagedRun(ctx, input.fileId, false);
     if (!staged) throw notStaged();
     return previewOf(ctx, staged);
+  },
+});
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// The confirmed orders
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// How far an order has got is its lines' furthest stage: a cancelled order is cancelled only when every line is, a returned line makes it returned.
+const ORDER_RANK: Record<Stage, number> = { unknown: 0, cancelled: 1, placed: 2, shipped: 3, completed: 4, returned: 5 };
+
+export const marketplaceOrders = defineQuery({
+  name: 'finance.marketplace.orders',
+  input: zMarketplaceOrdersInput,
+  // Every role reads: an order holds no buyer data, only the platform's order number, SKUs, quantities and amounts.
+  access: ['owner', 'admin', 'member', 'viewer'],
+  handler: async (ctx, input): Promise<MarketplaceOrder[]> => {
+    let query = ctx.trx
+      .selectFrom('crove_finance.channel_order as o')
+      .select(['o.id', 'o.legal_entity_id', 'o.platform', 'o.order_no', 'o.ordered_at', 'o.created_at'])
+      .where('o.org_id', '=', ctx.orgId)
+      .orderBy('o.ordered_at', sql`desc nulls last`)
+      .orderBy('o.created_at', 'desc')
+      .orderBy('o.id')
+      .limit(input.limit ?? 100);
+    if (input.legalEntityId) query = query.where('o.legal_entity_id', '=', input.legalEntityId);
+    if (input.platform) query = query.where('o.platform', '=', input.platform);
+    // An order with a line at the stage asked for.
+    const stage = input.stage;
+    if (stage) query = query.where((eb) => eb.exists(eb.selectFrom('crove_finance.channel_order_line as s').select('s.id').whereRef('s.org_id', '=', 'o.org_id').whereRef('s.order_id', '=', 'o.id').where('s.stage', '=', stage)));
+    const orders = await query.execute();
+    if (orders.length === 0) return [];
+    const lines = await ctx.trx
+      .selectFrom('crove_finance.channel_order_line as l')
+      .select(['l.id', 'l.order_id', 'l.line_key', 'l.sku', 'l.item_name', 'l.quantity', 'l.unit_price', 'l.amount', 'l.stage', 'l.shipped_at'])
+      .where('l.org_id', '=', ctx.orgId)
+      .where('l.order_id', 'in', orders.map((o) => o.id))
+      .orderBy('l.line_key')
+      .execute();
+    // The item each shipped line moved, by its code.
+    const shipped = lines.length === 0 ? [] : await ctx.trx
+      .selectFrom('crove_finance.stock_move as m')
+      .innerJoin('crove_finance.stock_item as i', (join) => join.onRef('i.org_id', '=', 'm.org_id').onRef('i.id', '=', 'm.item_id'))
+      .select(['m.order_line_id', 'i.code'])
+      .where('m.org_id', '=', ctx.orgId)
+      .where('m.order_move', '=', 'ship')
+      .where('m.order_line_id', 'in', lines.map((l) => l.id))
+      .execute();
+    const codes = new Map(shipped.flatMap((m) => (m.order_line_id ? [[m.order_line_id, m.code] as const] : [])));
+    return orders.map((o) => {
+      const own = lines.filter((l) => l.order_id === o.id);
+      const furthest = own.reduce<Stage>((best, l) => (ORDER_RANK[l.stage] > ORDER_RANK[best] ? l.stage : best), 'unknown');
+      return {
+        id: o.id,
+        legalEntityId: o.legal_entity_id,
+        platform: o.platform,
+        orderNo: o.order_no,
+        orderedAt: o.ordered_at === null ? null : String(o.ordered_at).slice(0, 10),
+        stage: furthest,
+        lines: own.map((l) => ({
+          id: l.id,
+          lineKey: l.line_key,
+          sku: l.sku,
+          itemName: l.item_name,
+          quantity: String(l.quantity),
+          unitPrice: l.unit_price === null ? null : String(l.unit_price),
+          amount: l.amount === null ? null : String(l.amount),
+          stage: l.stage,
+          shippedAt: l.shipped_at === null ? null : String(l.shipped_at).slice(0, 10),
+          itemCode: codes.get(l.id) ?? null,
+        })),
+      };
+    });
   },
 });
 
@@ -488,4 +560,4 @@ export function recordMarketplaceReadFailure(runtime: Runtime, orgId: string, fi
 }
 
 export const marketplaceCommands = [marketplaceConfirm, marketplaceReject];
-export const marketplaceQueries = [marketplaceStaged, marketplacePreview];
+export const marketplaceQueries = [marketplaceStaged, marketplacePreview, marketplaceOrders];

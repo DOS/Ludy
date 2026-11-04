@@ -189,6 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
@@ -1632,6 +1633,16 @@ export const contract = {
       save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
     },
+  },
+  // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.
+  // staged lists the reports waiting; preview says how one stands against the org's orders and stock items now; confirm stores the orders once and moves stock for the lines that name an
+  // item (MARKETPLACE_NOT_STAGED, 409, when it was already decided or read again); reject skips it, storing nothing. orders lists the confirmed orders. No buyer data of any kind.
+  marketplace: {
+    staged: oc.input(z.object({}).optional()).output(z.array(zMarketplaceStaged)),
+    preview: oc.input(z.object({ fileId: zId })).output(zMarketplacePreview),
+    confirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceConfirmResult),
+    reject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    orders: oc.input(zMarketplaceOrdersInput.optional()).output(z.array(zMarketplaceOrder)),
   },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.

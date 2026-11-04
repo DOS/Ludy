@@ -2264,6 +2264,23 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
       },
     },
+    marketplace: {
+      staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
+      preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
+      confirm: os.marketplace.confirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      reject: os.marketplace.reject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      orders: os.marketplace.orders.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.orders', input ?? {}, { actor, orgId }))),
+    },
     stock: {
       items: {
         list: os.stock.items.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_item.list', input ?? {}, { actor, orgId }))),
