@@ -6,7 +6,7 @@
 --
 -- crove_kernel.approval_command_policy  the policy table, with the new command in its own list (the signature and OUT columns are unchanged).
 -- crove_kernel.approval_command_live    which commands are judged on the members now (approval.ts, CommandPolicy.live): the new command joins the ads ones.
--- Idempotent; applied files stay untouched. The finance part (the definer that runs under the approval) is in 20261122180000_crove_finance_einvoice_issue.sql.
+-- Idempotent; applied files stay untouched. The finance part (the definer that runs under the approval) is in 20261123050000_crove_finance_einvoice_issue.sql.
 SET LOCAL lock_timeout = '2s';
 
 CREATE OR REPLACE FUNCTION crove_kernel.approval_command_policy(p_command text, OUT roles text[], OUT permission text, OUT four_eyes boolean, OUT ledger boolean)

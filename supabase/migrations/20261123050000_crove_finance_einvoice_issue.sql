@@ -14,7 +14,7 @@
 --                           the state and the submit time, nothing else; the draft guard admits that one move from that owner and from no one else.
 -- einvoice_draft_line_guard replaced to take the draft FOR KEY SHARE, so a line cannot be written between the definer's read of the lines and its commit (the definer holds the
 --                           draft FOR UPDATE).
--- The approval policy of finance.einvoice.issue is in 20261122190000_crove_kernel_approval_policy_einvoice.sql, a crove_kernel migration.
+-- The approval policy of finance.einvoice.issue is in 20261123060000_crove_kernel_approval_policy_einvoice.sql, a crove_kernel migration.
 SET LOCAL lock_timeout = '2s';
 
 -- ---------------------------------------------------------------------------
