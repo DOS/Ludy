@@ -21,6 +21,7 @@ import { sql } from 'kysely';
 import { DomainError, defineCommand, type CommandContext } from '@crove/kernel-runtime';
 import { zId, type AdsCampaignPlan } from '@crove/kernel-contract';
 import { planHash } from './campaign-plan.ts';
+import { todayIn } from './domain.ts';
 import { contextBase, draftPlanOf } from './campaign-draft.ts';
 import { committedLaunches, type LaunchState } from './launch-ledger.ts';
 import { committedProblems } from './launch-caps.ts';
@@ -157,6 +158,20 @@ const failLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx,
 const stopLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'stopped', stop_reason: reason, commit_until: null });
 const needAttention = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'needs_attention', stop_reason: reason });
 
+// The condition that stops a launch right now, or null: the org's switch, the launches blocked, the account's switch, the write connection active. Read before every step
+// (`begin`), and again before a create that follows a reconcile that found nothing (`record` of `missing`), since the owner can stop while the lookup runs.
+function stopConditionOf(
+  setting: { write_enabled: boolean; launches_blocked: boolean } | undefined,
+  account: { write_enabled: boolean },
+  connection: { status: string } | null,
+): 'switch_off' | 'launches_blocked' | 'account_off' | 'connection_closed' | null {
+  if (setting?.write_enabled !== true) return 'switch_off';
+  if (setting.launches_blocked) return 'launches_blocked';
+  if (account.write_enabled !== true) return 'account_off';
+  if (!connection || connection.status !== 'active') return 'connection_closed';
+  return null;
+}
+
 // A code as the ledger holds a reason: lower case letters and underscores, at most 40.
 const reasonOf = (code: string): string => code.toLowerCase().replace(/[^a-z_]/g, '_').slice(0, 40) || 'unknown';
 
@@ -188,7 +203,7 @@ export const adsLaunchBegin = defineCommand({
     if (connection && !writer) return none('no_writer');
 
     // Every stop condition, before every step.
-    const stop = setting?.write_enabled !== true ? 'switch_off' : setting.launches_blocked ? 'launches_blocked' : account.write_enabled !== true ? 'account_off' : !connection || connection.status !== 'active' ? 'connection_closed' : null;
+    const stop = stopConditionOf(setting, account, connection);
     if (stop) {
       if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'cancelled', stop_reason: stop, commit_until: null });
       else {
@@ -229,7 +244,19 @@ export const adsLaunchBegin = defineCommand({
 
     if (launch.state === 'queued') {
       // What the writer cannot carry out is stopped here, before the first call: nothing is created and nothing is spent, so the commitment is released.
-      const defect = !page ? 'page_required' : !writer.objectives.includes(plan.objective) ? 'objective_unsupported' : writer.currencies !== null && !writer.currencies.includes(launch.currency) ? 'currency_unsupported' : plan.mediaFileId !== null && !writer.media ? 'media_unsupported' : null;
+      // A flight whose last day has passed in the account's own zone cannot run: the ad set would carry an expired schedule, or the platform would refuse it after the
+      // campaign exists. It ends before any call, and a frozen plan cannot be repaired by a retry (the commitment was already over with the flight).
+      const defect = !page
+        ? 'page_required'
+        : !writer.objectives.includes(plan.objective)
+          ? 'objective_unsupported'
+          : writer.currencies !== null && !writer.currencies.includes(launch.currency)
+            ? 'currency_unsupported'
+            : plan.mediaFileId !== null && !writer.media
+              ? 'media_unsupported'
+              : launch.end_text < todayIn(account.time_zone as string, ctx.now)
+                ? 'flight_over'
+                : null;
       if (defect) {
         await setLaunch(ctx, launch.id, { state: 'launching' });
         await failLaunch(ctx, launch.id, defect);
@@ -413,6 +440,9 @@ export const adsLaunchRecord = defineCommand({
       // The platform has no such object: the call may be made again, once, and the row says so (a call counted more). Only from an unclear row, which a reconcile
       // took: a second `missing` for the same row finds it begun again and is stale, so two jobs never both make the call.
       if (row.state !== 'ambiguous') return { recorded: false, reason: 'stale' };
+      // The stop conditions again before the call is armed: an owner's stop, a switch-off or a closed connection that came while the lookup ran does not change the
+      // launch row, and the job still holds the token it opened before. Nothing is armed, and the next begin stops the launch.
+      if (stopConditionOf(await currentSetting(ctx), found.account, found.connection)) return { recorded: true, state: launch.state, step: launch.step, next: 'stop' };
       await settle({ state: 'started', calls: row.calls + 1 });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: 'missing' });
       return { recorded: true, state: 'launching', step: launch.step, next: 'call' };

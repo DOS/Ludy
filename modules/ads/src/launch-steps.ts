@@ -100,8 +100,10 @@ export function zoneKnown(zone: string | null): zone is string {
   }
 }
 
-// The first moment of a day in the account's own time zone as ISO 8601 with its offset (`2026-11-05T00:00:00+0700`), for the start and the end of a flight (the
-// end is the first moment of the day after the last day). It throws for a zone that is not known (`zoneKnown`).
+// The first moment of a day in the account's own time zone as ISO 8601 with its local time and offset (`2026-11-05T00:00:00+0700`), for the start and the end of a flight
+// (the end is the first moment of the day after the last day). It throws for a zone that is not known (`zoneKnown`). When the zone skips its own midnight on that day (a
+// daylight-saving change at midnight: Santiago on 6 September 2026, where the clocks go from 23:59 to 01:00), the day starts at the first moment that exists, so that
+// is the answer (`2026-09-06T01:00:00-0300`): never an instant of the day before.
 export function zonedMidnight(day: string, zone: string | null): string {
   // A zone this runtime does not know (none recorded, or a name it cannot read) is not guessed as UTC: a flight window put in the wrong zone drifts away from the
   // days the launch's commitment holds. The launch checks the zone before any call (`zoneKnown`); this throws if it is asked anyway.
@@ -112,15 +114,29 @@ export function zonedMidnight(day: string, zone: string | null): string {
     const match = /^GMT([+-])(\d{2}):?(\d{2})?$/.exec(part);
     return match ? (match[1] === '-' ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? '0')) : 0;
   };
-  // The offset that holds at the zone's own midnight, not at some other hour of that day: a zone that changes its offset on that day (daylight saving) has two.
-  // First the offset at the UTC midnight of the day, which puts the guess of the instant near the local midnight; if the zone's offset there is another one, that
-  // is the one at local midnight (the change happened between the two instants).
+  const clock = new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  const localOf = (instant: number): { date: string; time: string } => {
+    const parts = clock.formatToParts(new Date(instant));
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '00';
+    return { date: `${get('year')}-${get('month')}-${get('day')}`, time: `${get('hour')}:${get('minute')}:${get('second')}` };
+  };
+  // The first minute whose local date is the day or later. Local dates only grow with the instant, and every zone's offset is between -12 and +14 hours, so it lies
+  // between 15 hours before the UTC midnight of the day (still the day before, wherever) and 15 hours after it (already the day, wherever); a bisection finds it. At
+  // the zone's own midnight it is that midnight, with the offset that holds there (a zone that changes its offset on that day has two); where midnight is skipped it
+  // is the first moment after the skip.
   const base = Date.parse(`${day}T00:00:00Z`);
-  const guess = offsetAt(base);
-  const offset = offsetAt(base - guess * 60_000);
+  let low = base - 15 * 3_600_000;
+  let high = base + 15 * 3_600_000;
+  while (high - low > 60_000) {
+    const mid = low + Math.floor((high - low) / 120_000) * 60_000;
+    if (localOf(mid).date >= day) high = mid;
+    else low = mid;
+  }
+  const local = localOf(high);
+  const offset = offsetAt(high);
   const sign = offset < 0 ? '-' : '+';
   const abs = Math.abs(offset);
-  return `${day}T00:00:00${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(2, '0')}`;
+  return `${local.date}T${local.time}${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(2, '0')}`;
 }
 
 export const dayAfter = (day: string): string => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);

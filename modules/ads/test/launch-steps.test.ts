@@ -94,6 +94,18 @@ describe('the flight in the account\'s own time zone', () => {
     expect(zonedMidnight('2026-03-30', 'Europe/Berlin')).toBe('2026-03-30T00:00:00+0200');
   });
 
+  it('starts a day at the first moment that exists when the zone skips its own midnight, never at an instant of the day before', () => {
+    // Santiago springs forward at midnight on 2026-09-06: the clocks go from 23:59 on the 5th to 01:00 on the 6th, so 6 September starts at 01:00 (04:00Z), and the flight that
+    // ends on the 5th ends at that same moment.
+    expect(zonedMidnight('2026-09-06', 'America/Santiago')).toBe('2026-09-06T01:00:00-0300');
+    expect(zonedMidnight('2026-09-05', 'America/Santiago')).toBe('2026-09-05T00:00:00-0400');
+    expect(zonedMidnight(dayAfter('2026-09-05'), 'America/Santiago')).toBe('2026-09-06T01:00:00-0300');
+    expect(Date.parse(zonedMidnight('2026-09-06', 'America/Santiago').replace(/([+-]\d{2})(\d{2})$/, '$1:$2'))).toBe(Date.parse('2026-09-06T04:00:00Z'));
+    // Another zone that changes at midnight: Havana springs forward at midnight too (2026-03-08).
+    expect(zonedMidnight('2026-03-08', 'America/Havana')).toBe('2026-03-08T01:00:00-0400');
+    expect(zonedMidnight('2026-03-09', 'America/Havana')).toBe('2026-03-09T00:00:00-0400');
+  });
+
   it('ends at the first moment of the day after the last day', () => {
     expect(dayAfter('2026-11-12')).toBe('2026-11-13');
     expect(dayAfter('2026-11-30')).toBe('2026-12-01');
