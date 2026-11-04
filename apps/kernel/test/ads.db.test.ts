@@ -1364,9 +1364,9 @@ suite('ads on PostgreSQL (#2217)', () => {
           }
           // The launches the job tests (W2-3) leave started hold their commitment too: the system, which knows nothing ran, releases them.
           await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'test_cleanup' WHERE org_id = $1 AND state IN ('launching', 'needs_attention')`, [orgId]), true);
-          // A launch a person stopped (W2-4a) keeps its commitment to at least the first day of its flight, which a final state can never release: the tests that stop one
-          // leave it, so the next test starts from the caps alone (the table's owner removes the row; nothing in the ledger deletes one).
-          await admin((c) => c.query(`DELETE FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'stopped' AND commit_until IS NOT NULL`, [orgId]));
+          // A launch a person stopped (W2-4a) keeps its commitment to at least the first day of its flight, which a final state can never release, and a live one (W2-4b)
+          // keeps all of its: the tests that stop one or run one to live leave it, so the next test starts from the caps alone (the table's owner removes the row; nothing in the ledger deletes one).
+          await admin((c) => c.query(`DELETE FROM crove_ads.ad_launch WHERE org_id = $1 AND state IN ('stopped', 'live') AND commit_until IS NOT NULL`, [orgId]));
           await open();
           const made = await connect(name);
           await sync(made.connectionId);
@@ -2607,7 +2607,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               // A person has no column that asks for a retry: the request is the definer's, and a person's own update of it is a privilege error.
               await expect(inContext(owner, (c) => c.query(`UPDATE crove_ads.ad_launch SET retry_requested_at = now() WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
               // The run to live, then what the rule says of the switches (the kill switch blocks launches) once every activation has settled.
-              expect(await activate(w, launch.id)).toEqual({ steps: 2, ended: 'live' });
+              expect(await activate(w, launch.id)).toEqual({ steps: 3, ended: 'live' });
               expect(await problem(launch.id)).toBeNull();
               expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
               expect(await problem(launch.id)).toBe('switches');
