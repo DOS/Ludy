@@ -10,6 +10,8 @@ import {
   isEveryEntity,
   scopeNames,
   socialPostOf,
+  taskDueDay,
+  taskDueFromDay,
   toggleScopeEntity,
 } from '../src/lib/agents.ts';
 
@@ -140,5 +142,16 @@ describe('legal entity scope', () => {
     expect(scopeNames(['e3', 'e1'], entities)).toEqual(['Công ty', 'Hộ kinh doanh']);
     // An id the reader cannot name is left out.
     expect(scopeNames(['e9', 'e2'], entities)).toEqual(['Chi nhánh Hà Nội']);
+  });
+});
+
+// Task due day conversion for task creation and editing (#2588).
+describe('taskDueDay and taskDueFromDay', () => {
+  it('converts between an ISO timestamp and the local day in Asia/Ho_Chi_Minh', () => {
+    const iso = taskDueFromDay('2026-11-20', 'Asia/Ho_Chi_Minh');
+    expect(iso).toBe('2026-11-20T16:59:00.000Z');
+    expect(taskDueDay(iso, 'Asia/Ho_Chi_Minh')).toBe('2026-11-20');
+    expect(taskDueFromDay('', 'Asia/Ho_Chi_Minh')).toBeNull();
+    expect(taskDueDay(null, 'Asia/Ho_Chi_Minh')).toBe('');
   });
 });

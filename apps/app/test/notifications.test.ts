@@ -7,11 +7,11 @@ import { vi } from '../src/i18n/messages/vi.ts';
 
 describe('notificationKinds', () => {
   it("lists the kernel's kinds, and finance's where finance runs", () => {
-    expect(notificationKinds(['finance'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'finance.bank_attention', 'finance.portal_attention', 'finance.period_closing']);
-    expect(notificationKinds(['social'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new']);
-    expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
+    expect(notificationKinds(['finance'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'finance.bank_attention', 'finance.portal_attention', 'finance.period_closing']);
+    expect(notificationKinds(['social'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new']);
+    expect(notificationKinds(['notes'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'notes.todo_due']);
     // An ad account's paused connection is a kind of the Ads module (#2219).
-    expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);
+    expect(notificationKinds(['ads'])).toEqual(['kernel.approval_waiting', 'kernel.file_unreadable', 'kernel.task_assigned', 'kernel.task_rerouted', 'kernel.original_flagged', 'kernel.ai_budget', 'kernel.conversation_new', 'kernel.channel_expired']);
   });
 
   it('has a label for every kind in both languages', () => {
@@ -29,6 +29,8 @@ describe('notificationTarget', () => {
   it('opens what the notification is about', () => {
     expect(notificationTarget({ kind: 'kernel.approval_waiting', subjectId: id, detail: {} })).toEqual({ to: 'proposal', id });
     expect(notificationTarget({ kind: 'kernel.file_unreadable', subjectId: id, detail: {} })).toEqual({ to: 'inbox' });
+    expect(notificationTarget({ kind: 'kernel.task_assigned', subjectId: id, detail: { title: 'Việc' } })).toEqual({ to: 'task', id });
+    expect(notificationTarget({ kind: 'kernel.task_assigned', subjectId: null, detail: {} })).toEqual({ to: 'tasks' });
     expect(notificationTarget({ kind: 'kernel.task_rerouted', subjectId: id, detail: { title: 'Việc' } })).toEqual({ to: 'task', id });
     expect(notificationTarget({ kind: 'kernel.task_rerouted', subjectId: null, detail: {} })).toEqual({ to: 'tasks' });
     // An original e-invoice that differs from its posting or is not verified opens the posted proposal (#2335).

@@ -1981,6 +1981,18 @@ export const contract = {
         }),
       )
       .output(z.object({ taskId: zId })),
+    update: oc
+      .input(
+        z.object({
+          id: zId,
+          title: z.string().trim().min(1).max(300).optional(),
+          description: z.string().max(10000).nullable().optional(),
+          assigneePositionId: zId.nullable().optional(),
+          due: z.iso.datetime().nullable().optional(),
+          idempotencyKey: zId,
+        }),
+      )
+      .output(z.object({ taskId: zId })),
     comment: oc.input(z.object({ id: zId, body: z.string().trim().min(1).max(10000), idempotencyKey: zId })).output(z.object({ commentId: zId })),
     setStatus: oc.input(z.object({ id: zId, status: zTaskStatus, idempotencyKey: zId })).output(z.object({ taskId: zId, status: zTaskStatus })),
   },

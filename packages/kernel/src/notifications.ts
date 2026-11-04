@@ -7,8 +7,9 @@
 // writes nothing), and prunes the recipients' old rows. It returns how many rows it wrote. kind is '<module>.<kind>'.
 //
 // The kernel's own kinds come from kernel.notification.dispatch: a proposal waiting for my approval (the eligible
-// approvers of its command, P12) and a file that failed to read (whoever asked for the reading, else the uploader,
-// else, for a mailed file, the owners and admins), and a task a chart or role change moved to someone because its
+// approvers of its command, P12), a file that failed to read (whoever asked for the reading, else the uploader,
+// else, for a mailed file, the owners and admins), a task given or moved to my position (#2588, the target seat's
+// holder, else the owners), and a task a chart or role change moved to someone because its
 // holder could no longer read its legal entity (the target seat's holder, else the owners; #1799). Members read their own (kernel.notification.list), mark them read
 // and turn kinds off (kernel.notification.mute); a restrictive policy keeps each member to their own rows.
 import { sql } from 'kysely';
@@ -34,6 +35,7 @@ export const NOTIFICATION_KIND = /^[a-z]+\.[a-z0-9_]+$/;
 // The kernel's kinds.
 export const APPROVAL_WAITING = 'kernel.approval_waiting';
 export const FILE_UNREADABLE = 'kernel.file_unreadable';
+export const TASK_ASSIGNED = 'kernel.task_assigned';
 export const TASK_REROUTED = 'kernel.task_rerouted';
 // An owner's notice before a personal-data erasure (#1678, ADR-0037 section 5): how many of my private notes and
 // to-dos mention a person who asked to be erased. Not one a member can turn off: the erasure waits on it.
@@ -129,7 +131,16 @@ export async function outboxEvent(ctx: Pick<CommandContext, 'trx' | 'orgId'>, ev
 }
 
 // The events kernel.notification.dispatch handles.
-export const KERNEL_NOTIFYING_EVENTS = ['kernel.proposal.created', 'kernel.file.read_failed', 'kernel.task.rerouted', 'kernel.personal_data.notified', 'kernel.channel.expired', 'kernel.proposal.original_flagged'] as const;
+export const KERNEL_NOTIFYING_EVENTS = [
+  'kernel.proposal.created',
+  'kernel.file.read_failed',
+  'kernel.task.created',
+  'kernel.task.assigned',
+  'kernel.task.rerouted',
+  'kernel.personal_data.notified',
+  'kernel.channel.expired',
+  'kernel.proposal.original_flagged',
+] as const;
 
 export const notificationDispatch = defineCommand({
   name: 'kernel.notification.dispatch',
@@ -187,6 +198,46 @@ export const notificationDispatch = defineCommand({
           // The file's name is read when the notice is shown (#1977).
           detail: {},
           eventId: event.id,
+        });
+        return { sent };
+      }
+      case 'kernel.task.created':
+      case 'kernel.task.assigned': {
+        const e = z.object({ taskId: zId, positionId: zId.nullable().optional() }).safeParse(event.payload);
+        if (!e.success) return { sent: 0 };
+        const task = await ctx.trx
+          .selectFrom('crove_kernel.task')
+          .select(['id', 'assignee_position_id', 'status', 'legal_entity_id'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', e.data.taskId)
+          .executeTakeFirst();
+        // Closed or moved again before the worker got to it: that later move tells its own holder.
+        if (!task || ['done', 'cancelled'].includes(task.status)) return { sent: 0 };
+        if (e.data.positionId !== undefined && task.assignee_position_id !== e.data.positionId) return { sent: 0 };
+        let users: string[];
+        if (task.assignee_position_id === null) {
+          users = (
+            await ctx.trx.selectFrom('crove_kernel.tenant_member').select('user_id').where('org_id', '=', ctx.orgId).where('role', '=', 'owner').execute()
+          ).map((r) => r.user_id);
+        } else {
+          const seat = await ctx.trx
+            .selectFrom('crove_kernel.position')
+            .select('holder_user_id')
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', task.assignee_position_id)
+            .executeTakeFirst();
+          users = seat?.holder_user_id ? [seat.holder_user_id] : [];
+        }
+        const sent = await notifyMembers(ctx, {
+          kind: TASK_ASSIGNED,
+          users,
+          key: `task_assigned:${task.id}:${event.id}`,
+          subject: { type: 'kernel.task', id: task.id },
+          legalEntityId: task.legal_entity_id,
+          // The task's title is read when the notice is shown, never copied (#1977).
+          detail: {},
+          eventId: event.id,
+          actor: event.actor,
         });
         return { sent };
       }

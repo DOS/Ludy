@@ -2695,6 +2695,7 @@ export function createRpcHandler(
       ),
       get: os.tasks.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.task.get', input, { actor, orgId }))),
       create: os.tasks.create.handler(({ context, input }) => keyed(context, 'kernel.task.create', input)),
+      update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
     },

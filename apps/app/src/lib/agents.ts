@@ -156,3 +156,38 @@ export function socialPostOf(sourceRef: unknown): string | null {
   const { type, id } = sourceRef as { type?: unknown; id?: unknown };
   return type === 'social.post' && typeof id === 'string' && UUID.test(id) ? id : null;
 }
+
+/** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */
+export function taskDueDay(due: string | null | undefined, timeZone: string): string {
+  if (!due) return '';
+  const ms = Date.parse(due);
+  if (Number.isNaN(ms)) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
+/** End of `dueOn` (23:59) in `timeZone` as an ISO timestamp, or null when `dueOn` is empty (#2588). */
+export function taskDueFromDay(dueOn: string, timeZone: string): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dueOn.trim());
+  if (!m) return null;
+  const utcEnd = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 0);
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(utcEnd));
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+    const localAsUtc = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), 0);
+    return new Date(utcEnd - (localAsUtc - utcEnd)).toISOString();
+  } catch {
+    return new Date(utcEnd).toISOString();
+  }
+}
