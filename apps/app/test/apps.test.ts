@@ -40,7 +40,7 @@ describe('apps of the shell (#1528)', () => {
     const menu = (modules: string[]) => installedApps(modules).find((a) => a.id === 'accounting')?.groups.map((g) => [g.id, g.items.map((i) => i.to)]);
     const off = menu(['kernel', 'finance']);
     expect(off).toEqual(menu(['kernel', 'finance', 'crm']));
-    expect(off?.find(([id]) => id === 'parties')?.[1]).toEqual(['/o/$slug/customers', '/o/$slug/payment-reminders', '/o/$slug/vendors']);
+    expect(off?.find(([id]) => id === 'books')?.[1]).toEqual(expect.arrayContaining(['/o/$slug/customers', '/o/$slug/payment-reminders', '/o/$slug/vendors']));
     // Its links to a customer open the accounting's own screen, which no module but finance gates.
     for (const modules of [['kernel', 'finance'], ['kernel', 'finance', 'crm']]) {
       expect(screenInstalled(modules, '/o/acme/customers'), modules.join()).toBe(true);

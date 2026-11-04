@@ -42,6 +42,8 @@ export function useFormat() {
     () => ({
       money: (value: string | null | undefined, currency?: string) => formatMoney(value, locale, currency),
       number: (value: number | bigint | string) => formatNumber(value, locale),
+      // A plain decimal with up to `digits` decimals (a unit cost of stock).
+      decimal: (value: string, digits: number) => formatDecimal(value, locale, digits),
       // AI budgets and run costs (6 decimals).
       aiAmount: (value: string) => formatDecimal(value, locale, 6),
       date: (value: string | null | undefined) => formatDate(value, locale),

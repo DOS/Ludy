@@ -48,6 +48,8 @@ const FINANCE_SCREENS = {
     { path: 'vouchers' },
     // The drafts of the sales e-invoices a business will issue (#2500).
     { path: 'sales-invoices' },
+    // The items of stock, their moves and the goods lines not yet assigned to an item (#2512).
+    { path: 'stock' },
     { path: 'bank' },
     { path: 'fixed-assets' },
     { path: 'ledger' },
@@ -65,14 +67,17 @@ const FINANCE_SCREENS = {
     { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },
     { app: 'accounting', group: 'books', path: 'sales-invoices', label: 'salesInvoices' },
+    { app: 'accounting', group: 'books', path: 'stock', label: 'stock' },
     { app: 'accounting', group: 'books', path: 'bank', label: 'bank' },
     { app: 'accounting', group: 'books', path: 'fixed-assets', label: 'fixedAssets' },
     { app: 'accounting', group: 'books', path: 'ledger', label: 'ledger' },
-    { app: 'accounting', group: 'tax', path: 'vat', label: 'vat' },
-    { app: 'accounting', group: 'tax', path: 'portal-invoices', label: 'portalList' },
-    { app: 'accounting', group: 'parties', path: 'customers', label: 'customers' },
-    { app: 'accounting', group: 'parties', path: 'payment-reminders', label: 'paymentReminders' },
-    { app: 'accounting', group: 'parties', path: 'vendors', label: 'vendors' },
+    // The VAT and the tax portal's list, then the customers, their reminders and the vendors: in the one group of the app, because a headed group each made the menu longer than a
+    // 1366x768 window holds once "Hàng hóa" joined it.
+    { app: 'accounting', group: 'books', path: 'vat', label: 'vat' },
+    { app: 'accounting', group: 'books', path: 'portal-invoices', label: 'portalList' },
+    { app: 'accounting', group: 'books', path: 'customers', label: 'customers' },
+    { app: 'accounting', group: 'books', path: 'payment-reminders', label: 'paymentReminders' },
+    { app: 'accounting', group: 'books', path: 'vendors', label: 'vendors' },
   ],
 } as const satisfies ModuleScreens;
 

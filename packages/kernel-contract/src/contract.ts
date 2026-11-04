@@ -189,6 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
@@ -1634,6 +1635,36 @@ export const contract = {
       save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
       delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
     },
+  },
+  // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
+  // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.
+  stock: {
+    items: {
+      // The items of one legal entity, or of every entity the caller may see; the inactive ones only when asked. On hand is the sum of the item's moves.
+      list: oc.input(z.object({ legalEntityId: zId.optional(), includeInactive: z.boolean().optional() }).optional()).output(z.array(zStockItem)),
+      // STOCK_ITEM_CODE_EXISTS (409), STOCK_ITEM_CODE_FIXED, STOCK_ITEM_ENTITY_FIXED, STOCK_ITEM_IN_USE (the unit and the account stay once a move names the item),
+      // STOCK_ACCOUNT_UNKNOWN, STOCK_ACCOUNT_INACTIVE, STOCK_ACCOUNT_KIND (422), STOCK_ITEM_NOT_FOUND (404).
+      save: oc.input(zStockItemInput).output(z.object({ id: zId })),
+      setActive: oc.input(z.object({ itemId: zId, active: z.boolean() })).output(z.object({ active: z.boolean() })),
+    },
+    aliases: {
+      // STOCK_ALIAS_TAKEN and STOCK_ALIAS_FACTOR (409), STOCK_ALIAS_EMPTY (422), STOCK_ITEM_INACTIVE (409).
+      teach: oc.input(zStockAliasTeach).output(z.object({ id: zId, existing: z.boolean() })),
+      forget: oc.input(z.object({ aliasId: zId })).output(z.object({ removed: z.boolean() })),
+    },
+    moves: {
+      list: oc.input(z.object({ itemId: zId, limit: z.number().int().min(1).max(500).optional() })).output(z.array(zStockMove)),
+      // The correction of a move: a reversing move of the opposite quantity. STOCK_MOVE_NOT_FOUND (404), STOCK_MOVE_IS_REVERSAL and STOCK_MOVE_REVERSED (409).
+      reverse: oc.input(z.object({ moveId: zId })).output(z.object({ id: zId })),
+    },
+    // The goods lines of posted documents that moved no stock: they matched no item by code or by a taught name.
+    unassigned: oc.input(zStockUnassignedInput.optional()).output(z.array(zStockUnassignedLine)),
+    // Writes the move of a line and, unless told not to, teaches its name to the item. STOCK_LINE_NOT_FOUND (404), STOCK_LINE_ASSIGNED and STOCK_LINE_VOIDED (409),
+    // STOCK_LINE_NOT_GOODS, STOCK_LINE_NO_QUANTITY and STOCK_ITEM_ENTITY_MISMATCH (422).
+    assign: oc.input(zStockAssign).output(z.object({ moveId: zId, aliasId: zId.nullable() })),
+    // Nhập xuất tồn of one month and the stock card of an item (#2513): read-only and provisional (the weighted average of the month); every role reads.
+    report: oc.input(zStockReportInput).output(z.array(zStockReportRow)),
+    card: oc.input(zStockCardInput).output(zStockCard),
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),
