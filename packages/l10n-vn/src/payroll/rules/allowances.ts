@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { rule, type PayrollRule } from '../rule-types.ts';
+import { defineRule, type PayrollRule } from '../rule-types.ts';
 
 // Parts of pay exempt from personal income tax (plan section 5, row 13). Only the two that move a monthly figure are
 // modelled; the others (uniform, phone and travel within the corporate-tax limits, housing, severance, pay for unused
 // leave) are not, and a payment of that kind is entered as other pay and taxed in full.
 
 export const EXEMPT_ALLOWANCE_RULES: readonly PayrollRule[] = [
-  rule({
+  defineRule({
     kind: 'pit_meal_cash_cap',
     key: 'default',
     effectiveFrom: '2026-07-01',
@@ -17,7 +17,7 @@ export const EXEMPT_ALLOWANCE_RULES: readonly PayrollRule[] = [
     },
     value: { monthly: '1200000' },
   }),
-  rule({
+  defineRule({
     kind: 'pit_overtime_exemption',
     key: 'default',
     effectiveFrom: '2026-01-01',

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { rule, type RuleRow } from '../rule-types.ts';
+import { defineRule, type RuleRow } from '../rule-types.ts';
 
 // The reference level behind the insurance wage's floor and cap, and the bounds themselves (plan section 5, rows 4 and 5).
 // The reference level equals the base salary (luong co so) while that exists (Law 41/2024 Arts. 7 and 141(13)).
 
 export const REFERENCE_LEVEL_RULES: readonly RuleRow<'reference_level'>[] = [
-  rule({
+  defineRule({
     kind: 'reference_level',
     key: 'default',
     effectiveFrom: '2024-07-01',
@@ -16,7 +16,7 @@ export const REFERENCE_LEVEL_RULES: readonly RuleRow<'reference_level'>[] = [
     },
     value: { amount: '2340000' },
   }),
-  rule({
+  defineRule({
     kind: 'reference_level',
     key: 'default',
     effectiveFrom: '2026-07-01',
@@ -30,7 +30,7 @@ export const REFERENCE_LEVEL_RULES: readonly RuleRow<'reference_level'>[] = [
 ];
 
 export const INSURANCE_WAGE_BOUND_RULES: readonly RuleRow<'insurance_wage_bounds'>[] = [
-  rule({
+  defineRule({
     kind: 'insurance_wage_bounds',
     key: 'social',
     effectiveFrom: '2025-07-01',
@@ -41,7 +41,7 @@ export const INSURANCE_WAGE_BOUND_RULES: readonly RuleRow<'insurance_wage_bounds
     },
     value: { floor: { basis: 'reference_level', multiple: '1' }, cap: { basis: 'reference_level', multiple: '20' } },
   }),
-  rule({
+  defineRule({
     kind: 'insurance_wage_bounds',
     key: 'unemployment',
     effectiveFrom: '2026-01-01',

@@ -100,7 +100,7 @@ export interface RuleDefinition<K extends RuleKind> {
 }
 
 /** Builds a row; the id follows from kind, key and date so two rows cannot disagree about it. */
-export function rule<K extends RuleKind>(definition: RuleDefinition<K>): RuleRow<K> {
+export function defineRule<K extends RuleKind>(definition: RuleDefinition<K>): RuleRow<K> {
   return { id: `${definition.kind}.${definition.key}@${definition.effectiveFrom}`, ...definition };
 }
 

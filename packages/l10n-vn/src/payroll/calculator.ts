@@ -212,8 +212,9 @@ function invalid(what: string): PayrollRefusedError {
   return new PayrollRefusedError('invalid_input', `invalid payroll input: ${what}`);
 }
 
-// A non-negative decimal; an absent value is zero.
-function amount(name: string, value: string | undefined): Decimal {
+// A non-negative decimal, rounded to the dong where it enters; an absent optional value is zero, an absent required one is refused.
+function amount(name: string, value: string | undefined, required = false): Decimal {
+  if (required && (value === undefined || value.trim() === '')) throw invalid(`${name} is required`);
   let parsed: Decimal;
   try {
     parsed = money(value ?? '');
@@ -221,13 +222,15 @@ function amount(name: string, value: string | undefined): Decimal {
     throw invalid(`${name} is not a decimal amount`);
   }
   if (parsed.isNegative()) throw invalid(`${name} is negative`);
-  return parsed;
+  return parsed.toDecimalPlaces(0);
 }
 
 const percentOf = (base: Decimal, percent: string): Decimal => base.times(money(percent)).div(PERCENT_SCALE).toDecimalPlaces(0);
 
 // The rules in force on the month, remembering which were looked at.
 function ruleBook(rules: readonly PayrollRule[], month: string) {
+  // The rules in force on the first day of the pay month. A row that starts mid-month applies from the next month, and a
+  // rule dated by the time of payment (the BHTN cap) follows the pay month, not the day the money moves.
   const onDate = `${month}-01`;
   const used = new Map<string, RuleRef>();
   return {
@@ -253,7 +256,7 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
   const zero = money(0);
 
   // Days and proration.
-  const standardDays = amount('standardWorkingDays', inputs.standardWorkingDays);
+  const standardDays = amount('standardWorkingDays', inputs.standardWorkingDays, true);
   if (!standardDays.greaterThan(0)) throw invalid('standardWorkingDays must be above zero');
   const unpaidLeave = amount('unpaidLeaveDays', inputs.unpaidLeaveDays);
   const notEmployed = amount('daysNotEmployed', inputs.daysNotEmployed);
@@ -262,7 +265,7 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
   const prorate = (full: Decimal): Decimal => full.times(paidDays).div(standardDays).toDecimalPlaces(0);
 
   // Regular pay.
-  const baseWage = amount('baseWage', employment.baseWage);
+  const baseWage = amount('baseWage', employment.baseWage, true);
   const allowances = employment.allowances.map((a) => ({ ...a, value: amount(`allowance ${a.label}`, a.amount) }));
   const otherRegular = amount('otherRegularPay', employment.otherRegularPay);
   const basePaid = prorate(baseWage);
@@ -272,7 +275,10 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
   const regularPaid = basePaid.plus(allowancesPaid.reduce((s, v) => s.plus(v), zero)).plus(otherPaid);
   const unpaidReduction = regularFull.minus(regularPaid);
 
-  // The insurable pay and, from it, the hourly rate of overtime and night work (Labor Code Art. 98).
+  // The insurable pay and, from it, the hourly rate of overtime and night work (Labor Code Art. 98). A simplification the
+  // accountant (#2535) confirms: the job's wage is the base wage and the allowances named in the contract, so other regular
+  // pay and allowances not named are left out of the hourly rate.
+  //
   const insurablePay = baseWage.plus(allowances.filter((a) => a.namedInContract).reduce((s, a) => s.plus(a.value), zero));
   const hourlyCache: { rate: Decimal | null } = { rate: null };
   const hourlyRate = (): Decimal => {
@@ -289,7 +295,7 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
     const night = book.get('night_premium', 'default');
     const exemption = book.get('pit_overtime_exemption', 'default');
     for (const entry of overtimeInputs) {
-      if (!(entry.dayKind in multiples)) throw invalid(`unknown overtime day kind ${entry.dayKind}`);
+      if (!Object.hasOwn(multiples, entry.dayKind)) throw invalid(`unknown overtime day kind ${entry.dayKind}`);
       const hours = amount('overtime hours', entry.hours);
       const dayMultiple = money(multiples[entry.dayKind]);
       const multiple = entry.night ? dayMultiple.plus(money(night.nightWork)).plus(money(night.nightOvertimeExtra).times(dayMultiple)) : dayMultiple;
@@ -364,6 +370,8 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
     const cap = money(book.get('pit_meal_cash_cap', 'default').monthly);
     exemptMeal = mealPaid.lessThan(cap) ? mealPaid : cap;
   }
+  // Night-work pay here is the premium alone, exempt under either reading; the row is still consulted so the month lists it.
+  if (nightPay.greaterThan(0)) book.get('pit_overtime_exemption', 'default');
   const exemptNight = nightPay;
   const taxableIncome = gross.minus(exemptMeal).minus(exemptOvertime).minus(exemptNight);
 
@@ -411,19 +419,19 @@ export function calculatePayroll(employment: PayrollEmployment, inputs: PayrollM
     pit = tax.toDecimalPlaces(0);
   } else {
     flatPercent = withholding.percent;
-    incomeAfterInsurance = taxableIncome.minus(employeeInsurance);
-    assessable = incomeAfterInsurance.isNegative() ? zero : incomeAfterInsurance;
+    // The payment is the taxable income before any insurance: the threshold and the 10% both apply to it.
+    assessable = taxableIncome;
     if (employment.commitment === true) mode = 'commitment';
-    else if (assessable.greaterThanOrEqualTo(money(withholding.paymentThreshold)) || inputs.withholdingRequested === true) {
+    else if (taxableIncome.greaterThanOrEqualTo(money(withholding.paymentThreshold)) || inputs.withholdingRequested === true) {
       mode = 'flat';
-      pit = percentOf(assessable, withholding.percent);
+      pit = percentOf(taxableIncome, withholding.percent);
     } else mode = 'below_threshold';
   }
 
   // Deductions and the checks of the Labor Code.
   const deductionTotals = { advance: zero, damage: zero, other: zero };
   for (const d of inputs.deductions ?? []) {
-    if (!(d.kind in deductionTotals)) throw invalid(`unknown deduction kind ${d.kind}`);
+    if (!Object.hasOwn(deductionTotals, d.kind)) throw invalid(`unknown deduction kind ${d.kind}`);
     deductionTotals[d.kind] = deductionTotals[d.kind].plus(amount(`deduction ${d.label}`, d.amount));
   }
   const deductionsTotal = deductionTotals.advance.plus(deductionTotals.damage).plus(deductionTotals.other);

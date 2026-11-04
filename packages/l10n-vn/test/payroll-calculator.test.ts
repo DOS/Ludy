@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
-import { PAYROLL_RULES, PayrollRefusedError, calculatePayroll, listRulesUsed, rule, type PayrollRule, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs } from '../src/index.ts';
+import { PAYROLL_RULES, PayrollRefusedError, calculatePayroll, listRulesUsed, defineRule, type PayrollRule, type PayrollCalculation, type PayrollEmployment, type PayrollMonthInputs } from '../src/index.ts';
 
 // Golden tests of the payroll calculator (#2529) from invented people: no real name, amount or identifier. Every figure
 // was worked by hand from the rules of docs/plan/payroll.md section 5 (and the overtime case by a separate script), not
@@ -232,9 +232,51 @@ describe('overtime and night work', () => {
 function withWholeOvertime(): PayrollRule[] {
   return [
     ...PAYROLL_RULES,
-    rule({ kind: 'pit_overtime_exemption', key: 'default', effectiveFrom: '2026-08-01', status: 'confirmed', source: { cite: 'A test row: the accountant reads the whole overtime pay as exempt', confidence: 'primary' }, value: { mode: 'whole_pay' } }),
+    defineRule({ kind: 'pit_overtime_exemption', key: 'default', effectiveFrom: '2026-08-01', status: 'confirmed', source: { cite: 'A test row: the accountant reads the whole overtime pay as exempt', confidence: 'primary' }, value: { mode: 'whole_pay' } }),
   ];
 }
+
+describe('overtime on a weekly rest day', () => {
+  it('pays 200%, and 270% at night (200% + 30% + 20% of 200%)', () => {
+    const c = calculatePayroll(employment({ baseWage: '25000000' }), month('2026-08', { overtime: [{ dayKind: 'weekly_rest_day', night: false, hours: '5' }, { dayKind: 'weekly_rest_day', night: true, hours: '2' }] }));
+    expect(c.breakdown.pay.overtime.map((l) => [l.multiple, l.pay])).toEqual([
+      ['2', '1201923'],
+      ['2.7', '649038'],
+    ]);
+  });
+});
+
+describe('ordinary night work without overtime', () => {
+  it('adds the 30% premium, exempts it, and lists the exemption row the month relied on', () => {
+    const c = calculatePayroll(employment({ baseWage: '25000000' }), month('2026-08', { nightHours: '6' }));
+    expect(c.breakdown.pay.nightWork).toEqual({ hours: '6', pay: '216346' });
+    expect(c.gross).toBe('25216346');
+    expect(c.taxableIncome).toBe('25000000');
+    expect(c.rulesUsed.map((r) => r.id)).toContain('pit_overtime_exemption.default@2026-01-01');
+  });
+});
+
+describe('the top of the PIT table', () => {
+  it('taxes the part above 100 million at 35%', () => {
+    // 150,000,000 in region I: employee 4,048,000 + 759,000 + 1,062,000 (BHTN capped at 106,200,000) = 5,869,000.
+    // Assessable 150,000,000 - 5,869,000 - 15,500,000 = 128,631,000: 500,000 + 2,000,000 + 6,000,000 + 12,000,000 + 35% x 28,631,000 = 30,520,850.
+    const c = calculatePayroll(employment({ baseWage: '150000000' }), month('2026-08'));
+    expect(c.employeeInsurance).toBe('5869000');
+    expect(c.breakdown.tax.slices.map((s) => s.tax)).toEqual(['500000', '2000000', '6000000', '12000000', '10020850']);
+    expect(c.pit).toBe('30520850');
+  });
+
+  it('stays in the lower bracket when the assessable income is exactly on its edge', () => {
+    // Not insured, so assessable = pay - 15,500,000: exactly 10,000,000 and exactly 30,000,000.
+    const edge10 = calculatePayroll(employment({ insured: false, baseWage: '25500000' }), month('2026-08'));
+    expect(edge10.breakdown.tax.assessableIncome).toBe('10000000');
+    expect(edge10.breakdown.tax.slices.map((s) => s.percent)).toEqual(['5']);
+    expect(edge10.pit).toBe('500000');
+    const edge30 = calculatePayroll(employment({ insured: false, baseWage: '45500000' }), month('2026-08'));
+    expect(edge30.breakdown.tax.slices.map((s) => s.percent)).toEqual(['5', '10']);
+    expect(edge30.pit).toBe('2500000');
+  });
+});
 
 describe('a mid-month hire', () => {
   it('pays the days worked and still takes insurance on the contract wage in the first month', () => {
@@ -276,6 +318,12 @@ describe('allowances', () => {
     ]);
   });
 
+  it('exempts a cash meal allowance below the cap in full', () => {
+    const c = calculatePayroll(employment({ allowances: [{ label: 'Meals', amount: '1000000', type: 'meal_cash', namedInContract: false }] }), month('2026-08'));
+    expect(c.breakdown.tax.exemptMealCash).toBe('1000000');
+    expect(c.taxableIncome).toBe('20000000');
+  });
+
   it('refuses a cash meal allowance in a month before the cap has a row, rather than guess it', () => {
     const input = employment({ allowances: [{ label: 'Meals', amount: '1500000', type: 'meal_cash', namedInContract: false }] });
     expect(() => calculatePayroll(input, month('2026-03'))).toThrow(/pit_meal_cash_cap/);
@@ -297,6 +345,14 @@ describe('withholding at 10% on a payment', () => {
     const threeMonths = calculatePayroll(casual({ contract: 'fixed_term', contractTermMonths: 3 }), month('2026-08'));
     expect(threeMonths.breakdown.tax.mode).toBe('progressive');
     expect(threeMonths.pit).toBe('0');
+  });
+
+  it('applies the threshold and the 10% to the whole payment of an insured short contract, insurance not deducted', () => {
+    // 5,200,000 on a 2-month contract, insured: employee insurance 546,000 is taken from the net, not from the base of the 10%.
+    const c = calculatePayroll(casual({ contract: 'fixed_term', contractTermMonths: 2, insured: true, baseWage: '5200000' }), month('2026-08'));
+    expect(c.employeeInsurance).toBe('546000');
+    expect(c.pit).toBe('520000');
+    expect(c.net).toBe('4134000');
   });
 
   it('takes nothing below 5 million unless the person asks', () => {
@@ -360,12 +416,16 @@ describe('refusals', () => {
     expect(refusal(() => calculatePayroll(employment(), month('2026-08', { unpaidLeaveDays: '30' }))).code).toBe('invalid_input');
     expect(refusal(() => calculatePayroll(employment({ contract: 'fixed_term' }), month('2026-08'))).code).toBe('invalid_input');
     expect(refusal(() => calculatePayroll(employment(), month('2026-08', { bonus: '-1' }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment({ baseWage: '' }), month('2026-08'))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment(), month('2026-08', { overtime: [{ dayKind: 'constructor' as 'holiday', night: false, hours: '1' }] }))).code).toBe('invalid_input');
+    expect(refusal(() => calculatePayroll(employment(), month('2026-08', { deductions: [{ label: 'x', kind: 'toString' as 'other', amount: '1' }] }))).code).toBe('invalid_input');
   });
 
   it('keeps money as exact decimals', () => {
     const c = calculatePayroll(employment({ baseWage: '10000000.55' }), month('2026-08'));
     expect(c.gross).toBe('10000001');
     expect(typeof c.net).toBe('string');
+    expect(calculatePayroll(employment(), month('2026-08', { bonus: '1000.5' })).gross).toBe('20001001');
   });
 });
 

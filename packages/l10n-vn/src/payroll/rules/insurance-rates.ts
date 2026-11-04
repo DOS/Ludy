@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { rule, type PayrollRule, type RuleRow } from '../rule-types.ts';
+import { defineRule, type PayrollRule, type RuleRow } from '../rule-types.ts';
 
 // Insurance rates by fund, in percent of the contribution wage (plan section 5, rows 2, 7 and 8). No rate changed in 2026
 // in any source read; the draft decree that would reduce the work accident rate to 0.3% until 2027-12-31 is unverified
@@ -12,7 +12,7 @@ export type InsuranceFund = (typeof INSURANCE_FUNDS)[number];
 const SOCIAL_LAW = 'Law 41/2024/QH15 on Social Insurance (in force 2025-07-01; consolidated 19/VBHN-VPQH)';
 
 export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
-  rule({
+  defineRule({
     kind: 'insurance_rate',
     key: 'retirement_death',
     effectiveFrom: '2025-07-01',
@@ -20,7 +20,7 @@ export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
     source: { cite: `${SOCIAL_LAW}: retirement and death fund, employer 14%, employee 8%`, confidence: 'primary' },
     value: { employerPercent: '14', employeePercent: '8', wageBase: 'social' },
   }),
-  rule({
+  defineRule({
     kind: 'insurance_rate',
     key: 'sickness_maternity',
     effectiveFrom: '2025-07-01',
@@ -28,7 +28,7 @@ export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
     source: { cite: `${SOCIAL_LAW}: sickness and maternity fund, employer 3%, employee 0%`, confidence: 'primary' },
     value: { employerPercent: '3', employeePercent: '0', wageBase: 'social' },
   }),
-  rule({
+  defineRule({
     kind: 'insurance_rate',
     key: 'work_accident',
     effectiveFrom: '2025-07-01',
@@ -39,7 +39,7 @@ export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
     },
     value: { employerPercent: '0.5', employeePercent: '0', wageBase: 'social' },
   }),
-  rule({
+  defineRule({
     kind: 'insurance_rate',
     key: 'health',
     effectiveFrom: '2025-07-01',
@@ -47,7 +47,7 @@ export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
     source: { cite: 'Health Insurance Law 51/2024/QH15 and Decree 188/2025/ND-CP: health insurance, employer 3%, employee 1.5% (the split is from commentary)', confidence: 'commentary' },
     value: { employerPercent: '3', employeePercent: '1.5', wageBase: 'social' },
   }),
-  rule({
+  defineRule({
     kind: 'insurance_rate',
     key: 'unemployment',
     effectiveFrom: '2026-01-01',
@@ -58,7 +58,7 @@ export const INSURANCE_RATE_RULES: readonly RuleRow<'insurance_rate'>[] = [
 ];
 
 export const UNION_FEE_RULES: readonly RuleRow<'union_fee'>[] = [
-  rule({
+  defineRule({
     kind: 'union_fee',
     key: 'employer',
     effectiveFrom: '2025-07-01',
@@ -72,7 +72,7 @@ export const UNION_FEE_RULES: readonly RuleRow<'union_fee'>[] = [
 ];
 
 export const INSURANCE_SUSPENSION_RULES: readonly RuleRow<'insurance_suspension'>[] = [
-  rule({
+  defineRule({
     kind: 'insurance_suspension',
     key: 'unpaid_leave',
     effectiveFrom: '2025-07-01',

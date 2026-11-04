@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { INSURANCE_FUNDS, PAYROLL_RULES, REGIONS, listRulesUsed, ruleInForce, type PayrollRule } from '../src/index.ts';
+import { INSURANCE_FUNDS, PAYROLL_RULES, REGIONS, listRulesUsed, ruleInForce, sum, type PayrollRule } from '../src/index.ts';
 
 // The rule data of the payroll calculator (#2529, ADR-0046 point 2): every row dated, cited and with a status, and no
 // rate or threshold outside it.
@@ -38,9 +38,9 @@ describe('payroll rule data', () => {
   it('holds a rate for every fund, summing to 21.5% for the employer and 10.5% for the employee', () => {
     const rows = INSURANCE_FUNDS.map((fund) => ruleInForce(PAYROLL_RULES, 'insurance_rate', fund, '2026-08-01'));
     expect(rows.every((row) => row !== undefined)).toBe(true);
-    const total = (pick: 'employerPercent' | 'employeePercent') => rows.reduce((sum, row) => sum + Number(row?.value[pick]), 0);
-    expect(total('employerPercent')).toBeCloseTo(21.5, 10);
-    expect(total('employeePercent')).toBeCloseTo(10.5, 10);
+    const total = (pick: 'employerPercent' | 'employeePercent') => sum(rows.map((row) => row?.value[pick] ?? '0')).toFixed();
+    expect(total('employerPercent')).toBe('21.5');
+    expect(total('employeePercent')).toBe('10.5');
   });
 
   it('holds five PIT brackets from the 2026 tax period, and the deductions', () => {
@@ -59,8 +59,12 @@ describe('payroll rule data', () => {
     expect(ruleInForce(PAYROLL_RULES, 'pit_brackets', 'resident_monthly', '2025-12-31')).toBeUndefined();
   });
 
-  it('keeps every row commentary until the accountant confirms it (#2535)', () => {
-    expect(PAYROLL_RULES.filter((row) => row.status === 'confirmed')).toEqual([]);
+  // The accountant (#2535) flips a row to `confirmed` in her pull request and adds its id to this list, which is the
+  // one line that names what has been confirmed. Every other row stays commentary.
+  const CONFIRMED_ROW_IDS: readonly string[] = [];
+
+  it('marks a row confirmed only when the list of confirmed rows names it', () => {
+    expect(PAYROLL_RULES.filter((row) => row.status === 'confirmed').map((row) => row.id)).toEqual([...CONFIRMED_ROW_IDS]);
   });
 });
 
