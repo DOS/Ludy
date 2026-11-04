@@ -259,6 +259,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
+    // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
+    readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
     ...options,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
