@@ -9,7 +9,17 @@ import { Link } from '@tanstack/react-router';
 import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import { useTranslations } from 'use-intl';
-import { ADS_CALLS_TO_ACTION, ADS_GENDERS, ADS_OBJECTIVES, ADS_PLAN_LIMITS, type AdAccountView, type AdsCampaignDraftView, type AdsCampaignPlanDraft, type AdsObjective } from '@crove/kernel-contract';
+import {
+  ADS_CALLS_TO_ACTION,
+  ADS_GENDERS,
+  ADS_OBJECTIVES,
+  ADS_PLAN_LIMITS,
+  type AdAccountView,
+  type AdsCampaignDraftView,
+  type AdsCampaignPlanDraft,
+  type AdsLaunchView,
+  type AdsObjective,
+} from '@crove/kernel-contract';
 import { Alert } from '@crove/ui/components/alert';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
@@ -18,6 +28,7 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { Textarea } from '@crove/ui/components/textarea';
 import { useFormat } from '../i18n/provider.tsx';
+import type { Translate } from '../i18n/runtime.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { keyFor, type KeyHolder } from '../lib/ads.ts';
 import {
@@ -32,6 +43,9 @@ import {
   genderText,
   isDirty,
   issueText,
+  launchObjectLevelText,
+  launchObjectStatusText,
+  launchReasonText,
   maxSpendHint,
   maxSpendOf,
   objectiveText,
@@ -491,10 +505,12 @@ export function CampaignBuilder({
   );
 }
 
-// What an approved plan's launch is (W2-2, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
-// not started, which releases the amount at once, and stop one that has (W2-4a): the commitment stays to at least today, and the ads it made at the platform are paused.
+// What an approved plan's launch is (W2-2..W2-4c, #2296): its amount is held against the spend caps until it is cancelled or stopped. Owners and admins can cancel one that has
+// not started, which releases the amount at once, retry one that needs attention (W2-4b..W2-4c), and stop one that has started (W2-4a): the commitment stays to at least today,
+// and the ads it made at the platform are paused.
 function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canManage: boolean }) {
   const t = useTranslations('ads');
+  const root = useTranslations();
   const f = useFormat();
   const attempt = useRef<KeyHolder | null>(null);
   const cancel = useMutation(
@@ -515,17 +531,27 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
       },
     }),
   );
+  const retry = useMutation(
+    orpc.ads.retryLaunch.mutationOptions({
+      onSuccess: async () => {
+        attempt.current = null;
+        await refreshCampaigns();
+        toast(t('campaigns.launchRetriedToast'));
+      },
+    }),
+  );
   const launch = draft.launch;
   if (!launch) return <Alert role="status">{t('campaigns.approvedNote')}</Alert>;
   if (launch.state === 'cancelled') return <Alert role="status">{t('campaigns.launchCancelled')}</Alert>;
   const held = { amount: f.money(launch.amount, launch.currency), until: f.date(launch.commitUntil ?? launch.endOn) };
-  const reason = launch.stopReason ?? '-';
+  const reason = launchReasonText(launch.stopReason, root);
   if (launch.state === 'failed') return <Alert role="status">{t('campaigns.launchFailed', { reason })}</Alert>;
   if (launch.state === 'stopped') {
     return (
       <Alert role="status" data-testid="campaign-launch">
         <p>{t('campaigns.launchStopped', held)}</p>
         {launch.windDown && <p data-testid="campaign-wind-down">{t(launch.windDown.state === 'done' ? 'campaigns.launchWindDownDone' : launch.windDown.state === 'gave_up' ? 'campaigns.launchWindDownGaveUp' : 'campaigns.launchWindDownPending')}</p>}
+        <LaunchObjectsList launch={launch} title={t('campaigns.launchObjectsTitle')} root={root} />
       </Alert>
     );
   }
@@ -533,25 +559,50 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
     return (
       <Alert role="status" data-testid="campaign-launch">
         <p>
-          {launch.state === 'needs_attention'
-            ? t('campaigns.launchNeedsAttention', { ...held, reason })
-            : t(launch.step === 'paused' ? 'campaigns.launchCreated' : 'campaigns.launchCreating', held)}
+          {launch.state === 'live'
+            ? t('campaigns.launchLive', held)
+            : launch.state === 'needs_attention'
+              ? t('campaigns.launchNeedsAttention', { ...held, reason })
+              : t(launch.step === 'paused' ? 'campaigns.launchCreated' : launch.step === 'activate' ? 'campaigns.launchActivating' : 'campaigns.launchCreating', held)}
         </p>
-        {canManage && (
-          <ConfirmDialog
-            render={<Button loading={stop.isPending} type="button" variant="destructive" className="mt-2" />}
-            destructive
-            title={t('campaigns.launchStopTitle')}
-            description={t('campaigns.launchStopBody', { name: draft.plan.name })}
-            confirm={t('campaigns.launchStop')}
-            onConfirm={() => {
-              attempt.current = keyFor(attempt.current, launch.id);
-              stop.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
-            }}
-          >
-            {t('campaigns.launchStop')}
-          </ConfirmDialog>
+        {launch.state === 'needs_attention' && launch.retryRequested && (
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="campaign-retry-queued">
+            {t('campaigns.launchRetryQueued')}
+          </p>
         )}
+        <LaunchObjectsList launch={launch} title={t('campaigns.launchObjectsTitle')} root={root} />
+        {canManage && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {launch.state === 'needs_attention' && !launch.retryRequested && (
+              <Button
+                type="button"
+                variant="outline"
+                loading={retry.isPending}
+                data-testid="campaign-retry-launch"
+                onClick={() => {
+                  attempt.current = keyFor(attempt.current, `retry:${launch.id}:${launch.attempt}`);
+                  retry.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
+                }}
+              >
+                {t('campaigns.launchRetry')}
+              </Button>
+            )}
+            <ConfirmDialog
+              render={<Button loading={stop.isPending} type="button" variant="destructive" />}
+              destructive
+              title={t('campaigns.launchStopTitle')}
+              description={t('campaigns.launchStopBody', { name: draft.plan.name })}
+              confirm={t('campaigns.launchStop')}
+              onConfirm={() => {
+                attempt.current = keyFor(attempt.current, `stop:${launch.id}`);
+                stop.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
+              }}
+            >
+              {t('campaigns.launchStop')}
+            </ConfirmDialog>
+          </div>
+        )}
+        {retry.error && <ErrorText>{errorMessage(retry.error)}</ErrorText>}
         {stop.error && <ErrorText>{errorMessage(stop.error)}</ErrorText>}
       </Alert>
     );
@@ -567,7 +618,7 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
           description={t('campaigns.launchCancelBody', { name: draft.plan.name })}
           confirm={t('campaigns.launchCancel')}
           onConfirm={() => {
-            attempt.current = keyFor(attempt.current, launch.id);
+            attempt.current = keyFor(attempt.current, `cancel:${launch.id}`);
             cancel.mutate({ launchId: launch.id, idempotencyKey: attempt.current.key });
           }}
         >
@@ -576,5 +627,26 @@ function LaunchNote({ draft, canManage }: { draft: AdsCampaignDraftView; canMana
       )}
       {cancel.error && <ErrorText>{errorMessage(cancel.error)}</ErrorText>}
     </Alert>
+  );
+}
+
+function LaunchObjectsList({ launch, title, root }: { launch: AdsLaunchView; title: string; root: Translate }) {
+  if (launch.objects.length === 0) return null;
+  return (
+    <div className="mt-2 space-y-1">
+      <p className="text-xs font-medium text-foreground">{title}</p>
+      <ul className="space-y-1 text-xs text-muted-foreground" data-testid="campaign-launch-objects">
+        {launch.objects.map((o) => (
+          <li key={o.slot} className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              {launchObjectLevelText(o.level, root)}: <span className="font-medium text-foreground">{o.name}</span> ({o.externalId})
+            </span>
+            <Badge variant={launch.state === 'live' && o.level !== 'creative' && (o.effectiveStatus === null || o.effectiveStatus.toLowerCase() === 'active') ? 'success' : 'outline'}>
+              {launchObjectStatusText(o, launch, root)}
+            </Badge>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

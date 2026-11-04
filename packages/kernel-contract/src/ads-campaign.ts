@@ -115,6 +115,19 @@ export const ADS_DRAFT_ORIGINS = ['human', 'ai'] as const;
 // runs a queued one; until then a queued launch only holds its amount, and a person can cancel it.
 export const ADS_LAUNCH_STATES = ['queued', 'launching', 'live', 'needs_attention', 'stopped', 'failed', 'cancelled'] as const;
 export type AdsLaunchState = (typeof ADS_LAUNCH_STATES)[number];
+export const ADS_LAUNCH_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
+export type AdsLaunchObjectLevel = (typeof ADS_LAUNCH_OBJECT_LEVELS)[number];
+// One object the launch created on the ad platform (W2-3..W2-4c): its slot (campaign, ad_set, creative_1..n, ad_1..n), its platform id and name, and what the platform
+// later reports when synced.
+export const zAdsLaunchObjectView = z.object({
+  slot: z.string(),
+  level: z.enum(ADS_LAUNCH_OBJECT_LEVELS),
+  externalId: z.string(),
+  name: z.string(),
+  effectiveStatus: z.string().nullable(),
+  reviewReason: z.string().nullable(),
+});
+export type AdsLaunchObjectView = z.infer<typeof zAdsLaunchObjectView>;
 export const zAdsLaunchView = z.object({
   id: zId,
   draftId: zId,
@@ -134,11 +147,15 @@ export const zAdsLaunchView = z.object({
   // The last day it still commits its budget against the caps; null when it commits nothing any more.
   commitUntil: z.string().nullable(),
   stopReason: z.string().nullable(),
+  // Whether an owner or an admin has asked to run a `needs_attention` launch again and the writer has not picked the retry up yet (W2-4b..W2-4c).
+  retryRequested: z.boolean(),
   createdAt: z.string(),
   finishedAt: z.string().nullable(),
   // A stopped launch's objects at the platform: being paused, paused (or there was nothing to pause), or Ludy gave up (the code says why) and the person pauses them by
   // hand there. null for a launch that is not stopped.
   windDown: z.object({ state: z.enum(['pending', 'done', 'gave_up']), code: z.string().nullable() }).nullable(),
+  // The objects this launch has created on the ad platform so far, in creation order.
+  objects: z.array(zAdsLaunchObjectView),
 });
 export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
