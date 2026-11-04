@@ -34,6 +34,16 @@ const shopeeRow = (order: string, status: string, sku: string, qty: number, pric
 const shopeeReport = (): XlsxCell[][] => [['Báo cáo đơn hàng Shopee'], [], SHOPEE_HEAD, shopeeRow('2610A1', 'Hoàn thành', 'QC-1', 2, 50000), shopeeRow('2610A2', 'Đã hủy', 'QC-2', 1, 120000), shopeeRow('2610A3', 'Đang giao', 'QC-1', 3, 50000)];
 
 describe('readMarketplaceOrders', () => {
+  it('lists the rows that stop a file ahead of the rows that do not, whatever the cap cuts', () => {
+    // More ignorable rows (a totals row has no order number) than the list holds, then a line with a quantity of zero: the line must still be named.
+    const totals = Array.from({ length: EXTRACT_LIMITS.maxOrderSkipped + 1 }, (): XlsxCell[] => ['', '', '', '', '', '', '', '', 'Tổng']);
+    const read = readMarketplaceOrders(buildXlsx([SHOPEE_HEAD, ...totals, shopeeRow('2610Z1', 'Đang giao', 'QC-1', 1, 50000), shopeeRow('2610Z2', 'Đang giao', 'QC-1', 0, 50000)]));
+    expect(read.skippedCount).toBe(EXTRACT_LIMITS.maxOrderSkipped + 2);
+    expect(read.skipped).toHaveLength(EXTRACT_LIMITS.maxOrderSkipped);
+    expect(read.skipped[0]).toEqual({ rowNo: EXTRACT_LIMITS.maxOrderSkipped + 4, reason: 'bad_quantity' });
+    expect(read.skipped.slice(1).every((s) => s.reason === 'no_order_no')).toBe(true);
+  });
+
   it('reads a Shopee workbook: the platform, the profile it used, the lines with their sheet rows, and nothing of the buyer', () => {
     const read = readMarketplaceOrders(buildXlsx(shopeeReport()));
     expect(read).toMatchObject({ recognized: true, platform: 'shopee', tooMany: false, skippedCount: 0 });

@@ -34,13 +34,13 @@ const zLine = zExtractedMarketplaceOrders.shape.lines.element;
 type StagedLine = z.infer<typeof zLine>;
 const zStagedResult = z.object({ kind: z.literal('marketplace_orders'), summary: zMarketplaceSummary, lines: z.array(zLine).optional() });
 
-// How far a line may move: forward only, the same moves the table's guard allows (an unknown status to any, placed to shipped, completed, returned or cancelled, shipped to completed
-// or returned, completed to returned; cancelled and returned are final).
+// How far a line may move: forward only, the same moves the table's guard allows (an unknown status to any, placed to shipped, completed, returned or cancelled, shipped to completed,
+// returned or cancelled, completed to returned; cancelled and returned are final).
 export function canAdvance(from: Stage, to: Stage): boolean {
   if (from === to) return false;
   if (from === 'unknown') return true;
   if (from === 'placed') return to === 'shipped' || to === 'completed' || to === 'returned' || to === 'cancelled';
-  if (from === 'shipped') return to === 'completed' || to === 'returned';
+  if (from === 'shipped') return to === 'completed' || to === 'returned' || to === 'cancelled';
   if (from === 'completed') return to === 'returned';
   return false;
 }
@@ -139,6 +139,7 @@ async function stagedRun(ctx: QueryContext, fileId: string, lock: boolean): Prom
 }
 
 const lockReport = (ctx: QueryContext, fileId: string) => sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.report:${ctx.orgId}:${fileId}`}, 0))`.execute(ctx.trx);
+const pgCode = (error: unknown) => (error as { code?: string } | null)?.code;
 const notStaged = () => new DomainError('MARKETPLACE_NOT_STAGED', 409, 'Báo cáo này đã được xử lý hoặc đã được đọc lại; hãy tải lại danh sách');
 
 type OrderKey = { platform: Platform; orderNo: string; lineKey: string };
@@ -334,7 +335,8 @@ async function ensureOrder(ctx: CommandContext, legalEntityId: string, platform:
 }
 
 // The stock a line moves, once: a shipment at the shipping day (or the order's, or today), a return after its shipment, both through the item the line names (the shipment's item for a
-// return). A line that names no item moves nothing and waits for a person.
+// return). A line cancelled after it shipped (a failed delivery) brings its stock back like a return; one cancelled before shipping moved nothing. A line that names no item moves nothing
+// and waits for a person.
 async function moveLineStock(
   ctx: CommandContext,
   line: { id: string; stage: Stage; quantity: string; shippedAt: string | null; orderedAt: string | null; sku: string | null },
@@ -343,10 +345,12 @@ async function moveLineStock(
   // An item a person chose for the line (the assignment): used instead of looking the SKU up.
   explicit?: ItemMatch,
 ): Promise<number> {
-  if (!MOVES_STOCK.has(line.stage)) return 0;
+  if (!MOVES_STOCK.has(line.stage) && line.stage !== 'cancelled') return 0;
   const made = await ctx.trx.selectFrom('crove_finance.stock_move').select(['order_move', 'item_id', 'quantity']).where('org_id', '=', ctx.orgId).where('order_line_id', '=', line.id).execute();
   const ship = made.find((m) => m.order_move === 'ship');
   const returned = made.find((m) => m.order_move === 'return');
+  // Cancelled: only a line that had shipped has anything to bring back.
+  if (line.stage === 'cancelled' && !ship) return 0;
   const day = line.shippedAt ?? line.orderedAt ?? today;
   let moves = 0;
   let shipped = ship ? { itemId: ship.item_id, quantity: String(ship.quantity) } : null;
@@ -359,7 +363,7 @@ async function moveLineStock(
     shipped = { itemId: match.itemId, quantity: signed };
     moves += 1;
   }
-  if (line.stage === 'returned' && !returned) {
+  if ((line.stage === 'returned' || line.stage === 'cancelled') && !returned) {
     const back = shipped.quantity.startsWith('-') ? shipped.quantity.slice(1) : `-${shipped.quantity}`;
     await writeStockMove(ctx, { itemId: shipped.itemId, date: today, quantity: back, source: { type: 'order_line', orderLineId: line.id, move: 'return' } });
     moves += 1;
@@ -388,57 +392,63 @@ export const marketplaceConfirm = defineCommand({
     let newLines = 0;
     let updatedLines = 0;
     let duplicateLines = 0;
-    for (const line of staged.lines) {
-      const key = keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey });
-      const was = known.get(key);
-      if (was) {
-        if (canAdvance(was.stage, line.stage)) {
-          // The shipping day is set once; a later report can give it, never change it.
-          await ctx.trx
-            .updateTable('crove_finance.channel_order_line')
-            .set({ stage: line.stage, ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}), updated_at: ctx.now })
-            .where('org_id', '=', ctx.orgId)
-            .where('id', '=', was.id)
-            .execute();
-          updatedLines += 1;
-          touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku });
-        } else {
-          duplicateLines += 1;
-          // A line known and unchanged may still have stock to move (the item was assigned since).
-          touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku });
-        }
-        continue;
-      }
-      let orderId = orderIds.get(line.orderNo);
-      if (!orderId) {
-        orderId = await ensureOrder(ctx, legalEntityId, platform, line.orderNo, line.orderedAt);
-        orderIds.set(line.orderNo, orderId);
-      }
-      const row = await ctx.trx
-        .insertInto('crove_finance.channel_order_line')
-        .values({
-          org_id: ctx.orgId,
-          order_id: orderId,
-          line_key: line.lineKey,
-          sku: line.sku,
-          item_name: line.itemName,
-          quantity: line.quantity,
-          unit_price: line.unitPrice,
-          amount: line.amount,
-          stage: line.stage,
-          shipped_at: line.shippedAt,
-          source_sha256: staged.sha256,
-          source_row: line.rowNo,
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow();
-      newLines += 1;
-      touched.push({ id: row.id, stage: line.stage, quantity: line.quantity, shippedAt: line.shippedAt, orderedAt: line.orderedAt, sku: line.sku });
-    }
-    // Stock: the lines that move it and name an item, each once.
-    const matches = await matchSkus(ctx, legalEntityId, platform, touched.flatMap((l) => (l.sku ? [l.sku] : [])));
     let stockMoves = 0;
-    for (const line of touched) stockMoves += await moveLineStock(ctx, line, matches, today);
+    // The lock is per report, so another member confirming an overlapping report at the same moment can reach the same new line or the same stock move first: that meets a unique index.
+    try {
+      for (const line of staged.lines) {
+        const key = keyOf({ platform, orderNo: line.orderNo, lineKey: line.lineKey });
+        const was = known.get(key);
+        if (was) {
+          if (canAdvance(was.stage, line.stage)) {
+            // The shipping day is set once; a later report can give it, never change it.
+            await ctx.trx
+              .updateTable('crove_finance.channel_order_line')
+              .set({ stage: line.stage, ...(was.shippedAt === null && line.shippedAt !== null ? { shipped_at: line.shippedAt } : {}), updated_at: ctx.now })
+              .where('org_id', '=', ctx.orgId)
+              .where('id', '=', was.id)
+              .execute();
+            updatedLines += 1;
+            touched.push({ id: was.id, stage: line.stage, quantity: was.quantity, shippedAt: was.shippedAt ?? line.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku });
+          } else {
+            duplicateLines += 1;
+            // A line known and unchanged may still have stock to move (the item was assigned since).
+            touched.push({ id: was.id, stage: was.stage, quantity: was.quantity, shippedAt: was.shippedAt, orderedAt: was.orderedAt ?? line.orderedAt, sku: was.sku });
+          }
+          continue;
+        }
+        let orderId = orderIds.get(line.orderNo);
+        if (!orderId) {
+          orderId = await ensureOrder(ctx, legalEntityId, platform, line.orderNo, line.orderedAt);
+          orderIds.set(line.orderNo, orderId);
+        }
+        const row = await ctx.trx
+          .insertInto('crove_finance.channel_order_line')
+          .values({
+            org_id: ctx.orgId,
+            order_id: orderId,
+            line_key: line.lineKey,
+            sku: line.sku,
+            item_name: line.itemName,
+            quantity: line.quantity,
+            unit_price: line.unitPrice,
+            amount: line.amount,
+            stage: line.stage,
+            shipped_at: line.shippedAt,
+            source_sha256: staged.sha256,
+            source_row: line.rowNo,
+          })
+          .returning('id')
+          .executeTakeFirstOrThrow();
+        newLines += 1;
+        touched.push({ id: row.id, stage: line.stage, quantity: line.quantity, shippedAt: line.shippedAt, orderedAt: line.orderedAt, sku: line.sku });
+      }
+      // Stock: the lines that move it and name an item, each once.
+      const matches = await matchSkus(ctx, legalEntityId, platform, touched.flatMap((l) => (l.sku ? [l.sku] : [])));
+      for (const line of touched) stockMoves += await moveLineStock(ctx, line, matches, today);
+    } catch (error) {
+      if (pgCode(error) === '23505') throw new DomainError('MARKETPLACE_BUSY', 409, 'Có báo cáo khác đang được nhập cùng lúc; hãy thử lại sau ít phút');
+      throw error;
+    }
     await ctx.run('kernel.extraction.statement_state', { fileId: input.fileId, state: 'imported', newLines, duplicateLines: duplicateLines + updatedLines });
     ctx.audit({ fileId: input.fileId, platform, newLines, updatedLines, duplicateLines, stockMoves });
     return { newLines, updatedLines, duplicateLines, stockMoves };

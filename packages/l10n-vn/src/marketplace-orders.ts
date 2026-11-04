@@ -11,6 +11,7 @@
 //
 // Pure functions over the grid the sheet readers give (bank-statement-sheet.ts: rows by 1-based number, cells by 0-based column), shared by the parsing sandbox and, later, the
 // screens.
+import { Decimal } from 'decimal.js';
 import { headerKey, type StatementCell, type StatementGrid } from './bank-statement-sheet.ts';
 
 export const MARKETPLACE_PLATFORMS = ['shopee', 'tiktok_shop', 'lazada'] as const;
@@ -52,7 +53,7 @@ const NONE: Words = { contains: [] };
 // before "đã giao" (delivered) is `completed`.
 const COMMON_STATUSES: MarketplaceProfile['statuses'] = [
   { stage: 'cancelled', words: ['da huy', 'huy don', 'cancelled', 'canceled', 'cancellation', 'failed delivery', 'delivery failed'] },
-  { stage: 'returned', words: ['hoan tra', 'tra hang', 'da hoan', 'returned', 'return completed', 'refunded'] },
+  { stage: 'returned', words: ['hoan tra', 'tra hang', 'returned', 'return completed'] },
   { stage: 'shipped', words: ['da giao cho don vi van chuyen', 'dang giao', 'dang van chuyen', 'dang chuyen', 'in transit', 'shipped', 'shipping'] },
   { stage: 'completed', words: ['hoan thanh', 'da giao', 'giao hang thanh cong', 'completed', 'delivered'] },
   {
@@ -149,7 +150,8 @@ function claim(profile: MarketplaceProfile, headers: Map<number, string>): Recor
   for (const field of order) {
     const words = profile.columns[field];
     for (const word of words.contains) {
-      const hit = [...headers].find(([col, key]) => !taken.has(col) && (key === word || key.includes(word)));
+      const open = [...headers].filter(([col]) => !taken.has(col));
+      const hit = open.find(([, key]) => key === word) ?? open.find(([, key]) => key.includes(word));
       if (hit) {
         columns[field] = hit[0];
         taken.add(hit[0]);
@@ -258,11 +260,32 @@ const MAX_NAME = 200;
 
 const clip = (text: string, max: number): string => text.slice(0, max);
 
-// A number cell is the digits Excel stored; a text cell is what was typed: Vietnamese 1.234.567 or 1,234,567.50 or 1234567.5, with a currency sign, spaces or a minus in front. null when it is
-// not a number. Never rounds.
+// A 53-bit hash of text (cyrb53), as 14 hex digits: pure code, so this package needs no crypto.
+function hash53(text: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+}
+
+// A line's key is its SKU and variation (or its name, for a seller with no SKU), which can be long: past MAX_BASE it keeps its start and a hash of the whole text, so two long keys that
+// share a start stay two keys, and a '#n' for a repeated product still fits MAX_KEY.
+const MAX_BASE = 100;
+const shortKey = (base: string): string => (base.length <= MAX_BASE ? base : `${base.slice(0, MAX_BASE - 15)}~${hash53(base)}`);
+
+// A number cell is the digits Excel stored, with a point as the only mark (1.234 is one and 234 thousandths, whatever the seller's locale shows); a text cell is what was typed:
+// Vietnamese 1.234.567 or 1,234,567.50 or 1234567.5, with a currency sign, spaces or a minus in front. null when it is not a number. Never rounds.
 export function readDecimal(cell: StatementCell | undefined): string | null | 'bad' {
   const raw = cellText(cell);
   if (raw === '') return null;
+  const stored = cell?.kind === 'number' ? /^(-)?(\d+(?:\.\d+)?)$/.exec(raw) : null;
+  if (stored) return finishDecimal(stored[2] as string, stored[1] === '-');
   let text = raw.replace(/[\s ]/g, '').replace(/(?:₫|đ|vnd|vnđ|d)$/i, '').replace(/^(?:₫|đ|vnd|vnđ)/i, '');
   let negative = false;
   if (/^\(.*\)$/.test(text)) {
@@ -291,11 +314,30 @@ export function readDecimal(cell: StatementCell | undefined): string | null | 'b
   } else {
     normalized = text;
   }
+  return finishDecimal(normalized, negative);
+}
+
+function finishDecimal(normalized: string, negative: boolean): string | 'bad' {
   if (!/^\d+(\.\d+)?$/.test(normalized)) return 'bad';
   const trimmed = normalized.replace(/^0+(?=\d)/, '');
   if (trimmed.length > 24) return 'bad';
   const isZero = /^0(\.0+)?$/.test(trimmed);
   return negative && !isZero ? `-${trimmed}` : trimmed;
+}
+
+// A decimal string that fits numeric(intDigits + decimals, decimals) without being cut: trailing zeros of the fraction dropped, null when it does not fit.
+function fits(value: string, intDigits: number, decimals: number): string | null {
+  const [whole = '', fraction = ''] = value.replace(/^-/, '').split('.');
+  const kept = fraction.replace(/0+$/, '');
+  if (whole.length > intDigits || kept.length > decimals) return null;
+  return `${value.startsWith('-') ? '-' : ''}${whole}${kept === '' ? '' : `.${kept}`}`;
+}
+
+// A price or an amount as the table keeps it: a float's tail (33333.333333333336) rounded half up to four decimals, null when it still does not fit.
+function fitMoney(value: string | null): string | null {
+  if (value === null) return null;
+  const rounded = new Decimal(value).toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed();
+  return fits(rounded, 16, 4);
 }
 
 const MONTHS: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
@@ -326,17 +368,25 @@ export function readDay(cell: StatementCell | undefined): string | null {
 export function stageOf(profile: MarketplaceProfile, label: string): OrderStage {
   const key = headerKey(label);
   if (key === '') return 'unknown';
-  for (const { stage, words } of profile.statuses) if (words.some((w) => key === w || key.includes(w))) return stage;
+  for (const { stage, words } of profile.statuses) {
+    if (!words.some((w) => key === w || key.includes(w))) continue;
+    // A return still asked for, refused, withdrawn or on its way has not brought the goods back, and a stage of `returned` is final.
+    if (stage === 'returned' && RETURN_NOT_DONE.some((w) => key.includes(w))) return 'unknown';
+    return stage;
+  }
   return 'unknown';
 }
 
-// A return the platform has accepted or completed; a request still open does not bring the goods back.
-const RETURN_DONE = ['hoan thanh', 'da chap nhan', 'da hoan', 'completed', 'accepted', 'refunded', 'return'];
+// A return the platform has accepted or completed; a request still open, a rejected one or one that was withdrawn does not bring the goods back.
+const RETURN_DONE = ['hoan thanh', 'da chap nhan', 'da hoan tra', 'completed', 'accepted', 'returned', 'return successful'];
+const RETURN_NOT_DONE = ['reject', 'tu choi', 'not ', 'khong', 'cancel', 'huy', 'request', 'yeu cau', 'pending', 'processing', 'cho ', 'dang '];
+const returnDone = (key: string): boolean => key !== '' && !/^(khong|none|no|n a)$/.test(key) && !RETURN_NOT_DONE.some((w) => key.includes(w)) && RETURN_DONE.some((w) => key.includes(w));
 
 // An id that a spreadsheet turned into a number has lost its last digits: a number of 16 or more digits (a double holds 15), or one with an exponent.
 function brokenId(cell: StatementCell | undefined): boolean {
   const text = cellText(cell);
-  return /^\d+(?:\.\d+)?e\+?\d+$/i.test(text) || (cell?.kind === 'number' && /^\d{16,}$/.test(text));
+  // Excel writes a big number as 2.61E+18 or 3E+18; an order number such as 2610E1 is an id, not an exponent.
+  return /^(?:\d+\.\d+e[+-]?\d+|\d+e\+\d+)$/i.test(text) || (cell?.kind === 'number' && /^\d{16,}$/.test(text));
 }
 
 // The lines of the file under its header, at most maxRows of them; null when the file has more. Rows with no order number and nothing else in them are blank and not reported.
@@ -375,11 +425,18 @@ export function orderLines(rows: StatementGrid, mapping: OrderMapping, maxRows: 
         skipped.push({ rowNo, reason: 'bad_quantity' });
         continue;
       }
-      quantity = q;
+      const fitted = fits(q, 14, 6);
+      if (fitted === null || /^0(\.0+)?$/.test(fitted)) {
+        skipped.push({ rowNo, reason: 'bad_quantity' });
+        continue;
+      }
+      quantity = fitted;
     }
-    const price = readDecimal(cell(row, 'unitPrice'));
-    const amount = readDecimal(cell(row, 'amount'));
-    if (price === 'bad' || amount === 'bad') {
+    const priceRead = readDecimal(cell(row, 'unitPrice'));
+    const amountRead = readDecimal(cell(row, 'amount'));
+    const price = priceRead === 'bad' ? 'bad' : fitMoney(priceRead);
+    const amount = amountRead === 'bad' ? 'bad' : fitMoney(amountRead);
+    if (price === 'bad' || amount === 'bad' || (priceRead !== null && price === null) || (amountRead !== null && amount === null)) {
       skipped.push({ rowNo, reason: 'bad_amount' });
       continue;
     }
@@ -395,24 +452,29 @@ export function orderLines(rows: StatementGrid, mapping: OrderMapping, maxRows: 
     let stage = stageOf(profile, statusLabel);
     // A return the platform accepted or completed brings the goods back, whatever the order status says.
     const returnKey = headerKey(text(row, 'returnStatus'));
-    if (returnKey !== '' && !/^(khong|none|no|n a)$/.test(returnKey) && RETURN_DONE.some((w) => returnKey.includes(w))) stage = 'returned';
+    if (returnDone(returnKey)) stage = 'returned';
     if (stage === 'unknown' && statusLabel !== '') unknown.add(clip(statusLabel, MAX_LABEL));
     const sku = text(row, 'sku');
     const name = text(row, 'itemName');
     const variation = text(row, 'variation');
-    const baseKey = profile.rowPerUnit && text(row, 'lineKey') !== '' ? text(row, 'lineKey') : sku !== '' ? (variation !== '' ? `${sku}|${variation}` : sku) : `${name}|${variation}`;
+    const baseKey = shortKey(profile.rowPerUnit && text(row, 'lineKey') !== '' ? text(row, 'lineKey') : sku !== '' ? (variation !== '' ? `${sku}|${variation}` : sku) : `${name}|${variation}`);
     const orderKey = `${orderNo}\u0000${baseKey}`;
     const count = (seen.get(orderKey) ?? 0) + 1;
     seen.set(orderKey, count);
+    const lineKey = count === 1 ? baseKey : `${baseKey}#${count}`;
+    if (lineKey.length > MAX_KEY || sku.length > MAX_SKU) {
+      skipped.push({ rowNo, reason: 'too_long' });
+      continue;
+    }
     out.push({
       rowNo,
-      orderNo: clip(orderNo, MAX_ID),
-      lineKey: clip(count === 1 ? baseKey : `${baseKey}#${count}`, MAX_KEY),
+      orderNo,
+      lineKey,
       orderedAt,
       shippedAt,
       stage,
       statusLabel: statusLabel === '' ? null : clip(statusLabel, MAX_LABEL),
-      sku: sku === '' ? null : clip(sku, MAX_SKU),
+      sku: sku === '' ? null : sku,
       itemName: name === '' ? null : clip(name, MAX_NAME),
       quantity,
       unitPrice: price,

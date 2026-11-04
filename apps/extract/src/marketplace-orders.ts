@@ -21,11 +21,13 @@ export function readMarketplaceOrders(bytes: Uint8Array): ExtractedMarketplaceOr
   if (read === null) return { ...head, tooMany: true, lines: [], skipped: [], skippedCount: 0, unknownStatuses: [] };
   // A header with nothing under it is no report of any orders.
   if (read.lines.length === 0 && read.skipped.length === 0) return NONE;
+  // The list is capped, and a row that stops the file (anything but a row with no order number) must never be cut off behind a thousand totals rows: those come first, in row order.
+  const skipped = [...read.skipped.filter((s) => s.reason !== 'no_order_no'), ...read.skipped.filter((s) => s.reason === 'no_order_no')];
   return {
     ...head,
     tooMany: false,
     lines: read.lines,
-    skipped: read.skipped.slice(0, EXTRACT_LIMITS.maxOrderSkipped),
+    skipped: skipped.slice(0, EXTRACT_LIMITS.maxOrderSkipped),
     skippedCount: read.skipped.length,
     unknownStatuses: read.unknownStatuses,
   };

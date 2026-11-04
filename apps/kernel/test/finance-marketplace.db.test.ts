@@ -199,6 +199,43 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, item)).toBe('0');
   });
 
+  it('brings the stock back when an order is cancelled after it shipped, and nothing when it was cancelled before', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('C1', 'Đang giao', 'QC-1', 2), row('C2', 'Chờ xác nhận', 'QC-1', 1)))).fileId);
+    expect(await onHand(o, item)).toBe('-2');
+    // C1 failed delivery (cancelled after it shipped): the goods are back, once. C2 was cancelled before it shipped: nothing to bring back.
+    expect(await confirm(o, (await read(o, report(row('C1', 'Đã hủy', 'QC-1', 2), row('C2', 'Đã hủy', 'QC-1', 1)))).fileId)).toEqual({ newLines: 0, updatedLines: 2, duplicateLines: 0, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('0');
+    expect((await moves(o, item)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
+    expect((await orderRows(o)).map((r) => [r.order_no, r.stage])).toEqual([
+      ['C1', 'cancelled'],
+      ['C2', 'cancelled'],
+    ]);
+    // Again: nothing more. A line first seen cancelled moved nothing.
+    expect(await confirm(o, (await read(o, report(row('C1', 'Đã hủy', 'QC-1', 2), row('C3', 'Đã hủy', 'QC-1', 4)))).fileId)).toEqual({ newLines: 1, updatedLines: 0, duplicateLines: 1, stockMoves: 0 });
+    expect(await onHand(o, item)).toBe('0');
+  });
+
+  it('refuses to reverse a move of an order line, in the app and in the database, and refuses one of another legal entity', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('G1', 'Đang giao', 'QC-1', 2)))).fileId);
+    const [ship] = await rows<{ id: string; order_line_id: string }>("SELECT id, order_line_id FROM crove_finance.stock_move WHERE org_id = $1 AND order_move = 'ship'", [o.orgId]);
+    await expect(execute(o, 'finance.stock_move.reverse', { moveId: ship?.id })).rejects.toMatchObject({ code: 'STOCK_MOVE_ORDER_LINE' });
+    // Not even a row written straight to the table gets past the guard.
+    await expect(
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-11-01', 2, 'reversal', $3)", [o.orgId, item, ship?.id]),
+    ).rejects.toThrow(/STOCK_ORDER_REVERSAL/);
+    expect(await onHand(o, item)).toBe('-2');
+    // A move of an order line is of the line's own legal entity: an item of another entity is refused by the table.
+    const other = (await rows<{ id: string }>("INSERT INTO crove_kernel.legal_entity (org_id, name, created_by) VALUES ($1, 'Pháp nhân phụ', $2) RETURNING id", [o.orgId, o.owner]))[0]?.id;
+    const foreign = await makeItem(o, 'QC-9', { legalEntityId: other });
+    await expect(
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move) VALUES ($1, $2, '2026-11-01', -1, 'order_line', $3, 'ship')", [o.orgId, foreign, ship?.order_line_id]),
+    ).rejects.toThrow(/STOCK_ORDER_ENTITY/);
+  });
+
   it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');

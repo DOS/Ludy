@@ -89,7 +89,7 @@ export function StagedMarketplace({ canDecide, refetchMs }: { canDecide: boolean
                   <div>
                     <dt className="text-subtle-foreground">{t('platform')}</dt>
                     <dd className="text-foreground">
-                      {t(`platforms.${s.platform}`)} <Badge variant="secondary">{t('mappingUnconfirmed')}</Badge>
+                      {t(`platforms.${s.platform}`)} {!s.profileConfirmed && <Badge variant="secondary">{t('mappingUnconfirmed')}</Badge>}
                     </dd>
                   </div>
                   <div>
@@ -107,7 +107,7 @@ export function StagedMarketplace({ canDecide, refetchMs }: { canDecide: boolean
                   <div className="sm:col-span-2">
                     <dt className="text-subtle-foreground">{t('stages')}</dt>
                     <dd className="text-foreground tabular-nums">
-                      {t('stagesValue', { placed: s.stages.placed, shipped: s.stages.shipped, completed: s.stages.completed, cancelled: s.stages.cancelled, returned: s.stages.returned })}
+                      {t('stagesValue', { placed: s.stages.placed, shipped: s.stages.shipped, completed: s.stages.completed, cancelled: s.stages.cancelled, returned: s.stages.returned, unknown: s.stages.unknown })}
                     </dd>
                   </div>
                   <Preview fileId={file.fileId} />
@@ -117,7 +117,12 @@ export function StagedMarketplace({ canDecide, refetchMs }: { canDecide: boolean
                     <AlertDescription className="text-warning">{t('unknownStatuses', { statuses: s.unknownStatuses.join(', ') })}</AlertDescription>
                   </Alert>
                 )}
-                <p className="mt-2 text-xs text-subtle-foreground">{t('mappingHint')}</p>
+                {s.ignoredRows > 0 && (
+                  <Alert className="mt-3 border-warning/30 bg-warning/10 text-warning" role="note" data-testid="staged-marketplace-ignored">
+                    <AlertDescription className="text-warning">{t('ignoredRows', { count: s.ignoredRows })}</AlertDescription>
+                  </Alert>
+                )}
+                {!s.profileConfirmed && <p className="mt-2 text-xs text-subtle-foreground">{t('mappingHint')}</p>}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Button size="sm" loading={confirm.isPending && confirm.variables === file.fileId} disabled={busy} onClick={() => confirm.mutate(file.fileId)} data-testid="staged-marketplace-import">
                     {t('import')}

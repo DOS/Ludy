@@ -55,6 +55,7 @@ describe('telling a platform by its headers', () => {
 });
 
 describe('the lines of a Shopee file', () => {
+  const shopee = MARKETPLACE_PROFILES[0] as (typeof MARKETPLACE_PROFILES)[number];
   const read = (rows: Cell[][]) => {
     const g = grid(rows);
     const mapping = findOrderColumns(g);
@@ -68,7 +69,7 @@ describe('the lines of a Shopee file', () => {
     const result = read([SHOPEE_HEAD, shopeeRow('2610A1', 'Hoàn thành', 'QC-1', '2', '50.000', '100.000'), shopeeRow('2610A2', 'Đã hủy', 'QC-2', '1', '1.234.567,50', '1.234.567,50', '30/10/2026')]);
     expect(result.lines).toEqual([
       expect.objectContaining({ orderNo: '2610A1', lineKey: 'QC-1', stage: 'completed', sku: 'QC-1', quantity: '2', unitPrice: '50000', amount: '100000', orderedAt: '2026-10-30' }),
-      expect.objectContaining({ orderNo: '2610A2', stage: 'cancelled', quantity: '1', unitPrice: '1234567.50', amount: '1234567.50', orderedAt: '2026-10-30' }),
+      expect.objectContaining({ orderNo: '2610A2', stage: 'cancelled', quantity: '1', unitPrice: '1234567.5', amount: '1234567.5', orderedAt: '2026-10-30' }),
     ]);
     const everything = JSON.stringify(result.lines);
     for (const buyer of BUYER) expect(everything).not.toContain(buyer);
@@ -97,9 +98,12 @@ describe('the lines of a Shopee file', () => {
     expect(result.skipped).toEqual([{ rowNo: 2, reason: 'bad_id' }]);
     expect(result.lines).toEqual([]);
     // A text id that looks like a number in exponent form is one too; an order number that merely has an E in it is not.
-    const exponent = read([SHOPEE_HEAD, shopeeRow('2.61E+18', 'Hoàn thành', 'QC-1', '1', '1', '1'), shopeeRow('E1', 'Hoàn thành', 'QC-1', '1', '1', '1')]);
-    expect(exponent.skipped).toEqual([{ rowNo: 2, reason: 'bad_id' }]);
-    expect(exponent.lines.map((l) => l.orderNo)).toEqual(['E1']);
+    const exponent = read([SHOPEE_HEAD, shopeeRow('2.61E+18', 'Hoàn thành', 'QC-1', '1', '1', '1'), shopeeRow('3E+18', 'Hoàn thành', 'QC-1', '1', '1', '1'), shopeeRow('E1', 'Hoàn thành', 'QC-1', '1', '1', '1'), shopeeRow('2610E1', 'Hoàn thành', 'QC-1', '1', '1', '1')]);
+    expect(exponent.skipped).toEqual([
+      { rowNo: 2, reason: 'bad_id' },
+      { rowNo: 3, reason: 'bad_id' },
+    ]);
+    expect(exponent.lines.map((l) => l.orderNo)).toEqual(['E1', '2610E1']);
   });
 
   it('gives a second row of the same product in one order its own line, and lists a status it does not know', () => {
@@ -107,6 +111,97 @@ describe('the lines of a Shopee file', () => {
     expect(result.lines.map((l) => l.lineKey)).toEqual(['QC-1', 'QC-1#2']);
     expect(result.lines.map((l) => l.stage)).toEqual(['unknown', 'unknown']);
     expect(result.unknownStatuses).toEqual(['Trạng thái lạ']);
+  });
+
+  it('reads a number cell as Excel stored it: a point is a decimal mark, never a thousands mark', () => {
+    // 1.234 in a number cell is one and 234 thousandths; the same characters typed as text are 1234 in Vietnamese notation.
+    expect(readDecimal({ kind: 'number', value: '1.234' })).toBe('1.234');
+    expect(readDecimal({ kind: 'text', value: '1.234' })).toBe('1234');
+    expect(readDecimal({ kind: 'number', value: '0.5' })).toBe('0.5');
+    expect(readDecimal({ kind: 'number', value: '-2.250' })).toBe('-2.250');
+    expect(readDecimal({ kind: 'number', value: '1e+21' })).toBe('bad');
+    const stored = read([SHOPEE_HEAD, ['2610D1', '2026-10-30', 'Đang giao', '', '', '', 'QC-1', 'x', { number: '50000' }, { number: '1.234' }, { number: '61700' }]]);
+    expect(stored.lines.map((l) => l.quantity)).toEqual(['1.234']);
+  });
+
+  it('keeps a quantity and an amount within what the table holds: a float tail is rounded, a number too big is refused', () => {
+    const row = (order: string, qty: string, price: string): Cell[] => shopeeRow(order, 'Đang giao', 'QC-1', qty, price, price);
+    const result = read([
+      SHOPEE_HEAD,
+      row('2610F1', '1', '33333.333333333336'),
+      row('2610F2', '0.1234567', '1'),
+      row('2610F3', '123456789012345', '1'),
+      row('2610F4', '1', '12345678901234567'),
+      row('2610F5', '2.500000', '0.00005'),
+    ]);
+    expect(result.skipped.map((s) => [s.rowNo, s.reason])).toEqual([
+      [3, 'bad_quantity'],
+      [4, 'bad_quantity'],
+      [5, 'bad_amount'],
+    ]);
+    expect(result.lines.map((l) => [l.orderNo, l.quantity, l.unitPrice])).toEqual([
+      ['2610F1', '1', '33333.3333'],
+      ['2610F5', '2.5', '0.0001'],
+    ]);
+  });
+
+  it('does not take a completed order for a return, nor a return still asked, refused or withdrawn for one that came back', () => {
+    expect(stageOf(shopee, 'Đã hoàn thành')).toBe('completed');
+    // Money back is not goods back: a refund alone moves no stock, and a return still asked for is not one that came back.
+    expect(stageOf(shopee, 'Đã hoàn tiền')).toBe('unknown');
+    expect(stageOf(shopee, 'Yêu cầu trả hàng')).toBe('unknown');
+    expect(stageOf(shopee, 'Đang trả hàng')).toBe('unknown');
+    expect(stageOf(shopee, 'Đã trả hàng')).toBe('returned');
+    const head = [...SHOPEE_HEAD, 'Trạng thái Trả hàng/Hoàn tiền'];
+    const line = (order: string, returnStatus: string): Cell[] => [...shopeeRow(order, 'Đang giao', 'QC-1', '1', '1', '1'), returnStatus];
+    const result = read([
+      head,
+      line('R1', 'Return requested'),
+      line('R2', 'Return rejected'),
+      line('R3', 'Yêu cầu bị từ chối'),
+      line('R4', 'Đang xử lý'),
+      line('R5', 'Return cancelled'),
+      line('R6', 'Không có'),
+      line('R7', 'Hoàn thành'),
+      line('R8', 'Return completed'),
+      line('R9', 'Refunded'),
+    ]);
+    expect(result.lines.map((l) => [l.orderNo, l.stage])).toEqual([
+      ['R1', 'shipped'],
+      ['R2', 'shipped'],
+      ['R3', 'shipped'],
+      ['R4', 'shipped'],
+      ['R5', 'shipped'],
+      ['R6', 'shipped'],
+      ['R7', 'returned'],
+      ['R8', 'returned'],
+      ['R9', 'shipped'],
+    ]);
+  });
+
+  it('keeps a long key short and distinct, and refuses a SKU past its length', () => {
+    const sku = 'S'.repeat(100);
+    const line = (order: string, itemSku: string, variation: string): Cell[] => [...shopeeRow(order, 'Đang giao', itemSku, '1', '1', '1'), variation];
+    const long = 'Áo thun cổ tròn cotton '.repeat(5);
+    const result = read([
+      [...SHOPEE_HEAD, 'Tên phân loại hàng'],
+      // A SKU of the full length is kept whole; one a character longer is refused.
+      line('2610E1', sku, ''),
+      line('2610E2', 'T'.repeat(101), ''),
+      // A seller with no SKU: the key is the product name and the variation, long. Two variations that differ only at the end must stay two keys, and a repeat of one gets its '#2'.
+      line('2610E3', '', `${long}Đỏ`),
+      line('2610E3', '', `${long}Xanh`),
+      line('2610E3', '', `${long}Xanh`),
+      line('2610E4', 'OK-1', 'Đỏ'),
+    ]);
+    expect(result.skipped.map((s) => [s.rowNo, s.reason])).toEqual([[3, 'too_long']]);
+    expect(result.lines.map((l) => l.orderNo)).toEqual(['2610E1', '2610E3', '2610E3', '2610E3', '2610E4']);
+    const keys = result.lines.map((l) => l.lineKey);
+    expect(keys[0]).toBe(sku);
+    expect(keys.slice(1, 4).every((k) => k.length <= 120)).toBe(true);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys[3]).toMatch(/#2$/);
+    expect(keys[4]).toBe('OK-1|Đỏ');
   });
 
   it('answers null for a file with more lines than the cap', () => {
