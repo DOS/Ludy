@@ -36,6 +36,15 @@ interface ItemFormState {
 const blankItem = (): ItemFormState => ({ itemId: null, code: '', name: '', unit: '', stockAccount: '156', trade: 'goods' });
 const fromItem = (i: StockItem): ItemFormState => ({ itemId: i.id, code: i.code, name: i.name, unit: i.unit, stockAccount: i.stockAccount, trade: i.trade });
 
+type ItemField = 'code' | 'unit' | 'account';
+// The input a server error is about, by its code (an error with no field of its own stays under the form).
+function fieldOfError(code: string | undefined): ItemField | null {
+  if (code === 'STOCK_ITEM_CODE_EXISTS' || code === 'STOCK_ITEM_CODE_FIXED') return 'code';
+  if (code === 'STOCK_ITEM_IN_USE') return 'unit';
+  if (code === 'STOCK_ACCOUNT_UNKNOWN' || code === 'STOCK_ACCOUNT_INACTIVE' || code === 'STOCK_ACCOUNT_KIND') return 'account';
+  return null;
+}
+
 function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFormState; legalEntityId: string | undefined; locked: boolean; onClose: () => void }) {
   const t = useTranslations('stock');
   const [form, setForm] = useState(initial);
@@ -49,6 +58,9 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
   });
   const set = (patch: Partial<ItemFormState>) => setForm((s) => ({ ...s, ...patch }));
   const id = 'stock-item';
+  // The field a save error is about, so the error is linked to it (aria-invalid and aria-describedby) and a screen reader says which input to fix.
+  const failing = fieldOfError((save.error as { code?: string } | null)?.code);
+  const flag = (field: ItemField) => (failing === field ? { 'aria-invalid': true as const, 'aria-describedby': `${id}-error` } : {});
   const ready = form.code.trim() !== '' && form.name.trim() !== '' && form.unit.trim() !== '' && form.stockAccount.trim() !== '';
   return (
     <Card className="mb-6 block p-4" aria-label={form.itemId ? t('editTitle') : t('newTitle')} data-testid="stock-item-form">
@@ -56,7 +68,7 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <Label htmlFor={`${id}-code`}>{t('code')}</Label>
-          <Input id={`${id}-code`} value={form.code} maxLength={40} disabled={form.itemId !== null} onChange={(e) => set({ code: e.target.value })} />
+          <Input id={`${id}-code`} value={form.code} maxLength={40} disabled={form.itemId !== null} onChange={(e) => set({ code: e.target.value })} {...flag('code')} />
         </div>
         <div className="space-y-1 sm:col-span-2">
           <Label htmlFor={`${id}-name`}>{t('name')}</Label>
@@ -64,11 +76,11 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-unit`}>{t('unit')}</Label>
-          <Input id={`${id}-unit`} value={form.unit} maxLength={30} disabled={locked} onChange={(e) => set({ unit: e.target.value })} />
+          <Input id={`${id}-unit`} value={form.unit} maxLength={30} disabled={locked} onChange={(e) => set({ unit: e.target.value })} {...flag('unit')} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-account`}>{t('account')}</Label>
-          <Input id={`${id}-account`} value={form.stockAccount} maxLength={35} inputMode="numeric" disabled={locked} onChange={(e) => set({ stockAccount: e.target.value })} />
+          <Input id={`${id}-account`} value={form.stockAccount} maxLength={35} inputMode="numeric" disabled={locked} onChange={(e) => set({ stockAccount: e.target.value })} {...flag('account')} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-trade`}>{t('trade')}</Label>
@@ -82,7 +94,7 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
         </div>
       </div>
       {locked && <p className="mt-2 text-xs text-subtle-foreground">{t('lockedHint')}</p>}
-      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+      {save.error && <ErrorText id={`${id}-error`}>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()} data-testid="stock-item-save">
           {t('save')}
@@ -228,23 +240,37 @@ function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undef
       </div>
       {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
-        <TableSkeleton columns={8} />
+        <TableSkeleton columns={12} />
       ) : report.error ? (
         <ErrorText>{errorMessage(report.error)}</ErrorText>
       ) : report.data.length === 0 ? (
         <p className="text-sm text-subtle-foreground">{t('reportEmpty')}</p>
       ) : (
-        <DataTable head={[t('code'), t('name'), t('openingQty'), t('inQty'), t('outQty'), t('closingQty'), t('closingVal'), t('unitCost'), '']} numeric={[2, 3, 4, 5, 6, 7]}>
+        <DataTable
+          head={[t('code'), t('name'), t('openingQty'), t('openingVal'), t('inQty'), t('inVal'), t('outQty'), t('outVal'), t('closingQty'), t('closingVal'), t('unitCost'), '']}
+          numeric={[2, 3, 4, 5, 6, 7, 8, 9, 10]}
+        >
           {report.data.map((r) => (
             <TableRow key={r.itemId} data-testid="stock-report-row">
               <TableCell className="px-4 py-3">{r.code}</TableCell>
-              <TableCell className="px-4 py-3">{r.name}</TableCell>
+              <TableCell className="px-4 py-3">
+                {r.name}
+                {/* The month's average is worked from the opening stock: a negative one (goods sold before they were bought in) makes the provisional cost unreliable until the purchase is entered. */}
+                {r.openingQuantity.startsWith('-') && (
+                  <span className="block text-xs text-warning" data-testid="stock-negative-opening">
+                    {t('negativeOpening')}
+                  </span>
+                )}
+              </TableCell>
               <TableCell className={NUM}>{r.openingQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.openingValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.inQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.inValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.outQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.outValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.closingQuantity}</TableCell>
               <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
-              <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 4)}</TableCell>
+              <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 6)}</TableCell>
               <TableCell className="px-4 py-3 text-right">
                 <Button variant="ghost" size="sm" onClick={() => setCardOf({ id: r.itemId, name: r.name, unit: r.unit })} data-testid="stock-report-card">
                   {t('card')}
@@ -257,6 +283,9 @@ function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undef
     </section>
   );
 }
+
+// The query's default page: the newest lines first.
+const UNASSIGNED_SHOWN = 200;
 
 function UnassignedRow({ line, items, canWrite }: { line: StockUnassignedLine; items: StockItem[]; canWrite: boolean }) {
   const t = useTranslations('stock');
@@ -358,13 +387,20 @@ export function StockPage() {
           onClose={() => setEditing(null)}
         />
       )}
-      {viewing && <MovesPanel key={viewing.id} item={viewing} canWrite={canWrite} onClose={() => setViewing(null)} />}
+      {/* The panel is of the item's own entity: after the entity on screen changes it is not shown (its Reverse action must not sit on another entity's screen). */}
+      {viewing && (entity.legalEntityId === undefined || viewing.legalEntityId === entity.legalEntityId) && <MovesPanel key={viewing.id} item={viewing} canWrite={canWrite} onClose={() => setViewing(null)} />}
 
       {lines.length > 0 && (
         <section className="mb-8" aria-label={t('unassignedTitle')} data-testid="stock-unassigned">
           <h2 className="text-base font-medium text-foreground">{t('unassignedTitle')}</h2>
           <p className="mb-3 text-sm text-subtle-foreground">{t('unassignedHint')}</p>
           {canWrite && list.filter((i) => i.active).length === 0 && <p className="mb-3 text-sm text-foreground">{t('noItemsToAssign')}</p>}
+          {/* A work queue: an assigned line leaves it and an older one takes its place. */}
+          {lines.length >= UNASSIGNED_SHOWN && (
+            <p className="mb-3 text-sm text-subtle-foreground" data-testid="stock-unassigned-capped">
+              {t('unassignedCapped', { count: UNASSIGNED_SHOWN })}
+            </p>
+          )}
           <DataTable head={[t('invoice'), t('description'), t('quantity'), '']} numeric={[2]}>
             {lines.map((line) => (
               <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} />
@@ -432,7 +468,8 @@ export function StockPage() {
         </DataTable>
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
-      <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      {/* Keyed by the entity: the open card is dropped when the entity on screen changes. */}
+      <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} />
       <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} />
     </>
   );

@@ -4,7 +4,7 @@
 // split for the platform. Nothing here touches a database or a platform.
 import { describe, expect, it } from 'vitest';
 import type { AdsCampaignPlan } from '@crove/kernel-contract';
-import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, stepAction, stepLevel, stepVariant, targetingNames, zoneKnown, zonedMidnight } from '../src/launch-steps.ts';
+import { RECONCILE_WAIT_SECONDS, STARTED_STALE_SECONDS, dayAfter, launchCallKey, launchSteps, nameTail, objectName, parseLaunchCallKey, slotOfName, stepAction, stepLevel, stepVariant, targetingNames, zoneKnown, zonedMidnight } from '../src/launch-steps.ts';
 
 const TAG = 'ludy:0123456789';
 const LAUNCH = '0198f3c2-7b1e-7000-8000-0123456789ab';
@@ -164,5 +164,27 @@ describe('the names of a plan\'s targeting', () => {
       gender: 'female',
     });
     expect(targetingNames(plan([{ country: 'VN' }], []))).toMatchObject({ countries: ['VN'], regions: [], interests: [] });
+  });
+});
+
+describe('the object of a launch a name belongs to', () => {
+  it('is the inverse of the tail every name carries, whatever the plan’s own text in front of it', () => {
+    for (const variants of [1, 2, 3]) {
+      for (const step of launchSteps(variants)) {
+        for (const planName of ['Khuyến mãi mùa hè', 'Plan ludy: x', '']) {
+          expect(slotOfName(TAG, objectName(planName, TAG, step), variants), `${planName} / ${step}`).toBe(step);
+        }
+      }
+    }
+  });
+
+  it('says nothing for a name without the tag, with a tail that is not a step of this launch, or a variant the plan does not have', () => {
+    expect(slotOfName(TAG, 'Plan', 3)).toBeNull();
+    expect(slotOfName(TAG, `Plan ${TAG} creative 4`, 3)).toBeNull();
+    expect(slotOfName(TAG, `Plan ${TAG} ad 2`, 1)).toBeNull();
+    expect(slotOfName(TAG, `Plan ${TAG} something else`, 3)).toBeNull();
+    expect(slotOfName(TAG, `Plan ${TAG} set `, 3)).toBeNull();
+    // Another launch's tag is not this one's.
+    expect(slotOfName(TAG, 'Plan ludy:ffffffffff set', 3)).toBeNull();
   });
 });

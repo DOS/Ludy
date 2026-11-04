@@ -124,9 +124,17 @@ export const stockItemSave = defineCommand({
         throw error;
       }
     }
+    // The item row is locked before it is read: the unit comparison and the taught-names check below then read committed state, and a name taught meanwhile (its foreign key takes
+    // a share of this row) waits for this commit instead of slipping between the check and the update.
+    await ctx.trx.selectFrom('crove_finance.stock_item').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.itemId).forUpdate().executeTakeFirst();
     const item = await loadItem(ctx, input.itemId);
     if (input.code !== item.code) throw new DomainError('STOCK_ITEM_CODE_FIXED', 422, 'Mã hàng không đổi được sau khi đã tạo');
     if (input.legalEntityId !== null && input.legalEntityId !== item.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_FIXED', 422, 'Mặt hàng thuộc về một pháp nhân và không đổi sang pháp nhân khác được');
+    // A taught name carries a factor against the item's unit, so the unit stays while names are taught: the factor would otherwise be applied to a unit it was not made for.
+    if (!sameUnit(input.unit, item.unit)) {
+      const taught = await ctx.trx.selectFrom('crove_finance.stock_alias').select('id').where('org_id', '=', ctx.orgId).where('item_id', '=', item.id).limit(1).executeTakeFirst();
+      if (taught) throw new DomainError('STOCK_ITEM_IN_USE', 409, 'Mặt hàng đã có tên gán với hệ số quy đổi theo đơn vị hiện tại; hãy bỏ gán các tên trước khi đổi đơn vị tính');
+    }
     try {
       await ctx.trx
         .updateTable('crove_finance.stock_item')
@@ -191,8 +199,9 @@ export const stockAliasTeach = defineCommand({
       .where('alias_key', '=', key)
       .executeTakeFirstOrThrow();
     if (held.item_id !== item.id) throw new DomainError('STOCK_ALIAS_TAKEN', 409, 'Tên này đã được gán cho một mặt hàng khác; hãy bỏ gán ở đó trước');
-    // A name taught without a unit stays as it is; one taught in a unit is the same alias only in that unit.
-    const otherUnit = held.source_unit !== null && input.unit !== undefined && !sameUnit(held.source_unit, input.unit);
+    // A name taught in a unit is the same alias only in that unit: teaching it again in a unit when it holds none (or another) is refused, never left unscoped, so its factor is
+    // never applied to a unit it was not made for. Taught again with no unit, it is the alias it was.
+    const otherUnit = input.unit !== undefined && !sameUnit(held.source_unit, input.unit);
     if (plainQuantity(held.factor) !== plainQuantity(input.factor) || otherUnit) throw new DomainError('STOCK_ALIAS_FACTOR', 409, 'Tên này đã được gán cho mặt hàng này với một hệ số hoặc đơn vị quy đổi khác; hãy bỏ gán rồi gán lại');
     return { id: held.id, existing: true };
   },

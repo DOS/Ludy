@@ -173,9 +173,24 @@ describe('module screens against the router (#1652)', () => {
       [
         'accounting',
         [
-          ['books', ['/o/$slug/documents', '/o/$slug/journal', '/o/$slug/vouchers', '/o/$slug/sales-invoices', '/o/$slug/stock', '/o/$slug/bank', '/o/$slug/fixed-assets', '/o/$slug/ledger']],
-          ['tax', ['/o/$slug/vat', '/o/$slug/portal-invoices']],
-          ['parties', ['/o/$slug/customers', '/o/$slug/payment-reminders', '/o/$slug/vendors']],
+          [
+            'books',
+            [
+              '/o/$slug/documents',
+              '/o/$slug/journal',
+              '/o/$slug/vouchers',
+              '/o/$slug/sales-invoices',
+              '/o/$slug/stock',
+              '/o/$slug/bank',
+              '/o/$slug/fixed-assets',
+              '/o/$slug/ledger',
+              '/o/$slug/vat',
+              '/o/$slug/portal-invoices',
+              '/o/$slug/customers',
+              '/o/$slug/payment-reminders',
+              '/o/$slug/vendors',
+            ],
+          ],
         ],
       ],
       // One app, Engage (#2435), with the design owner's groups: Hộp thư (the Inbox of CV3, #2306; the comment inbox's old address redirects to it),

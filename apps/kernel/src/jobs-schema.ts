@@ -85,6 +85,9 @@ export const QUEUES = {
   // Created by the launch writer migration (crove_ads_launch_writer): one approved launch, ids only (the org and the launch), run by the relay's event ads.launch.queued and
   // by the sweep's re-queue; it creates the plan's objects at the platform, every one paused (#2296, W2-3).
   adsLaunch: 'ads-launch',
+  // Created by the launch pause migration (crove_ads_launch_pause): one stopped launch, ids only (the org and the launch), run by the relay's event ads.pause.queued and by
+  // the sweep's re-queue; it finds what the launch made at the platform by its tag and pauses it, nothing else (#2296, W2-4a).
+  adsPause: 'ads-pause',
   // Created by the calendar write-back queue migration (20261112090000): a booking's event made to match the member's connected calendar (#2124).
   calendarWriteback: 'kernel-calendar-writeback',
   // Created by the dead letter migration (20261103150000): every other queue's dead letters (#1720, dead-letter.ts).
@@ -178,6 +181,9 @@ const QUEUE_EGRESS: { readonly [Q in QueueName]: JobEgress } = {
   // The calls of a launch of the ad platform's writer (create a campaign, an ad set, a creative and an ad, every one paused; find them by their tag; resolve the
   // names of regions and interests), through the narrowed `channels.adWriters`: nothing that changes a status, revokes or deletes is reachable.
   [QUEUES.adsLaunch]: ['provider:ad_platform'],
+  // The pause of what a stopped launch made (find the objects that carry the launch's tag, set them PAUSED), through the narrowed `channels.adPausers`: nothing that
+  // creates, activates, archives, verifies or revokes is reachable.
+  [QUEUES.adsPause]: ['provider:ad_platform'],
   // The calendar adapters (channels.calendars): the provider's events are written through them.
   [QUEUES.calendarWriteback]: ['provider:channel'],
   [QUEUES.deadLetter]: 'none',

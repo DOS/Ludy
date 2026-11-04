@@ -17,7 +17,7 @@ import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
 import { ADS_SPEND_SCOPES, AD_WRITE_PROVIDERS, READ_PROVIDER_OF_WRITE, isAdWriteProviderId, zAdsAccountLinkWrite, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
-import { cancelQueuedLaunches } from './launch-ledger.ts';
+import { cancelQueuedLaunches, stopStartedLaunches } from './launch-ledger.ts';
 
 const OWNERS: readonly MemberRole[] = ['owner'];
 const MANAGERS: readonly MemberRole[] = ['owner', 'admin'];
@@ -180,7 +180,11 @@ export const adsAccountDisconnect = defineCommand({
     }
     // The launches of the account that have not started are cancelled with it (W2-2), so a plan approved before cannot start after a reconnect.
     const launchesCancelled = await cancelQueuedLaunches(ctx, 'account_off', account.id);
-    ctx.audit({ adAccountId: account.id, closed, launchesCancelled });
+    // The launches that have started are stopped with it (W2-4a), keeping their commitments to at least today, and their objects paused afterwards, before the
+    // permission is revoked: the closed write connection leaves the sealed copy of its token, which the revoke sweep pauses with first.
+    const launchesStopped = await stopStartedLaunches(ctx, 'disconnected', { adAccountId: account.id });
+    for (const s of launchesStopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
+    ctx.audit({ adAccountId: account.id, closed, launchesCancelled, launchesStopped: launchesStopped.length });
     return { adAccountId: account.id, closed };
   },
 });

@@ -109,6 +109,69 @@ export async function cancelQueuedLaunches(ctx: Db, reason: 'cancelled' | 'switc
   return rows.length;
 }
 
+// The states of a launch that has started: the writer may have made objects at the platform (and, from W2-4b, activated them). Stopping one is the stop's (W2-4a).
+export const STARTED_STATES = ['launching', 'needs_attention', 'live'] as const;
+
+export interface StoppedLaunch {
+  id: string;
+  adAccountId: string;
+}
+
+// Stops the launches that have started, of the org, of one account or one launch, in the actor's own context (an owner's or an admin's, or the system's): each moves to
+// `stopped` and keeps its commitment against the caps to at least the earlier of what it was and today in the account's own time zone, never cleared (the database's
+// guard holds the rule whoever stops it, crove_ads.launch_guard: a person's stop must not release spend that ran or is in flight, and crove_ads.launch_today is the one
+// definition of today, tomorrow in UTC when no zone is known). A flight that has not begun keeps its first day (the ledger holds a commitment inside the flight, never
+// before its first day), which is never less than the guard allows. The objects at the platform are paused afterwards, by the pause job, from the event the caller writes
+// for each launch returned (`ads.pause.queued`, ids only): never inside this transaction, so a platform that is down cannot stop a stop. A launch that has not started
+// is cancelled instead (cancelQueuedLaunches).
+export async function stopStartedLaunches(
+  ctx: Db,
+  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected',
+  filter: { adAccountId?: string; launchId?: string } = {},
+): Promise<StoppedLaunch[]> {
+  const account = filter.adAccountId ?? null;
+  const launch = filter.launchId ?? null;
+  const { rows } = await sql<{ id: string; ad_account_id: string }>`
+    UPDATE crove_ads.ad_launch l
+    SET state = 'stopped', stop_reason = ${reason},
+        commit_until = GREATEST(l.start_on, LEAST(l.commit_until, crove_ads.launch_today((SELECT a.time_zone FROM crove_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id))))
+    WHERE l.org_id = ${ctx.orgId}::uuid AND l.state IN ('launching', 'needs_attention', 'live')
+      AND (${account}::uuid IS NULL OR l.ad_account_id = ${account}::uuid) AND (${launch}::uuid IS NULL OR l.id = ${launch}::uuid)
+    RETURNING l.id, l.ad_account_id`.execute(ctx.trx);
+  return rows.map((r) => ({ id: r.id, adAccountId: r.ad_account_id }));
+}
+
+// Whether an account has a launch that is not wound down: one that has started and is still going (launching, needs attention, live), or one that was stopped and whose
+// objects are not yet paused at the platform (and Ludy has not given up on). Its history may not be deleted until it is.
+export async function hasOpenLaunch(ctx: Db, adAccountId: string): Promise<boolean> {
+  const { rows } = await sql<{ open: boolean }>`
+    SELECT EXISTS (
+      SELECT 1 FROM crove_ads.ad_launch l
+      WHERE l.org_id = ${ctx.orgId}::uuid AND l.ad_account_id = ${adAccountId}::uuid
+        AND (l.state IN ('launching', 'needs_attention', 'live') OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))
+    ) AS open`.execute(ctx.trx);
+  return rows[0]?.open === true;
+}
+
+// What an account's deletion would leave running at the platform: the launches that are not wound down and, bounded, the platform ids of what they made, so the audit
+// row of a deletion Ludy cannot refuse (the platform's own data deletion request) lets the person pause those by hand.
+export async function openLaunchObjects(ctx: Db, adAccountId: string): Promise<{ launches: number; objects: Array<{ level: string; id: string }> }> {
+  const { rows } = await sql<{ launches: number; level: string | null; external_id: string | null }>`
+    WITH open AS (
+      SELECT l.id FROM crove_ads.ad_launch l
+      WHERE l.org_id = ${ctx.orgId}::uuid AND l.ad_account_id = ${adAccountId}::uuid
+        AND (l.state IN ('launching', 'needs_attention', 'live') OR (l.state = 'stopped' AND l.started_at IS NOT NULL AND l.wound_down_at IS NULL AND l.wind_down_code IS NULL))
+    )
+    SELECT (SELECT count(*)::int FROM open) AS launches, o.level, o.external_id
+    FROM (SELECT 1) one
+    LEFT JOIN LATERAL (
+      SELECT o.level, o.external_id FROM crove_ads.ad_object o
+      WHERE o.org_id = ${ctx.orgId}::uuid AND o.launch_id IN (SELECT id FROM open) AND o.level IN ('campaign', 'ad_set', 'ad')
+      ORDER BY o.level, o.external_id LIMIT 30
+    ) o ON true`.execute(ctx.trx);
+  return { launches: rows[0]?.launches ?? 0, objects: rows.filter((r) => r.level !== null && r.external_id !== null).map((r) => ({ level: r.level as string, id: r.external_id as string })) };
+}
+
 // The launch of a draft, if one was queued (the builder shows it on an approved draft).
 const launchSelect = (db: Db['trx']) =>
   db.selectFrom('crove_ads.ad_launch as l').select([
@@ -123,6 +186,8 @@ const launchSelect = (db: Db['trx']) =>
     'l.stop_reason',
     'l.created_at',
     'l.finished_at',
+    'l.wound_down_at',
+    'l.wind_down_code',
     sql<string>`l.daily_budget::text`.as('daily_budget'),
     sql<string>`l.amount::text`.as('amount'),
     sql<string>`l.start_on::text`.as('start_on'),
@@ -149,6 +214,9 @@ export function launchView(row: LaunchRow): AdsLaunchView {
     stopReason: row.stop_reason,
     createdAt: row.created_at.toISOString(),
     finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
+    // What became of the objects of a stopped launch at the platform: being paused, paused (or there was nothing to pause), or Ludy gave up and the person is to pause
+    // them by hand there. null for a launch that is not stopped.
+    windDown: row.state === 'stopped' ? { state: row.wound_down_at ? 'done' : row.wind_down_code ? 'gave_up' : 'pending', code: row.wind_down_code } : null,
   };
 }
 

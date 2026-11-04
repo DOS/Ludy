@@ -248,7 +248,7 @@ import { zStatementsHtkkCheck, zStatementsHtkkYear } from './statements-htkk.ts'
 import { zTaxObligationMark, zTaxProfile } from './tax-calendar.ts';
 import { zTodayBrief, zTodayBriefInput, zTodayList, zTodayMailSet, zTodayMailSetting } from './today.ts';
 import { zBookEntity, zLegalEntity, zLegalEntityInput } from './legal-entity.ts';
-import { zMemberRoles, zRoleAssignInput } from './roles.ts';
+import { zBuiltinRoleKey, zMemberRoles, zRoleAssignInput } from './roles.ts';
 import { zCalendarConnectionView, zCalendarEventAdd, zCalendarEventCancel, zCalendarEventView, zCalendarRange, zCalendarSlot, zCalendarSlotsQuery, zCalendarOAuthProvider, zMyCalendar, zWorkingHours } from './calendar.ts';
 import { zBoard, zBoardQuery, zDeal, zDealCreate, zDealDeleted, zDealListQuery, zDealMove, zDealPage, zDealRef, zDealSetting, zDealSettingSet, zDealUpdate, zNextStepChanged, zNextStepDone, zNextStepListQuery, zNextStepPage, zNextStepSnooze, zPartyChoice, zPartyDealsQuery, zPartySearchQuery, zPipelineStage, zStageAdd, zStageRemove, zStageRename, zStageReorder } from './crm-deals.ts';
 import { zBookingCancel, zBookingItem, zBookingListQuery, zBookingMove, zBookingSuggestInput, zBookingSuggestion, zEventType, zEventTypeInput, zEventTypeSetActive, zEventTypeUpdate } from './crm.ts';
@@ -287,7 +287,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall } from './ads-campaign.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -379,8 +379,11 @@ export const contract = {
     // Owners and admins (admins cannot invite admins). R3: needs fresh MFA. Nobody becomes a member until the
     // invitee accepts (invites.accept). The answer is the same whether or not the email has an account.
     // An owner may scope the invite to legal entities (#1281): the invitee joins as a member or viewer holding the
-    // external_accountant role for those entities only.
-    invite: oc.input(z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional() })).output(zInviteCreated),
+    // external_accountant role for those entities only. An owner may also send one department role (#2611, a catalog role
+    // of scope org), granted when the invite is accepted; it never goes with legalEntityIds.
+    invite: oc
+      .input(z.object({ email: z.email().max(320), role: zInviteRole, legalEntityIds: zInviteLegalEntityIds.optional(), roleKey: zBuiltinRoleKey.optional() }))
+      .output(zInviteCreated),
     // Owners and admins: the org's invites that are still pending or expired, newest first.
     listInvites: oc.output(z.array(zInvite)),
     revokeInvite: oc.input(z.object({ inviteId: zId })).output(z.object({ ok: z.literal(true) })),
@@ -1892,6 +1895,9 @@ export const contract = {
     discardCampaignDraft: oc.input(zAdsCampaignDraftDiscardCall).output(z.object({ draftId: zId })),
     // Cancels a launch that has not started (W2-2): an approved plan's commitment against the caps is released. Owners and admins.
     cancelLaunch: oc.input(zAdsLaunchCancelCall).output(z.object({ launchId: zId, released: z.string() })),
+    // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's
+    // stop never releases spend that ran or is in flight), and the objects it made at the platform are paused from the queue after the commit.
+    stopLaunch: oc.input(zAdsLaunchStopCall).output(z.object({ launchId: zId, state: z.literal('stopped'), commitUntil: z.string().nullable() })),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),
