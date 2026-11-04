@@ -59,6 +59,9 @@ export const LEDGER_APPROVE_PERMISSION = 'finance.proposal.approve';
 const LEDGER: CommandPolicy = { roles: ['owner', 'admin'], permission: LEDGER_APPROVE_PERMISSION, fourEyes: true };
 // A distinct object, so approvalPolicies() reports it as no ledger policy (the database's `ledger` false for these commands).
 const ADS: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
+// Issuing a sales e-invoice (ADR-0044 point 3, #2502): a legal document that posts nothing to the ledger (the sale is posted later, from the signed XML). Owners and admins approve,
+// with four-eyes and the one-person path (P10), judged on the members now: the same rule as the ads commands.
+const EINVOICE: CommandPolicy = { roles: ['owner', 'admin'], permission: null, fourEyes: true, live: true };
 const POLICIES: Record<string, CommandPolicy> = {
   'finance.purchase.record': LEDGER,
   // A reversal is itself a posting (#138): the same roles approve it, with four-eyes.
@@ -80,6 +83,7 @@ const POLICIES: Record<string, CommandPolicy> = {
   'ads.launches.unblock': ADS,
   // The launch of a drafted campaign (ADR-0043, #2295, W1): the plan and its largest amount are what the approver signs; the same rule.
   'ads.campaign.launch': ADS,
+  'finance.einvoice.issue': EINVOICE,
 };
 
 const NOBODY: CommandPolicy = { roles: [], permission: null, fourEyes: true };
@@ -101,7 +105,7 @@ export function liveApprovalCommands(): string[] {
 // The version of the approval rules in this file (plan §4.7 recorded outcome: policy_version). Raise it with any change
 // to who may approve what, so an approval audit row says which rules it ran under, next to the org's preset and its
 // version and the build.
-export const APPROVAL_POLICY_VERSION = 4;
+export const APPROVAL_POLICY_VERSION = 5;
 
 // The org's approval policy (#1402): its preset, a data row of crove_kernel.approval_preset, and the version of the
 // org's choice, which grows by one on every change (kernel.org.set_approval_preset).
