@@ -260,8 +260,8 @@ describe('a draft that is frozen', () => {
     expect(html).not.toContain('Save the draft');
     expect(html).not.toContain('Ask for approval');
   });
+
   it('approved says that nothing is spent yet', () => {
-  it('approved says that nothing is sent to the ad platform yet', () => {
     const html = render(builder({ draft: draft({ status: 'approved' }) }));
     expect(html).toContain('Approved. Nothing is spent yet.');
     expect(html).not.toContain('Save the draft');
