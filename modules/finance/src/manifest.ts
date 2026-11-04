@@ -46,6 +46,8 @@ export const financeManifest = defineModule({
       stock_alias: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'source', 'alias_key', 'factor', 'source_unit', 'created_by', 'created_at']),
       stock_item: columns(['org_id', 'id', 'legal_entity_id', 'code', 'name', 'unit', 'kind', 'stock_account', 'trade', 'active', 'created_by', 'created_at', 'updated_at']),
       stock_move: columns(['org_id', 'id', 'legal_entity_id', 'item_id', 'move_date', 'quantity', 'source_type', 'document_id', 'line_no', 'line_attempt', 'reverses_move_id', 'created_by', 'created_at']),
+      stock_period: columns(['org_id', 'id', 'legal_entity_id', 'period_month', 'voucher_id', 'total_cost', 'closed_by', 'closed_at']),
+      stock_period_item: columns(['org_id', 'id', 'legal_entity_id', 'period_id', 'item_id', 'opening_quantity', 'opening_value', 'in_quantity', 'in_value', 'out_quantity', 'out_value', 'closing_quantity', 'closing_value', 'unit_cost']),
       vat_return_filed: columns(['org_id', 'id', 'period', 'status', 'source', 'carried_in_amount', 'deductible_amount', 'carried_out_amount', 'marked_by', 'created_at', 'legal_entity_id']),
       vendor_account_rule: columns(['org_id', 'party_id', 'debit_account', 'confirmed_by', 'updated_at']),
     },
@@ -77,6 +79,7 @@ export const financeManifest = defineModule({
     { type: 'finance.purchase_document', table: 'purchase_document', legalEntityScoped: true, audit: 'append_only' },
     { type: 'finance.stock_item', table: 'stock_item', legalEntityScoped: true, audit: 'command' },
     { type: 'finance.stock_move', table: 'stock_move', legalEntityScoped: true, audit: 'append_only' },
+    { type: 'finance.stock_period', table: 'stock_period', legalEntityScoped: true, audit: 'append_only' },
   ],
   // Its screens in the app and its menu items (#1652), kept with the other modules' in @crove/kernel-contract.
   ...MODULE_SCREENS.finance,
