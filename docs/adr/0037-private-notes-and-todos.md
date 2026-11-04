@@ -125,4 +125,8 @@ Options considered: delete at once (rejected: a removal by mistake loses the mem
 - The owner asks for break-glass access (option C).
 - Teams exist (`team_lead`), so a note can be shared with a team instead of the whole org.
 - Notes carry a legal entity, so entity-limited members can read shared notes of their entities.
-- AI on notes (N8): an addendum on the definer that lets the worker read the one note the author asked about.
+- AI on notes (N8): an addendum on the definer that lets the worker read the one note the author asked about. Written as [ADR-0049](0049-member-scoped-vy.md) (below).
+
+## Addendum (proposed 2026-11-04): Vy working for one member
+
+[ADR-0049](0049-member-scoped-vy.md) (Proposed) records the owner's rule of 2026-11-03 on [#1677](https://github.com/DOS/Ludy/issues/1677): there is one Vy, and when it works for one member it reads what that member can read; what it finds in a private note goes back to that member only; Vy working for the whole company (the org-chart agents) and org-wide work keep decision N-6 and read nothing private. It revises N-6 only for Vy working for one member, and it replaces the worker definer this ADR's "Revisit when" expected for N8: the author's own context reads the note through the policies of section 2, which do not change in the first stage. **Until ADR-0049 is Accepted, nothing in this ADR changes.** Once it is, section 1's "agent contexts read and write nothing" reads "an org-chart agent context reads and writes nothing; a member-mode context (Vy working for one member) reads only what that member could, in a table that opted in" (stage B of ADR-0049, with its own invariant step first).
