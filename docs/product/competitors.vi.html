@@ -38,10 +38,12 @@ code{font-family:var(--font-mono);font-size:.88em;background:var(--code-bg);padd
 .card b{display:block;font-size:18px;color:var(--accent-ink);line-height:1.3;margin-bottom:4px}
 .card p{margin:0 0 8px;font-size:14.5px;line-height:1.55}
 .card .price{color:var(--muted);font-size:13.5px}
-.table-wrap{overflow:auto;margin:12px 0;border:1px solid var(--line);border-radius:8px;max-height:80vh;max-width:100%}
-table{border-collapse:separate;border-spacing:0;width:100%;font-size:inherit;min-width:1180px;font-variant-numeric:tabular-nums}
+.table-wrap{margin:12px 0;border:1px solid var(--line);border-radius:8px;max-width:100%}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:inherit;font-variant-numeric:tabular-nums}
+/* Wide screens: the table fits the page and scrolls with it, header sticky to the window. Narrow screens: only the table scrolls sideways, so the page never does. */
+@media (max-width:1199px){.table-wrap{overflow-x:auto}table{min-width:1180px}}
 th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px;line-height:1.5}
-thead th{position:sticky;top:0;z-index:3;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--line)}
+thead th{position:sticky;top:env(safe-area-inset-top,0px);z-index:3;background:var(--surface);color:var(--muted);font-weight:600;border-bottom:1px solid var(--line)}
 tbody th[scope=row]{position:sticky;left:0;z-index:2;background:var(--surface);font-weight:600;min-width:210px;max-width:260px;border-right:1px solid var(--line)}
 thead th:first-child{left:0;z-index:4;min-width:210px}
 td{min-width:150px}
@@ -85,7 +87,7 @@ footer{margin-top:48px;color:var(--muted);font-size:14px}
 </div>
 
 <h2>2. Bảng so sánh</h2>
-<p class="muted prose">Mỗi ô có nhãn trạng thái và tên sản phẩm. Với Ludy, nhãn là trạng thái của chính Ludy. Hàng tiêu đề và cột đầu cố định khi cuộn. Bảng chỉ đọc danh sách sản phẩm trên trang của mỗi hãng, không đo độ sâu tính năng.</p>
+<p class="muted prose">Mỗi ô có nhãn trạng thái và tên sản phẩm. Với Ludy, nhãn là trạng thái của chính Ludy. Hàng tiêu đề đứng yên khi cuộn trang; trên màn hình hẹp, bảng cuộn ngang và cột đầu đứng yên. Bảng chỉ đọc danh sách sản phẩm trên trang của mỗi hãng, không đo độ sâu tính năng.</p>
 <div class="legend">
   <div><span class="chip ok">Có</span> đối thủ có</div>
   <div><span class="chip warn">Một phần</span> có một phần</div>
