@@ -2654,6 +2654,20 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect((await events('ads.pause.queued', launch.id)).length).toBe(1);
             });
 
+            it('keeps a stopped launch committing against the caps until it is wound down, then lets its room go (L2 of the W2-4a review)', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await created('Giữ chỗ đến khi tạm dừng xong', w);
+              expect((await stopAs(owner, launch.id)).status).toBe(200);
+              // The stop shortened the row's commitment to today, but its objects are not confirmed paused: the caps still count it to the last day of its flight, so a plan of
+              // 150 000 a day against the org's 200 000 over days it covers is refused.
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', commit_until: inDays(0) });
+              const next = await saved(owner, account, plan({ name: 'Cần chỗ', dailyBudget: '150000', startOn: inDays(1), endOn: inDays(3) }));
+              expect(await submit(owner, next.id)).toMatchObject({ status: 409, body: { code: 'ADS_SPEND_CAP' } });
+              // The pause is done: the launch commits what its row says (until today), and the same plan fits.
+              expect(await runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: launch.id })).toEqual({ ran: true, ended: 'done' });
+              expect((await submit(owner, next.id)).status).toBe(200);
+            });
+
             it('waits for a flight that has not begun, and the sweep queues it on its first day', async () => {
               const w = new SandboxAdWriter();
               const { launch } = await created('Chờ ngày đầu', w, { startOn: inDays(2), endOn: inDays(8) });
