@@ -236,6 +236,39 @@ suite('marketplace order reports (#2515)', () => {
     ).rejects.toThrow(/STOCK_ORDER_ENTITY/);
   });
 
+  it('assigns a line without teaching its SKU unless asked, so a wrong choice is not repeated by the next report', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('T1', 'Đang giao', 'MA-SAI', 2)))).fileId);
+    const [open] = await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: open?.lineId, itemId: item, factor: '3' }, o.member)).toEqual({ moves: 1 });
+    expect(await onHand(o, item)).toBe('-6');
+    expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toEqual([]);
+    // The next report with the same SKU is not moved by itself: it waits to be assigned again.
+    expect(await confirm(o, (await read(o, report(row('T2', 'Đang giao', 'MA-SAI', 1)))).fileId)).toMatchObject({ newLines: 1, stockMoves: 0 });
+    expect((await query<unknown[]>(o, 'finance.marketplace.unassigned', {}, o.member)).length).toBe(1);
+  });
+
+  it('holds the stage of a line in the table: a shipment only for a line that shipped, a return only for one that came back', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-1');
+    await confirm(o, (await read(o, report(row('S1', 'Chờ xác nhận', 'QC-1', 1), row('S2', 'Đang giao', 'QC-1', 2), row('S3', 'Đã hủy', 'QC-1', 1)))).fileId);
+    const lineOf = async (order: string) => (await rows<{ id: string }>('SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [o.orgId, order]))[0]?.id;
+    const insert = (line: string | undefined, move: 'ship' | 'return', quantity: string) =>
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move) VALUES ($1, $2, '2026-11-01', $3, 'order_line', $4, $5)", [o.orgId, item, quantity, line, move]);
+    // A placed line and a line cancelled before it shipped move no shipment.
+    await expect(insert(await lineOf('S1'), 'ship', '-1')).rejects.toThrow(/STOCK_ORDER_STAGE/);
+    await expect(insert(await lineOf('S3'), 'ship', '-1')).rejects.toThrow(/STOCK_ORDER_STAGE/);
+    // A shipped line has not come back: no return, whatever its shipment (S2 moved by itself: its SKU is the item's code).
+    await expect(insert(await lineOf('S2'), 'return', '2')).rejects.toThrow(/STOCK_ORDER_STAGE/);
+    // A line cancelled without shipping passes the stage and is still refused a return with no shipment behind it.
+    await expect(insert(await lineOf('S3'), 'return', '1')).rejects.toThrow(/STOCK_ORDER_RETURN/);
+    // The ways stock really moves still work: the shipment of S2 exists, and returned and cancelled-after-shipping lines bring it back.
+    expect((await moves(o, item)).map((m) => m.order_move)).toEqual(['ship']);
+    expect(await confirm(o, (await read(o, report(row('S2', 'Đã hủy', 'QC-1', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await onHand(o, item)).toBe('0');
+  });
+
   it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');
@@ -261,7 +294,8 @@ suite('marketplace order reports (#2515)', () => {
     const placed = orders.find((r) => r.orderNo === 'U3')?.lines[0]?.id as string;
     await expect(execute(o, 'finance.marketplace.assign', { lineId: placed, itemId: item }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_NOT_SHIPPED' });
     // Assigned at a factor of two bottles to the unit: three units are six, taken out once, and the SKU is taught for the platform.
-    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item, factor: '2' }, o.member)).toEqual({ moves: 1 });
+    // The SKU is taught only when asked (a wrong one cannot be undone yet, #2633): this one is, so the next report with it moves by itself.
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item, factor: '2', teach: true }, o.member)).toEqual({ moves: 1 });
     expect(await onHand(o, item)).toBe('-7');
     expect(await query(o, 'finance.marketplace.unassigned', {}, o.member)).toEqual([]);
     await expect(execute(o, 'finance.marketplace.assign', { lineId: line, itemId: item }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_ASSIGNED' });

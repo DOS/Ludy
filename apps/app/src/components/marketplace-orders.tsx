@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Marketplace orders on the "Hàng hóa" screen (#2515, ADR-0045): the shipped lines of an imported report that named no stock item ("Dòng đơn hàng sàn chưa gán"), assigned here to an
-// item (which also teaches the SKU for that platform, so the next report moves it by itself), and the confirmed orders with how far each has got. A marketplace order is not an invoice
+// item (which teaches the SKU for that platform only when asked, so the next report moves it by itself), and the confirmed orders with how far each has got. A marketplace order is not an invoice
 // and no buyer value is ever shown: the importer never read one.
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -28,7 +28,8 @@ function UnassignedRow({ line, items, canWrite }: { line: MarketplaceUnassignedL
   const f = useFormat();
   const [itemId, setItemId] = useState('');
   const [factor, setFactor] = useState('1');
-  const [teach, setTeach] = useState(true);
+  // Not remembered unless asked: a wrong item or factor cannot be undone yet, and a remembered one would repeat on every later report.
+  const [teach, setTeach] = useState(false);
   const assign = useMutation({ mutationFn: () => client.marketplace.assign({ lineId: line.lineId, itemId, factor: factor.trim(), teach, idempotencyKey: crypto.randomUUID() }), onSuccess: refresh });
   const choices = items.filter((i) => i.active && i.legalEntityId === line.legalEntityId);
   const id = `mkt-unassigned-${line.lineId}`;

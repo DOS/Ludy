@@ -609,7 +609,7 @@ export const marketplaceUnassigned = defineQuery({
 export const marketplaceAssign = defineCommand({
   name: 'finance.marketplace.assign',
   input: zMarketplaceAssign,
-  // Records the stock an order line moved, through the item a person chose, and teaches the SKU: no posting (R1).
+  // Records the stock an order line moved, through the item a person chose, and teaches the SKU when asked to: no posting (R1).
   risk: 'R1',
   sideEffect: 'internal',
   access: IMPORTERS,

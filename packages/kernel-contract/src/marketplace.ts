@@ -108,6 +108,7 @@ export const zMarketplaceUnassignedLine = z.object({
 });
 export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLine>;
 
-// factor: how many of the item's units one unit of the report's is (a carton of 12). teach: remember the SKU for this platform and item.
-export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(true) });
+// factor: how many of the item's units one unit of the report's is (a carton of 12). teach: remember the SKU for this platform and item, which makes every later report with it move that
+// item by itself at that factor. Off unless asked: a wrong item or factor cannot be undone yet (#2633), and a taught one would repeat on every report.
+export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(false) });
 export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;

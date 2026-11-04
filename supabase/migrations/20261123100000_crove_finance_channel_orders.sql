@@ -147,8 +147,10 @@ ALTER TABLE crove_finance.stock_move ADD CONSTRAINT stock_move_order_line_fk FOR
 -- One shipment and one return per order line: a re-uploaded report never moves the stock twice. Doubles as the foreign key's index.
 CREATE UNIQUE INDEX IF NOT EXISTS stock_move_order_uq ON crove_finance.stock_move (org_id, order_line_id, order_move) WHERE order_line_id IS NOT NULL;
 
--- A return needs the shipment it brings back, and a move of an order line is of the item the line is assigned to (the same item for both) and of the line's own legal entity. A move
--- of an order line is never reversed on its own: the line's stage decides what comes back, and a reversed shipment would leave the line shipped with nothing left to move.
+-- A return needs the shipment it brings back, and a move of an order line is of the item the line is assigned to (the same item for both) and of the line's own legal entity. A shipment
+-- is of a line that has shipped (shipped, completed, or returned, which a first report may show a line as), and a return of a line that came back (returned, or cancelled after it
+-- shipped); a placed, unknown or cancelled-before-shipping line moves nothing. A move of an order line is never reversed on its own: the line's stage decides what comes back, and a
+-- reversed shipment would leave the line shipped with nothing left to move.
 CREATE OR REPLACE FUNCTION crove_finance.stock_move_order_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
@@ -156,6 +158,13 @@ BEGIN
        SELECT 1 FROM crove_finance.channel_order_line l
        WHERE l.org_id = NEW.org_id AND l.id = NEW.order_line_id AND l.legal_entity_id = NEW.legal_entity_id) THEN
     RAISE EXCEPTION 'STOCK_ORDER_ENTITY' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.source_type = 'order_line' AND NOT EXISTS (
+       SELECT 1 FROM crove_finance.channel_order_line l
+       WHERE l.org_id = NEW.org_id AND l.id = NEW.order_line_id
+         AND ((NEW.order_move = 'ship' AND l.stage IN ('shipped', 'completed', 'returned'))
+           OR (NEW.order_move = 'return' AND l.stage IN ('returned', 'cancelled')))) THEN
+    RAISE EXCEPTION 'STOCK_ORDER_STAGE' USING ERRCODE = '23514';
   END IF;
   IF NEW.source_type = 'reversal' AND EXISTS (
        SELECT 1 FROM crove_finance.stock_move s
