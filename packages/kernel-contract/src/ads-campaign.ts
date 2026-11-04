@@ -144,6 +144,8 @@ export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
 // Stopping a launch that has started (W2-4a): owners and admins; it keeps the commitment to at least today and the objects at the platform are paused.
 export const zAdsLaunchStopCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
+// Running a launch that needs attention again (W2-4b): owners and admins; the launch job takes the request with the next attempt.
+export const zAdsLaunchRetryCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
 
 // A draft as the builder shows it.
 export const zAdsCampaignDraftView = z.object({

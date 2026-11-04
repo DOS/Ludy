@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adLaunchWriters, adPausers, adPlatforms, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adActivators, adLaunchWriters, adPausers, adPlatforms, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -22,6 +22,7 @@ import { CredentialVault, DomainError, mintContextToken, parseVaultKey, Runtime,
 import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod-ads';
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
+import { runAdsActivate } from '../src/ads-activate.ts';
 import { runAdsLaunch } from '../src/ads-launch.ts';
 import { runAdsPause } from '../src/ads-pause.ts';
 import { runAdsRevoke } from '../src/ads-revoke.ts';
@@ -2554,6 +2555,154 @@ suite('ads on PostgreSQL (#2217)', () => {
               expect(audited[0]?.detail.launchesNotWoundDown).toBe(1);
               expect((audited[0]?.detail.objects ?? []).map((o) => o.id).sort()).toEqual(ids);
               expect(await launchNow(left.launch.id)).toBeUndefined();
+            });
+          });
+
+          // W2-4b (#2296): retry and activation. The activation is the last steps of the approved launch (no second approval): the database refuses the move to live unless the
+          // stamped approval, the recorded objects, the settled activations, the switches and the flight hold, and begin re-checks everything before each call.
+          describe('retry and activation (W2-4b)', () => {
+            const activate = (w: SandboxAdWriter, launchId: string) => runAdsActivate({ runtime: worker, broker: vault, activators: adActivators({ sandbox: w }) }, { orgId, launchId });
+            // A launch whose flight began today, with its objects created and paused (the launch job ran): it waits for the activation.
+            const created = async (name: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => {
+              const made = await queued(name, { startOn: inDays(0), endOn: inDays(6), ...over });
+              expect(await run(w, made.launch.id)).toMatchObject({ ended: 'paused' });
+              return made;
+            };
+            const activations = (id: string) => row<{ step: string; state: string }>(`SELECT step, state FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY started_at, id`, [orgId, `ads.launch:${id}:%:activate\\_%`]);
+            const statuses = (w: SandboxAdWriter) => [...w.objects.values()].map((o) => `${o.level}:${o.status}`).sort();
+            const toLive = (id: string) => inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'live', step = 'live' WHERE org_id = $1 AND id = $2`, [orgId, id]));
+            const problem = async (id: string) => (await row<{ p: string | null }>(`SELECT crove_ads.launch_activation_problem($1, $2) AS p`, [orgId, id]))[0]?.p;
+            const events = (type: string, id: string) => row<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = $2 AND payload ->> 'launchId' = $3`, [orgId, type, id]);
+
+            it('switches on the launch\'s own objects, each ad first, then the ad set, the campaign last, one call each, and the launch is live', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await created('Kích hoạt đủ', w, { variants: [variant(1), variant(2)] });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused' });
+              // The launch job queued the activation: ids only. Nothing is on yet.
+              expect((await events('ads.activate.queued', launch.id)).map((e) => Object.keys(e.payload).sort())).toEqual([['adAccountId', 'launchId']]);
+              expect(statuses(w).every((s) => s.endsWith(':paused'))).toBe(true);
+              expect(await activate(w, launch.id)).toEqual({ steps: 4, ended: 'live' });
+              expect((await activations(launch.id)).map((a) => [a.step, a.state])).toEqual([
+                ['activate_ad_1', 'succeeded'],
+                ['activate_ad_2', 'succeeded'],
+                ['activate_ad_set', 'succeeded'],
+                ['activate_campaign', 'succeeded'],
+              ]);
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'live', step: 'live', commit_until: inDays(6) });
+              // The objects that deliver are on, a creative has no status and stays as it was.
+              expect(statuses(w)).toEqual(['ad:active', 'ad:active', 'ad_set:active', 'campaign:active', 'creative:paused', 'creative:paused']);
+              // What Ludy recorded it set stays the record of the creation (the platform's own status is what the screens read, W2-4c).
+              expect((await objectsOf(launch.id)).every((o) => o.configured_status === 'paused')).toBe(true);
+              expect(await activate(w, launch.id)).toEqual({ steps: 0, ended: 'live' });
+            });
+
+            it('refuses the move to live to everything but the activation, at the database: the settled activations, the switches and the flight', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await created('Cơ sở dữ liệu giữ luật', w);
+              // The objects are created, and no activation is settled: the system itself cannot make the move.
+              await expect(toLive(launch.id)).rejects.toMatchObject({ code: '42501', message: expect.stringContaining('ADS_LAUNCH_ACTIVATION'), detail: 'activation' });
+              expect(await problem(launch.id)).toBe('activation');
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching' });
+              for (const who of [owner, adminAccount, member]) await expect(inContext(who, (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'live' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
+              // A person has no column that asks for a retry: the request is the definer's, and a person's own update of it is a privilege error.
+              await expect(inContext(owner, (c) => c.query(`UPDATE crove_ads.ad_launch SET retry_requested_at = now() WHERE org_id = $1 AND id = $2`, [orgId, launch.id]))).rejects.toMatchObject({ code: '42501' });
+              // The run to live, then what the rule says of the switches (the kill switch blocks launches) once every activation has settled.
+              expect(await activate(w, launch.id)).toEqual({ steps: 2, ended: 'live' });
+              expect(await problem(launch.id)).toBeNull();
+              expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
+              expect(await problem(launch.id)).toBe('switches');
+            });
+
+            it('re-checks before each call: a stop, a connection that closed behind it, and a lowered cap leave everything paused, nothing called', async () => {
+              // An owner's stop first: the activation finds it stopped.
+              const w = new SandboxAdWriter();
+              const a = await created('Dừng trước khi bật', w);
+              expect((await stopAs(owner, a.launch.id)).status).toBe(200);
+              expect(await activate(w, a.launch.id)).toEqual({ steps: 0, ended: 'final' });
+              expect(statuses(w).every((s) => s.endsWith(':paused'))).toBe(true);
+              // The write connection closed between the creates and the activation, as no stop command saw it: begin stops the launch, keeping its commitment to today, and
+              // the pause job is queued (ids only).
+              const b = await created('Kết nối đóng', w);
+              await row(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT write_connection_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2)`, [orgId, b.account]);
+              expect(await activate(w, b.launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
+              expect(await launchNow(b.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed', commit_until: inDays(0) });
+              expect((await events('ads.pause.queued', b.launch.id)).length).toBe(1);
+              expect((await activations(b.launch.id)).length).toBe(0);
+              // A cap of the account lowered below the launch after it was created: needs attention, nothing called.
+              const c = await created('Hạ hạn mức trước khi bật', w);
+              expect((await callAs(owner, 'ads/lowerCap', { idempotencyKey: key(), scope: 'account', adAccountId: c.account, period: 'daily', amount: '90000' })).status).toBe(200);
+              expect(await activate(w, c.launch.id)).toEqual({ steps: 0, ended: 'cap_lowered' });
+              expect(await launchNow(c.launch.id)).toMatchObject({ state: 'needs_attention', stop_reason: 'cap_lowered' });
+              expect((await activations(c.launch.id)).length).toBe(0);
+              expect(statuses(w).every((s) => s.endsWith(':paused'))).toBe(true);
+            });
+
+            it('waits for a flight that has not begun, and the sweep queues it on its first day', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await created('Chờ ngày đầu', w, { startOn: inDays(2), endOn: inDays(8) });
+              expect(await activate(w, launch.id)).toEqual({ steps: 0, ended: 'not_started' });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused' });
+              expect(await problem(launch.id)).toBe('activation');
+              // The sweep leaves it alone before its first day, and brings a launch whose first day has come and whose event was lost.
+              const sweep = () => inContext('system', async (c) => Number((await c.query<{ n: number }>(`SELECT crove_ads.activate_requeue($1::text[], 50) AS n`, [['sandboxwrite_ads']])).rows[0]?.n), true);
+              const aged = (id: string) =>
+                admin(async (c) => {
+                  await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                  try {
+                    await c.query(`UPDATE crove_ads.ad_launch SET updated_at = now() - interval '10 minutes', state = state, step = step WHERE org_id = $1 AND id = $2`, [orgId, id]);
+                  } finally {
+                    await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                  }
+                });
+              await aged(launch.id);
+              await sweep();
+              expect((await events('ads.activate.queued', launch.id)).length).toBe(1);
+              const today = await created('Ngày đầu đã đến', w);
+              await aged(today.launch.id);
+              expect(await sweep()).toBeGreaterThanOrEqual(1);
+              expect((await events('ads.activate.queued', today.launch.id)).length).toBe(2);
+            });
+
+            it('runs a launch that needs attention again only when an owner or an admin asks, and reconciles what the earlier attempt left unsettled before it creates anything', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await queued('Chạy lại không trùng', { variants: [variant(1)] });
+              // The ad set is made at the platform and the answer is lost: the row stays unclear, and the launch is sent to a person.
+              w.inject({ level: 'ad_set', when: 'after' });
+              expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
+              await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'needs_attention' WHERE org_id = $1 AND id = $2`, [orgId, launch.id]), true);
+              // Nothing runs it again by itself, and nobody but an owner or an admin asks.
+              expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'needs_attention' });
+              for (const who of [member, viewer, accountant, outsider]) expect((await callAs(who, 'ads/retryLaunch', { launchId: launch.id, idempotencyKey: key() })).status, who.email).toBe(403);
+              expect((await callAs(owner, 'ads/retryLaunch', { launchId: randomUUID(), idempotencyKey: key() })).status).toBe(404);
+              expect(await callAs(adminAccount, 'ads/retryLaunch', { launchId: launch.id, idempotencyKey: key() })).toMatchObject({ status: 200, body: { launchId: launch.id, requested: true } });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'needs_attention', attempt: 1 });
+              expect((await events('ads.launch.queued', launch.id)).length).toBe(2);
+              // The job takes the request: attempt two, and the ad set the first attempt may have made is found by its tag, never made again.
+              expect(await run(w, launch.id)).toMatchObject({ ended: 'paused' });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused', attempt: 2 });
+              expect([...w.objects.values()].filter((o) => o.level === 'ad_set')).toHaveLength(1);
+              expect([...w.objects.values()].map((o) => o.level).sort()).toEqual(['ad', 'ad_set', 'campaign', 'creative']);
+              const rows = await calls(launch.id);
+              expect(rows.filter((r) => r.step === 'ad_set').map((r) => [r.key.split(':')[2], r.state, r.error_code])).toEqual([['1', 'failed', 'SUPERSEDED'], ['2', 'succeeded', null]]);
+              // A request that is taken is gone: the launch needs attention again only by its own failure, and a second retry on a launch that is not waiting is refused.
+              expect(await callAs(owner, 'ads/retryLaunch', { launchId: launch.id, idempotencyKey: key() })).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCH_NOT_RETRYABLE' } });
+            });
+
+            it('stops a started launch whose write connection closed by another path, and waits for an activation that may still land before it pauses', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await created('Đóng bằng đường khác', w);
+              // The platform's deletion of the write grant closes the connection, with no stop command in sight.
+              await worker.execute('ads.account.forget_write', { adAccountId: account }, { actor: SYSTEM, orgId });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching' });
+              const pauseRun = (id: string) => runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId: id });
+              await pauseRun(launch.id);
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed' });
+              // An activation call begun and not settled may land after a pause: the pause waits for it.
+              const other = await created('Chờ lệnh bật', w);
+              await worker.execute('ads.activate.begin', { launchId: other.launch.id, providers: ['sandboxwrite_ads'] }, { actor: SYSTEM, orgId });
+              expect((await activations(other.launch.id)).map((a) => [a.step, a.state])).toEqual([['activate_ad_1', 'started']]);
+              expect((await stopAs(owner, other.launch.id)).status).toBe(200);
+              expect(await pauseRun(other.launch.id)).toEqual({ ran: false, ended: 'activation_in_flight' });
             });
           });
         });

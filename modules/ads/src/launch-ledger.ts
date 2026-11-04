@@ -141,6 +141,10 @@ export async function stopStartedLaunches(
   return rows.map((r) => ({ id: r.id, adAccountId: r.ad_account_id }));
 }
 
+// Stops one started launch for the launch job and the activation job (W2-4b), with the rule of any stop (the commitment kept to at least today, never cleared). The caller writes
+// the event of the pause at its own call, as a literal, after it commits.
+export const stopRunningLaunch = (ctx: Db, reason: Parameters<typeof stopStartedLaunches>[1], launchId: string): Promise<StoppedLaunch[]> => stopStartedLaunches(ctx, reason, { launchId });
+
 // Whether an account has a launch that is not wound down: one that has started and is still going (launching, needs attention, live), or one that was stopped and whose
 // objects are not yet paused at the platform (and Ludy has not given up on). Its history may not be deleted until it is.
 export async function hasOpenLaunch(ctx: Db, adAccountId: string): Promise<boolean> {

@@ -25,7 +25,7 @@ import { planHash } from './campaign-plan.ts';
 import { draftPlanOf } from './campaign-draft.ts';
 import { todayIn } from './domain.ts';
 import { activationCallKey, activationLevel, activationSlots, activationStep, slotOfActivationStep, type ActivationLevel } from './launch-activation.ts';
-import { lockedLaunch, stopStartedLaunches } from './launch-ledger.ts';
+import { lockedLaunch, stopRunningLaunch } from './launch-ledger.ts';
 import { launchAccountOf, callErrorKind, launchCapsProblems, launchSelect, needAttention, reasonOf, requireSystem, setLaunch, stopConditionOf, type Db } from './launch-run.ts';
 import { LAUNCH_STEP_PAUSED, STARTED_STALE_SECONDS, UNCLEAR_GIVE_UP_SECONDS, UNCLEAR_MAX_CALLS, parseLaunchCallKey, stepAction, unsettledEarlier, zoneKnown } from './launch-steps.ts';
 import { currentSetting, lockedSetting } from './write.ts';
@@ -184,7 +184,7 @@ export const adsActivateBegin = defineCommand({
     // Every stop condition, before EVERY call. A stop ends the launch stopped, its commitment kept to at least today, and the pause job pauses what it made.
     const stop = stopConditionOf(setting, account, connection);
     if (stop) {
-      const stopped = await stopStartedLaunches(ctx, stop, { launchId: launch.id });
+      const stopped = await stopRunningLaunch(ctx, stop, launch.id);
       for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, stopped: stop, state: launch.state, phase: 'activate' });
       return none(stop);
@@ -195,7 +195,7 @@ export const adsActivateBegin = defineCommand({
     const drafted = await draftPlanOf(ctx, launch.draft_id);
     const plan = drafted?.plan ?? null;
     if (!plan || account.currency !== launch.currency || planHash(plan, launch.ad_account_id, launch.currency) !== launch.plan_hash) {
-      const stopped = await stopStartedLaunches(ctx, 'plan_changed', { launchId: launch.id });
+      const stopped = await stopRunningLaunch(ctx, 'plan_changed', launch.id);
       for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, stopped: 'plan_changed', phase: 'activate' });
       return none('plan_changed');
@@ -209,7 +209,7 @@ export const adsActivateBegin = defineCommand({
     const today = todayIn(account.time_zone, ctx.now);
     if (today < launch.start_text) return none('not_started');
     if (today > launch.end_text) {
-      const stopped = await stopStartedLaunches(ctx, 'flight_over', { launchId: launch.id });
+      const stopped = await stopRunningLaunch(ctx, 'flight_over', launch.id);
       for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, stopped: 'flight_over', phase: 'activate' });
       return none('flight_over');

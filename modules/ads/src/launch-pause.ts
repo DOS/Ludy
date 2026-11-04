@@ -136,6 +136,7 @@ export const adsPauseBegin = defineCommand({
       if (open?.status === 'active') return none('not_stopped');
       await lockedSetting(ctx);
       const stopped = await stopStartedLaunches(ctx, 'connection_closed', { launchId: launchId });
+      for (const s of stopped) await ctx.emit('ads.pause.queued', { launchId: s.id, adAccountId: s.adAccountId });
       ctx.audit({ launchId, adAccountId: launch.ad_account_id, via: input.via, outcome: 'stopped_connection_closed', stopped: stopped.length });
       if (stopped.length !== 1) return none('not_stopped');
       const after = await ctx.trx.selectFrom('crove_ads.ad_launch').select(['state', 'finished_at']).where('org_id', '=', ctx.orgId).where('id', '=', launchId).executeTakeFirst();

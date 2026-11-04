@@ -23,7 +23,7 @@ import { zId, type AdsCampaignPlan } from '@crove/kernel-contract';
 import { planHash } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
 import { contextBase, draftPlanOf } from './campaign-draft.ts';
-import { committedLaunches, stopStartedLaunches, type LaunchState } from './launch-ledger.ts';
+import { committedLaunches, stopRunningLaunch, type LaunchState } from './launch-ledger.ts';
 import { committedProblems } from './launch-caps.ts';
 import {
   LAUNCH_STEP_PAUSED,
@@ -236,7 +236,7 @@ export const adsLaunchBegin = defineCommand({
       else {
         // A launch whose objects were never switched on commits nothing when it ends (nothing ran); one that ever began an activation keeps its commitment to at least
         // today, like any stop, since an object may be on (W2-4b).
-        if (await activationEverBegun(ctx, launch.id)) await stopStartedLaunches(ctx, stop, { launchId: launch.id });
+        if (await activationEverBegun(ctx, launch.id)) await stopRunningLaunch(ctx, stop, launch.id);
         else await stopLaunch(ctx, launch.id, stop);
         // What it made at the platform is paused from the queue after the commit (W2-4a): the stop commands of the org and the account write the same event for the launches
         // they stop, and this is the one that finds a launch a condition stopped while the job was running (a connection that closed, a switch that went off between).
@@ -254,7 +254,7 @@ export const adsLaunchBegin = defineCommand({
       if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'launching' });
       if (launch.state !== 'queued' && (await activationEverBegun(ctx, launch.id))) {
         // An object may be on: the launch is stopped with its commitment kept and what it made is paused, not failed.
-        await stopStartedLaunches(ctx, 'plan_changed', { launchId: launch.id });
+        await stopRunningLaunch(ctx, 'plan_changed', launch.id);
         await ctx.emit('ads.pause.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
       } else await failLaunch(ctx, launch.id, 'plan_changed');
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, failed: 'plan_changed' });

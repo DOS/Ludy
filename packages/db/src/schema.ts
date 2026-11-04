@@ -898,7 +898,7 @@ export type AdsAdLaunchTable = Refine<
 // What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
 // database's guard holds who writes it.
 export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
-export const AD_OBJECT_STATUSES = ['paused', 'active', 'archived'] as const;
+export const AD_OBJECT_STATUSES = ['paused', 'archived'] as const;
 export type AdsAdObjectTable = Refine<
   G.AdsAdObjectTable,
   {

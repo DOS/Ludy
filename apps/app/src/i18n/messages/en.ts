@@ -7461,6 +7461,7 @@ export const en = {
       ADS_LAUNCH_NOT_FOUND: 'This launch was not found.',
       ADS_LAUNCH_NOT_QUEUED: 'This launch has already started or ended, so it can no longer be cancelled.',
       ADS_LAUNCH_NOT_RUNNING: 'This launch has not started, or has already stopped or ended, so it cannot be stopped.',
+      ADS_LAUNCH_NOT_RETRYABLE: 'Only a launch that is waiting for someone to look at it can be run again.',
       ADS_LAUNCH_NOT_WOUND_DOWN: 'This account still has an ad launch that is not fully stopped. Stop it and wait for its ads to be paused before deleting the history.',
       ADS_DRAFT_REQUEST_NOT_FOUND: 'This request for a draft was not found.',
       ADS_DRAFT_REQUEST_OPEN: 'You already have a request for a draft waiting for an answer. Wait for it, then ask again.',

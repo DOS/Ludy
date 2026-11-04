@@ -5,14 +5,13 @@
 --
 -- crove_ads.ad_launch gains   the request to run a launch that needs attention again, kept on its row: `retry_requested_at` and `retry_requested_by`. They are the
 --                             system's and the definer's below, never a column grant, so the columns a tenant role may update stay the state columns.
--- crove_ads.ad_object         `configured_status` accepts 'active' (set by the guard of the launch in the move to live, nothing else sets it).
 --
 -- crove_ads.launch_activation_problem
 --                             why a launch may not be live yet, or null: the stamped proposal is the approved launch of this draft and plan hash, every object of the plan is
 --                             recorded, every ad, the ad set and the campaign has its activation settled (an external_call row ads.launch:<launch>:<attempt>:activate_<slot>
 --                             that succeeded), the org's switch and the account's are on and launches are not blocked, and today in the account's zone is inside the flight.
 -- crove_ads.launch_guard      the W2-4a guard with additions marked W2-4b: the move launching to live raises ADS_LAUNCH_ACTIVATION (the reason in DETAIL) unless the function above
---                             says null, and sets the delivering objects active; the retry columns are held as above. Everything else is as it was.
+--                             says null; the retry columns are held as above. Everything else is as it was.
 -- crove_ads.launch_commitments
 --                             L2 of the W2-4a review: a stopped launch that is not wound down keeps committing to the last day of its flight.
 -- crove_ads.launch_request_retry
@@ -26,20 +25,6 @@ SET LOCAL lock_timeout = '2s';
 
 ALTER TABLE crove_ads.ad_launch ADD COLUMN IF NOT EXISTS retry_requested_at timestamptz;
 ALTER TABLE crove_ads.ad_launch ADD COLUMN IF NOT EXISTS retry_requested_by uuid;
-
-DO $$
-DECLARE
-  v_name text;
-BEGIN
-  SELECT c.conname INTO v_name FROM pg_catalog.pg_constraint c
-  WHERE c.conrelid = 'crove_ads.ad_object'::regclass AND c.contype = 'c' AND pg_catalog.pg_get_constraintdef(c.oid) LIKE '%configured_status%' AND c.conname <> 'ad_object_configured_status_ck';
-  IF v_name IS NOT NULL THEN
-    EXECUTE pg_catalog.format('ALTER TABLE crove_ads.ad_object DROP CONSTRAINT %I', v_name);
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = 'crove_ads.ad_object'::regclass AND conname = 'ad_object_configured_status_ck') THEN
-    ALTER TABLE crove_ads.ad_object ADD CONSTRAINT ad_object_configured_status_ck CHECK (configured_status IN ('paused', 'active', 'archived'));
-  END IF;
-END $$;
 
 -- Why a launch may not be live yet, or null. Read by the guard (which is the one place that matters) and by the tests; the commands check the same things before each call.
 CREATE OR REPLACE FUNCTION crove_ads.launch_activation_problem(p_org uuid, p_launch uuid) RETURNS text
@@ -252,15 +237,12 @@ BEGIN
       RAISE EXCEPTION 'ADS_LAUNCH_FORBIDDEN' USING ERRCODE = '42501';
     END IF;
     -- W2-4b: the move that starts spend. Only the system makes it, and only when the launch's own approval, its objects, the switches and the flight all hold now: the
-    -- activation job meets them, and nothing else can (the graph above is judged first, so a queued launch is still a bad move). The objects of the launch that deliver are
-    -- set to active in the same statement, so what Ludy recorded for them is what it set.
+    -- activation job meets them, and nothing else can (the graph above is judged first, so a queued launch is still a bad move).
     IF v_move = 'launching>live' THEN
       v_problem := crove_ads.launch_activation_problem(OLD.org_id, OLD.id);
       IF v_problem IS NOT NULL THEN
         RAISE EXCEPTION 'ADS_LAUNCH_ACTIVATION' USING ERRCODE = '42501', DETAIL = v_problem;
       END IF;
-      UPDATE crove_ads.ad_object o SET configured_status = 'active'
-      WHERE o.org_id = OLD.org_id AND o.launch_id = OLD.id AND o.level IN ('campaign', 'ad_set', 'ad');
     END IF;
     -- A launch the writer has activated cannot be stopped with its whole commitment cleared: what ran counts (the commitment is shortened to the last day it
     -- ran, never cleared), whoever stops it.

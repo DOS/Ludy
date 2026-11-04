@@ -20,6 +20,7 @@ export * from './sandbox-write.ts';
 export * from './revokers.ts';
 export * from './pausers.ts';
 export * from './activators.ts';
+export * from './sandbox-activate.ts';
 export * from './launch-writers.ts';
 export * from './writer.ts';
 

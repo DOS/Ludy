@@ -7457,6 +7457,7 @@ export const vi = {
       ADS_LAUNCH_NOT_FOUND: 'Không tìm thấy lần chạy này.',
       ADS_LAUNCH_NOT_QUEUED: 'Lần chạy này đã bắt đầu hoặc đã kết thúc nên không hủy được nữa.',
       ADS_LAUNCH_NOT_RUNNING: 'Lần chạy này chưa bắt đầu, đã dừng hoặc đã kết thúc nên không dừng được nữa.',
+      ADS_LAUNCH_NOT_RETRYABLE: 'Chỉ chạy lại được lần chạy đang chờ người xem xét.',
       ADS_LAUNCH_NOT_WOUND_DOWN: 'Tài khoản này còn một lần chạy quảng cáo chưa dừng hẳn. Hãy dừng nó và chờ các quảng cáo được tạm dừng trước khi xóa lịch sử.',
       ADS_DRAFT_REQUEST_NOT_FOUND: 'Không tìm thấy yêu cầu soạn nháp này.',
       ADS_DRAFT_REQUEST_OPEN: 'Bạn đang có một yêu cầu soạn nháp chờ trả lời. Chờ xong rồi nhờ tiếp.',
