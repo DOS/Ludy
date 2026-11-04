@@ -59,8 +59,12 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.channel_order',
   'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
+  'crove_finance.stock_count',
+  'crove_finance.stock_count_line',
   'crove_finance.stock_item',
   'crove_finance.stock_move',
+  'crove_finance.stock_period',
+  'crove_finance.stock_period_item',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -168,6 +172,12 @@ const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
 // Stock items (#2512) are unique per entity by code, and an alias by its key: each seeded one takes the next.
 let stockSeq = 0;
 const stockCode = () => `SP${(stockSeq++).toString().padStart(5, '0')}`;
+// A closed month of stock (#2513) is unique per entity and month: each seeded one takes the next month from January 2000.
+let stockMonthSeq = 0;
+const stockMonth = () => {
+  const n = stockMonthSeq++;
+  return `${2000 + Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, '0')}-01`;
+};
 // Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
 let channelOrderSeq = 0;
 const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
@@ -976,6 +986,28 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2513: a count of the entity's stock (kiểm kê), a draft until it is confirmed or cancelled. Tenant roles read, insert and move it on (its status, note and who confirmed it), so the
+  // update probes assign the note to itself.
+  'crove_finance.stock_count': {
+    update: { set: 'note = note' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), count_date: '2026-11-03' } }),
+  },
+  // #2513: what was counted of one item. It takes its count's entity, and the count and the item are seeded with it. Tenant roles read, insert and change the counted quantity while the
+  // count is a draft, so the update probes assign it to itself.
+  'crove_finance.stock_count_line': {
+    update: { set: 'counted_quantity = counted_quantity' },
+    make: (o) => {
+      const item = randomUUID();
+      const count = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_count', values: { org_id: o.id, id: count, count_date: '2026-11-03' } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), count_id: count, item_id: item, counted_quantity: '3' },
+      };
+    },
+  },
   // #2512: an item of stock (ADR-0045 point 1), per legal entity (the org's default, by its trigger); its code is unique per entity. Tenant roles edit its name,
   // so the update probes assign the name to itself.
   'crove_finance.stock_item': {
@@ -990,6 +1022,26 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       return {
         setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
         row: { org_id: o.id, id: randomUUID(), item_id: item, move_date: '2026-11-03', quantity: '5', source_type: 'manual' },
+      };
+    },
+  },
+  // #2513: a closed month of stock (ADR-0045 point 2): the entity's month whose cost was set from the moves and posted; one per entity and month, with no figure of its own the
+  // moves could not give again. It takes the org's default entity by its trigger. Append-only: tenant roles read and insert, and nothing updates or deletes it.
+  'crove_finance.stock_period': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), period_month: stockMonth() } }),
+  },
+  // #2513: what a closed month held of one item (opening, in, out and closing quantity and value, and the unit cost the month's average gave). It takes its period's entity, and the
+  // period and the item are seeded with it. Append-only like the period.
+  'crove_finance.stock_period_item': {
+    make: (o) => {
+      const item = randomUUID();
+      const period = randomUUID();
+      return {
+        setup: [
+          { table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } },
+          { table: 'crove_finance.stock_period', values: { org_id: o.id, id: period, period_month: stockMonth() } },
+        ],
+        row: { org_id: o.id, id: randomUUID(), period_id: period, item_id: item },
       };
     },
   },
