@@ -73,9 +73,19 @@ describe('configuration guards', () => {
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true' })).not.toThrow();
     expect(() => loadConfig({ ...base, ADS_SANDBOX: 'true', PUBLIC_URL: 'https://books.example.com' })).toThrow(/ADS_SANDBOX/);
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance,ads' })).toThrow(/ADS_SANDBOX/);
+    // The sandbox e-invoice provider (ADR-0044 point 8, #2502): it issues made-up sales invoices into the books, so a deployment others reach that runs the finance module
+    // sets it to false (docker compose falls back to true), or leaves the module out.
+    // Left out, it is on for a local URL and off for a public one.
+    expect(loadConfig({ ...base }).EINVOICE_SANDBOX).toBe('true');
+    expect(loadConfig({ ...base, ...publicUrl }).EINVOICE_SANDBOX).toBe('false');
+    expect(() => loadConfig({ ...base, EINVOICE_SANDBOX: 'true' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true' })).toThrow(/EINVOICE_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'finance' })).toThrow(/EINVOICE_SANDBOX/);
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'true', CROVE_MODULES: 'social' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false', EINVOICE_SANDBOX: 'false' })).not.toThrow();
     expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'false' })).not.toThrow();
-    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', CROVE_MODULES: 'finance' })).not.toThrow();
-    expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1' })).not.toThrow();
+    expect(() => loadConfig({ ...base, ...publicUrl, ADS_SANDBOX: 'true', EINVOICE_SANDBOX: 'false', CROVE_MODULES: 'finance' })).not.toThrow();
+    expect(() => loadConfig({ ...base, PUBLIC_URL: 'https://books.example.com', PUBLIC_AUTH_URL: 'https://auth.example.com/auth/v1', EINVOICE_SANDBOX: 'false' })).not.toThrow();
   });
 
   // #2118: docker-compose.yml falls back to published passwords for an unset one; on a public URL the kernel refuses them.

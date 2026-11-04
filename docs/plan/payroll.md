@@ -2,6 +2,8 @@
 
 > Plan for [#2498](https://github.com/DOS/Ludy/issues/2498), 2026-11-03, from the owner's question in the Accounting PO chat the same day ("why not build the missing features: output invoices, BHXH, etc?"). Design only: nothing here is built, no money is spent, no account was created, no credential was used. Every rule comes from public pages read on 2026-11-03 and carries where it comes from and how sure it is. The decision record is [ADR-0046](../adr/0046-payroll-for-small-teams.md); a Vietnamese summary for the owner is [payroll.vi.md](payroll.vi.md). Not legal advice: the accountant (#61) and a lawyer confirm the rules of section 5, and the plan says which.
 
+> **Addendum 2026-11-04.** Payroll is its own app, not part of Kế toán (owner decision, [ADR-0046 addendum](../adr/0046-payroll-for-small-teams.md#addendum-2026-11-04-payroll-is-its-own-app)): a new module `hr` with its own app (working name Ludy Nhân sự), permissions `hr.payroll.read` and `hr.payroll.run` in place of the `finance.payroll.*` names below, and the month's posting handed to finance as an ordinary proposal that Kế toán approves from its totals. Where this plan says "in Kế toán" for the staff list, the pay sheet or the payslips, read "in the HR app".
+
 ## 1. Goal
 
 A small business with staff runs payroll every month. Ludy today has no employee, no pay sheet, no payslip and no way to book salaries or the insurance and tax that come with them.

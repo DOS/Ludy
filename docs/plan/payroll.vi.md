@@ -2,6 +2,8 @@
 
 > Tóm tắt tiếng Việt của [payroll.md](payroll.md) (issue #2498, 2026-11-03). Chỉ là thiết kế: chưa xây gì, chưa tốn tiền, chưa tạo tài khoản nào, chưa dùng thông tin đăng nhập nào. Mọi quy định lấy từ trang công khai, ghi rõ nguồn và mức chắc chắn. Không phải tư vấn pháp lý: kế toán (#61) và luật sư phải xác nhận.
 
+> **Bổ sung 2026-11-04.** Tính lương là **một app riêng**, không nằm trong Kế toán (chủ sở hữu quyết định; xem phần bổ sung của ADR-0046). App mới tạm tên Ludy Nhân sự, có quyền riêng cho người xem và người chạy lương. Duyệt xong bảng lương tháng thì app Nhân sự gửi một đề xuất bút toán sang Kế toán; kế toán chỉ thấy và duyệt số tổng theo tài khoản, không thấy lương từng người.
+
 ## Làm được gì sau khi xây xong
 
 1. Chủ hoặc quản trị viên giữ danh sách **nhân viên** với hợp đồng, các khoản lương, người phụ thuộc, tài khoản nhận lương, với quyền truy cập hẹp hơn phần sổ sách còn lại.
