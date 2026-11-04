@@ -169,6 +169,7 @@ type TaskDetail = Awaited<ReturnType<typeof orpc.tasks.get.call>>['task'];
 function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart | undefined; onDone: () => void }) {
   const t = useTranslations('tasks');
   const tz = browserTimeZone();
+  const [initial] = useState(task);
   const [title, setTitle] = useState(task.title);
   const [titleError, setTitleError] = useState(false);
   const [description, setDescription] = useState(task.description ?? '');
@@ -187,11 +188,11 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
     }
     const nextDescription = description.trim() ? description.trim() : null;
     const nextAssignee = assignee || null;
-    const initialDueOn = taskDueDay(task.due, tz);
+    const initialDueOn = taskDueDay(initial.due, tz);
     const patch = {
-      ...(nextTitle !== task.title ? { title: nextTitle } : {}),
-      ...(nextDescription !== task.description ? { description: nextDescription } : {}),
-      ...(nextAssignee !== task.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
+      ...(nextTitle !== initial.title ? { title: nextTitle } : {}),
+      ...(description !== (initial.description ?? '') ? { description: nextDescription } : {}),
+      ...(nextAssignee !== initial.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
       ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
     };
     if (Object.keys(patch).length === 0) {
@@ -221,6 +222,9 @@ function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart 
           required
           maxLength={300}
           value={title}
+          onBlur={(e) => {
+            if (!e.target.value.trim()) setTitleError(true);
+          }}
           onChange={(e) => {
             setTitle(e.target.value);
             if (titleError && e.target.value.trim()) setTitleError(false);
