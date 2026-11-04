@@ -1522,7 +1522,7 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   // #2640: the wrapped data key of a subject (ADR-0017 section 2), the first of which is a payroll employee's. Written and read by definers alone, so no role may touch it.
   'crove_kernel.subject_key': {
-    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: '\\x00' } }),
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: `\\x${'00'.repeat(60)}` } }),
   },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),
