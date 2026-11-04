@@ -1,6 +1,6 @@
 # Dự án và bảng công việc: tóm tắt cho chủ sở hữu
 
-> Tóm tắt tiếng Việt của [projects.md](projects.md) và [ADR-0048](../adr/0048-projects-on-kernel-tasks.md), ngày 2026-11-03. Đây là đề xuất để anh bàn: chưa xây gì, chưa tạo issue nào. Làm gọn, tính năng lõi trước, AI đi kèm ngay trong từng màn hình (đúng lời anh dặn).
+> Tóm tắt tiếng Việt của [projects.md](projects.md) và [ADR-0048](../adr/0048-projects-on-kernel-tasks.md), ngày 2026-11-03. Anh đã duyệt ngày 2026-11-04 ("Đồng ý"), nên D-1 đến D-5 chốt theo đề xuất. Chưa xây gì; mỗi bước xây đã thành một issue. Làm gọn, tính năng lõi trước, AI đi kèm ngay trong từng màn hình (đúng lời anh dặn).
 
 ## Người dùng được gì
 
@@ -25,15 +25,15 @@ Chủ một công ty một người hoặc một nhóm nhỏ (2 đến khoảng 
 
 Mọi lần gọi AI đều đi qua **đồng hồ đo ngân sách AI** (bộ đếm chi phí AI theo tổ chức, có mức dừng). Tắt AI thì dự án, bảng và "Việc của tôi" vẫn dùng đủ.
 
-## Những quyết định anh cần đưa ra (đề xuất đặt trước)
+## Những quyết định anh đã chốt (2026-11-04, "Đồng ý", theo đề xuất)
 
-| # | Câu hỏi | Đề xuất | Lý do | Nếu anh chưa trả lời |
-| --- | --- | --- | --- | --- |
-| D-1 | Khi nào xây? | Mốc M3 (giai đoạn thí điểm có trả phí), ưu tiên P2, sau việc chốt sổ tháng của M2 | Có ích hằng tuần, nhưng đối tác thí điểm chưa hỏi tới, và chốt sổ tháng đang quan trọng hơn | Không bắt đầu xây |
-| D-2 | Ai thấy một dự án? | Mọi thành viên trong tổ chức, giống việc hiện nay; dự án riêng để sau | Nhóm nhỏ thường làm chung; muốn giấu việc thì phải đổi một quy tắc bảo mật lõi đang được kiểm thử | Làm theo đề xuất |
-| D-3 | Việc giao cho "vị trí" hay cho "người"? | Giữ **vị trí** (một ô trong sơ đồ tổ chức, do người hoặc tác tử AI giữ). Chủ sở hữu tạo cho mỗi đồng nghiệp một vị trí một lần | Tác tử AI, việc giao từ việc riêng, và việc chuyển giao khi có người nghỉ đều dựa trên vị trí. Công ty một người không cần làm gì | Làm theo đề xuất |
-| D-4 | Cột của bảng: theo trạng thái hay mỗi dự án tự đặt cột? | Theo trạng thái | Người và tác tử AI cùng dùng một nghĩa; không cần cấu hình | Làm theo đề xuất |
-| D-5 | Vy đọc ghi chú để đề xuất việc: chờ bản bổ sung ADR-0037 không? | Có. Phần báo việc và tình hình tuần làm trước; phần đọc ghi chú làm sau khi bản bổ sung được duyệt | Quy tắc anh chốt hôm 2026-11-03 (#1677, mỗi người có Vy riêng, Vy chỉ thấy những gì người đó thấy) cần được ghi thành văn bản và qua kiểm tra bảo mật trước | Làm theo đề xuất |
+| # | Câu hỏi | Đã chốt | Lý do |
+| --- | --- | --- | --- |
+| D-1 | Khi nào xây? | Mốc M3 (giai đoạn thí điểm có trả phí), ưu tiên P2, sau việc chốt sổ tháng của M2 | Có ích hằng tuần, nhưng đối tác thí điểm chưa hỏi tới, và chốt sổ tháng đang quan trọng hơn |
+| D-2 | Ai thấy một dự án? | Mọi thành viên trong tổ chức, giống việc hiện nay; dự án riêng để sau | Nhóm nhỏ thường làm chung; muốn giấu việc thì phải đổi một quy tắc bảo mật lõi đang được kiểm thử |
+| D-3 | Việc giao cho "vị trí" hay cho "người"? | Giữ **vị trí** (một ô trong sơ đồ tổ chức, do người hoặc tác tử AI giữ). Chủ sở hữu tạo cho mỗi đồng nghiệp một vị trí một lần | Tác tử AI, việc giao từ việc riêng, và việc chuyển giao khi có người nghỉ đều dựa trên vị trí. Công ty một người không cần làm gì |
+| D-4 | Cột của bảng: theo trạng thái hay mỗi dự án tự đặt cột? | Theo trạng thái | Người và tác tử AI cùng dùng một nghĩa; không cần cấu hình |
+| D-5 | Vy đọc ghi chú để đề xuất việc: chờ ADR-0049 không? | Có. Phần báo việc và tình hình tuần làm trước; phần đọc ghi chú làm sau khi ADR-0049 (Vy riêng cho từng người, PR #2572) được PO Nền tảng duyệt | Quy tắc anh chốt hôm 2026-11-03 (#1677, mỗi người có Vy riêng, Vy chỉ thấy những gì người đó thấy) cần được ghi thành văn bản và qua kiểm tra bảo mật trước |
 
 Giải thích từ ngữ: **ADR** là văn bản ghi một quyết định thiết kế; **issue** là một mục việc trên GitHub; **PR** là một gói thay đổi mã chờ kiểm tra rồi mới gộp vào; **tác tử AI** là AI giữ một vị trí trong sơ đồ tổ chức; **P2, P3** là mức ưu tiên (P3 thấp nhất); **Icebox** là danh sách để sau, chỉ mở lại khi có người dùng thật cần.
 
@@ -51,14 +51,14 @@ Biểu đồ Gantt (biểu đồ tiến độ theo thời gian), chấm giờ l�
 
 | Bước | Nội dung | Mốc, ưu tiên |
 | --- | --- | --- |
-| P0 | Kiểm thử bảo mật cho ba bảng mới, làm trước | M3, P2 |
-| P1 | Sửa việc và báo cho người được giao | M3, P2 |
-| P2 | Dự án, bảng cột và danh sách | M3, P2 |
-| P3 | "Việc của tôi" trên mọi dự án | M3, P2 |
-| P4 | Gắn ghi chú và việc riêng vào việc và dự án | M3, P2 |
-| P5 | Vy báo việc trễ và việc kẹt trên trang chủ (không gọi AI) | M3, P2 |
-| P6 | Vy viết tình hình tuần của dự án | M3, P2 |
-| P7 | Vy đề xuất việc từ ghi chú (sau bản bổ sung ADR-0037) | M3, P2 |
-| P8 | Các mục để sau, mỗi mục một issue P3 khi có người dùng cần | Icebox, P3 |
+| P0 (#2586) | Kiểm thử bảo mật cho ba bảng mới, làm trước | M3, P2 |
+| P1 (#2588) | Sửa việc và báo cho người được giao | M3, P2 |
+| P2 (#2591) | Dự án, bảng cột và danh sách | M3, P2 |
+| P3 (#2593) | "Việc của tôi" trên mọi dự án | M3, P2 |
+| P4 (#2595) | Gắn ghi chú và việc riêng vào việc và dự án | M3, P2 |
+| P5 (#2596) | Vy báo việc trễ và việc kẹt trên trang chủ (không gọi AI) | M3, P2 |
+| P6 (#2597) | Vy viết tình hình tuần của dự án | M3, P2 |
+| P7 (#2598) | Vy đề xuất việc từ ghi chú (sau khi ADR-0049 được duyệt) | M3, P2 |
+| P8 (#2599 đến #2610) | Các mục để sau, mỗi mục một issue P3, chỉ làm khi có người dùng cần | Icebox, P3 |
 
-Ai cần làm gì: **anh** trả lời D-1 đến D-5; sau đó PO (người điều phối sản phẩm) tạo các issue và giao cho tác tử AI xây.
+Ai cần làm gì: anh không cần làm gì thêm. PO Frontend (người điều phối sản phẩm phần giao diện) giao các issue cho tác tử AI xây; PO Nền tảng duyệt ADR-0049 trước bước P7.

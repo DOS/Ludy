@@ -1,8 +1,8 @@
 # 0048. Projects on kernel tasks: a module that groups tasks, status columns, org-wide visibility, links from notes, Vy proposes
 
-- Status: Proposed (2026-11-03). Nothing here is built. The owner discusses the plan before any build; decisions D-1 to D-5 of the plan are open.
-- Date: 2026-11-03
-- Deciders: owner (JOY), who asked on 2026-11-03 for a lean, core-first, AI-first plan for projects and a task board; the engineering choices below by the Claude Code session that wrote the plan
+- Status: Accepted (owner, 2026-11-04: "Đồng ý", Agreed, in the Frontend PO chat; decisions D-1 to D-5 of the plan as recommended). Proposed 2026-11-03. Nothing here is built yet.
+- Date: 2026-11-04
+- Deciders: owner (JOY), who asked on 2026-11-03 for a lean, core-first, AI-first plan for projects and a task board and accepted it on 2026-11-04; the engineering choices below by the Claude Code session that wrote the plan
 - Builds on: ADR-0029 (agents, positions, tasks), ADR-0031 (module enablement), ADR-0037 (private notes and to-dos) and the owner's decision of 2026-11-03 on #1677 (each member has their own Vy, which reads exactly what the member can), the agents' write guard (#285), Home's today list (#2383), the AI budget meter (#2382)
 - Plan: [projects.md](../plan/projects.md)
 
@@ -64,13 +64,13 @@ Small teams need to group their work into projects, follow it on a board, and se
 ### 5. Agents keep ADR-0029; the member's Vy only proposes
 
 - **Org-chart agents.** These agents keep working tasks of their own seats under a lease, so their cards move on the board. The `crove_projects` tables get the agents' write guard from `apply_tenant_rls` and are not on its allowlist, so agents never create projects, add tasks to a project or change membership.
-- **The member's Vy.** Vy acts for one member and runs in that member's sealed context with that member's rights, as the ADR-0037 addendum required by #1677 will define. In this decision it writes nothing on its own:
+- **The member's Vy.** Vy acts for one member and runs in that member's sealed context with that member's rights, as ADR-0049, member-scoped Vy ([PR #2572](https://github.com/DOS/Ludy/pull/2572), awaiting the Platform PO's acceptance) defines. ADR-0049 takes the place of the ADR-0037 addendum that #1677 required. In this decision it writes nothing on its own:
   - its task proposals (from a note the member chose) are checked by code and listed for the member;
   - the member confirms them, in a batch for the clean ones;
   - each confirmation runs the member's own command, and the task is created tainted and linked to the note.
 - **Org-visible AI output.** Output such as the weekly status reads tasks and their comments only, never a note, and every figure in it must come from code (the numbers check of #1237).
 - **Metering.** Model calls go through `metered(...)` under `projects.weekly_status` and `projects.tasks_from_note`. The board, My work and the nudges on Home work with AI off.
-- **Before the addendum.** No step reads a note with a model until the ADR-0037 addendum is accepted.
+- **Before ADR-0049.** No step reads a note with a model until ADR-0049 is accepted.
 
 ## Consequences
 
@@ -94,5 +94,5 @@ Small teams need to group their work into projects, follow it on a board, and se
 
 - The owner asks for private projects or per-project columns.
 - Teams exist (`team_lead`), so a project could belong to a team.
-- The ADR-0037 addendum of #1677 is accepted, which unblocks plan step P7.
+- ADR-0049 (member-scoped Vy) is accepted, which unblocks plan step P7.
 - The Meeting Notes module (ADR-0047, planned in parallel) lands, so tasks can be proposed from a meeting.
