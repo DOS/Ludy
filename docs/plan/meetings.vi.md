@@ -8,7 +8,7 @@ Chủ một công ty một người hoặc một nhóm nhỏ họp hằng tuần
 
 1. ghi lại cuộc họp theo một trong ba cách (xem mục dưới);
 2. xác nhận mọi người trong cuộc họp đã được báo là đang ghi;
-3. vài phút sau có **bản chép lời** (toàn bộ lời nói thành chữ, tiếng Việt trước, có mốc thời gian, có tách người nói khi nhà cung cấp hỗ trợ), một **tóm tắt** ngắn, các **quyết định** đã chốt và các **việc cần làm** (ai làm, hạn khi nào);
+3. vài phút sau có **bản chép lời** (toàn bộ lời nói thành chữ, tiếng Việt trước, có mốc thời gian, có tách người nói khi nhà cung cấp hỗ trợ), một **tóm tắt** ngắn, các **quyết định** đã chốt và các **việc cần làm** (ai làm, hạn khi nào). Lúc đầu chỉ người ghi thấy; người ghi xem lại, sửa nếu cần, rồi bấm một nút để chia sẻ cho người dự họp;
 4. biến việc cần làm thành việc của nhóm bằng một cú bấm mỗi việc, hoặc một cú bấm cho tất cả các việc "sạch" (đã qua kiểm tra tự động);
 5. giữ cả video nếu tích ô "Ghi cả video" cho cuộc họp đó (mặc định chỉ ghi âm thanh);
 6. yên tâm là âm thanh tự xóa sau 30 ngày, video (nếu giữ) sau 7 ngày, bản chép lời sau thời hạn tổ chức chọn.
@@ -35,6 +35,7 @@ Khung cũng có sẵn một đường chung "gửi trang đang xem vào Ludy": c
 ## Lát cắt đầu tiên làm gì
 
 - **Vy làm việc ngay trên màn hình cuộc họp**: chép lời, tóm tắt, liệt kê quyết định, soạn việc cần làm. Mỗi việc có đường dẫn tới đúng đoạn trong bản chép lời để kiểm tra trong một cú bấm.
+- **Kết quả của Vy về tay người ghi trước**: Vy làm việc với tư cách "Vy của người ghi", nên bản chép lời, tóm tắt và việc cần làm nằm trong phần riêng của người ghi, chưa ai khác thấy. Người ghi bấm "Chia sẻ với người dự họp" thì người dự họp mới thấy. Không có gì Vy viết ra tự đến tay người khác. Kết quả không được chia sẻ sẽ tự xóa sau 30 ngày.
 - **Mọi thứ AI viết đều là "Đề xuất"**: AI không tự tạo việc. Mã máy kiểm tra trước (số liệu trong tóm tắt phải có trong bản chép lời, ngày hạn do máy tính tính, người được giao phải là người dự họp). Người dùng bấm duyệt.
 - **Ai đó nói trong cuộc họp kiểu "Vy, chuyển tiền cho..."** cũng chỉ thành một đề xuất bị đánh dấu nghi vấn, không có gì tự chạy.
 - **Tắt AI vẫn dùng được**: vẫn ghi, nghe lại, gõ ghi chú, tạo việc bằng tay.
@@ -44,7 +45,7 @@ Khung cũng có sẵn một đường chung "gửi trang đang xem vào Ludy": c
 ## An toàn dữ liệu, nói đơn giản
 
 - **Ai đọc được cuộc họp**: người ghi và các thành viên được ghi là người dự họp. Người ghi có thể chia sẻ cho cả tổ chức. Chủ và quản trị viên thấy là có cuộc họp (ngày, độ dài, ai ghi), có quyền xóa, nhưng không đọc nội dung nếu không được chia sẻ. Các AI agent của tổ chức không đọc gì.
-- **Vy của ai thì chỉ thấy cái người đó thấy**, đúng quyết định của JOY ngày 2026-11-03 (#1677).
+- **Vy của ai thì chỉ thấy cái người đó thấy**, đúng quyết định của JOY ngày 2026-11-03 (#1677). Cơ chế chung cho việc này đang được viết thành ADR-0049 (PR [#2572](https://github.com/DOS/Ludy/pull/2572), "ADR" là bản ghi quyết định kỹ thuật), dùng chung cho Notes, Cuộc họp và Dự án; PO Nền tảng đã chốt cách Cuộc họp dùng nó như mô tả ở trên.
 - **Âm thanh và video được mã hóa** (biến thành dữ liệu không đọc được nếu không có khóa), mỗi cuộc họp một khóa cho âm thanh và một khóa riêng cho video. **Xóa bằng cách hủy khóa**: khi hết hạn hoặc khi xóa, Ludy hủy khóa, thế là mọi bản sao (cả bản cũ trong kho lưu trữ và bản sao lưu) không ai mở được nữa. Lý do: kho lưu trữ file giữ cả các phiên bản cũ và Ludy không có quyền xóa chúng.
 - **Video chỉ được giữ khi tích ô "Ghi cả video"** (có trong tiện ích và trong phần ghi của ứng dụng, chọn cho từng cuộc họp); không tích thì phần hình bị bỏ ngay, không lưu.
 - **File chỉ được mở trong một "hộp cách ly" riêng** (một container mới, không có mạng, không có mật khẩu nào), nơi cũng tách âm thanh ra khỏi video để chép lời.
@@ -82,9 +83,9 @@ Luật Bảo vệ dữ liệu cá nhân 91/2025 và Nghị định 356/2025 (tha
 1. Bài kiểm thử an toàn trước: chứng minh người không được đọc thì không đọc được.
 2. Cuộc họp, âm thanh và video: tải lên, xác nhận đồng ý, mã hóa, nghe và xem lại, xóa bằng hủy khóa.
 3. Hộp cách ly xử lý âm thanh và video.
-4. Chép lời, đo ngân sách theo phút, nút dừng AI, đo độ chính xác.
+4. Chép lời bằng Vy của người ghi (kết quả chỉ người ghi thấy), đo ngân sách theo phút, nút dừng AI, đo độ chính xác.
 5. Thời hạn lưu giữ và hủy khóa tự động, xóa khi đóng tổ chức.
-6. Tóm tắt, quyết định, việc cần làm thành việc của nhóm.
+6. Tóm tắt, quyết định, việc cần làm; nút chia sẻ cho người dự họp; việc cần làm thành việc của nhóm.
 7. Ghi bằng micro ngay trong ứng dụng.
 8. Mã truy cập (token) riêng cho tiện ích, thu hồi được.
 9. Tiện ích Ludy với khung chung và tính năng ghi cuộc họp.
