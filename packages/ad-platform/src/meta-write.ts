@@ -233,23 +233,27 @@ export class MetaAdWriter implements AdWriter {
     return this.create(secret, account, 'ad', { name: input.name, adset_id: input.adSetId, creative: JSON.stringify({ creative_id: input.creativeId }) });
   }
 
-  // The objects of a level whose name carries the launch's tag. Only the first page (a launch makes a handful of objects, and the tag is its own).
+  // The objects of a level whose name carries the launch's tag. Only the first page is read (a launch makes a handful of objects, and the tag is its own), so an
+  // answer that says there is more (`paging.next`) is not the whole answer: it is unknowable (`PAGED_ANSWER`), never "these are all of them", because a caller
+  // that took a partial list for a full one would call an object missing and make it again, or leave one unpaused.
   async findByTag(secret: string, account: AdWriterAccount, level: AdObjectLevel, tag: string): Promise<AdFoundObject[]> {
     const token = tokenOf(secret);
     if (!ACT_ID.test(account.externalAccountId)) throw new AdPlatformError('bad_request', 'BAD_ACCOUNT');
     if (!TAG.test(tag)) throw new AdPlatformError('bad_request', 'BAD_TAG');
+    let answer: { data?: Array<{ id?: unknown; name?: unknown }>; paging?: { next?: unknown } };
     try {
-      const answer = await this.graph.call<{ data?: Array<{ id?: unknown; name?: unknown }> }>('GET', `${account.externalAccountId}/${EDGES[level]}`, {
+      answer = await this.graph.call<typeof answer>('GET', `${account.externalAccountId}/${EDGES[level]}`, {
         token,
         params: { fields: 'id,name', filtering: JSON.stringify([{ field: 'name', operator: 'CONTAIN', value: tag }]), limit: '100' },
         timeoutMs: CALL_TIMEOUT_MS,
       });
-      const found: AdFoundObject[] = [];
-      for (const item of answer.data ?? []) if (typeof item.id === 'string' && OBJECT_ID.test(item.id) && typeof item.name === 'string' && item.name.includes(tag)) found.push({ id: item.id, name: item.name });
-      return found;
     } catch (error) {
       throw metaAdsError(error, this.now);
     }
+    if (answer.paging?.next !== undefined && answer.paging.next !== null && answer.paging.next !== false) throw new AdPlatformError('unknown', 'PAGED_ANSWER');
+    const found: AdFoundObject[] = [];
+    for (const item of answer.data ?? []) if (typeof item.id === 'string' && OBJECT_ID.test(item.id) && typeof item.name === 'string' && item.name.includes(tag)) found.push({ id: item.id, name: item.name });
+    return found;
   }
 
   // The names of a plan's regions and interests as Meta's ids, with Meta's targeting search (GETs). A name resolves only when exactly one result carries it

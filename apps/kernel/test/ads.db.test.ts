@@ -12,7 +12,7 @@ import { SignJWT } from 'jose';
 import { sql } from 'kysely';
 import pg from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adLaunchWriters, adPlatforms, launchWriterOf, platformUserHash, sandboxWriteLogin, type AdPlatform, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
+import { AdPlatformError, MetaAdsPlatform, SandboxAdWriter, adLaunchWriters, adPausers, adPlatforms, launchWriterOf, platformUserHash, revokerOf, sandboxWriteLogin, type AdPlatform, type LaunchWriter, type sandboxAdPlatform } from '@crove/ad-platform';
 import { ConnectorError, type Fetch, type OAuthConnector } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -23,6 +23,8 @@ import { addDays, addMonths, adsCommands, adsQueries, todayIn } from '@crove/mod
 import { createAuthenticator } from '../src/auth.ts';
 import { acceptAdsDeletion, adsDeletionStatus, runAdsDeletions } from '../src/ads-deletion.ts';
 import { runAdsLaunch } from '../src/ads-launch.ts';
+import { runAdsPause } from '../src/ads-pause.ts';
+import { runAdsRevoke } from '../src/ads-revoke.ts';
 import { acceptMetaDeletion, metaDeletionStatus } from '../src/meta-deletion.ts';
 import { adsDue, pruneAdsRuns, runAdsSync } from '../src/ads-sync.ts';
 import { loadConfig } from '../src/config.ts';
@@ -2149,25 +2151,41 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect((await submit(owner, next.id)).status).toBe(200);
           });
 
-          it('stops a launch that is half way when writing is switched off or launches are blocked, with nothing created after, and releases what nothing ran', async () => {
+          it('stops a launch that is half way when writing is switched off or launches are blocked: the stop is a person\'s, so its commitment stays to today, and nothing is created after', async () => {
             const w = new SandboxAdWriter();
             const first = await queued('Tắt giữa chừng');
             w.inject({ level: 'ad_set', when: 'after' });
             expect(await run(w, first.launch.id)).toEqual({ steps: 2, ended: 'unknown' });
             expect(await launchNow(first.launch.id)).toMatchObject({ state: 'launching' });
             expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+            // The switch-off stopped it, as the owner's stop: the commitment is shortened to today and never cleared (what ran or is in flight still counts), and the job
+            // that comes after finds it done and creates nothing.
+            expect(await launchNow(first.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(0) });
             await age(first.launch.id, 61);
-            expect(await run(w, first.launch.id)).toEqual({ steps: 0, ended: 'switch_off' });
+            expect(await run(w, first.launch.id)).toEqual({ steps: 0, ended: 'final' });
             expect(w.received).toEqual(['campaign', 'ad_set']);
-            expect(await launchNow(first.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: null });
             // The same with the kill switch.
             const second = await queued('Chặn giữa chừng');
             w.inject({ level: 'ad_set', when: 'after' });
             expect(await run(w, second.launch.id)).toEqual({ steps: 2, ended: 'unknown' });
             expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
             await age(second.launch.id, 61);
-            expect(await run(w, second.launch.id)).toEqual({ steps: 0, ended: 'launches_blocked' });
-            expect(await launchNow(second.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'launches_blocked', commit_until: null });
+            expect(await run(w, second.launch.id)).toEqual({ steps: 0, ended: 'final' });
+            expect(await launchNow(second.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'launches_blocked', commit_until: inDays(0) });
+          });
+
+          it('stops a launch whose connection closed while it ran, as the system: nothing ran, so the commitment is released, and the pause of what it made is queued', async () => {
+            const w = new SandboxAdWriter();
+            const { account, launch } = await queued('Kết nối đóng giữa chừng');
+            w.inject({ level: 'ad_set', when: 'after' });
+            expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
+            // The write connection is closed behind the launch's back (a member who left): the next begin finds the condition and stops it.
+            await row(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT write_connection_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2)`, [orgId, account]);
+            await age(launch.id, 61);
+            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed', commit_until: null });
+            const events = await row<{ payload: Record<string, unknown> }>(`SELECT payload FROM crove_kernel.outbox_event WHERE org_id = $1 AND type = 'ads.pause.queued' AND payload ->> 'launchId' = $2`, [orgId, launch.id]);
+            expect(events.map((e) => Object.keys(e.payload).sort())).toEqual([['adAccountId', 'launchId']]);
           });
 
           it('leaves a launch queued, untouched, when this worker has no writer for its connection\'s provider', async () => {
@@ -2184,6 +2202,245 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect(await runAdsLaunch({ runtime: worker, broker: none, writers: adLaunchWriters({ sandbox: new SandboxAdWriter() }) }, { orgId, launchId: launch.id })).toEqual({ steps: 0, ended: 'no_broker' });
             expect(await calls(launch.id)).toEqual([]);
             expect((await launchNow(launch.id))?.state).toBe('queued');
+          });
+
+          it('treats an answer with more pages than the first as unknowable when it reconciles: nothing is created, and the launch is looked at again', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Câu trả lời nhiều trang');
+            w.inject({ level: 'ad_set', when: 'after' });
+            expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
+            await age(launch.id, 61);
+            // The list of ad sets by the tag says there is more than one page: not the whole answer, so not "missing" and not "found".
+            w.inject({ level: 'ad_set', when: 'find' });
+            expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknowable' });
+            expect(w.received).toEqual(['campaign', 'ad_set']);
+            expect((await calls(launch.id))[1]).toMatchObject({ step: 'ad_set', state: 'ambiguous', calls: 1, error_code: 'PAGED_ANSWER' });
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'launching' });
+            // The next look reads the list in full, finds the ad set and goes on: no second ad set was ever made.
+            await age(launch.id, 61);
+            expect(await run(w, launch.id)).toEqual({ steps: 3, ended: 'paused' });
+            expect([...w.objects.values()].filter((o) => o.level === 'ad_set')).toHaveLength(1);
+          });
+
+          describe('stopping a launch and pausing what it made (W2-4a)', () => {
+            const startedNow = async (name: string, w: SandboxAdWriter, over: Record<string, unknown> = {}) => {
+              const made = await queued(name, over);
+              expect(await run(w, made.launch.id)).toMatchObject({ ended: 'paused' });
+              return made;
+            };
+            const pauseRun = (w: SandboxAdWriter, launchId: string) => runAdsPause({ runtime: worker, broker: vault, pausers: adPausers({ sandbox: w }) }, { orgId, launchId });
+            const windDown = async (id: string) =>
+              (await row<{ wound_down_at: Date | null; wind_down_tries: number; wind_down_next_at: Date | null; wind_down_code: string | null }>(`SELECT wound_down_at, wind_down_tries, wind_down_next_at, wind_down_code FROM crove_ads.ad_launch WHERE org_id = $1 AND id = $2`, [orgId, id]))[0];
+            const pauseCalls = (id: string) => row<{ key: string; step: string; state: string; error_kind: string | null; error_code: string | null }>(`SELECT key, step, state, error_kind, error_code FROM crove_kernel.external_call WHERE org_id = $1 AND key LIKE $2 ORDER BY key`, [orgId, `ads.pause:${id}:%`]);
+            const stopAs = (who: Account, launchId: string) => callAs(who, 'ads/stopLaunch', { launchId, idempotencyKey: key() });
+            // The ledger's guard is on for every role, so a test that puts a clock or a count back does it with the guard off for the statement, as the ledger's own tests do.
+            const edit = (statement: string, params: unknown[]) =>
+              admin(async (c) => {
+                await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+                try {
+                  await c.query(statement, params);
+                } finally {
+                  await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+                }
+              });
+            const dueNow = (id: string) => edit(`UPDATE crove_ads.ad_launch SET wind_down_next_at = now() - interval '1 second' WHERE org_id = $1 AND id = $2`, [orgId, id]);
+
+            it('lets an owner or an admin stop a launch that has started, keeps its commitment to today, and the pause job pauses what it made, once, by the record and the tag', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, draft } = await startedNow('Dừng và tạm dừng', w);
+              expect(w.objects.size).toBeGreaterThanOrEqual(4);
+              for (const who of [member, viewer]) expect((await stopAs(who, launch.id)).status, who.email).toBe(403);
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused', commit_until: inDays(8) });
+              const stopped = await stopAs(adminAccount, launch.id);
+              expect(stopped).toMatchObject({ status: 200, body: { launchId: launch.id, state: 'stopped', commitUntil: inDays(0) } });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'stopped', commit_until: inDays(0) });
+              expect((await stopAs(owner, launch.id)).status).toBe(409);
+              // The wind-down is open and the builder says the ads are being paused.
+              expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 0, wind_down_code: null });
+              const pending = await callAs(owner, 'ads/campaignDraft', { draftId: draft.id });
+              expect(pending.body).toMatchObject({ launch: { state: 'stopped', windDown: { state: 'pending', code: null } } });
+              // The job: claims it, pauses the campaign, then the ad set, then the ads, and records.
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: true, ended: 'done' });
+              const levels = w.statusCalls.map((c) => c.level);
+              expect(levels.slice(0, 2)).toEqual(['campaign', 'ad_set']);
+              expect(levels.slice(2).every((l) => l === 'ad')).toBe(true);
+              expect(levels).toHaveLength(2 + [...w.objects.values()].filter((o) => o.level === 'ad').length);
+              expect(w.statusCalls.every((c) => c.status === 'paused')).toBe(true);
+              expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
+              expect(await windDown(launch.id)).toMatchObject({ wind_down_tries: 1, wind_down_next_at: null, wind_down_code: null });
+              expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              expect(await pauseCalls(launch.id)).toMatchObject([{ key: `ads.pause:${launch.id}:1`, step: 'pause', state: 'succeeded' }]);
+              expect((await callAs(owner, 'ads/campaignDraft', { draftId: draft.id })).body).toMatchObject({ launch: { windDown: { state: 'done', code: null } } });
+              // Once: a second run finds it done and calls nothing; so does a repeated event.
+              const calls1 = w.statusCalls.length;
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: false, ended: 'wound_down' });
+              expect(w.statusCalls).toHaveLength(calls1);
+              // The audit says how many were paused, and the token is in no audit row or ledger row.
+              const audited = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.pause.record' AND detail ->> 'launchId' = $2`, [orgId, launch.id]);
+              expect(audited).toHaveLength(1);
+              expect(audited[0]?.detail).toMatchObject({ outcome: 'done', via: 'connection', tries: 1, paused: calls1, failed: [], notTried: 0, listed: { campaign: true, ad_set: true, ad: true } });
+              const leaks = await row<{ n: string }>(`SELECT ((SELECT count(*) FROM crove_kernel.audit_event WHERE org_id = $1 AND detail::text LIKE '%sbxw_%') + (SELECT count(*) FROM crove_kernel.external_call WHERE org_id = $1 AND (key || coalesce(error_code, '')) LIKE '%sbxw_%'))::text AS n`, [orgId]);
+              expect(leaks[0]?.n).toBe('0');
+            });
+
+            it('is the system\'s alone: no owner, admin, member or agent runs begin or record of the pause', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await startedNow('Chỉ hệ thống tạm dừng', w);
+              await stopAs(owner, launch.id);
+              const begin = { launchId: launch.id, via: 'connection' };
+              const record = { launchId: launch.id, callKey: `ads.pause:${launch.id}:1`, via: 'connection', result: { kind: 'blocked', code: 'x' } };
+              for (const who of [asOwner(), { type: 'user' as const, userId: adminAccount.userId, aal: 'aal1' as const, sessionId: randomUUID() }, { type: 'user' as const, userId: member.userId, aal: 'aal1' as const, sessionId: randomUUID() }]) {
+                await expect(api.execute('ads.pause.begin', begin, { actor: who, orgId })).rejects.toMatchObject({ status: 403 });
+                await expect(api.execute('ads.pause.record', record, { actor: who, orgId })).rejects.toMatchObject({ status: 403 });
+              }
+              expect(await windDown(launch.id)).toMatchObject({ wind_down_tries: 0 });
+            });
+
+            it('pauses an object whose create was in flight when the launch was stopped, found by the launch\'s tag, and records it', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await queued('Tạo dở lúc dừng');
+              // The ad set is made at the platform and the answer is lost: the launch has the campaign recorded and an ad set it does not know.
+              w.inject({ level: 'ad_set', when: 'after' });
+              expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
+              expect(await objectsOf(launch.id)).toHaveLength(1);
+              expect((await stopAs(owner, launch.id)).status).toBe(200);
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: true, ended: 'done' });
+              const adSet = [...w.objects.values()].find((o) => o.level === 'ad_set');
+              expect(w.statusCalls.map((c) => c.id)).toContain(adSet?.id);
+              // It is recorded now, as the launch's ad set, with the name the platform has.
+              const objects = await objectsOf(launch.id);
+              expect(objects.map((o) => o.slot)).toEqual(['campaign', 'ad_set']);
+              expect(objects.find((o) => o.slot === 'ad_set')).toMatchObject({ external_id: adSet?.id, configured_status: 'paused' });
+              expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              const audited = await row<{ detail: Record<string, unknown> }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.pause.record' AND detail ->> 'launchId' = $2`, [orgId, launch.id]);
+              expect(audited[0]?.detail).toMatchObject({ found: 2, recordedObjects: 1, unrecorded: [] });
+            });
+
+            it('holds the wind-down while a create of the launch may still land, and finishes once it has settled or is old enough to be lost', async () => {
+              const w = new SandboxAdWriter();
+              const { launch } = await queued('Chờ tạo xong');
+              // The worker dies after the platform made the campaign and before the record: a begun call, young.
+              const dying = new Proxy(worker, {
+                get: (target, prop) => {
+                  if (prop === 'execute') {
+                    return async (name: string, input: never, options: never) => {
+                      if (name === 'ads.launch.record') throw new Error('process killed');
+                      return target.execute(name, input, options);
+                    };
+                  }
+                  const member = Reflect.get(target, prop, target) as unknown;
+                  return typeof member === 'function' ? (member as (...args: unknown[]) => unknown).bind(target) : member;
+                },
+              });
+              await expect(run(w, launch.id, dying)).rejects.toThrow('process killed');
+              expect((await stopAs(owner, launch.id)).status).toBe(200);
+              // The pause finds the campaign by the tag and pauses it, but a create may still land: not wound down, due again in a few minutes.
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: true, ended: 'pending' });
+              expect(w.statusCalls.map((c) => c.level)).toEqual(['campaign']);
+              const held = await windDown(launch.id);
+              expect(held).toMatchObject({ wound_down_at: null, wind_down_tries: 1, wind_down_code: null });
+              expect(Date.parse(String(held?.wind_down_next_at))).toBeGreaterThan(Date.now() + 55_000);
+              expect((await objectsOf(launch.id)).map((o) => o.slot)).toEqual(['campaign']);
+              expect(await pauseCalls(launch.id)).toMatchObject([{ state: 'failed', error_code: 'CREATE_IN_FLIGHT' }]);
+              // Not due yet: another run finds nothing to do; due, and the begun call old enough to be lost: it finishes.
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: false, ended: 'in_flight' });
+              await age(launch.id, 301);
+              await dueNow(launch.id);
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: true, ended: 'done' });
+              expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              expect(await windDown(launch.id)).toMatchObject({ wind_down_tries: 2 });
+            });
+
+            it('gives up and says why: a refused token at once, the tenth run, the seventh day; and nothing is paused with a launch that made nothing', async () => {
+              // A refused token cannot pause anything.
+              const w1 = new SandboxAdWriter();
+              const refusedToken = await startedNow('Token bị từ chối', w1);
+              await stopAs(owner, refusedToken.launch.id);
+              w1.inject({ level: 'campaign', when: 'status', error: new AdPlatformError('token_expired', 'TOKEN') });
+              expect(await pauseRun(w1, refusedToken.launch.id)).toEqual({ ran: true, ended: 'gave_up' });
+              expect(await windDown(refusedToken.launch.id)).toMatchObject({ wound_down_at: null, wind_down_next_at: null, wind_down_code: 'token_refused', wind_down_tries: 1 });
+              expect((await callAs(owner, 'ads/campaignDraft', { draftId: refusedToken.draft.id })).body).toMatchObject({ launch: { windDown: { state: 'gave_up', code: 'token_refused' } } });
+              expect(await pauseCalls(refusedToken.launch.id)).toMatchObject([{ state: 'failed', error_kind: 'token_expired' }]);
+              // Given up: a later run does nothing.
+              expect(await pauseRun(w1, refusedToken.launch.id)).toEqual({ ran: false, ended: 'gave_up' });
+              // The tenth run that does not finish.
+              const w2 = new SandboxAdWriter();
+              const tenth = await startedNow('Lần thứ mười', w2);
+              await stopAs(owner, tenth.launch.id);
+              await edit(`UPDATE crove_ads.ad_launch SET wind_down_tries = 9 WHERE org_id = $1 AND id = $2`, [orgId, tenth.launch.id]);
+              w2.inject({ level: 'ad', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
+              expect(await pauseRun(w2, tenth.launch.id)).toEqual({ ran: true, ended: 'gave_up' });
+              expect(await windDown(tenth.launch.id)).toMatchObject({ wind_down_tries: 10, wind_down_code: 'attempts', wound_down_at: null });
+              // The seventh day: nothing is called.
+              const w3 = new SandboxAdWriter();
+              const old = await startedNow('Quá bảy ngày', w3);
+              await stopAs(owner, old.launch.id);
+              await edit(`UPDATE crove_ads.ad_launch SET finished_at = now() - interval '8 days' WHERE org_id = $1 AND id = $2`, [orgId, old.launch.id]);
+              expect(await pauseRun(w3, old.launch.id)).toEqual({ ran: false, ended: 'gave_up' });
+              expect(w3.statusCalls).toEqual([]);
+              expect(await windDown(old.launch.id)).toMatchObject({ wind_down_code: 'age', wind_down_tries: 0 });
+              // A launch that made nothing and ran nothing is wound down at once, with no call to the platform.
+              const w4 = new SandboxAdWriter();
+              const blank = await queued('Chưa tạo gì');
+              await row(`UPDATE crove_ads.ad_account SET time_zone = NULL WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
+              expect(await run(w4, blank.launch.id)).toEqual({ steps: 0, ended: 'zone_unknown' });
+              await row(`UPDATE crove_ads.ad_account SET time_zone = 'Asia/Ho_Chi_Minh' WHERE org_id = $1 AND id = $2`, [orgId, blank.account]);
+              expect((await stopAs(owner, blank.launch.id)).status).toBe(200);
+              expect(await pauseRun(w4, blank.launch.id)).toEqual({ ran: false, ended: 'nothing_to_pause' });
+              expect((await windDown(blank.launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              expect(w4.received).toEqual([]);
+              expect(w4.statusCalls).toEqual([]);
+            });
+
+            it('on a switch-off pauses with the sealed copy of the closed connection\'s token before it revokes the permission, and waits for the pause when it fails', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await startedNow('Tắt công tắc rồi gỡ quyền', w);
+              expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(0) });
+              // The write connection closed in the same transaction: its token is gone from the connection, and a copy is held for the revoke.
+              const obligation = async () => (await row<{ state: string; attempts: number; last_error_kind: string | null; last_error_code: string | null }>(`SELECT state, attempts, last_error_kind, last_error_code FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]))[0];
+              expect(await obligation()).toMatchObject({ state: 'pending', attempts: 0 });
+              // The pause job has no token of its own any more: it leaves the launch to the revoke sweep, counts no try, and calls nothing.
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: false, ended: 'revoke_path' });
+              expect(w.statusCalls).toEqual([]);
+              expect(await windDown(launch.id)).toMatchObject({ wind_down_tries: 0 });
+              // The sweep opens the copy, pauses what the launch made with it first, and does not revoke while the pause is not finished: one ad could not be paused.
+              w.inject({ level: 'ad', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
+              const sweep = () => runAdsRevoke({ runtime: worker, workerDb, broker: vault, revokers: { sandboxwrite_ads: revokerOf(w) } });
+              expect(await sweep()).toMatchObject({ tried: 1, done: 0 });
+              expect(w.statusCalls.map((c) => c.level).slice(0, 2)).toEqual(['campaign', 'ad_set']);
+              expect(await obligation()).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'transient', last_error_code: 'PAUSE_PENDING' });
+              expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 1 });
+              // Due again: the pause finishes with the same copy, the launch is wound down, and the permission is removed after it.
+              await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
+              await dueNow(launch.id);
+              expect(await sweep()).toMatchObject({ tried: expect.any(Number), done: expect.any(Number) });
+              expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
+              expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
+              expect(await obligation()).toMatchObject({ state: 'done' });
+              const how = await row<{ how_done: string | null }>(`SELECT how_done FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]);
+              expect(how[0]?.how_done).toBe('sandbox');
+            });
+
+            it('refuses to delete an account\'s history while a launch is not wound down, and says what the platform\'s own deletion request leaves behind', async () => {
+              const w = new SandboxAdWriter();
+              const { launch, account } = await startedNow('Xóa lịch sử khi đang chạy', w);
+              const refusal = await callAs(owner, 'ads/deleteHistory', { adAccountId: account, idempotencyKey: key() });
+              expect(refusal).toMatchObject({ status: 409, body: { code: 'ADS_LAUNCH_NOT_WOUND_DOWN' } });
+              expect((await stopAs(owner, launch.id)).status).toBe(200);
+              expect((await callAs(owner, 'ads/deleteHistory', { adAccountId: account, idempotencyKey: key() })).status).toBe(409);
+              expect(await pauseRun(w, launch.id)).toEqual({ ran: true, ended: 'done' });
+              expect((await callAs(owner, 'ads/deleteHistory', { adAccountId: account, idempotencyKey: key() })).status).toBe(200);
+              // The platform's request is not refused: the account and its launches go, and the audit row lists what was left running, by its platform ids.
+              const other = new SandboxAdWriter();
+              const left = await startedNow('Nền tảng yêu cầu xóa', other);
+              const ids = [...other.objects.values()].filter((o) => ['campaign', 'ad_set', 'ad'].includes(o.level)).map((o) => o.id).sort();
+              await worker.execute('ads.account.erase', { adAccountId: left.account }, { actor: SYSTEM, orgId });
+              const audited = await row<{ detail: { launchesNotWoundDown?: number; objects?: Array<{ level: string; id: string }> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.account.erase' AND detail ->> 'adAccountId' = $2`, [orgId, left.account]);
+              expect(audited[0]?.detail.launchesNotWoundDown).toBe(1);
+              expect((audited[0]?.detail.objects ?? []).map((o) => o.id).sort()).toEqual(ids);
+              expect(await launchNow(left.launch.id)).toBeUndefined();
+            });
           });
         });
       });

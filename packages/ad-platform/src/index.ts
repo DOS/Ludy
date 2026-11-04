@@ -18,6 +18,7 @@ export * from './meta-write-connector.ts';
 export * from './meta-write.ts';
 export * from './sandbox-write.ts';
 export * from './revokers.ts';
+export * from './pausers.ts';
 export * from './launch-writers.ts';
 export * from './writer.ts';
 
