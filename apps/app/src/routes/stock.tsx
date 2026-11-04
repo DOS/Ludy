@@ -34,6 +34,15 @@ interface ItemFormState {
 const blankItem = (): ItemFormState => ({ itemId: null, code: '', name: '', unit: '', stockAccount: '156', trade: 'goods' });
 const fromItem = (i: StockItem): ItemFormState => ({ itemId: i.id, code: i.code, name: i.name, unit: i.unit, stockAccount: i.stockAccount, trade: i.trade });
 
+type ItemField = 'code' | 'unit' | 'account';
+// The input a server error is about, by its code (an error with no field of its own stays under the form).
+function fieldOfError(code: string | undefined): ItemField | null {
+  if (code === 'STOCK_ITEM_CODE_EXISTS' || code === 'STOCK_ITEM_CODE_FIXED') return 'code';
+  if (code === 'STOCK_ITEM_IN_USE') return 'unit';
+  if (code === 'STOCK_ACCOUNT_UNKNOWN' || code === 'STOCK_ACCOUNT_INACTIVE' || code === 'STOCK_ACCOUNT_KIND') return 'account';
+  return null;
+}
+
 function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFormState; legalEntityId: string | undefined; locked: boolean; onClose: () => void }) {
   const t = useTranslations('stock');
   const [form, setForm] = useState(initial);
@@ -47,6 +56,9 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
   });
   const set = (patch: Partial<ItemFormState>) => setForm((s) => ({ ...s, ...patch }));
   const id = 'stock-item';
+  // The field a save error is about, so the error is linked to it (aria-invalid and aria-describedby) and a screen reader says which input to fix.
+  const failing = fieldOfError((save.error as { code?: string } | null)?.code);
+  const flag = (field: ItemField) => (failing === field ? { 'aria-invalid': true as const, 'aria-describedby': `${id}-error` } : {});
   const ready = form.code.trim() !== '' && form.name.trim() !== '' && form.unit.trim() !== '' && form.stockAccount.trim() !== '';
   return (
     <Card className="mb-6 block p-4" aria-label={form.itemId ? t('editTitle') : t('newTitle')} data-testid="stock-item-form">
@@ -54,7 +66,7 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
       <div className="mt-3 grid gap-3 sm:grid-cols-3">
         <div className="space-y-1">
           <Label htmlFor={`${id}-code`}>{t('code')}</Label>
-          <Input id={`${id}-code`} value={form.code} maxLength={40} disabled={form.itemId !== null} onChange={(e) => set({ code: e.target.value })} />
+          <Input id={`${id}-code`} value={form.code} maxLength={40} disabled={form.itemId !== null} onChange={(e) => set({ code: e.target.value })} {...flag('code')} />
         </div>
         <div className="space-y-1 sm:col-span-2">
           <Label htmlFor={`${id}-name`}>{t('name')}</Label>
@@ -62,11 +74,11 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-unit`}>{t('unit')}</Label>
-          <Input id={`${id}-unit`} value={form.unit} maxLength={30} disabled={locked} onChange={(e) => set({ unit: e.target.value })} />
+          <Input id={`${id}-unit`} value={form.unit} maxLength={30} disabled={locked} onChange={(e) => set({ unit: e.target.value })} {...flag('unit')} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-account`}>{t('account')}</Label>
-          <Input id={`${id}-account`} value={form.stockAccount} maxLength={35} inputMode="numeric" disabled={locked} onChange={(e) => set({ stockAccount: e.target.value })} />
+          <Input id={`${id}-account`} value={form.stockAccount} maxLength={35} inputMode="numeric" disabled={locked} onChange={(e) => set({ stockAccount: e.target.value })} {...flag('account')} />
         </div>
         <div className="space-y-1">
           <Label htmlFor={`${id}-trade`}>{t('trade')}</Label>
@@ -80,7 +92,7 @@ function ItemForm({ initial, legalEntityId, locked, onClose }: { initial: ItemFo
         </div>
       </div>
       {locked && <p className="mt-2 text-xs text-subtle-foreground">{t('lockedHint')}</p>}
-      {save.error && <ErrorText>{errorMessage(save.error)}</ErrorText>}
+      {save.error && <ErrorText id={`${id}-error`}>{errorMessage(save.error)}</ErrorText>}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button loading={save.isPending} disabled={!ready} onClick={() => save.mutate()} data-testid="stock-item-save">
           {t('save')}
@@ -373,7 +385,8 @@ export function StockPage() {
           onClose={() => setEditing(null)}
         />
       )}
-      {viewing && <MovesPanel key={viewing.id} item={viewing} canWrite={canWrite} onClose={() => setViewing(null)} />}
+      {/* The panel is of the item's own entity: after the entity on screen changes it is not shown (its Reverse action must not sit on another entity's screen). */}
+      {viewing && (entity.legalEntityId === undefined || viewing.legalEntityId === entity.legalEntityId) && <MovesPanel key={viewing.id} item={viewing} canWrite={canWrite} onClose={() => setViewing(null)} />}
 
       {lines.length > 0 && (
         <section className="mb-8" aria-label={t('unassignedTitle')} data-testid="stock-unassigned">
@@ -452,7 +465,8 @@ export function StockPage() {
         </DataTable>
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
-      <ReportSection legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      {/* Keyed by the entity: the open card is dropped when the entity on screen changes. */}
+      <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} />
     </>
   );
 }

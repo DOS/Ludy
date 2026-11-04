@@ -193,6 +193,17 @@ CREATE OR REPLACE FUNCTION crove_finance.stock_move_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
   PERFORM 1 FROM crove_finance.stock_item i WHERE i.org_id = NEW.org_id AND i.id = NEW.item_id FOR SHARE;
+  -- A line of a voided document moves nothing (the void takes its moves back), and a line moves the stock of its own entity: the document and the item belong to one.
+  IF NEW.source_type = 'document_line' THEN
+    IF EXISTS (SELECT 1 FROM crove_finance.purchase_document_void v WHERE v.org_id = NEW.org_id AND v.document_id = NEW.document_id) THEN
+      RAISE EXCEPTION 'STOCK_LINE_VOIDED' USING ERRCODE = '23514';
+    END IF;
+    IF NOT EXISTS (
+         SELECT 1 FROM crove_finance.purchase_document d JOIN crove_finance.stock_item i ON i.org_id = d.org_id AND i.legal_entity_id = d.legal_entity_id
+         WHERE d.org_id = NEW.org_id AND d.id = NEW.document_id AND i.id = NEW.item_id) THEN
+      RAISE EXCEPTION 'STOCK_LINE_ENTITY' USING ERRCODE = '23514';
+    END IF;
+  END IF;
   IF NEW.source_type = 'document_line' AND NEW.line_attempt > 1
      AND NOT EXISTS (
        SELECT 1 FROM crove_finance.stock_move p JOIN crove_finance.stock_move r ON r.org_id = p.org_id AND r.reverses_move_id = p.id

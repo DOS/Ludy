@@ -302,6 +302,11 @@ suite('stock from document lines (#2512)', () => {
     // Taught again in another unit: refused, and a name taught with no unit stays as it was.
     await expect(execute(other, 'finance.stock_alias.teach', { itemId: bottle, source: 'text', key: LINE_TWO, factor: '12', unit: 'Thùng' })).rejects.toMatchObject({ code: 'STOCK_ALIAS_FACTOR' });
     await expect(execute(other, 'finance.stock_alias.teach', { itemId: bottle, source: 'text', key: LINE_TWO, factor: '12' })).resolves.toMatchObject({ existing: true });
+    // A name taught with no unit, taught again in a unit: refused, never left matching every unit.
+    const loose = await org();
+    const crate = await makeItem(loose, { unit: 'chai' });
+    await execute(loose, 'finance.stock_alias.teach', { itemId: crate, source: 'text', key: LINE_TWO, factor: '12' });
+    await expect(execute(loose, 'finance.stock_alias.teach', { itemId: crate, source: 'text', key: LINE_TWO, factor: '12', unit: 'Thùng' })).rejects.toMatchObject({ code: 'STOCK_ALIAS_FACTOR' });
   });
 
   it('has no two items whose codes differ only in case, so a line is never left unmatched by an ambiguous code', async () => {
@@ -333,8 +338,11 @@ suite('stock from document lines (#2512)', () => {
     expect(await onHand(o, item)).toBe('0');
     // The voided document's lines leave the unassigned list.
     expect(await unassigned(o)).toEqual([]);
-    // Its line cannot be assigned any more.
+    // Its line cannot be assigned any more, and the database refuses a move of a line of a voided document whatever writes it.
     await expect(execute(o, 'finance.stock.assign', { documentId: posted.documentId, lineNo: 1, itemId: item })).rejects.toMatchObject({ code: 'STOCK_LINE_VOIDED' });
+    await expect(
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no, line_attempt) VALUES ($1, $2, current_date, 1, 'document_line', $3, 2, 2)", [o.orgId, item, posted.documentId]),
+    ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_LINE_VOIDED') });
   });
 
   it('lets a line assigned to the wrong item be reversed and assigned again, keeping the history; and a member who made a move can still be removed', async () => {
