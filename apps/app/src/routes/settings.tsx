@@ -28,7 +28,7 @@ import { apiFetch, errorMessage, isStepUpRequired, orpc, queryClient } from '../
 import { getConfig } from '../lib/auth.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { ROLES, roleChangeConfirmation, roleChangeKind, type Role, type RoleChangeKind } from '../lib/members.ts';
-import { inviteRoleChoices } from '../lib/member-roles.ts';
+import { asRoleKey, inviteRoleChoices } from '../lib/member-roles.ts';
 import { exportFileName, exportPhase, formatBytes, offboardErrorMessage, slugConfirmed } from '../lib/offboarding.ts';
 
 interface MemberRow {
@@ -628,7 +628,7 @@ function PendingInvites({ entities, entitiesLoading }: { entities: LegalEntity[]
                 {i.status === 'expired' ? t('expired') : t('expiresAt', { at: f.dateTime(i.expiresAt) })}
                 {i.invitedBy ? ` · ${t('invitedBy', { name: i.invitedBy })}` : ''}
               </p>
-              {i.roleKey && <p className="text-xs text-muted-foreground">{t('inviteDepartmentOf', { role: root(`memberRoles.roles.${i.roleKey}`) })}</p>}
+              {i.roleKey && <p className="text-xs text-muted-foreground">{t('inviteDepartmentOf', { role: root(`memberRoles.roles.${asRoleKey(i.roleKey)}`) })}</p>}
               {i.legalEntityIds && i.legalEntityIds.length > 0 && (
                 <p className="text-xs text-muted-foreground">{t('inviteScopedTo', { entities: i.legalEntityIds.map(entityName).join(', ') })}</p>
               )}

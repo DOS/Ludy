@@ -9,6 +9,7 @@ import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { signOut } from '../lib/session-actions.ts';
 import { useFormat } from '../i18n/provider.tsx';
 import { forgetInvite, pendingInvite } from '../lib/invite.ts';
+import { asRoleKey } from '../lib/member-roles.ts';
 import { LegalConsent } from '../components/legal-consent.tsx';
 import { SupportLink } from '../components/support-link.tsx';
 
@@ -107,13 +108,20 @@ export function InvitePage() {
       <ScreenTitle name={t('title', { org: invite.orgName })} />
       <h1 className="mt-6 text-lg font-semibold text-foreground">{t('title', { org: invite.orgName })}</h1>
       <p className="mt-2 text-sm text-muted-foreground">
-        {t.rich(invite.roleKey ? 'bodyWithDepartment' : 'body', {
-          invitedBy: invite.invitedBy,
-          org: invite.orgName,
-          role: t(`role.${invite.role}`),
-          department: invite.roleKey ? root(`memberRoles.roles.${invite.roleKey}`) : '',
-          strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
-        })}
+        {invite.roleKey
+          ? t.rich('bodyWithDepartment', {
+              invitedBy: invite.invitedBy,
+              org: invite.orgName,
+              role: t(`role.${invite.role}`),
+              department: root(`memberRoles.roles.${asRoleKey(invite.roleKey)}`),
+              strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
+            })
+          : t.rich('body', {
+              invitedBy: invite.invitedBy,
+              org: invite.orgName,
+              role: t(`role.${invite.role}`),
+              strong: (chunks) => <span className="font-medium text-foreground">{chunks}</span>,
+            })}
       </p>
       <p className="mt-2 text-xs text-subtle-foreground">
         {t('expires', { at: f.dateTime(invite.expiresAt) })}{' '}

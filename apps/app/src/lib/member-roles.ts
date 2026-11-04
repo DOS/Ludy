@@ -1,5 +1,5 @@
 // Member roles in Settings (issue #1279): which roles an owner may still give a member. The kernel checks again.
-import type { MemberRoles, RoleAssignment } from '@crove/kernel-contract';
+import type { BuiltinRoleKey, MemberRoles, RoleAssignment } from '@crove/kernel-contract';
 
 type CatalogRole = MemberRoles['roles'][number];
 
@@ -27,3 +27,7 @@ export function assignableRoles(catalog: readonly CatalogRole[], held: readonly 
 export function inviteRoleChoices(catalog: readonly CatalogRole[], baseRole: string): CatalogRole[] {
   return catalog.filter((role) => !roleNeedsEntity(role) && !(baseRole === 'viewer' && role.permissions.length > 0));
 }
+
+// A role key the kernel sent as a plain string (an invite's), as the catalog's union, so a translation key built from it is
+// checked against the few role names and not against every key of the catalog (a string there slows the typecheck to a crawl).
+export const asRoleKey = (key: string) => key as BuiltinRoleKey;
