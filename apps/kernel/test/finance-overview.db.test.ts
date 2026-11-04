@@ -31,6 +31,7 @@ suite('the Kế toán Tổng quan (#2631)', () => {
   let rt: Runtime;
   let o: { orgId: string; owner: string; member: string; viewer: string };
   let fresh: { orgId: string; owner: string };
+  let second = '';
   let customer = '';
   let vendor = '';
   const asUser = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
@@ -48,7 +49,7 @@ suite('the Kế toán Tổng quan (#2631)', () => {
   const person = (name: string) => upsertIdentity(db, { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@overview.test`, name: null });
 
   // One balanced voucher of two lines, requested by the member and approved by the owner (four-eyes).
-  async function post(date: string, debit: { account: string; partyId?: string }, credit: { account: string; partyId?: string }, amount: string) {
+  async function post(date: string, debit: { account: string; partyId?: string }, credit: { account: string; partyId?: string }, amount: string, orgId = o.orgId) {
     const input: JournalVoucherRequest = {
       date,
       description: `Bút toán thử ${date}`,
@@ -57,9 +58,13 @@ suite('the Kế toán Tổng quan (#2631)', () => {
         { account: credit.account, ...(credit.partyId ? { partyId: credit.partyId } : {}), debit: '0', credit: amount },
       ],
     };
-    const { proposalId } = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal_voucher.record', input }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() });
-    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(o.owner), orgId: o.orgId });
-    await rt.execute('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(o.owner), orgId: o.orgId });
+    const { proposalId } = await rt.execute<{ proposalId: string }>('kernel.proposal.request', { command: 'finance.journal_voucher.record', input }, { actor: asUser(o.member), orgId, idempotencyKey: randomUUID() });
+    return approve(proposalId, orgId);
+  }
+
+  async function approve(proposalId: string, orgId: string) {
+    const detail = await rt.query<{ revision: number }>('kernel.inbox.get', { id: proposalId }, { actor: asUser(o.owner), orgId });
+    return rt.execute<{ journalEntryId: string }>('kernel.proposal.approve', { id: proposalId, revision: detail.revision }, { actor: asMfa(o.owner), orgId });
   }
 
   const overview = (range: FinanceOverview['range'], user = o.owner, orgId = o.orgId, asOf = TODAY) =>
@@ -87,7 +92,7 @@ suite('the Kế toán Tổng quan (#2631)', () => {
     const owner = await person('owner');
     const { orgId } = await createOrg(rt, asUser(owner), `Org ${randomUUID().slice(0, 6)}`);
     o = { orgId, owner, member: await person('member'), viewer: await person('viewer') };
-    const second = await person('admin');
+    second = await person('admin');
     for (const [user, role] of [
       [o.member, 'member'],
       [o.viewer, 'viewer'],
@@ -184,6 +189,51 @@ suite('the Kế toán Tổng quan (#2631)', () => {
     const viewer = await overview('last_30_days', o.viewer);
     expect(viewer.cash.amount).toBe('11800000');
     await expect(overview('last_30_days', fresh.owner, o.orgId)).rejects.toThrow();
+  });
+
+  it('counts a posted reversal as lowering what it undoes, in the cards, the months and the mix', async () => {
+    const { orgId } = await createOrg(rt, asUser(o.owner), `Org ${randomUUID().slice(0, 6)}`);
+    for (const [user, role] of [
+      [o.member, 'member'],
+      [second, 'admin'],
+    ] as const) {
+      await admin((c) => c.query('INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, $3)', [orgId, user, role]));
+    }
+    await post('2026-10-20', { account: '112' }, { account: '511' }, '5000000', orgId);
+    const cost = await post('2026-10-21', { account: '642' }, { account: '112' }, '400000', orgId);
+    const before = await overview('last_30_days', o.owner, orgId);
+    expect(before.cash.amount).toBe('4600000');
+    expect(before.profit.amount).toBe('4600000');
+    const { proposalId } = await rt.execute<{ proposalId: string }>(
+      'kernel.proposal.request',
+      { command: 'finance.journal.reverse', input: { entryId: cost.journalEntryId, entryDate: '2026-10-25', reason: 'Ghi nhầm' } },
+      { actor: asUser(o.member), orgId, idempotencyKey: randomUUID() },
+    );
+    await approve(proposalId, orgId);
+    const after = await overview('last_30_days', o.owner, orgId);
+    expect(after.cash.amount).toBe('5000000');
+    expect(after.profit.amount).toBe('5000000');
+    expect(after.months.at(-2)).toEqual({ month: '2026-10', revenue: '5000000', costs: '0', profit: '5000000' });
+    expect(after.expenses).toEqual([]);
+  });
+
+  it('answers a member for the entities they see only: another entity is refused as if it did not exist', async () => {
+    const branch = String((await admin((c) => c.query<{ id: string }>(`INSERT INTO crove_kernel.legal_entity (org_id, name, kind, created_by) VALUES ($1, 'Chi nhánh', 'branch', $2) RETURNING id`, [o.orgId, o.owner]))).rows[0]?.id);
+    const defaultEntity = String((await admin((c) => c.query<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]))).rows[0]?.id);
+    const scoped = await person('scoped');
+    await admin(async (c) => {
+      await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [o.orgId, scoped]);
+      await c.query(`INSERT INTO crove_kernel.role_assignment (org_id, user_id, role_key, legal_entity_id, granted_by) VALUES ($1, $2, 'external_accountant', $3, $4)`, [o.orgId, scoped, defaultEntity, o.owner]);
+    });
+    const asScoped = (legalEntityId?: string) =>
+      rt.query<FinanceOverview>('finance.overview', { range: 'last_30_days', asOf: TODAY, ...(legalEntityId ? { legalEntityId } : {}) }, { actor: asUser(scoped), orgId: o.orgId });
+    expect((await asScoped()).cash.amount).toBe('11800000');
+    expect((await asScoped(defaultEntity)).cash.amount).toBe('11800000');
+    await expect(asScoped(branch)).rejects.toMatchObject({ code: 'LEGAL_ENTITY_NOT_ALLOWED' });
+    // The branch's own books are empty: the owner sees them as such, and nothing of the default entity's.
+    const own = await rt.query<FinanceOverview>('finance.overview', { range: 'last_30_days', asOf: TODAY, legalEntityId: branch }, { actor: asUser(o.owner), orgId: o.orgId });
+    expect(own.empty).toBe(true);
+    expect(own.cash.amount).toBe('0');
   });
 
   it('reads a new org as empty, with every card at 0', async () => {

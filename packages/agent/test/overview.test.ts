@@ -67,6 +67,12 @@ describe('checkOverviewSentence', () => {
     expect(sentence('Profit is down 40% to 1.5 million.')).toEqual({ kind: 'none', code: 'FIGURES' });
   });
 
+  it('drops fractions and multiples said in words, and a number word hidden by an invisible character', () => {
+    for (const text of ['Chi phí tăng gấp ba.', 'Chi phí tăng một phần tư.', 'Chi phí tăng hơn nửa.', 'Costs rose threefold.', 'Costs rose tenfold.', 'Costs rose by a third.', 'Costs are up a quarter.', 'Profit fell by twen​ty per​cent.', 'Cash rose by 5 tri​ệu.']) {
+      expect(sentence(text), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+  });
+
   it('drops an empty, a long or a many-sentence text and a link', () => {
     expect(checkOverviewSentence(FACTS, null)).toEqual({ kind: 'none', code: 'EMPTY' });
     expect(sentence('   ')).toEqual({ kind: 'none', code: 'EMPTY' });

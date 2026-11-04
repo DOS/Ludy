@@ -30,8 +30,8 @@ const FIGURE_LABEL = {
   en: { cash: 'Cash and bank deposits (111, 112) at the end of the period', profit: 'Profit before tax for the period', receivables: 'Receivables from customers (131) at the end of the period', payables: 'Payables to suppliers (331) at the end of the period' },
 } as const;
 const EXPENSE_LABEL = {
-  vi: { '632': 'Giá vốn hàng bán (632)', '641': 'Chi phí bán hàng (641)', '642': 'Chi phí quản lý (642)', '635': 'Chi phí tài chính (635)', '811': 'Chi phí khác (811)' },
-  en: { '632': 'Cost of goods sold (632)', '641': 'Selling expenses (641)', '642': 'Administrative expenses (642)', '635': 'Financial expenses (635)', '811': 'Other expenses (811)' },
+  vi: { '632': 'Giá vốn hàng bán (632)', '641': 'Chi phí bán hàng (641)', '642': 'Chi phí quản lý kinh doanh (642)', '635': 'Chi phí tài chính (635)', '811': 'Chi phí khác (811)' },
+  en: { '632': 'Cost of goods sold (632)', '641': 'Selling expenses (641)', '642': 'Selling and administrative expenses (642)', '635': 'Financial expenses (635)', '811': 'Other expenses (811)' },
 } as const;
 
 // A whole-dong amount with the language's grouping ("12.345.678" in Vietnamese, "12,345,678" in English), and a percent with one decimal ("37,5" / "37.5").
@@ -102,8 +102,10 @@ const SCALED = /\p{Nd}\s*(?:k|nghìn|ngàn|trăm|triệu|tỷ|tỉ|thousand|hund
 // Vietnamese number words only count before a unit or "gấp" (so "năm nay" and "một lần nữa" stay allowed); English ones count anywhere but a bare "one".
 const NUMBER_IN_WORDS = [
   /(?<![\p{L}])(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|mấy|vài)(?:\s+(?:mươi|mốt|lăm|mười|một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín))?\s+(?:phần trăm|ngày|tuần|tháng|quý|đồng|đô|lần|trăm|nghìn|ngàn|triệu|tỷ)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:nửa|rưỡi|phần tư|phần ba|phần năm|phần mười)(?![\p{L}])/iu,
   /(?<![\p{L}])gấp\s+(?:đôi|rưỡi|một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười)(?![\p{L}])/iu,
-  /(?<![\p{L}])(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|half|double|doubled|triple|tripled|dozen|percent)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|half|double|doubled|triple|tripled|dozen|percent|halved|halves|third|thirds|quarter|quarters)(?![\p{L}])/iu,
+  /(?<![\p{L}])(?:two|three|four|five|six|seven|eight|nine|ten|twenty|hundred|thousand)-?fold(?![\p{L}])/iu,
 ];
 
 /** The sentence the model gave, or why there is none. Pure: the model call is the caller's. */
@@ -111,7 +113,10 @@ export function checkOverviewSentence(facts: OverviewFacts, output: { sentence?:
   const text = (output?.sentence ?? '').replace(/\s+/g, ' ').trim();
   if (text === '') return { kind: 'none', code: 'EMPTY' };
   if (Array.from(text).length > OVERVIEW_SENTENCE_MAX || sentencesIn(text) > OVERVIEW_SENTENCES_MAX) return { kind: 'none', code: 'TOO_LONG' };
-  if (draftFiguresOutside(text, [overviewFactsText(facts)]).length > 0 || SCALED.test(text.normalize('NFKC')) || NUMBER_IN_WORDS.some((word) => word.test(text.normalize('NFKC')))) return { kind: 'none', code: 'FIGURES' };
+  // Invisible format characters (a zero-width space inside a number word) could split a word the checks look for, so a text holding one is no sentence.
+  const read = text.normalize('NFKC');
+  if (/\p{Cf}/u.test(read)) return { kind: 'none', code: 'FIGURES' };
+  if (draftFiguresOutside(text, [overviewFactsText(facts)]).length > 0 || SCALED.test(read) || NUMBER_IN_WORDS.some((word) => word.test(read))) return { kind: 'none', code: 'FIGURES' };
   if (draftLinksOutside(text, []).length > 0) return { kind: 'none', code: 'LINK' };
   return { kind: 'sentence', text };
 }

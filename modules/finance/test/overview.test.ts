@@ -52,6 +52,11 @@ describe('overviewFigure', () => {
     expect(overviewFigure('0', '0')).toEqual({ amount: '0', previous: '0', change: '0', changePercent: null });
   });
 
+  it('shows a change too small for one decimal as 0.0, never -0.0', () => {
+    expect(overviewFigure('999999', '1000000').changePercent).toBe('0.0');
+    expect(overviewFigure('1000000.1', '1000000').changePercent).toBe('0.0');
+  });
+
   it('does no arithmetic on JS numbers: a 16-digit amount keeps every digit', () => {
     expect(overviewFigure('9007199254740993', '9007199254740991')).toMatchObject({ change: '2' });
   });

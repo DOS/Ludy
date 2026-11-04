@@ -16,6 +16,7 @@ import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { CardSkeleton, Empty, ErrorText, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc } from '../lib/api.ts';
+import { SAFETY_POLL_MS, pollEvery, useStreamLive } from '../lib/stream-hook.ts';
 import { OVERVIEW_CARDS, chartBars, chartHasData, directionOf, monthNumber, percentSize, toneOf, type Direction, type OverviewCard } from '../lib/finance-overview.ts';
 
 const TONE_CLASS = { good: 'text-success', bad: 'text-destructive', neutral: 'text-muted-foreground' } as const;
@@ -101,13 +102,19 @@ function ResultsChart({ months }: { months: FinanceOverview['months'] }) {
                 <span className="size-2.5 rounded-sm bg-muted-foreground/40" />
                 {t('results.costs')}
               </span>
+              {bars.some((bar) => bar.revenueNegative || bar.costsNegative) && (
+                <span className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-sm bg-destructive" />
+                  {t('results.negative')}
+                </span>
+              )}
             </div>
             <div className="grid grid-cols-6 gap-2" aria-hidden="true">
               {bars.map((bar, i) => (
                 <div key={bar.month} className="flex flex-col items-center gap-1.5">
                   <div className="flex h-32 w-full items-end justify-center gap-1">
-                    <div className="w-1/3 rounded-t-sm bg-primary" style={{ height: `${bar.revenue}%` }} />
-                    <div className="w-1/3 rounded-t-sm bg-muted-foreground/40" style={{ height: `${bar.costs}%` }} />
+                    <div className={cn('w-1/3 rounded-t-sm', bar.revenueNegative ? 'bg-destructive' : 'bg-primary')} style={{ height: `${bar.revenue}%` }} />
+                    <div className={cn('w-1/3 rounded-t-sm', bar.costsNegative ? 'bg-destructive/60' : 'bg-muted-foreground/40')} style={{ height: `${bar.costs}%` }} />
                   </div>
                   <span className="text-xs text-muted-foreground">{t('results.month', { month: String(monthNumber(bar.month)) })}</span>
                   <span className={cn('text-xs tabular-nums', bar.profitNegative ? 'text-destructive' : 'text-foreground')}>{f.money(months[i]?.profit ?? '0')}</span>
@@ -180,15 +187,13 @@ function ExpenseMix({ expenses }: { expenses: FinanceOverview['expenses'] }) {
 }
 
 // The coworker's sentence: nothing at all unless it came back used, so with AI off the screen has no gap and no notice.
-function Explanation({ input, ready }: { input: { range: OverviewRange; legalEntityId?: string }; ready: boolean }) {
+// `version` is when the figures on screen were read: the sentence is asked again whenever they are, so it never sits beside figures it was not written from
+// (the server keeps a sentence by its figures, so asking again over unchanged figures costs no model call).
+function Explanation({ input, ready, version }: { input: { range: OverviewRange; legalEntityId?: string }; ready: boolean; version: number }) {
   const t = useTranslations('financeOverview');
   const lang = useLocale() === 'en' ? 'en' : 'vi';
-  const explain = useQuery({
-    ...orpc.financeOverview.explain.queryOptions({ input: { ...input, lang } }),
-    enabled: ready,
-    staleTime: 10 * 60_000,
-    retry: false,
-  });
+  const base = orpc.financeOverview.explain.queryOptions({ input: { ...input, lang } });
+  const explain = useQuery({ ...base, queryKey: [...base.queryKey, version], enabled: ready, staleTime: Infinity, retry: false });
   if (explain.data?.ai !== 'used' || !explain.data.text) return null;
   return (
     <Card className="mt-6 p-4" data-testid="overview-explanation">
@@ -206,7 +211,8 @@ export function AccountingOverviewPage() {
   const entity = useChosenEntity();
   const [range, setRange] = useState<OverviewRange>('last_30_days');
   const input = { range, ...(entity.legalEntityId ? { legalEntityId: entity.legalEntityId } : {}) };
-  const overview = useQuery({ ...orpc.financeOverview.get.queryOptions({ input }), enabled: entity.ready });
+  const live = useStreamLive();
+  const overview = useQuery({ ...orpc.financeOverview.get.queryOptions({ input }), enabled: entity.ready, refetchInterval: pollEvery(live, 60_000, SAFETY_POLL_MS) });
   const data = overview.data;
 
   return (
@@ -259,7 +265,7 @@ export function AccountingOverviewPage() {
             </div>
           ) : (
             <>
-              <Explanation input={input} ready={entity.ready} />
+              <Explanation input={input} ready={entity.ready} version={overview.dataUpdatedAt} />
               <ResultsChart months={data.months} />
               <ExpenseMix expenses={data.expenses} />
             </>

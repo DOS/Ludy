@@ -70,7 +70,7 @@ export function overviewFigure(current: string, previous: string): OverviewFigur
     amount: canonical(now),
     previous: canonical(before),
     change: canonical(change),
-    changePercent: before.isZero() ? null : change.dividedBy(before.abs()).times(100).toFixed(1),
+    changePercent: before.isZero() ? null : change.dividedBy(before.abs()).times(100).toFixed(1).replace(/^-0\.0$/, '0.0'),
   };
 }
 

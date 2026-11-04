@@ -35,9 +35,14 @@ describe('chartBars', () => {
 
   it('scales every bar to the largest figure of the months, and marks a loss', () => {
     const bars = chartBars(months);
-    expect(bars[0]).toEqual({ month: '2026-09', revenue: 40, costs: 16, profit: 24, profitNegative: false });
-    expect(bars[1]).toEqual({ month: '2026-10', revenue: 80, costs: 100, profit: 20, profitNegative: true });
-    expect(bars[2]).toEqual({ month: '2026-11', revenue: 0, costs: 0, profit: 0, profitNegative: false });
+    expect(bars[0]).toEqual({ month: '2026-09', revenue: 40, costs: 16, profit: 24, revenueNegative: false, costsNegative: false, profitNegative: false });
+    expect(bars[1]).toEqual({ month: '2026-10', revenue: 80, costs: 100, profit: 20, revenueNegative: false, costsNegative: false, profitNegative: true });
+    expect(bars[2]).toEqual({ month: '2026-11', revenue: 0, costs: 0, profit: 0, revenueNegative: false, costsNegative: false, profitNegative: false });
+  });
+
+  it('marks a negative revenue or cost, which a reversal in a later month can make', () => {
+    const [bar] = chartBars([{ month: '2026-10', revenue: '-1000000', costs: '-500000', profit: '-500000' }]);
+    expect(bar).toEqual({ month: '2026-10', revenue: 100, costs: 50, profit: 50, revenueNegative: true, costsNegative: true, profitNegative: true });
   });
 
   it('draws nothing when every month is empty', () => {

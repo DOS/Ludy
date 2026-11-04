@@ -33,6 +33,9 @@ export interface Bar {
   revenue: number;
   costs: number;
   profit: number;
+  // A negative figure (a sale of an earlier month reversed this month) is drawn in its own color, never as a positive bar.
+  revenueNegative: boolean;
+  costsNegative: boolean;
   profitNegative: boolean;
 }
 
@@ -45,7 +48,16 @@ export function chartBars(months: FinanceOverview['months']): Bar[] {
   let max = 0n;
   for (const m of months) for (const v of [m.revenue, m.costs, m.profit]) if (abs(v) > max) max = abs(v);
   const share = (value: string) => (max === 0n ? 0 : Number((abs(value) * 1000n) / max) / 10);
-  return months.map((m) => ({ month: m.month, revenue: share(m.revenue), costs: share(m.costs), profit: share(m.profit), profitNegative: toUnits(m.profit) < 0n }));
+  const negative = (value: string) => toUnits(value) < 0n;
+  return months.map((m) => ({
+    month: m.month,
+    revenue: share(m.revenue),
+    costs: share(m.costs),
+    profit: share(m.profit),
+    revenueNegative: negative(m.revenue),
+    costsNegative: negative(m.costs),
+    profitNegative: negative(m.profit),
+  }));
 }
 
 // Whether the six months have anything to draw.
