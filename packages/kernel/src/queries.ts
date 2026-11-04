@@ -69,7 +69,7 @@ export function orgDetailQuery(options: OrgDetailOptions) {
     handler: async (ctx) => {
       const tenant = await ctx.trx
         .selectFrom('crove_kernel.tenant')
-        .select(['org_id', 'slug', 'name', 'inbound_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
+        .select(['org_id', 'slug', 'name', 'inbound_token', 'conversation_token', 'tax_code', 'vat_filing_period', 'address', 'contact_email', 'approval_preset', 'approval_policy_version'])
         .where('org_id', '=', ctx.orgId)
         .executeTakeFirstOrThrow();
       const memberRows = await ctx.trx
@@ -102,6 +102,8 @@ export function orgDetailQuery(options: OrgDetailOptions) {
         address: tenant.address,
         contactEmail: tenant.contact_email,
         inboundAddress: seesInbound ? `${tenant.inbound_token}@${options.inboundDomain}` : null,
+        // The Inbox's own address (#2439), issued the first time an owner or admin opens the Inbox; null until then.
+        conversationAddress: seesInbound && tenant.conversation_token ? `${tenant.conversation_token}@${options.inboundDomain}` : null,
         inboundDroppedCount,
         members: members.map((m) => ({ userId: m.user_id, email: m.email, displayName: m.display_name, role: m.role })),
         // What the signed-in member holds through org-wide role assignments (#1279).

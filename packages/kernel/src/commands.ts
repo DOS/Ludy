@@ -533,6 +533,32 @@ export function inboundRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOU
 
 export const rotateInbound = inboundRotateCommand();
 
+// Rotates the org's conversation address (#2439, the Inbox's own address): the old token is tombstoned and never issued again, mail to it is dropped by the
+// worker like mail to an unknown token. R3 and owner only, as the document address's rotation is, with the same limits (the definer counts the rotations of
+// this address apart from the document address's).
+export function conversationAddressRotateCommand(limits: InboundRotateLimits = DEFAULT_INBOUND_ROTATE_LIMITS) {
+  assertRotateLimit('perDay', limits.perDay);
+  assertRotateLimit('total', limits.total);
+  return defineCommand({
+    name: 'kernel.conversation.address_rotate',
+    input: z.object({}),
+    risk: 'R3',
+    sideEffect: 'irreversible',
+    access: ['owner'],
+    handler: async (ctx) => {
+      if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ chủ sở hữu mới đổi được địa chỉ email của Hộp thư');
+      await sql`SELECT set_config('crove.inbound_rotate_limit_per_day', ${String(limits.perDay)}, true),
+                       set_config('crove.inbound_rotate_limit_total', ${String(limits.total)}, true)`.execute(ctx.trx);
+      const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.conversation_address_rotate() AS token`.execute(ctx.trx);
+      if (!rows[0]?.token) throw new DomainError('INTERNAL', 500, 'Không đổi được địa chỉ email của Hộp thư');
+      await ctx.activity('kernel.org', ctx.orgId, 'conversation_address.rotated', 'Đổi địa chỉ email của Hộp thư; địa chỉ cũ ngừng nhận thư');
+      return { rotated: true };
+    },
+  });
+}
+
+export const rotateConversationAddress = conversationAddressRotateCommand();
+
 // A user asks for a proposal that is not read from a file, for example reversing a posted journal entry (#138). The
 // requester is its author, so with two or more eligible approvers someone else approves it (P10), and the approval
 // runs the command at its own risk level (R3 for a posting, with step-up, P11). Asking is R1 and posts nothing.
@@ -1189,6 +1215,7 @@ export function buildKernelCommands(
     ...otherKernelCommands,
     options.uploadBeginLimits ? beginUploadCommand(options.uploadBeginLimits) : beginUpload,
     options.inboundRotateLimits ? inboundRotateCommand(options.inboundRotateLimits) : rotateInbound,
+    options.inboundRotateLimits ? conversationAddressRotateCommand(options.inboundRotateLimits) : rotateConversationAddress,
   ];
 }
 

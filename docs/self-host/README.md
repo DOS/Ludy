@@ -109,7 +109,7 @@ one password reset to an address at a large mail provider and check that it land
 
 Invoices by email (one address per organization) need an inbound mail relay: `INBOUND_DOMAIN`, `INBOUND_SECRET`, and
 [`tools/inbound-mail/worker.js`](../../tools/inbound-mail/worker.js) for Cloudflare Email Routing, set up in
-[provision-pilot.md](../runbooks/provision-pilot.md), section 5, "Inbound email". Uploads work without it.
+[provision-pilot.md](../runbooks/provision-pilot.md), section 5, "Inbound email". Uploads work without it. Customer email for the Inbox uses the same relay, to an address of its own per organization; set `INBOUND_AUTHSERV_ID` (see `.env.example`) so a customer's reply joins its conversation, otherwise each reply opens a new one.
 
 ## 6. Who may sign up
 
