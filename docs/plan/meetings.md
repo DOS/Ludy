@@ -1,6 +1,6 @@
 # Ludy Meetings: AI meeting notes, plan
 
-> Plan for epic [#932](https://github.com/DOS/Ludy/issues/932), 2026-11-03. Owner direction the same day: "Okay đưa nó đi. Rồi tao bàn với nó. Nói nó là làm lean, core feature trước và AI first nhé" (go ahead; the owner discusses it first; lean, core features first, AI-first). Revised the same day after the owner's input on capture: "Tao thấy option extension là ổn nhất mà, không cần bot, không cần cài app mà ghi âm, record video đều được" (a browser extension is the best option: no bot, no app to install, and it records audio and video). **A proposal: nothing here is built, no build issue is opened, no money is spent and no provider was contacted.** The owner discusses it and answers section 14 before any build. The decision record is [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Proposed); a Vietnamese summary for the owner is [meetings.vi.md](meetings.vi.md). It replaces the scope paragraph of the kernel plan's §13 "Meeting Notes" once accepted. The legal points of section 7 are commentary until a lawyer (#62) confirms them.
+> Plan for epic [#932](https://github.com/DOS/Ludy/issues/932), 2026-11-03. Owner direction the same day: "Okay đưa nó đi. Rồi tao bàn với nó. Nói nó là làm lean, core feature trước và AI first nhé" (go ahead; the owner discusses it first; lean, core features first, AI-first). Revised the same day after the owner's input on capture: "Tao thấy option extension là ổn nhất mà, không cần bot, không cần cài app mà ghi âm, record video đều được" (a browser extension is the best option: no bot, no app to install, and it records audio and video). **Approved by the owner on 2026-11-04 ("Đồng ý"): Q1 to Q6 as recommended, Q7 decided the same day (section 14).** Nothing here is built yet and no money is spent; the build issues are listed in section 15. Steps M4 (transcription) and M6 (summary, decisions, action items) depend on ADR-0049, the member-scoped Vy (PR [#2572](https://github.com/DOS/Ludy/pull/2572)), which still waits for the Platform PO's acceptance. The decision record is [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (Accepted); a Vietnamese summary for the owner is [meetings.vi.md](meetings.vi.md). It replaces the scope paragraph of the kernel plan's §13 "Meeting Notes" once accepted. The legal points of section 7 are commentary until a lawyer (#62) confirms them.
 
 ## 1. The user and the weekly job
 
@@ -21,6 +21,7 @@ After the first slice, that person can:
 - 2026-10-31 and 2026-11-02 ([scope.md](../product/scope.md)): OPC and SME first, core features first, AI-first; AI is a coworker, never an "assistant"; Vy is the general manager across apps.
 - 2026-11-03, on [#1677](https://github.com/DOS/Ludy/issues/1677): each member has their own Vy, which sees exactly what that member can access; org-wide outputs carry nothing private. The mechanism is drafted as ADR-0049 (the member-scoped Vy, PR [#2572](https://github.com/DOS/Ludy/pull/2572)); on 2026-11-04 the Platform PO ruled how meetings reuses it (option (a)): Vy's output on a meeting lands in the recorder's own Vy result, and the recorder publishes it to the attendees with one click.
 - 2026-11-03, this plan: lean, core first, AI-first; the owner discusses before anything is built.
+- 2026-11-04, the plan: "Đồng ý". Q1 to Q6 are decided as recommended (section 14).
 - 2026-11-03, capture: a browser extension is the main path for online meetings, with no bot and no desktop app; it records audio and, when chosen, video. The owner accepts that people are used to meeting bots but finds them annoying, so the bot stays later.
 - 2026-11-03, the extension is the shared Ludy extension, useful to Ludy Engage too later; meetings is its first feature (section 5.6).
 - 2026-11-04, video (Q7, decided): "Có option cho cái extension là được mà? mặc định voice only, có thêm nút check record video thôi" (an option is fine: voice only by default, plus a "record video" checkbox). Audio only by default; a "Ghi cả video" checkbox in the extension and in the in-app recorder, set per meeting.
@@ -196,22 +197,24 @@ Proposed in ADR-0047 point 2, an owner decision (section 14, Q2):
 - **Browser and store changes.** Chrome may change tab capture or the store's policy; Safari and Firefox users get the microphone only; the Zoom and Teams desktop apps stay outside. The in-app recorder and the upload are the fallback for each.
 - **Video multiplies exposure.** Faces, screens and much larger files; hence off by default, a separate key and a short default retention.
 
-## 14. Decisions for the owner
+## 14. Owner decisions (decided 2026-11-04)
 
-| # | Decision | Recommendation | Why | If no answer |
-|---|---|---|---|---|
-| Q1 | When is the first slice built? | Steps M1 to M11 in M3 at P2, after M3's P0 and P1 work; the rest in the Icebox at P3 | Owners meet weekly, and this is a feature an OPC feels on day one; it does not compete with the monthly close work of M2 | It stays in the Icebox (Decision 19's default) |
-| Q2 | Who reads a meeting? | The recorder and the member attendees; the recorder may share it with the org; owners and admins see that it exists and may delete it, not read it | Meetings hold talk about pay, customers and people; the same rule as private notes (ADR-0037) and the per-member Vy rule | Built as recommended |
-| Q3 | How long are audio, video and transcripts kept by default? | Audio 30 days after the transcript is ready; a kept video 7 days (or 30); transcript and its results 12 months; all changeable | Audio is the most sensitive part and is only needed to check the transcript; video multiplies exposure (faces, screens) and a week is enough to look back at a shared screen; a year of text covers follow-up | Built as recommended |
-| Q4 | How strong is the consent step? | A required confirmation with the method and a notice to read aloud, recorded on the meeting; no per-participant signature in the first slice | It costs the user ten seconds and leaves a record; signatures from customers would kill the feature for small teams | Built as recommended, pending the lawyer |
-| Q5 | Where does audio go for transcription in Ludy Cloud? | A Whisper-class model run in Vietnam with no retention, chosen in the private Cloud layer; the module stays off in Ludy Cloud until chosen | Voices of customers are personal data, and a transfer abroad needs an assessment | Self-hosters choose their own; Ludy Cloud keeps the module off |
-| Q6 | Where does it live in the app? | A "Cuộc họp" tab in Ludy Notes, done by Vy | Notes is Vy's app, and a meeting's summary becomes a note later (N10) | Built as recommended |
+The owner approved the plan on 2026-11-04 in the coordinator's chat: "Đồng ý". Q1 to Q6 are decided as recommended; Q7 was decided the same day.
+
+| # | Decision | Decided (as recommended) | Why |
+|---|---|---|---|
+| Q1 | When is the first slice built? | Steps M1 to M11 in M3 at P2, after M3's P0 and P1 work; the rest in the Icebox at P3 | Owners meet weekly, and this is a feature an OPC feels on day one; it does not compete with the monthly close work of M2 |
+| Q2 | Who reads a meeting? | The recorder and the member attendees; the recorder may share it with the org; owners and admins see that it exists and may delete it, not read it | Meetings hold talk about pay, customers and people; the same rule as private notes (ADR-0037) and the per-member Vy rule |
+| Q3 | How long are audio, video and transcripts kept by default? | Audio 30 days after the transcript is ready; a kept video 7 days (or 30); transcript and its results 12 months; all changeable | Audio is the most sensitive part and is only needed to check the transcript; video multiplies exposure (faces, screens) and a week is enough to look back at a shared screen; a year of text covers follow-up |
+| Q4 | How strong is the consent step? | A required confirmation with the method and a notice to read aloud, recorded on the meeting; no per-participant signature in the first slice | It costs the user ten seconds and leaves a record; signatures from customers would kill the feature for small teams |
+| Q5 | Where does audio go for transcription in Ludy Cloud? | A Whisper-class model run in Vietnam with no retention, chosen in the private Cloud layer; the module stays off in Ludy Cloud until chosen | Voices of customers are personal data, and a transfer abroad needs an assessment |
+| Q6 | Where does it live in the app? | A "Cuộc họp" tab in Ludy Notes, done by Vy | Notes is Vy's app, and a meeting's summary becomes a note later (N10) |
 
 Decided: **Q7, video** (owner, 2026-11-04: "Có option cho cái extension là được mà? mặc định voice only, có thêm nút check record video thôi"): audio only by default; a "Ghi cả video" checkbox in the extension and in the in-app recorder, per meeting; a kept video has its own key; transcription always uses the audio.
 
 ## 15. Build steps
 
-Step ids M1 to M11 and L1 to L5 name the steps of this plan, not the milestones M1 to M3 of the backlog review; the milestone column says "M3" for the milestone M3 Paid pilot. One issue, one worktree, one PR each, end to end. New tenant tables go by the two-step rule (the invariant PR first). Milestone and priority as proposed in Q1; the issues are opened after the owner approves.
+Step ids M1 to M11 and L1 to L5 name the steps of this plan, not the milestones M1 to M3 of the backlog review; the milestone column says "M3" for the milestone M3 Paid pilot. One issue, one worktree, one PR each, end to end. New tenant tables go by the two-step rule (the invariant PR first). Milestone and priority as decided in Q1; the issues were opened on 2026-11-04 after the owner's approval. Steps M4 (transcription) and M6 (summary, decisions, action items) depend on ADR-0049, the member-scoped Vy (PR [#2572](https://github.com/DOS/Ludy/pull/2572)), which still waits for the Platform PO's acceptance.
 
 | # | Step | Scope | Acceptance | Files | Milestone, priority | Protected |
 |---|---|---|---|---|---|---|

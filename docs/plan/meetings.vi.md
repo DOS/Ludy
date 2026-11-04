@@ -1,6 +1,6 @@
 # Ghi chú cuộc họp bằng AI: tóm tắt cho chủ sở hữu
 
-> Tóm tắt tiếng Việt của [meetings.md](meetings.md) và [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (epic [#932](https://github.com/DOS/Ludy/issues/932), ngày 2026-11-03, đã sửa cùng ngày theo ý JOY về tiện ích trình duyệt và video). Bản tiếng Anh là bản chuẩn. **Đây mới là đề xuất để JOY bàn: chưa xây gì, chưa mở issue xây nào, chưa tốn tiền, chưa liên hệ nhà cung cấp nào.** Theo lời JOY: làm gọn, tính năng lõi trước, AI làm việc ngay trong luồng.
+> Tóm tắt tiếng Việt của [meetings.md](meetings.md) và [ADR-0047](../adr/0047-meeting-notes-audio-and-transcripts.md) (epic [#932](https://github.com/DOS/Ludy/issues/932), ngày 2026-11-03, đã sửa cùng ngày theo ý JOY về tiện ích trình duyệt và video). Bản tiếng Anh là bản chuẩn. **JOY đã duyệt kế hoạch ngày 2026-11-04 ("Đồng ý"): các câu 1 đến 6 theo đúng đề xuất, câu về video đã quyết cùng ngày.** Chưa xây gì, chưa tốn tiền; các issue xây đã được mở (xem bản tiếng Anh, mục 15). Bước chép lời và bước tóm tắt còn chờ ADR-0049 (cơ chế "Vy của từng người", PR [#2572](https://github.com/DOS/Ludy/pull/2572)) được PO Nền tảng chấp nhận. Theo lời JOY: làm gọn, tính năng lõi trước, AI làm việc ngay trong luồng.
 
 ## Người dùng được gì
 
@@ -59,16 +59,18 @@ Luật Bảo vệ dữ liệu cá nhân 91/2025 và Nghị định 356/2025 (tha
 - Ludy bắt buộc bước xác nhận trước khi nhận âm thanh, và lưu lại: ai xác nhận, lúc nào, báo bằng cách nào. Màn hình có sẵn một câu thông báo để đọc to.
 - Không lưu "dấu vân giọng nói" và không nhận diện người nói giữa các cuộc họp, vì giọng nói dùng để nhận diện có thể là dữ liệu sinh trắc học, loại nhạy cảm.
 
-## JOY cần quyết
+## JOY đã quyết (2026-11-04)
 
-| # | Quyết định | Đề xuất | Nếu chưa trả lời |
-|---|---|---|---|
-| 1 | Khi nào xây lát cắt đầu tiên? | Các bước M1 đến M11 trong mốc M3 (thí điểm có trả phí), độ ưu tiên P2, sau các việc P0 và P1 của M3; phần còn lại để sau (Icebox) | Giữ trong Icebox như mặc định cũ |
-| 2 | Ai đọc được một cuộc họp? | Người ghi và thành viên dự họp; có thể chia sẻ cho cả tổ chức; chủ và quản trị viên được xóa, không được đọc nếu không chia sẻ | Làm theo đề xuất |
-| 3 | Giữ âm thanh, video và bản chép lời bao lâu mặc định? | Âm thanh 30 ngày sau khi có bản chép lời; video (nếu giữ) 7 ngày, hoặc 30 ngày; bản chép lời và tóm tắt 12 tháng; tổ chức đổi được | Làm theo đề xuất |
-| 4 | Bước xác nhận đồng ý chặt đến đâu? | Bắt buộc tích xác nhận, chọn cách đã báo, có câu đọc to; chưa cần từng người ký | Làm theo đề xuất, chờ luật sư |
-| 5 | Trên Ludy Cloud, âm thanh gửi đi chép lời ở đâu? | Một mô hình họ Whisper chạy tại Việt Nam, không lưu lại âm thanh, chọn trong phần riêng của Ludy Cloud; chưa chọn thì tắt tính năng trên Cloud | Người tự cài tự chọn; Cloud để tắt |
-| 6 | Đặt ở đâu trong ứng dụng? | Thẻ "Cuộc họp" trong Ludy Notes, do Vy làm | Làm theo đề xuất |
+JOY trả lời "Đồng ý" ngày 2026-11-04, nên cả sáu câu dưới đây theo đúng đề xuất.
+
+| # | Quyết định | Đã chốt (theo đề xuất) |
+|---|---|---|
+| 1 | Khi nào xây lát cắt đầu tiên? | Các bước M1 đến M11 trong mốc M3 (thí điểm có trả phí), độ ưu tiên P2, sau các việc P0 và P1 của M3; phần còn lại để sau (Icebox) |
+| 2 | Ai đọc được một cuộc họp? | Người ghi và thành viên dự họp; có thể chia sẻ cho cả tổ chức; chủ và quản trị viên được xóa, không được đọc nếu không chia sẻ |
+| 3 | Giữ âm thanh, video và bản chép lời bao lâu mặc định? | Âm thanh 30 ngày sau khi có bản chép lời; video (nếu giữ) 7 ngày, hoặc 30 ngày; bản chép lời và tóm tắt 12 tháng; tổ chức đổi được |
+| 4 | Bước xác nhận đồng ý chặt đến đâu? | Bắt buộc tích xác nhận, chọn cách đã báo, có câu đọc to; chưa cần từng người ký |
+| 5 | Trên Ludy Cloud, âm thanh gửi đi chép lời ở đâu? | Một mô hình họ Whisper chạy tại Việt Nam, không lưu lại âm thanh, chọn trong phần riêng của Ludy Cloud; chưa chọn thì tắt tính năng trên Cloud |
+| 6 | Đặt ở đâu trong ứng dụng? | Thẻ "Cuộc họp" trong Ludy Notes, do Vy làm |
 
 Đã quyết: **video** (JOY, 2026-11-04: "Có option cho cái extension là được mà? mặc định voice only, có thêm nút check record video thôi"): mặc định chỉ ghi âm thanh; có ô "Ghi cả video" trong tiện ích và trong phần ghi của ứng dụng, chọn cho từng cuộc họp; video giữ lại có khóa riêng; chép lời luôn dùng âm thanh.
 
