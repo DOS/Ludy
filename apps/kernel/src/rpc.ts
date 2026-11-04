@@ -2607,6 +2607,14 @@ export function createRpcHandler(
           return runtime.execute('ads.launch.cancel', rest, { actor, orgId, idempotencyKey });
         }),
       ),
+      // Stopping a launch that has started (W2-4a): owners and admins; its commitment against the caps stays to at least today and its objects at the platform are paused
+      // afterwards, from the queue (never in this request).
+      stopLaunch: os.ads.stopLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
       // Asking the AI coworker for a draft (W1b): rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since
       // each ask leads to a paid model call in the worker; no counter of its own. The answer, or why there is none, comes back through campaignRequests.
       campaignRequests: os.ads.campaignRequests.handler(({ context, input }) => inAds(context, (orgId, actor) => runtime.query('ads.campaign.requests', input, { actor, orgId }))),

@@ -38,6 +38,8 @@ export const adsManifest = defineModule({
       ad_launch: columns([
         'org_id', 'id', 'ad_account_id', 'legal_entity_id', 'draft_id', 'proposal_id', 'plan_hash', 'tag', 'state', 'attempt', 'step', 'currency', 'daily_budget',
         'start_on', 'end_on', 'amount', 'commit_until', 'stop_reason', 'created_by', 'updated_by', 'created_at', 'updated_at', 'started_at', 'finished_at',
+        // The wind-down of a stopped launch (W2-4a): when its objects were paused at the platform, the runs begun and when the next is due, and why Ludy gave up.
+        'wound_down_at', 'wind_down_tries', 'wind_down_next_at', 'wind_down_code',
       ]),
       // What a launch created at the platform (W2-3, #2296): the platform's ids of the campaign, ad set, creatives and ads, and the names sent (business text
       // that carries the launch's tag), in the account's legal entity. What the platform last reported about each (W2-4's sync) is a status and a reason.

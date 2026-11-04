@@ -136,9 +136,14 @@ export const zAdsLaunchView = z.object({
   stopReason: z.string().nullable(),
   createdAt: z.string(),
   finishedAt: z.string().nullable(),
+  // A stopped launch's objects at the platform: being paused, paused (or there was nothing to pause), or Ludy gave up (the code says why) and the person pauses them by
+  // hand there. null for a launch that is not stopped.
+  windDown: z.object({ state: z.enum(['pending', 'done', 'gave_up']), code: z.string().nullable() }).nullable(),
 });
 export type AdsLaunchView = z.infer<typeof zAdsLaunchView>;
 export const zAdsLaunchCancelCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
+// Stopping a launch that has started (W2-4a): owners and admins; it keeps the commitment to at least today and the objects at the platform are paused.
+export const zAdsLaunchStopCall = z.strictObject({ launchId: zId, idempotencyKey: zId });
 
 // A draft as the builder shows it.
 export const zAdsCampaignDraftView = z.object({
