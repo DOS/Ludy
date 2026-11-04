@@ -120,6 +120,11 @@ export const stockItemSave = defineCommand({
     const item = await loadItem(ctx, input.itemId);
     if (input.code !== item.code) throw new DomainError('STOCK_ITEM_CODE_FIXED', 422, 'Mã hàng không đổi được sau khi đã tạo');
     if (input.legalEntityId !== null && input.legalEntityId !== item.legal_entity_id) throw new DomainError('STOCK_ITEM_ENTITY_FIXED', 422, 'Mặt hàng thuộc về một pháp nhân và không đổi sang pháp nhân khác được');
+    // A taught name carries a factor against the item's unit, so the unit stays while names are taught: the factor would otherwise be applied to a unit it was not made for.
+    if (!sameUnit(input.unit, item.unit)) {
+      const taught = await ctx.trx.selectFrom('crove_finance.stock_alias').select('id').where('org_id', '=', ctx.orgId).where('item_id', '=', item.id).limit(1).executeTakeFirst();
+      if (taught) throw new DomainError('STOCK_ITEM_IN_USE', 409, 'Mặt hàng đã có tên gán với hệ số quy đổi theo đơn vị hiện tại; hãy bỏ gán các tên trước khi đổi đơn vị tính');
+    }
     try {
       await ctx.trx
         .updateTable('crove_finance.stock_item')

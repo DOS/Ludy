@@ -207,6 +207,16 @@ suite('stock items, aliases and moves (#2512)', () => {
     await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, document_id, line_no) VALUES ($1, $2, '2026-11-03', 1, 'manual', $3, 1)", [o.orgId, id, randomUUID()])).rejects.toMatchObject({ code: '23514' });
   });
 
+  it('keeps the unit of an item that has taught names, whose factors are against that unit, until they are forgotten', async () => {
+    const o = await org();
+    const { id } = await save(o, { unit: 'chai' });
+    await execute(o, 'finance.stock_alias.teach', { itemId: id, source: 'text', key: 'thùng nước', factor: '12', unit: 'thùng' });
+    await expect(save(o, { itemId: id, unit: 'thùng' })).rejects.toMatchObject({ code: 'STOCK_ITEM_IN_USE' });
+    const alias = (await rows<{ id: string }>('SELECT id FROM crove_finance.stock_alias WHERE org_id = $1 AND item_id = $2', [o.orgId, id]))[0]?.id;
+    await execute(o, 'finance.stock_alias.forget', { aliasId: alias });
+    await expect(save(o, { itemId: id, unit: 'thùng' })).resolves.toEqual({ id });
+  });
+
   it('shows negative stock as it is, and lets members read and write while a viewer only reads', async () => {
     const o = await org();
     const { id } = await save(o, {}, o.member);
