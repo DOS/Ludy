@@ -87,6 +87,10 @@ export const DEPS_REACH: Readonly<Record<string, readonly Reach[]>> = {
   // The writers of the ad platforms (#2296 W2-3): what the launch job may call to create and change campaigns, the writers of @crove/ad-platform
   // (the sandbox's reaches nothing, the Meta one the Graph API host, to which its allowlisted fetch binds it). Only the launch job reaches the field.
   'channels.adWriters': ['provider:ad_platform'],
+  // The pausers of the ad platforms (#2296 W2-4a): what the pause job may call to pause the objects of a stopped launch, a narrowed view of the writers of
+  // @crove/ad-platform that finds the objects that carry the launch's tag and pauses them, and nothing else (it cannot create, activate or revoke). Each is
+  // bound to its platform's host by its allowlisted fetch (the sandbox's reaches nothing). Only the pause job reaches the field.
+  'channels.adPausers': ['provider:ad_platform'],
   // The e-invoice provider adapters (ADR-0044, #2502): the offline sandbox reaches nothing, and a real adapter its provider's own hosts, each bound to them by its
   // allowlisted fetch, so the field is classified for what it can reach: the providers of @crove/einvoice. Only the issue job reaches the field.
   'channels.einvoiceProviders': ['provider:einvoice'],
