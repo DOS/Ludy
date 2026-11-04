@@ -17,7 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'kysely';
 import { z } from 'zod';
 import type { MemberRole } from '@crove/db';
-import { zId } from '@crove/kernel-contract';
+import { isMailAddress, zId } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, type CommandContext } from '@crove/kernel-runtime';
 
 const ADMINS: readonly MemberRole[] = ['owner', 'admin'];
@@ -112,6 +112,8 @@ export interface MailRecord {
 // Writes the mail_message row for one mail, as suppressed when the address is suppressed for its stream.
 export async function createMailMessage(ctx: CommandContext, mail: MailToSend): Promise<MailRecord> {
   const to = mail.to.trim().toLowerCase();
+  // One mailbox: a list in this field would go to every address in it and slip past the suppression check, which hashes the whole string.
+  if (!isMailAddress(to)) throw new DomainError('VALIDATION', 422, 'Địa chỉ email người nhận không hợp lệ');
   const hash = await mailAddressHash(ctx, to);
   const status = (await isSuppressed(ctx, hash, mail.stream, ctx.now)) ? 'suppressed' : mail.status;
   const messageIdHeader = `<${randomUUID()}@${mail.messageIdDomain ?? deploymentMessageIdDomain ?? DEFAULT_MESSAGE_ID_DOMAIN}>`;
@@ -354,6 +356,10 @@ export const recordMailEvent = defineCommand({
         .execute();
       status = next;
     }
+    // A hard bounce (the address does not take mail) fails the reply it answered, though the mailer had accepted it.
+    if (input.kind === 'bounce_hard') await settleConversationReply(ctx, mail.id, 'failed', 'BOUNCED');
+    // A complaint (the customer marked it as spam) fails it too, though the mailer had taken it.
+    if (input.kind === 'complaint') await settleConversationReply(ctx, mail.id, 'failed', 'COMPLAINED');
     const suppression =
       input.kind === 'bounce_hard' ? { scope: 'all' as const, reason: 'hard_bounce' as const } : input.kind === 'complaint' ? { scope: 'marketing' as const, reason: 'complaint' as const } : null;
     let suppressed: MailScope | null = null;
@@ -399,7 +405,34 @@ export type QueuedMailBegin =
       // The org's inbound token (#669): a template whose replies should reach the Inbox names the org's inbound address
       // as the Reply-To.
       inboundToken: string;
+      // The org's conversation token (#2439): the Reply-To of an answer to a customer's mail; null before the address is issued.
+      conversationToken: string | null;
     };
+
+// A reply to an email conversation (#2439) is a mail of this queue, and its outcome is the outcome of the conversation message it carries: the mail's
+// source names the command that queued it and its source id the message. What the mail's state says about the message: sent (the mailer took it),
+// failed (refused, stopped by the suppression list, or bounced for good), unknown (the mailer may have taken it; never sent again blindly). The
+// message only moves on from the states a mail outcome can follow, so a late event never undoes a settled one.
+type SendState = 'queued' | 'sending' | 'sent' | 'failed' | 'unknown';
+const REPLY_FROM: Readonly<Record<'sent' | 'failed' | 'unknown', readonly SendState[]>> = {
+  sent: ['queued', 'sending', 'unknown'],
+  failed: ['queued', 'sending', 'unknown', 'sent'],
+  unknown: ['queued', 'sending'],
+};
+async function settleConversationReply(ctx: CommandContext, mailId: string, state: 'sent' | 'failed' | 'unknown', code: string | null): Promise<void> {
+  const mail = await ctx.trx.selectFrom('crove_kernel.mail_message').select(['source', 'source_id', 'message_id_header']).where('org_id', '=', ctx.orgId).where('id', '=', mailId).executeTakeFirst();
+  if (mail?.source !== 'kernel.conversation.reply' || !mail.source_id) return;
+  await ctx.trx
+    .updateTable('crove_kernel.conversation_message')
+    .set({ send_state: state, send_error_code: state === 'sent' ? null : (code ?? (state === 'failed' ? 'SEND_FAILED' : 'OUTCOME_UNKNOWN')) })
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', mail.source_id)
+    .where('direction', '=', 'out')
+    // Only the mail the message now carries settles it: a late event of an earlier mail (a retry made a new one) must not undo the current one.
+    .where('external_message_id', '=', mail.message_id_header)
+    .where('send_state', 'in', [...REPLY_FROM[state]])
+    .execute();
+}
 
 // A mail that cannot be sent leaves the queue as 'failed' with the reason, so no later pass picks it up again.
 async function stop(ctx: CommandContext, messageId: string, again: boolean, reason: string): Promise<QueuedMailBegin> {
@@ -410,6 +443,7 @@ async function stop(ctx: CommandContext, messageId: string, again: boolean, reas
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', messageId)
       .execute();
+    await settleConversationReply(ctx, messageId, 'failed', reason);
   }
   return { action: 'none', reason };
 }
@@ -450,6 +484,7 @@ export const beginQueuedMail = defineCommand({
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', mail.id)
         .execute();
+      await settleConversationReply(ctx, mail.id, 'failed', 'SUPPRESSED');
       ctx.audit({ message_id: mail.id, outcome: 'suppressed' });
       return { action: 'suppressed' };
     }
@@ -468,7 +503,7 @@ export const beginQueuedMail = defineCommand({
       .where('id', '=', mail.id)
       .execute();
     const { rows } = await sql<{ token: string | null }>`SELECT crove_kernel.mail_bounce_token(${mail.id}) AS token`.execute(ctx.trx);
-    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('inbound_token').where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
+    const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select(['inbound_token', 'conversation_token']).where('org_id', '=', ctx.orgId).executeTakeFirstOrThrow();
     const payload = mail.payload && typeof mail.payload === 'object' && !Array.isArray(mail.payload) ? (mail.payload as Record<string, unknown>) : {};
     return {
       action: 'send',
@@ -482,6 +517,7 @@ export const beginQueuedMail = defineCommand({
       messageIdHeader: mail.message_id_header,
       bounceToken: rows[0]?.token ?? null,
       inboundToken: tenant.inbound_token,
+      conversationToken: tenant.conversation_token,
     };
   },
 });
@@ -567,6 +603,7 @@ export const recordQueuedMail = defineCommand({
         .onConflict((oc) => oc.columns(['org_id', 'to_hash', 'scope']).where('lifted_at', 'is', null).doNothing())
         .execute();
     }
+    await settleConversationReply(ctx, mail.id, input.outcome === 'ambiguous' ? 'unknown' : input.outcome, input.errorCode ?? null);
     ctx.audit({ message_id: mail.id, attempt: input.attempt, outcome: input.outcome, ...(stop ? { suppressed: stop } : {}) });
     return { recorded: true };
   },

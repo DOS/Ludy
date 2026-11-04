@@ -36,6 +36,67 @@ function addressOf(address: Address | undefined): string | null {
   return address && typeof address.address === 'string' && address.address !== '' ? address.address : null;
 }
 
+// The Message-IDs a header names, "<id>" each: References holds a list, In-Reply-To one or more. Anything that is not an angle-bracketed id is
+// dropped, so a header cannot smuggle text through; at most maxMailRefs, the last ones (the nearest ancestors) kept.
+function messageIds(value: string | undefined): string[] {
+  if (!value) return [];
+  const found = value.match(/<[^<>\s]{1,300}>/g) ?? [];
+  return [...new Set(found)].slice(-EXTRACT_LIMITS.maxMailRefs);
+}
+
+// A bulk, list or auto-generated mail (RFC 3834 and the usual markers): the Inbox opens no conversation for it and never answers it.
+function isAutomated(headers: ReadonlyArray<{ key: string; value: string }>): boolean {
+  // Every header of the name counts, not the first only: a mail that starts "Auto-Submitted: no" and later carries "auto-replied" is automated.
+  const values = (name: string): string[] => headers.filter((h) => h.key.toLowerCase() === name).map((h) => h.value.trim().toLowerCase());
+  if (values('auto-submitted').some((value) => value !== 'no')) return true;
+  // A value may carry a comment: "bulk (mailer)".
+  if (values('precedence').some((value) => ['bulk', 'junk', 'list', 'auto_reply'].includes(value.replace(/\([^()]*\)/g, '').trim()))) return true;
+  return ['list-id', 'list-unsubscribe', 'x-autoreply', 'x-autorespond'].some((name) => values(name).length > 0);
+}
+
+// Whether the From header (or more than one of them) names more than one mailbox: the parser reads the first one, a mailer reads them all, so the Inbox
+// does not take such a mail for one customer's. A comma inside quotes, angle brackets or a comment does not count.
+function multipleFrom(headers: ReadonlyArray<{ key: string; value: string }>): boolean {
+  const from = headers.filter((h) => h.key.toLowerCase() === 'from');
+  if (from.length > 1) return true;
+  const value = from[0]?.value ?? '';
+  let quoted = false;
+  let angle = false;
+  let depth = 0;
+  for (let i = 0; i < value.length; i++) {
+    const ch = value[i] as string;
+    if (ch === '\\') i++;
+    else if (depth > 0) depth += ch === '(' ? 1 : ch === ')' ? -1 : 0;
+    else if (quoted) quoted = ch !== '"';
+    else if (ch === '"') quoted = true;
+    else if (ch === '(') depth = 1;
+    else if (ch === '<') angle = true;
+    else if (ch === '>') angle = false;
+    else if ((ch === ',' || ch === ';') && !angle) return true;
+  }
+  return false;
+}
+
+// The Authentication-Results headers, topmost first (a receiving server adds its own on top) and unfolded; at most maxAuthResults. A header longer than
+// maxAuthResultChars is never cut (a cut can turn "header.d=victim.test.evil.test" into "header.d=victim.test" and make a failure read as a pass): it is
+// kept as its authserv-id and "none", so it still stands in its place in the order and vouches for nothing.
+function authResultsOf(headers: ReadonlyArray<{ key: string; value: string }>): string[] {
+  return headers
+    .filter((h) => h.key.toLowerCase() === 'authentication-results')
+    .slice(0, EXTRACT_LIMITS.maxAuthResults)
+    .map((h) => {
+      const value = h.value.replace(/\s+/g, ' ').trim();
+      if (value.length <= EXTRACT_LIMITS.maxAuthResultChars) return value;
+      return `${(value.split(/[;\s]/)[0] ?? '').slice(0, 255)}; none`;
+    });
+}
+
+function sentAtOf(date: string | undefined): string | null {
+  if (!date) return null;
+  const time = Date.parse(date);
+  return Number.isNaN(time) ? null : new Date(time).toISOString();
+}
+
 function base64Of(content: ArrayBuffer | Uint8Array | string, encoding: string | undefined): string {
   if (typeof content === 'string') return encoding === 'base64' ? content : Buffer.from(content, 'utf8').toString('base64');
   return Buffer.from(content instanceof Uint8Array ? content : new Uint8Array(content)).toString('base64');
@@ -86,6 +147,14 @@ async function mime(bytes: Uint8Array): Promise<ExtractSuccess> {
         filename: cap(a.filename),
         content: base64Of(a.content, a.encoding),
       })),
+      fromName: cap(email.from?.name?.trim() || null),
+      sentAt: sentAtOf(email.date),
+      inReplyTo: cap(messageIds(email.inReplyTo)[0] ?? null),
+      // References, then every id In-Reply-To names (the nearest ancestors come last and are the ones kept when the list is cut).
+      references: messageIds(`${email.references ?? ''} ${email.inReplyTo ?? ''}`),
+      automated: isAutomated(email.headers),
+      multipleFrom: multipleFrom(email.headers),
+      authResults: authResultsOf(email.headers),
     },
   };
 }

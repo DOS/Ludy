@@ -264,6 +264,8 @@ const schema = z.object({
   ORG_LIMIT_INBOUND_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_ATTACHMENT_MB_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1000),
   ORG_LIMIT_EXTRACTION_PAGES_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1500),
+  // Customer mail to the org's conversation address (#2439) has a budget of its own, so spam on a published address never defers an invoice.
+  ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_AI_COST_PER_DAY: z.string().regex(/^\d{1,9}(\.\d{1,6})?$/).default('20'),
   AI_PRICE_INPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   AI_PRICE_OUTPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
@@ -555,6 +557,10 @@ const schema = z.object({
   // Inbound email: <token>@INBOUND_DOMAIN, delivered by a mail worker to POST /api/inbound/email.
   INBOUND_DOMAIN: optional,
   INBOUND_SECRET: optional,
+  // The name your receiving mail server writes in the Authentication-Results header it adds to each mail (its authserv-id, RFC 8601, usually its host
+  // name). With it, a customer mail whose sender passes DMARC, or DKIM for the From domain, is shown as verified, may join a thread by its References and
+  // brings the contact link with it; unset, no sender is verified (#2439). Never a name an earlier hop can write: your server must replace such a header.
+  INBOUND_AUTHSERV_ID: optional.pipe(z.string().regex(/^[A-Za-z0-9.-]{1,253}$/, 'INBOUND_AUTHSERV_ID is a host name').optional()),
   // During a rotation of INBOUND_SECRET (#1214): the value the mail worker may still send, accepted as well until the
   // worker sends the new one; then remove it (docs/runbooks/secret-rotation.md, section 2).
   INBOUND_SECRET_PREVIOUS: optional,
@@ -985,5 +991,6 @@ export function usageLimits(config: Config): UsageLimits {
     attachment_bytes: String(config.ORG_LIMIT_ATTACHMENT_MB_PER_DAY * 1024 * 1024),
     extraction_pages: String(config.ORG_LIMIT_EXTRACTION_PAGES_PER_DAY),
     ai_cost: config.ORG_LIMIT_AI_COST_PER_DAY,
+    conversation_emails: String(config.ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY),
   };
 }

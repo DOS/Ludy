@@ -103,6 +103,18 @@ export const PERSONAL_DATA_COLUMNS = {
     reason:
       'The name a platform gave for a customer who commented or wrote to the org (#2303): the erasure of that contact (kernel.conversation.erase_contact), the retention purge, the data deletion callback of Meta and the offboarding of the org delete the identity with its threads, so the generic erase leaves it alone',
   },
+  'crove_kernel.conversation_identity.external_user_id': {
+    kind: 'email',
+    handling: 'keep_record',
+    reason:
+      "For an email conversation the customer's address (#2439), found by a search of that address: erased with its threads by kernel.conversation.erase_contact, the retention purge and the offboarding of the org, as the display name is, so the generic erase leaves it alone",
+  },
+  'crove_kernel.conversation_message.email_refs': {
+    kind: 'other',
+    handling: 'not_personal',
+    reason:
+      'The Message-IDs a mail answers (#2439), kept only to join a reply to its thread: opaque ids made by mail programs, not addresses or text. They go with the message when the contact is erased, the retention purge runs or the org is offboarded',
+  },
   'crove_kernel.inbound_drop.address_id': { kind: 'other', handling: 'not_personal', reason: 'The id of an inbound address row' },
   // The org itself.
   'crove_kernel.tenant.tax_code': { kind: 'tax_code', handling: 'keep_org', reason: "The business's own tax code" },

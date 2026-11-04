@@ -15,6 +15,13 @@ export interface OutboundMail {
   returnPath?: string;
   // Where replies go (#669: the org's inbound address, so a client's reply with invoices reaches the Inbox).
   replyTo?: string;
+  // Threading (#2439): the Message-ID this mail answers and the Message-IDs of the thread so far, "<id@domain>" each, so the
+  // recipient's client files it with the conversation.
+  inReplyTo?: string;
+  references?: readonly string[];
+  // The name shown as the sender (the org's own name, #2439), the address staying the deployment's; a control character or an
+  // angle bracket in it is dropped by the provider.
+  fromName?: string;
   // Files sent with the mail, as text (#1319: a booking's .ics event).
   attachments?: readonly MailAttachment[];
 }

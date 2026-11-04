@@ -1396,6 +1396,8 @@ export interface KernelConversationMessageTable {
   platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   author_identity_id: ColumnType<string | null, string | null, NotGranted>;
+  email_refs: ColumnType<string[], string[] | undefined, NotGranted>;
+  sender_verified: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
 /** crove_kernel.conversation_note */
@@ -1454,6 +1456,8 @@ export interface KernelConversationTable {
   intent: string | null;
   intent_set_by: string | null;
   intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  subject: ColumnType<string | null, string | null, NotGranted>;
+  sender_unverified: Generated<boolean>;
 }
 
 /** crove_kernel.currency */
@@ -1626,8 +1630,8 @@ export interface KernelMailMessageTable {
   template_version: ColumnType<number, number | undefined, NotGranted>;
   to_address: string | null;
   to_hash: ColumnType<string, string, NotGranted>;
-  subject: ColumnType<string | null, string | null, NotGranted>;
-  payload: ColumnType<unknown, string | null | undefined, NotGranted>;
+  subject: string | null;
+  payload: ColumnType<unknown, string | null | undefined, string | null>;
   message_id_header: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   attempts: Generated<number>;
@@ -2021,6 +2025,7 @@ export interface KernelTenantTable {
   missing_invoice_reminder_day: number | null;
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
+  conversation_token: string | null;
 }
 
 /** crove_kernel.today_mail */
