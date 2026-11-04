@@ -16,6 +16,7 @@ export * from './tax-calendar.ts';
 export * from './vietnam-time.ts';
 export * from './bank-statement.ts';
 export * from './payment-reminder.ts';
+export * from './einvoice.ts';
 export * from './timeline.ts';
 export * from './audit.ts';
 export * from './sort-key.ts';
@@ -23,6 +24,7 @@ export * from './crm-deals.ts';
 export * from './contact-company.ts';
 export * from './contact-import.ts';
 export * from './conversations.ts';
+export * from './mail-address.ts';
 export * from './today.ts';
 export * from './coworkers.ts';
 

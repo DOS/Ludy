@@ -347,7 +347,7 @@ export const MAIL_EVENT_KINDS = ['delivered', 'deferred', 'bounce_hard', 'bounce
 export type MailEventTable = Refine<G.KernelMailEventTable, { kind: (typeof MAIL_EVENT_KINDS)[number] }>;
 
 // Per-org abuse limits (#675): what an org used, and the items kept for its next day's budget.
-export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost'] as const;
+export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails'] as const;
 export type UsageMetric = (typeof USAGE_METRICS)[number];
 // What a deferral may wait for: a limit above, or the AI budget of the month (#2382).
 export const USAGE_DEFERRAL_METRICS = [...USAGE_METRICS, 'ai_budget'] as const;
@@ -468,6 +468,22 @@ export type VatReturnFiledTable = Refine<
 // Learned bank-line rules (#2402): what a statement line's key is the key of. The key is stored only as a keyed hash.
 export const BANK_PARTY_RULE_KINDS = ['text', 'account'] as const;
 export type BankPartyRuleKind = (typeof BANK_PARTY_RULE_KINDS)[number];
+// A sales e-invoice draft (#2500, ADR-0044): its state, and the kind of buyer it is for (a business, a named individual, a consumer).
+export const EINVOICE_DRAFT_STATES = ['draft', 'submitting', 'pending', 'issued', 'rejected', 'failed'] as const;
+export const EINVOICE_BUYER_KINDS = ['business', 'individual', 'consumer'] as const;
+export type EInvoiceDraftTable = Refine<
+  G.FinanceEinvoiceDraftTable,
+  { state: Generated<(typeof EINVOICE_DRAFT_STATES)[number]>; buyer_kind: (typeof EINVOICE_BUYER_KINDS)[number]; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
+// A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
+export const EINVOICE_CONNECTION_STATES = ['works', 'wrong_credentials', 'api_not_enabled', 'ip_not_allowed', 'unreachable', 'signing_needs_person'] as const;
+export type EInvoiceConnectionState = (typeof EINVOICE_CONNECTION_STATES)[number];
+export type EInvoiceConnectionTable = Refine<
+  G.FinanceEinvoiceConnectionTable,
+  { last_test_state: EInvoiceConnectionState | null; legal_entity_id: LegalEntityColumn },
+  'legal_entity_id'
+>;
 export type BankPartyRuleTable = Refine<G.FinanceBankPartyRuleTable, { kind: ColumnType<BankPartyRuleKind, BankPartyRuleKind, never>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 
 // Learned account rules (#1399): the line's whole item description, normalized, or a keyword in it. What a rule matches
@@ -750,7 +766,7 @@ export type CrmImportRowTable = Refine<
 >;
 // The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
-export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
+export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 // The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
 export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -978,6 +994,8 @@ type Refined = Tables<{
   'crove_finance.cash_voucher': CashVoucherTable;
   'crove_finance.fixed_asset': FixedAssetTable;
   'crove_finance.bank_party_rule': BankPartyRuleTable;
+  'crove_finance.einvoice_draft': EInvoiceDraftTable;
+  'crove_finance.einvoice_connection': EInvoiceConnectionTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

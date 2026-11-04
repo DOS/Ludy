@@ -114,7 +114,7 @@ describe('suggestIntents', () => {
     const held = new Promise<void>((resolve) => (release = resolve));
     const { ai, calls } = setup({ intents: async (items) => (await held, items.map(() => 'spam' as Intent)), rank: async () => [1, 0] });
     const running = suggestIntents(ai, ORG, USER, [src('a')]);
-    const ranked = await matchContacts(ai, ORG, USER, { customerName: 'Hoa', phone: [], names: [{ partyId: 'n1', name: 'Hoa A' }, { partyId: 'n2', name: 'Hoa B' }] });
+    const ranked = await matchContacts(ai, ORG, USER, { customerName: 'Hoa', email: [], phone: [], names: [{ partyId: 'n1', name: 'Hoa A' }, { partyId: 'n2', name: 'Hoa B' }] });
     expect(ranked.ai).toBe('used');
     expect(ranked.candidates.map((c) => c.partyId)).toEqual(['n2', 'n1']);
     release();
@@ -143,6 +143,7 @@ describe('suggestIntents', () => {
 describe('matchContacts', () => {
   const found = (over: Partial<ContactCandidates> = {}): ContactCandidates => ({
     customerName: 'Hoa Nguyen',
+    email: [],
     phone: [{ partyId: 'p1', name: 'Trần Văn Bình' }],
     names: [
       { partyId: 'n1', name: 'Nguyễn Thị Hoa' },

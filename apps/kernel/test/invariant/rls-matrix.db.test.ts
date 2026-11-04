@@ -56,9 +56,9 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
-  'crove_finance.einvoice_draft',
-  'crove_finance.einvoice_draft_line',
-  'crove_finance.einvoice_series',
+  'crove_finance.stock_alias',
+  'crove_finance.stock_item',
+  'crove_finance.stock_move',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -160,6 +160,12 @@ const tag = () => randomUUID().slice(0, 8);
 // Series symbols are unique per entity and shaped like C26T plus two characters, so each seeded series takes the next one.
 let einvoiceSeq = 0;
 const einvoiceSymbol = () => `C26T${(einvoiceSeq++).toString(36).toUpperCase().padStart(2, '0')}`;
+// A provider connection is unique per entity, provider and seller tax code, and the matrix seeds several in one org: each takes the next 10-digit code.
+let einvoiceTaxSeq = 0;
+const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
+// Stock items (#2512) are unique per entity by code, and an alias by its key: each seeded one takes the next.
+let stockSeq = 0;
+const stockCode = () => `SP${(stockSeq++).toString().padStart(5, '0')}`;
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -731,6 +737,19 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2501: an org's connection to an e-invoice provider (ADR-0044 point 2): the channel connection that holds the sealed credential, the seller's tax code and the
+  // entity it issues for (the org's default, by its trigger). Tenant roles update only the last connection test (a column grant), so the update probes assign
+  // the state to itself.
+  'crove_finance.einvoice_connection': {
+    update: { set: 'last_test_state = last_test_state' },
+    make: (o) => {
+      const connection = { ...channelConnectionRow(o), provider: 'einvoice_sandbox' };
+      return {
+        setup: [{ table: 'crove_kernel.channel_connection', values: connection }],
+        row: { org_id: o.id, id: randomUUID(), channel_connection_id: connection.id, provider: 'einvoice_sandbox', seller_tax_code: einvoiceTaxCode() },
+      };
+    },
+  },
   // #2500: a sales e-invoice draft. Its series belongs to the same entity (a composite key), so each draft seeds a series of its own.
   'crove_finance.einvoice_draft': {
     make: (o) => {
@@ -922,6 +941,33 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
           balancingLine(o.id, entry, 1, 'debit'),
           balancingLine(o.id, entry, 2, 'credit'),
         ],
+      };
+    },
+  },
+  // #2512: a name a source uses for an item (a purchase line's description, a marketplace SKU); it takes its item's entity, and the item is seeded with it.
+  'crove_finance.stock_alias': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, alias_key: `rls-matrix-${stockCode()}` },
+      };
+    },
+  },
+  // #2512: an item of stock (ADR-0045 point 1), per legal entity (the org's default, by its trigger); its code is unique per entity. Tenant roles edit its name,
+  // so the update probes assign the name to itself.
+  'crove_finance.stock_item': {
+    update: { set: 'name = name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }),
+  },
+  // #2512: a move of stock, append-only (signed quantity, date, its source): tenant roles read and insert, and nothing updates or deletes a move. It takes its item's
+  // entity, and the item is seeded with it.
+  'crove_finance.stock_move': {
+    make: (o) => {
+      const item = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.stock_item', values: { org_id: o.id, id: item, code: stockCode(), name: 'RLS matrix', unit: 'cái', stock_account: '156' } }],
+        row: { org_id: o.id, id: randomUUID(), item_id: item, move_date: '2026-11-03', quantity: '5', source_type: 'manual' },
       };
     },
   },

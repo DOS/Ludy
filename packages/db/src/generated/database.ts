@@ -52,6 +52,10 @@ export interface CroveFinanceSchema {
   'crove_finance.collection_setting': FinanceCollectionSettingTable;
   'crove_finance.customer_collection': FinanceCustomerCollectionTable;
   'crove_finance.depreciation_line': FinanceDepreciationLineTable;
+  'crove_finance.einvoice_connection': FinanceEinvoiceConnectionTable;
+  'crove_finance.einvoice_draft': FinanceEinvoiceDraftTable;
+  'crove_finance.einvoice_draft_line': FinanceEinvoiceDraftLineTable;
+  'crove_finance.einvoice_series': FinanceEinvoiceSeriesTable;
   'crove_finance.fixed_asset': FinanceFixedAssetTable;
   'crove_finance.input_vat_check': FinanceInputVatCheckTable;
   'crove_finance.journal_entry': FinanceJournalEntryTable;
@@ -750,6 +754,75 @@ export interface FinanceDepreciationLineTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
 }
 
+/** crove_finance.einvoice_connection */
+export interface FinanceEinvoiceConnectionTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  channel_connection_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  seller_tax_code: ColumnType<string, string, NotGranted>;
+  last_test_state: string | null;
+  last_tested_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_finance.einvoice_draft_line */
+export interface FinanceEinvoiceDraftLineTable {
+  org_id: string;
+  id: Generated<string>;
+  legal_entity_id: string;
+  draft_id: string;
+  line_no: number;
+  description: string;
+  unit: string | null;
+  quantity: string;
+  unit_price: string;
+  amount: string;
+  vat_rate: string;
+  vat_amount: string;
+}
+
+/** crove_finance.einvoice_draft */
+export interface FinanceEinvoiceDraftTable {
+  org_id: string;
+  id: Generated<string>;
+  legal_entity_id: string;
+  state: Generated<string>;
+  series_id: string | null;
+  invoice_date: string;
+  currency: Generated<string>;
+  buyer_kind: string;
+  buyer_party_id: string | null;
+  buyer_tax_code: string | null;
+  buyer_name: string | null;
+  buyer_address: string | null;
+  buyer_email: string | null;
+  subtotal: string;
+  vat_amount: string;
+  total: string;
+  idempotency_key: Generated<string>;
+  provider_ref: string | null;
+  created_by: string | null;
+  created_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_finance.einvoice_series */
+export interface FinanceEinvoiceSeriesTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  provider: ColumnType<string, string, NotGranted>;
+  template_no: ColumnType<string, string, NotGranted>;
+  symbol: ColumnType<string, string, NotGranted>;
+  description: Generated<string>;
+  is_default: Generated<boolean>;
+  created_by: ColumnType<string | null, string | null, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
 /** crove_finance.fixed_asset */
 export interface FinanceFixedAssetTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -1343,6 +1416,8 @@ export interface KernelConversationMessageTable {
   platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   author_identity_id: ColumnType<string | null, string | null, NotGranted>;
+  email_refs: ColumnType<string[], string[] | undefined, NotGranted>;
+  sender_verified: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
 /** crove_kernel.conversation_note */
@@ -1401,6 +1476,8 @@ export interface KernelConversationTable {
   intent: string | null;
   intent_set_by: string | null;
   intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  subject: ColumnType<string | null, string | null, NotGranted>;
+  sender_unverified: Generated<boolean>;
 }
 
 /** crove_kernel.currency */
@@ -1573,8 +1650,8 @@ export interface KernelMailMessageTable {
   template_version: ColumnType<number, number | undefined, NotGranted>;
   to_address: string | null;
   to_hash: ColumnType<string, string, NotGranted>;
-  subject: ColumnType<string | null, string | null, NotGranted>;
-  payload: ColumnType<unknown, string | null | undefined, NotGranted>;
+  subject: string | null;
+  payload: ColumnType<unknown, string | null | undefined, string | null>;
   message_id_header: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   attempts: Generated<number>;
@@ -1968,6 +2045,7 @@ export interface KernelTenantTable {
   missing_invoice_reminder_day: number | null;
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
+  conversation_token: string | null;
 }
 
 /** crove_kernel.today_mail */

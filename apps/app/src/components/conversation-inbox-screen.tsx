@@ -21,6 +21,7 @@ import { useDebounced } from '../lib/use-debounced.ts';
 import { ConversationListItem, ConversationThread, POLL_MS, STATUSES, useMe } from './conversation-inbox.tsx';
 import { useIntentSuggestions } from './conversation-intent.tsx';
 import { ContactPanel } from './conversation-contact-panel.tsx';
+import { EmailAddressCard } from './conversation-email-address.tsx';
 
 const SEARCH_PAUSE_MS = 300;
 
@@ -103,6 +104,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
             <option value="">{ti('filters.kindAll')}</option>
             <option value="comment_thread">{t('kind.comment_thread')}</option>
             <option value="direct">{t('kind.direct')}</option>
+            <option value="email">{t('kind.email')}</option>
           </NativeSelect>
         </label>
         <label className="text-xs font-medium text-muted-foreground">
@@ -138,6 +140,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
         </label>
         <AvailabilitySwitch />
       </div>
+      <EmailAddressCard />
       <div className="grid gap-4 md:grid-cols-[minmax(0,18rem)_minmax(0,1fr)] lg:grid-cols-[minmax(0,18rem)_minmax(0,1fr)_minmax(0,16rem)]">
         <section aria-label={t('listLabel')} className="min-w-0 space-y-3" data-testid="inbox-list">
           <Tabs value={status} onValueChange={(v) => change({ status: v === 'new' ? undefined : (v as InboxSearch['status']) })}>

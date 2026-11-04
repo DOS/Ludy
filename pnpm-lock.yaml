@@ -490,6 +490,9 @@ importers:
       '@crove/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@crove/einvoice':
+        specifier: workspace:*
+        version: link:../../packages/einvoice
       '@crove/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract
@@ -669,6 +672,9 @@ importers:
       '@crove/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@crove/einvoice':
+        specifier: workspace:*
+        version: link:../../packages/einvoice
       '@crove/extract-contract':
         specifier: workspace:*
         version: link:../../packages/extract-contract
@@ -791,6 +797,8 @@ importers:
       '@types/pg':
         specifier: 'catalog:'
         version: 8.23.1
+
+  packages/einvoice: {}
 
   packages/extract-contract:
     dependencies:

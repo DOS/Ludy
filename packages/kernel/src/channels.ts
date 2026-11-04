@@ -425,7 +425,7 @@ const iso = (d: Date | string | null) => (d === null ? null : new Date(d).toISOS
 // The org's connections, live ones first. Never a credential: the columns are listed, not selected with *.
 export const channelsList = defineQuery({
   name: 'kernel.channel.list',
-  input: z.object({ includeRevoked: z.boolean().optional() }),
+  input: z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() }),
   access: ALL,
   handler: async (ctx: QueryContext, input): Promise<ChannelConnectionView[]> => {
     let q = ctx.trx
@@ -437,7 +437,13 @@ export const channelsList = defineQuery({
       // crowd a channel out.
       .where('provider', 'not like', 'bank\\_%')
       // Nor an ad account's (provider ..._ads, ADR-0040): the ads module lists it with its settings.
-      .where('provider', 'not like', '%\\_ads');
+      .where('provider', 'not like', '%\\_ads')
+      // Nor an e-invoice provider's (provider einvoice_..., ADR-0044): its external account id holds the seller's tax code and the legal entity, which only the
+      // finance module's list shows, to the members of that entity.
+      .where('provider', 'not like', 'einvoice\\_%')
+      // Nor the Inbox's email connection (#2439): it is made by the first customer mail and is not a place to publish. The screen that limits which
+      // channels a member may read (includeEmail) lists it, since reading email is one of those channels.
+      .where('provider', input.includeEmail ? 'is not' : '<>', input.includeEmail ? null : 'email');
     if (!input.includeRevoked) q = q.where('status', '<>', 'revoked');
     const rows = await q.orderBy(sql`status = 'revoked'`).orderBy('connected_at', 'desc').limit(500).execute();
     return rows.map((r) => ({

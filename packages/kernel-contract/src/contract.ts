@@ -189,6 +189,7 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
@@ -236,6 +237,7 @@ import {
   zSavedReplyList,
   zSavedReplyListed,
   zSavedReplyUpdate,
+  zConversationAddress,
 } from './conversations.ts';
 import { zCashVoucherPage, zCashVoucherRequest, zVoucherCursor } from './cash-voucher.ts';
 import { zDepreciationRequest, zJournalVoucherRequest, zYearClosingRequest } from './journal-voucher.ts';
@@ -383,6 +385,11 @@ export const contract = {
     // Owner only. Retires the org's inbound email address for good and returns the new one (null when the server
     // has no inbound domain). A retry with the same idempotencyKey does not rotate again.
     rotateInbound: oc.input(z.object({ idempotencyKey: zId })).output(z.object({ inboundAddress: z.string().nullable() })),
+    // Owners and admins (#2439): the Inbox's own email address, made the first time it is asked for and the same one after; null when the server has no
+    // inbound domain.
+    issueConversationAddress: oc.input(z.object({})).output(zConversationAddress),
+    // Owner only (R3): retires the Inbox's email address for good and returns the new one. A retry with the same idempotencyKey does not rotate again.
+    rotateConversationAddress: oc.input(z.object({ idempotencyKey: zId })).output(zConversationAddress),
     // Owners only (R3). A retry with the same idempotencyKey returns the first result.
     changeMemberRole: oc
       .input(z.object({ userId: zId, role: zRole, idempotencyKey: zId }))
@@ -449,7 +456,7 @@ export const contract = {
   },
   // Connected channel accounts (ADR-0025). Every member lists them; owners and admins connect and disconnect.
   channels: {
-    list: oc.input(z.object({ includeRevoked: z.boolean().optional() })).output(z.array(zChannelConnection)),
+    list: oc.input(z.object({ includeRevoked: z.boolean().optional(), includeEmail: z.boolean().optional() })).output(z.array(zChannelConnection)),
     // The offline sandbox channel, when the deployment enables it. Connecting again with the same key reconnects the
     // same sandbox account.
     connectSandbox: oc
@@ -1585,6 +1592,44 @@ export const contract = {
     customer: {
       get: oc.input(z.object({ partyId: zId })).output(zCustomerCollection),
       set: oc.input(zCustomerCollectionSet).output(zCustomerCollection),
+    },
+  },
+  // Sales e-invoice drafts and the series they are issued from (#2500, ADR-0044). Nothing issues an invoice and no provider is called: a draft is made, checked,
+  // edited and deleted while it is a draft; the amounts are computed by the server from the lines. Every role reads; owners, admins and members write drafts;
+  // owners and admins read a series from the provider (the offline sandbox, when EINVOICE_SANDBOX is on).
+  einvoice: {
+    status: oc.output(zEInvoiceStatus),
+    series: {
+      list: oc.output(z.array(zEInvoiceSeries)),
+      // EINVOICE_DISABLED (404) when the sandbox is off; LEGAL_ENTITY_NOT_ALLOWED (403) for an entity the caller may not see.
+      sync: oc.input(zEInvoiceSeriesSync).output(zEInvoiceSeriesSynced),
+      // The entity's default series: owners and admins; EINVOICE_SERIES_NOT_FOUND (404).
+      setDefault: oc.input(zEInvoiceSeriesSetDefault).output(z.object({ series: z.array(zEInvoiceSeries) })),
+    },
+    // The org's own account at a provider (#2501, ADR-0044 point 2). The credential is sealed in the kernel and never in an answer, a log or an audit row. Every member
+    // reads the connections and their last test; owners and admins connect, test and disconnect.
+    providers: oc.output(z.array(zEInvoiceProviderInfo)),
+    connections: {
+      list: oc.output(z.array(zEInvoiceConnection)),
+      // EINVOICE_DISABLED (404) for a provider this deployment does not offer, EINVOICE_SIGNING_TOKEN (422) for a provider whose signature needs the seller's own token,
+      // EINVOICE_FIELDS (422) when the fields are not the adapter's, EINVOICE_TAX_CODE_NEEDED and EINVOICE_TAX_CODE_MISMATCH (422), EINVOICE_CONNECTION_EXISTS (409),
+      // FORBIDDEN (403) unless owner or admin.
+      connect: oc.input(zEInvoiceConnect).output(z.object({ id: zId })),
+      // Reads the provider's templates and series and records the state; the series it finds are added to the connection's entity. EINVOICE_PROVIDER_NOT_READY (503)
+      // for a provider that is reached through the worker.
+      test: oc.input(z.object({ id: zId })).output(zEInvoiceConnectionTested),
+      disconnect: oc.input(z.object({ id: zId })).output(z.object({ removed: z.boolean() })),
+    },
+    drafts: {
+      // The drafts of one legal entity, or of every entity the caller may see when none is named.
+      list: oc.input(z.object({ legalEntityId: zId.optional() }).optional()).output(z.array(zEInvoiceDraftSummary)),
+      get: oc.input(z.object({ draftId: zId })).output(zEInvoiceDraft),
+      // The live check of the form as it stands: the computed lines, the totals and the issues, nothing stored.
+      check: oc.input(zEInvoiceDraftCheckInput).output(zEInvoiceDraftCheck),
+      // EINVOICE_DRAFT_NOT_FOUND (404), EINVOICE_NOT_DRAFT (409), EINVOICE_SERIES_NOT_FOUND (404), EINVOICE_SERIES_ENTITY (422), EINVOICE_ENTITY_FIXED (422),
+      // EINVOICE_DRAFT_INVALID (422), PARTY_NOT_FOUND (404). A draft that fails a check is saved all the same, with its issues.
+      save: oc.input(zEInvoiceDraftSave).output(zEInvoiceDraft),
+      delete: oc.input(z.object({ draftId: zId })).output(z.object({ deleted: z.literal(true) })),
     },
   },
   accountRules: {

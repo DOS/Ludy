@@ -17,6 +17,9 @@ const RUNNER = 'crove_test_runner';
 // Roles are cluster-wide. When an earlier run already created them, the runner gets the ADMIN OPTION it
 // would hold as their creator.
 const CROVE_ROLES = ['crove_tenant', 'crove_app', 'crove_worker', 'crove_definer_tenant', 'crove_auth_reader'];
+// Roles a later migration adds (#2502: crove_definer_einvoice, the owner of the e-invoice submit definer). The runner is given the same ADMIN OPTION over each that already exists in the
+// cluster, as for the roles above; none has to exist yet, so this accepts the database before and after the migration that makes it. The step-two change moves it into CROVE_ROLES.
+const LATER_ROLES = ['crove_definer_einvoice'];
 
 // A run's database is crove_test_runner_<id> (plus <id>_notowner) and its roles t100_test_runner_<id>_*, with
 // <id> = <Date.now()>_<random>. Another run's leftovers are swept once they are this old and unused.
@@ -270,7 +273,7 @@ suite('migrations with a runner that is not a superuser', () => {
         password,
       ]);
       await admin.query(rows[0]?.sql ?? '');
-      for (const role of CROVE_ROLES) {
+      for (const role of [...CROVE_ROLES, ...LATER_ROLES]) {
         await admin.query(`DO $$ BEGIN
           IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN
             GRANT ${role} TO ${RUNNER} WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
