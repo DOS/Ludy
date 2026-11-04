@@ -642,6 +642,8 @@ export const en = {
     empty: 'No items yet',
     emptyHint: 'Add an item so purchase and sales invoices move stock when a line matches its code or a name you assigned.',
     unassignedTitle: 'Lines not assigned yet',
+    unassignedCapped: 'Showing the {count, number} newest lines; assign some to see older ones.',
+    negativeOpening: 'Negative opening stock: the provisional cost is not reliable until the purchase is entered',
     unassignedHint: 'These are goods lines of posted invoices that matched no item, so they moved no stock. Pick an item to assign one; next time the name matches by itself. A sale line booked to 511 whose text is the code of an item or a name you taught still moves stock by itself; to have a line listed here, book it to 5111.',
     noItemsToAssign: 'Add an item before assigning lines.',
     invoice: 'Invoice',

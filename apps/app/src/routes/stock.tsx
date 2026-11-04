@@ -226,20 +226,34 @@ function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undef
       </div>
       {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
-        <TableSkeleton columns={8} />
+        <TableSkeleton columns={12} />
       ) : report.error ? (
         <ErrorText>{errorMessage(report.error)}</ErrorText>
       ) : report.data.length === 0 ? (
         <p className="text-sm text-subtle-foreground">{t('reportEmpty')}</p>
       ) : (
-        <DataTable head={[t('code'), t('name'), t('openingQty'), t('inQty'), t('outQty'), t('closingQty'), t('closingVal'), t('unitCost'), '']} numeric={[2, 3, 4, 5, 6, 7]}>
+        <DataTable
+          head={[t('code'), t('name'), t('openingQty'), t('openingVal'), t('inQty'), t('inVal'), t('outQty'), t('outVal'), t('closingQty'), t('closingVal'), t('unitCost'), '']}
+          numeric={[2, 3, 4, 5, 6, 7, 8, 9, 10]}
+        >
           {report.data.map((r) => (
             <TableRow key={r.itemId} data-testid="stock-report-row">
               <TableCell className="px-4 py-3">{r.code}</TableCell>
-              <TableCell className="px-4 py-3">{r.name}</TableCell>
+              <TableCell className="px-4 py-3">
+                {r.name}
+                {/* The month's average is worked from the opening stock: a negative one (goods sold before they were bought in) makes the provisional cost unreliable until the purchase is entered. */}
+                {r.openingQuantity.startsWith('-') && (
+                  <span className="block text-xs text-warning" data-testid="stock-negative-opening">
+                    {t('negativeOpening')}
+                  </span>
+                )}
+              </TableCell>
               <TableCell className={NUM}>{r.openingQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.openingValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.inQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.inValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.outQuantity}</TableCell>
+              <TableCell className={NUM}>{f.money(r.outValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.closingQuantity}</TableCell>
               <TableCell className={NUM}>{f.money(r.closingValue, 'VND')}</TableCell>
               <TableCell className={NUM}>{r.unitCost === null ? '' : f.decimal(r.unitCost, 4)}</TableCell>
@@ -255,6 +269,9 @@ function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undef
     </section>
   );
 }
+
+// The query's default page: the newest lines first.
+const UNASSIGNED_SHOWN = 200;
 
 function UnassignedRow({ line, items, canWrite }: { line: StockUnassignedLine; items: StockItem[]; canWrite: boolean }) {
   const t = useTranslations('stock');
@@ -363,6 +380,12 @@ export function StockPage() {
           <h2 className="text-base font-medium text-foreground">{t('unassignedTitle')}</h2>
           <p className="mb-3 text-sm text-subtle-foreground">{t('unassignedHint')}</p>
           {canWrite && list.filter((i) => i.active).length === 0 && <p className="mb-3 text-sm text-foreground">{t('noItemsToAssign')}</p>}
+          {/* A work queue: an assigned line leaves it and an older one takes its place. */}
+          {lines.length >= UNASSIGNED_SHOWN && (
+            <p className="mb-3 text-sm text-subtle-foreground" data-testid="stock-unassigned-capped">
+              {t('unassignedCapped', { count: UNASSIGNED_SHOWN })}
+            </p>
+          )}
           <DataTable head={[t('invoice'), t('description'), t('quantity'), '']} numeric={[2]}>
             {lines.map((line) => (
               <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} />

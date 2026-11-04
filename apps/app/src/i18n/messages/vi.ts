@@ -640,6 +640,8 @@ export const vi = {
     empty: 'Chưa có mặt hàng nào',
     emptyHint: 'Thêm mặt hàng để hóa đơn mua và bán tự ghi kho khi tên hàng khớp với mã hoặc với tên đã gán.',
     unassignedTitle: 'Dòng hàng chưa gán',
+    unassignedCapped: 'Đang hiện {count, number} dòng mới nhất; gán bớt để các dòng cũ hơn hiện ra.',
+    negativeOpening: 'Tồn đầu kỳ âm: giá vốn tạm tính chưa đáng tin cho tới khi nhập hàng bù',
     unassignedHint: 'Đây là các dòng hàng hóa của hóa đơn đã ghi sổ mà chưa khớp mặt hàng nào, nên chưa ghi kho. Chọn mặt hàng để gán; lần sau tên này tự khớp. Dòng bán hàng hạch toán vào 511 mà ghi đúng mã hoặc tên đã gán của một mặt hàng thì vẫn tự ghi kho; muốn dòng hiện ở đây, hãy hạch toán dòng vào 5111.',
     noItemsToAssign: 'Hãy thêm mặt hàng trước khi gán.',
     invoice: 'Hóa đơn',
