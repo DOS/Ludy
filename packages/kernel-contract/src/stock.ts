@@ -124,10 +124,17 @@ export const zStockReportRow = z.object({
   closingQuantity: z.string(),
   closingValue: z.string(),
   unitCost: z.string().nullable(),
+  // True when the month is closed for the item's entity: the figures are what the close stored, not a provisional average.
+  closed: z.boolean(),
 });
 export type StockReportRow = z.infer<typeof zStockReportRow>;
 
 export const zStockCardInput = z.strictObject({ itemId: zId, month: zStockMonth });
+
+// A month a person closed (#2513): the cost of goods sold that was posted for it, as a voucher of the books (null when nothing left the stock).
+export const zStockPeriodsInput = z.strictObject({ legalEntityId: zId.optional() });
+export const zStockPeriod = z.object({ id: zId, legalEntityId: zId, month: zStockMonth, totalCost: z.string(), voucherId: zId.nullable(), closedAt: z.string() });
+export type StockPeriod = z.infer<typeof zStockPeriod>;
 
 // An item's stock card for a month: its moves in order with the balance after each.
 export const zStockCard = z.object({
@@ -136,7 +143,8 @@ export const zStockCard = z.object({
   openingQuantity: z.string(),
   closingQuantity: z.string(),
   unitCost: z.string().nullable(),
-  provisional: z.literal(true),
+  // False once the month is closed.
+  provisional: z.boolean(),
   moves: z.array(
     z.object({
       id: zId,

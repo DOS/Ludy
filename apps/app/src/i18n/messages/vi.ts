@@ -8186,6 +8186,7 @@ export const vi = {
       stock: {
         assign: 'Gán dòng hóa đơn cho mặt hàng',
         card: 'Xem thẻ kho của mặt hàng',
+        periods: 'Xem các tháng đã đóng sổ kho',
         report: 'Xem báo cáo nhập xuất tồn',
         unassigned: 'Xem các dòng hàng chưa gán',
       },

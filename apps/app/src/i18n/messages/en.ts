@@ -8189,6 +8189,7 @@ export const en = {
       stock: {
         assign: 'Assign an invoice line to an item',
         card: 'View the stock card of an item',
+        periods: 'View the months of stock that were closed',
         report: 'View the stock in and out report',
         unassigned: 'View the goods lines not assigned yet',
       },
