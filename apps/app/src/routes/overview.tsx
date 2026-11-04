@@ -40,7 +40,8 @@ const TARGET = {
 } as const satisfies Record<WaitingKey, { icon: NavIconName }>;
 
 const APP_CARD = {
-  accounting: { to: '/o/$slug/vat', icon: 'appAccounting' },
+  // The Kế toán app opens on its Tổng quan (#2631).
+  accounting: { to: '/o/$slug/accounting', icon: 'appAccounting' },
   // Engage holds the CRM's screens too (#2435), so its card shows the posts' figure and the bookings' one.
   social: { to: '/o/$slug/social', icon: 'appSocial' },
 } as const satisfies Record<Exclude<AppId, 'home'>, { to: string; icon: NavIconName }>;

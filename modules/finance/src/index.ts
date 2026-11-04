@@ -33,6 +33,7 @@ import { customersList } from './parties.ts';
 import { financeNotificationCommands } from './notifications.ts';
 import { collectionSettingCommands, collectionSettingQueries } from './collection-settings.ts';
 import { paymentReminderCommands, paymentReminderQueries } from './payment-reminders.ts';
+import { financeOverviewQuery } from './overview.ts';
 import { einvoiceConnectionCommands, einvoiceConnectionQueries } from './einvoice-connections.ts';
 import { einvoiceCommands, einvoiceQueries } from './einvoice-drafts.ts';
 import { stockCommands, stockQueries } from './stock.ts';
@@ -179,6 +180,7 @@ export const financeQueries = [
   ledgerAccountQuery,
   ledgerBookQuery,
   statementsPeriodQuery,
+  financeOverviewQuery,
   openingBalancePreview,
   vouchersList,
   cashVouchers,

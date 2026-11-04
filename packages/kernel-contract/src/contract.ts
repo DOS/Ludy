@@ -194,6 +194,7 @@ import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInv
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
+import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import {
@@ -1736,6 +1737,14 @@ export const contract = {
     setReminder: oc
       .input(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() }))
       .output(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() })),
+  },
+  // The Tổng quan of the Kế toán app (#2631), every role: get answers the four cards (cash 111 + 112, profit before tax, receivables 131, payables 331) for a
+  // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
+  // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
+  // do not hold (ai says why there is none).
+  financeOverview: {
+    get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
+    explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.
