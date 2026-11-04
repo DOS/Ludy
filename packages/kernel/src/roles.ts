@@ -122,7 +122,7 @@ interface PgError {
 }
 
 // The refusals of role_assignment_grant() and role_assignment_revoke() (P0001, the code as message) as domain errors.
-function roleRefusal(error: unknown): never {
+export function roleRefusal(error: unknown): never {
   const pg = error as PgError;
   if (pg?.code === 'P0001') {
     switch (pg.message) {

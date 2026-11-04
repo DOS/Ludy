@@ -70,7 +70,7 @@ export const kernelManifest = defineModule({
       mail_suppression: columns(['org_id', 'id', 'to_hash', 'scope', 'reason', 'source_message_id', 'created_by', 'created_at', 'lifted_at', 'lifted_by', 'lift_reason']),
       // A member's availability for the inbox (CV3, #2306): available or away, which decides whom a new conversation is told to.
       member_availability: columns(['org_id', 'id', 'user_id', 'status', 'until', 'updated_at']),
-      member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids'], { email: 'contact' }),
+      member_invite: columns(['org_id', 'id', 'role', 'token_sha256', 'status', 'invited_by', 'created_at', 'expires_at', 'accepted_at', 'accepted_by', 'revoked_at', 'revoked_by', 'legal_entity_ids', 'role_key', 'role_scope'], { email: 'contact' }),
       notification: columns(['org_id', 'id', 'user_id', 'kind', 'dedupe_key', 'event_id', 'subject_type', 'subject_id', 'detail', 'created_at', 'read_at', 'legal_entity_id']),
       notification_mute: columns(['org_id', 'user_id', 'kind', 'created_at']),
       number_allocation: columns(['org_id', 'id', 'series_id', 'legal_entity_id', 'number', 'target_type', 'target_id', 'allocated_by', 'allocated_at']),
