@@ -99,13 +99,13 @@ const PINNED = [
   },
   {
     pkg: 'undici',
-    version: '7.30.0',
+    version: '7.30.1',
     reason: "fetch's multipart/form-data reader (Request.formData()), the same one Node ships built in",
     files: { 'lib/web/fetch/formdata-parser.js': 'd5d048201a040865a4376e423fd78b102ad164cb51ad7b0ade56897c7318bd6b' },
   },
   {
     pkg: 'undici',
-    version: '7.30.0',
+    version: '7.30.1',
     reason: "llhttp inlined as WebAssembly, the HTTP/1.1 parser undici's fetch runs and Node's own HTTP is built on",
     files: {
       'lib/llhttp/llhttp-wasm.js': '344f7ae80c983694372d9234584a1261ef5492ab219d6e573e933f5d1c715b00',
