@@ -49,6 +49,8 @@ const MACHINERY = new Set([
   'crove_kernel.outbox_archive',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
+  // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
+  'crove_kernel.subject_key',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -65,6 +67,7 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_kernel.subject_key',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -1517,6 +1520,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // every row gets its own.
   'crove_kernel.saved_view': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, scope: 'crm.deal', name: `rls-${tag()}`, filters: '{"v":1,"all":[]}' } }),
+  },
+  // #2640: the wrapped data key of a subject (ADR-0017 section 2), the first of which is a payroll employee's. Written and read by definers alone, so no role may touch it.
+  'crove_kernel.subject_key': {
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: `\\x${'00'.repeat(60)}` } }),
   },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),
