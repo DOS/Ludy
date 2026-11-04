@@ -133,6 +133,34 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
       )
     )[0];
   const move = (c: pg.Client, org: Org, id: string, set: string) => c.query(`UPDATE crove_ads.ad_launch SET ${set} WHERE org_id = $1 AND id = $2`, [org.orgId, id]);
+  // The system's move of a launching launch to live. W2-4b makes the database refuse it (ADS_LAUNCH_ACTIVATION) unless the launch's own approval is stamped, every
+  // object is recorded, the switches are on and today is inside the flight: the activation job meets those conditions, a fixture of this file (a made-up
+  // proposal, no objects, a flight in 2031) does not. So the move is made as the system first, the way the job makes it, and when the database refuses it for
+  // the activation's reasons only, the fixture is put in the state by the table's owner with the guard off for that one statement, as a backfill would. The guard's
+  // other rules (the graph, the frozen states, the stop) are what the rest of this file tests, and its activation rule has its own tests (W2-4b).
+  const activationRefusal = (e: unknown) => (e as { code?: string; message?: string })?.code === '42501' && String((e as { message?: string }).message).includes('ADS_LAUNCH_ACTIVATION');
+  async function seedLive(org: Org, id: string, set: string) {
+    await admin(async (c) => {
+      await c.query('BEGIN');
+      try {
+        await c.query('ALTER TABLE crove_ads.ad_launch DISABLE TRIGGER launch_guard');
+        await move(c, org, id, set);
+        await c.query('ALTER TABLE crove_ads.ad_launch ENABLE ALWAYS TRIGGER launch_guard');
+        await c.query('COMMIT');
+      } catch (e) {
+        await c.query('ROLLBACK');
+        throw e;
+      }
+    });
+  }
+  async function goLive(org: Org, id: string, set = `state = 'live'`) {
+    try {
+      await inContext(org, 'system', (c) => move(c, org, id, set), true);
+    } catch (e) {
+      if (!activationRefusal(e)) throw e;
+      await seedLive(org, id, set);
+    }
+  }
 
   beforeAll(async () => {
     const root = new pg.Client({ connectionString: ADMIN });
@@ -306,7 +334,7 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
     await inContext(org, 'system', (c) => move(c, org, run.id, `state = 'launching', attempt = 2`), true);
     expect(await get(org, run.id)).toMatchObject({ state: 'launching', attempt: 2 });
     await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET attempt = 3 WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_FORBIDDEN'));
-    await inContext(org, 'system', (c) => move(c, org, run.id, `state = 'live', step = 'activate'`), true);
+    await goLive(org, run.id, `state = 'live', step = 'activate'`);
     await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'queued' WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_STATE'));
     // The writer cannot stamp the start or the finish: the guard does.
     await inContext(org, 'system', (c) => refused(c, `UPDATE crove_ads.ad_launch SET finished_at = now() WHERE org_id = $1 AND id = $2`, [org.orgId, run.id], 'ADS_LAUNCH_FORBIDDEN'));
@@ -344,7 +372,10 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
         failed: [`state = 'launching'`, `state = 'failed', commit_until = NULL`],
         cancelled: [`state = 'cancelled'`],
       };
-      for (const set of path[state] ?? []) await inContext(org, state === 'cancelled' ? 'owner' : 'system', (c) => move(c, org, l.id, set), true);
+      for (const set of path[state] ?? []) {
+        if (set === `state = 'live'`) await goLive(org, l.id, set);
+        else await inContext(org, state === 'cancelled' ? 'owner' : 'system', (c) => move(c, org, l.id, set), true);
+      }
       expect((await get(org, l.id))?.state).toBe(state);
       return l;
     };
@@ -390,7 +421,7 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
     const org = await makeOrg();
     const l = await launch(org);
     await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'launching'`), true);
-    await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'live'`), true);
+    await goLive(org, l.id);
     // Shortened by the system (a person's stop does it with the move to stopped): earlier is accepted, later is not, before the first day is not a window.
     await inContext(org, 'system', (c) => move(c, org, l.id, `commit_until = '2031-03-07'`), true);
     expect((await get(org, l.id))?.commit_until).toBe('2031-03-07');
@@ -407,6 +438,20 @@ suite('the launch ledger of running ads (#2296, W2-2)', () => {
     expect(await get(org, failed.id)).toMatchObject({ state: 'failed', commit_until: null });
     await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'stopped', commit_until = '2031-03-07'`), true);
     expect(await get(org, l.id)).toMatchObject({ state: 'stopped', commit_until: '2031-03-07' });
+  });
+
+  // The fixture's own way to a live launch (goLive, above) must put a launching launch in the state and leave the guard on, or every test that uses it passes for nothing.
+  it('puts a fixture in the live state with the guard off for one statement only, and the guard is on again after', async () => {
+    const org = await makeOrg();
+    const l = await launch(org);
+    await inContext(org, 'system', (c) => move(c, org, l.id, `state = 'launching'`), true);
+    await seedLive(org, l.id, `state = 'live', step = 'activate'`);
+    expect(await get(org, l.id)).toMatchObject({ state: 'live', step: 'activate' });
+    const guard = await rows<{ tgenabled: string }>(`SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = 'crove_ads.ad_launch'::regclass AND tgname = 'launch_guard'`);
+    expect(guard).toEqual([{ tgenabled: 'A' }]);
+    await inContext(org, 'member', (c) => refused(c, `UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = '2031-03-04' WHERE org_id = $1 AND id = $2`, [org.orgId, l.id], 'ADS_LAUNCH_FORBIDDEN'));
+    expect(activationRefusal({ code: '42501', message: 'ADS_LAUNCH_ACTIVATION' })).toBe(true);
+    expect(activationRefusal({ code: '42501', message: 'ADS_LAUNCH_STATE' })).toBe(false);
   });
 
   it('follows its account when the account moves to another legal entity, whatever state the launch is in, and nothing else changes', async () => {
