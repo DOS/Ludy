@@ -31,20 +31,22 @@ interface Call {
   url: URL;
   headers: Record<string, string>;
   body: string | null;
+  redirect: string | undefined;
 }
 
-type Answer = { status?: number; body: unknown } | Error;
+type Answer = { status?: number; body?: unknown; raw?: string } | Error;
 
 // A fetch that answers from a list of recorded answers, in order, and remembers each request.
 function recorded(answers: Answer[]): { fetch: Fetch; calls: Call[] } {
   const calls: Call[] = [];
   let i = 0;
   const fetch: Fetch = async (input, init) => {
-    calls.push({ method: init?.method ?? 'GET', url: new URL(input), headers: Object.fromEntries(new Headers(init?.headers)), body: typeof init?.body === 'string' ? init.body : null });
+    calls.push({ method: init?.method ?? 'GET', url: new URL(input), headers: Object.fromEntries(new Headers(init?.headers)), body: typeof init?.body === 'string' ? init.body : null, redirect: init?.redirect });
     const next = answers[i++];
     if (!next) throw new Error(`no recorded answer for ${input}`);
     if (next instanceof Error) throw next;
-    return new Response(JSON.stringify(next.body), { status: next.status ?? 200, headers: { 'content-type': 'application/json' } });
+    const text = next.raw !== undefined ? next.raw : JSON.stringify(next.body);
+    return new Response(text, { status: next.status ?? 200, headers: { 'content-type': 'application/json' } });
   };
   return { fetch, calls };
 }
@@ -71,8 +73,15 @@ const googleError = (status: number, statusWord: string, errorCode?: Record<stri
       message: 'Google text that names an account',
       status: statusWord,
       details: [
-        ...(errorCode ? [{ '@type': 'type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure', errors: [{ errorCode, message: 'text' }] }] : []),
-        ...(retryDelay ? [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }] : []),
+        ...(errorCode
+          ? [
+              {
+                '@type': 'type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure',
+                errors: [{ errorCode, message: 'text', ...(retryDelay ? { details: { quotaErrorDetails: { retryDelay } } } : {}) }],
+              },
+            ]
+          : []),
+        ...(!errorCode && retryDelay ? [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }] : []),
       ],
     },
   },
@@ -144,8 +153,13 @@ describe('the Google Ads connection', () => {
     }
   });
 
-  it('makes no connection when the person reaches no readable account (the caller says so in words of its own)', async () => {
+  it('makes no connection when the person reaches no readable account, and refuses with MANAGER_ACCOUNT_UNSUPPORTED when only manager accounts are reached', async () => {
     expect(await connector([grant, { body: {} }]).connector.exchange({ code: 'c', redirectUri, codeVerifier: null })).toEqual([]);
+    const onlyManager = await connector([grant, { body: { resourceNames: ['customers/2345678901'] } }, customer({ id: '2345678901', manager: true })])
+      .connector.exchange({ code: 'c', redirectUri, codeVerifier: null })
+      .catch((e: unknown) => e);
+    expect(onlyManager).toBeInstanceOf(ConnectorError);
+    expect(onlyManager).toMatchObject({ kind: 'denied', code: 'MANAGER_ACCOUNT_UNSUPPORTED' });
   });
 
   it('refuses a grant without the Ads permission, without a refresh token, and a code Google no longer accepts', async () => {
@@ -177,13 +191,21 @@ describe('the Google Ads connection', () => {
 describe('the Google Ads reader', () => {
   const account = (id: string) => customer({ id, descriptiveName: `Account ${id}` });
 
-  it('names the accounts the refresh token reaches with their currency and time zone, asking for an access token each time', async () => {
+  it('names the accounts the refresh token reaches with their currency and time zone, asking for an access token each time, or queries one account when named', async () => {
     const { platform: p, calls } = platform([TOKEN, LIST, account('1234567890'), customer({ manager: true }), customer({ currencyCode: 'usd' })]);
     expect(await p.accounts(SECRET)).toEqual([{ externalAccountId: '1234567890', displayName: 'Account 1234567890', currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh' }]);
     expect(Object.fromEntries(new URLSearchParams(calls[0]?.body ?? ''))).toEqual({ client_id: APP.clientId, client_secret: 'client-secret', grant_type: 'refresh_token', refresh_token: 'refresh-1' });
     // The access token goes in the header after that, and the refresh token and the secret in no URL.
+    expect(calls).toHaveLength(5);
     expect(calls.slice(1).every((c) => c.headers.authorization === 'Bearer access-1')).toBe(true);
     expect(calls.every((c) => !c.url.toString().includes('refresh-1') && !c.url.toString().includes('access-1') && !c.url.toString().includes('client-secret'))).toBe(true);
+
+    const { platform: single, calls: singleCalls } = platform([TOKEN, account('1234567890')]);
+    expect(await single.accounts(SECRET, '1234567890')).toEqual([{ externalAccountId: '1234567890', displayName: 'Account 1234567890', currency: 'VND', timeZone: 'Asia/Ho_Chi_Minh' }]);
+    expect(singleCalls.map((c) => [c.method, c.url.pathname])).toEqual([
+      ['POST', '/token'],
+      ['POST', `/${GOOGLE_ADS_API_VERSION}/customers/1234567890/googleAds:searchStream`],
+    ]);
   });
 
   it('reads the account\'s days and each campaign\'s with two queries, money exact from micros, conversions as the one result kind and no reach', async () => {
@@ -222,11 +244,34 @@ describe('the Google Ads reader', () => {
     });
   });
 
-  it('leaves out a row that is not a day with its money and counts, and a campaign row with no id', async () => {
-    const odd = { body: [{ results: [{ segments: { date: 'yesterday' }, metrics: { costMicros: '1', impressions: '1', clicks: '1' } }, { segments: { date: '2026-11-01' }, metrics: { costMicros: '-5', impressions: '1', clicks: '1' } }, { segments: { date: '2026-11-01' }, metrics: { costMicros: '5', impressions: 'x', clicks: '1' } }] }] };
-    const noId = { body: [{ results: [{ campaign: { name: 'no id' }, segments: { date: '2026-11-01' }, metrics: { costMicros: '5', impressions: '1', clicks: '1' } }] }] };
+  it('leaves out a row that is not a day with its money and counts, and a campaign row with no id, while keeping a row whose absent metrics count as 0', async () => {
+    const odd = {
+      body: [
+        {
+          results: [
+            { segments: { date: 'yesterday' }, metrics: { costMicros: '1', impressions: '1', clicks: '1' } },
+            { segments: { date: '2026-11-01' }, metrics: { costMicros: '-5', impressions: '1', clicks: '1' } },
+            { segments: { date: '2026-11-01' }, metrics: { costMicros: '5', impressions: 'x', clicks: '1' } },
+            { segments: { date: '2026-11-01' }, metrics: { impressions: '10' } },
+          ],
+        },
+      ],
+    };
+    const noId = {
+      body: [
+        {
+          results: [
+            { campaign: { name: 'no id' }, segments: { date: '2026-11-01' }, metrics: { costMicros: '5', impressions: '1', clicks: '1' } },
+            { campaign: { id: '777', name: 'Zero clicks' }, segments: { date: '2026-11-01' }, metrics: { costMicros: '5000000' } },
+          ],
+        },
+      ],
+    };
     const { platform: p } = platform([TOKEN, odd, noId]);
-    expect(await p.readDaily(SECRET, '1234567890', { from: '2026-11-01', to: '2026-11-01' })).toEqual([]);
+    expect(await p.readDaily(SECRET, '1234567890', { from: '2026-11-01', to: '2026-11-01' })).toEqual([
+      { level: 'account', externalObjectId: '1234567890', objectName: '', day: '2026-11-01', spend: '0', impressions: 10, clicks: 0, reach: null, results: {} },
+      { level: 'campaign', externalObjectId: '777', objectName: 'Zero clicks', day: '2026-11-01', spend: '5', impressions: 0, clicks: 0, reach: null, results: {} },
+    ]);
   });
 
   it('answers nothing for a day with no rows, and refuses a range or an account id that is not one, without calling Google', async () => {
@@ -281,9 +326,11 @@ describe('what each failure of Google means for the sync', () => {
     expect([noCode.kind, noCode.code]).toEqual(['permission', 'PERMISSION_DENIED']);
   });
 
-  it('waits for the time Google names when a limit is hit, an hour when it names none, a few minutes for the temporary limit', async () => {
+  it('waits for the time Google names in quotaErrorDetails or RetryInfo when a limit is hit, an hour when it names none, a few minutes for the temporary limit', async () => {
     const named = await rejection(read([TOKEN, googleError(429, 'RESOURCE_EXHAUSTED', { quotaError: 'RESOURCE_EXHAUSTED' }, '7200s')]));
     expect([named.kind, named.code, named.retryAt?.toISOString()]).toEqual(['rate_limited', 'RESOURCE_EXHAUSTED', '2026-11-03T10:00:00.000Z']);
+    const retryInfo = await rejection(read([TOKEN, googleError(429, 'RESOURCE_EXHAUSTED', undefined, '1800s')]));
+    expect([retryInfo.kind, retryInfo.code, retryInfo.retryAt?.toISOString()]).toEqual(['rate_limited', 'RESOURCE_EXHAUSTED', '2026-11-03T08:30:00.000Z']);
     const bare = await rejection(read([TOKEN, googleError(429, 'RESOURCE_EXHAUSTED')]));
     expect(bare.retryAt?.toISOString()).toBe('2026-11-03T09:00:00.000Z');
     const temporary = await rejection(read([TOKEN, googleError(429, 'RESOURCE_EXHAUSTED', { quotaError: 'RESOURCE_TEMPORARILY_EXHAUSTED' })]));
@@ -298,17 +345,52 @@ describe('what each failure of Google means for the sync', () => {
     expect([network.kind, network.code]).toEqual(['transient', 'NETWORK']);
   });
 
-  it('keeps no text of Google\'s: the error carries its kind and Google\'s code only', async () => {
+  it('rejects a non-JSON or non-array 200 answer as transient BAD_STREAM, and throws a trailing error element in searchStream instead of returning partial rows', async () => {
+    const cutStream = await rejection(read([TOKEN, { status: 200, raw: '[{"results":[{"segments":' }]));
+    expect([cutStream.kind, cutStream.code]).toEqual(['transient', 'BAD_STREAM']);
+    const nonArrayStream = await rejection(read([TOKEN, { status: 200, body: { results: [] } }]));
+    expect([nonArrayStream.kind, nonArrayStream.code]).toEqual(['transient', 'BAD_STREAM']);
+    const badTokenJson = await rejection(read([{ status: 200, raw: '<html>502</html>' }]));
+    expect([badTokenJson.kind, badTokenJson.code]).toEqual(['transient', 'BAD_STREAM']);
+    const noAccessToken = await rejection(read([{ status: 200, body: { token_type: 'Bearer' } }]));
+    expect([noAccessToken.kind, noAccessToken.code]).toEqual(['transient', 'NO_ACCESS_TOKEN']);
+
+    const trailingError = await rejection(
+      read([
+        TOKEN,
+        {
+          status: 200,
+          body: [
+            { results: [{ segments: { date: '2026-11-01' }, metrics: { costMicros: '1000000', impressions: '10', clicks: '1' } }] },
+            googleError(503, 'UNAVAILABLE').body,
+          ],
+        },
+      ]),
+    );
+    expect([trailingError.kind, trailingError.code]).toEqual(['transient', 'UNAVAILABLE']);
+  });
+
+  it('keeps no text of Google\'s and bounds error codes to /^[A-Za-z0-9_.]{1,64}$/', async () => {
     const e = await rejection(read([TOKEN, googleError(403, 'PERMISSION_DENIED', { authorizationError: 'USER_PERMISSION_DENIED' })]));
     expect(e.message).toBe('ad platform error: permission USER_PERMISSION_DENIED');
     expect(e.message).not.toContain('names an account');
+    const unsafeCode = await rejection(read([TOKEN, googleError(403, 'PERMISSION_DENIED', { authorizationError: 'BAD CODE WITH SPACES OR >64 CHARS' })]));
+    expect([unsafeCode.kind, unsafeCode.code]).toEqual(['permission', 'PERMISSION_DENIED']);
   });
 
-  it('leaves out an account that answers a missing permission when naming the accounts, and fails on anything else', async () => {
-    const { platform: p } = platform([TOKEN, LIST, googleError(403, 'PERMISSION_DENIED', { authorizationError: 'USER_PERMISSION_DENIED' }), customer({ id: '2345678901' }), customer({ id: '3456789012' })]);
-    expect((await p.accounts(SECRET)).map((a) => a.externalAccountId)).toEqual(['2345678901', '3456789012']);
+  it('leaves out an account that fails with anything other than a refused token or a rate limit when naming the accounts', async () => {
+    const { platform: p } = platform([
+      TOKEN,
+      LIST,
+      googleError(403, 'PERMISSION_DENIED', { authorizationError: 'USER_PERMISSION_DENIED' }),
+      googleError(500, 'INTERNAL'),
+      customer({ id: '3456789012' }),
+    ]);
+    expect((await p.accounts(SECRET)).map((a) => a.externalAccountId)).toEqual(['3456789012']);
     const limited = await rejection(platform([TOKEN, LIST, googleError(429, 'RESOURCE_EXHAUSTED')]).platform.accounts(SECRET));
     expect(limited.kind).toBe('rate_limited');
+    const expired = await rejection(platform([TOKEN, LIST, googleError(401, 'UNAUTHENTICATED')]).platform.accounts(SECRET));
+    expect(expired.kind).toBe('token_expired');
   });
 });
 
@@ -342,12 +424,14 @@ describe('what the adapter can reach and do at all', () => {
     expect(calls).toHaveLength(0);
     await guarded('https://googleads.googleapis.com/v26/customers:listAccessibleCustomers');
     expect(calls).toHaveLength(1);
+    expect(calls[0]?.redirect).toBe('manual');
   });
 
   it('pins one API version', async () => {
     expect(GOOGLE_ADS_API_VERSION).toBe('v26');
     const { platform: p, calls } = platform([TOKEN, LIST, customer(), customer(), customer()]);
     await p.accounts(SECRET);
+    expect(calls).toHaveLength(5);
     expect(calls.slice(1).every((c) => c.url.pathname.startsWith('/v26/'))).toBe(true);
   });
 

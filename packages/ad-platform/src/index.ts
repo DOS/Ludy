@@ -97,8 +97,8 @@ export interface AdPlatform {
   // The hosts this adapter's fetch is bound to.
   readonly hosts: readonly string[];
   readonly capabilities: AdPlatformCapabilities;
-  // The ad accounts the credential reaches (one, for a connection made per account).
-  accounts(secret: string): Promise<AdPlatformAccount[]>;
+  // The ad accounts the credential reaches (or the one account named, when the caller already knows its id).
+  accounts(secret: string, externalAccountId?: string): Promise<AdPlatformAccount[]>;
   // The daily rows of an account for the days from `from` to `to`, both included (YYYY-MM-DD, in the account's time
   // zone). Days after today are never reported. Account rows and campaign rows come together.
   readDaily(secret: string, externalAccountId: string, range: { from: string; to: string }): Promise<AdDailyRow[]>;

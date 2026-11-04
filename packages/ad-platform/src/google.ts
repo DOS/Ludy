@@ -10,7 +10,9 @@
 // and ignored by the servers (Google will reject it in a future major version), so this adapter never sends it and the config has no setting for it. A
 // project at Test access reaches only test accounts; the owner applies for Explorer access (2,880 operations a day on production accounts, an
 // automated review, no brand verification) in the Cloud Console, and the runbook says so. A project not yet approved for production answers a
-// permission error, which the screen words.
+// permission error, which the screen words. Accounts reachable only through a manager account need the `login-customer-id` header and are not
+// supported: the person signs in with a Google account that reaches the ad account directly, and a login that reaches only manager accounts is
+// refused with `MANAGER_ACCOUNT_UNSUPPORTED`.
 //
 // Reading only: every request is a GET of the account list or a POST of one `googleAds:searchStream` query (a read, one operation however many
 // batches it streams), and the token endpoint. The queries are fixed text with only dates (checked against a pattern) and an account id (ten
@@ -30,8 +32,15 @@ export const GOOGLE_ADS_HOSTS = ['googleads.googleapis.com', 'oauth2.googleapis.
 export const GOOGLE_CUSTOMER_ID = /^\d{10}$/;
 const CLIENT_ID = /^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const SAFE_CODE = /^[A-Za-z0-9_.]{1,64}$/;
 const MAX_ACCOUNTS = 200;
 const REQUEST_TIMEOUT_MS = 30_000;
+
+const safeCode = (value: unknown): string | undefined => (typeof value === 'string' && SAFE_CODE.test(value) ? value : undefined);
+const parseDelayMs = (value: unknown): number | undefined => {
+  const match = typeof value === 'string' ? /^(\d{1,9})(?:\.\d+)?s$/.exec(value) : null;
+  return match ? Number(match[1]) * 1000 : undefined;
+};
 
 // A day older than this is settled: conversions are attributed to the day of the click and can be added for the conversion window (30 days by
 // default) [U: the live check confirms what a given account's window is]. The platform's own cost figure can be restated for days.
@@ -79,21 +88,25 @@ class GoogleAdsHttpError extends Error {
     this.name = 'GoogleAdsHttpError';
     this.status = status;
     // The token endpoint's own shape: `{ error: 'invalid_grant' }`.
-    this.oauth = typeof body?.error === 'string' ? body.error : undefined;
+    this.oauth = safeCode(body?.error);
     const error = body?.error !== null && typeof body?.error === 'object' ? (body?.error as { status?: unknown; details?: unknown }) : null;
-    this.statusWord = typeof error?.status === 'string' ? error.status : undefined;
+    this.statusWord = safeCode(error?.status);
     let code: string | undefined;
     let retry: number | undefined;
     for (const detail of Array.isArray(error?.details) ? (error.details as Array<Record<string, unknown>>) : []) {
-      // The Ads API's failure: each error names its code as the one key of `errorCode`, such as `authorizationError: USER_PERMISSION_DENIED`.
-      for (const e of Array.isArray(detail.errors) ? (detail.errors as Array<{ errorCode?: unknown }>) : []) {
+      // The Ads API's failure: each error names its code as the one key of `errorCode`, such as `authorizationError: USER_PERMISSION_DENIED`,
+      // and a quota failure carries its wait in `details.quotaErrorDetails.retryDelay`.
+      for (const e of Array.isArray(detail.errors) ? (detail.errors as Array<{ errorCode?: unknown; details?: unknown }>) : []) {
         const entries = e.errorCode !== null && typeof e.errorCode === 'object' ? Object.values(e.errorCode as Record<string, unknown>) : [];
-        const first = entries.find((v) => typeof v === 'string');
+        const first = entries.find((v) => safeCode(v) !== undefined);
         if (code === undefined && typeof first === 'string') code = first;
+        const quota = e.details !== null && typeof e.details === 'object' ? (e.details as { quotaErrorDetails?: { retryDelay?: unknown } }).quotaErrorDetails : undefined;
+        const wait = parseDelayMs(quota?.retryDelay);
+        if (retry === undefined && wait !== undefined) retry = wait;
       }
       // Google's RetryInfo: how long to wait, as seconds with an s.
-      const delay = typeof detail.retryDelay === 'string' ? /^(\d{1,9})(?:\.\d+)?s$/.exec(detail.retryDelay) : null;
-      if (delay) retry = Number(delay[1]) * 1000;
+      const wait = parseDelayMs(detail.retryDelay);
+      if (retry === undefined && wait !== undefined) retry = wait;
     }
     this.code = code;
     this.retryAfterMs = retry;
@@ -104,7 +117,7 @@ class GoogleAdsHttpError extends Error {
 export function googleAdsError(error: unknown, now: () => Date = () => new Date()): AdPlatformError {
   if (error instanceof AdPlatformError) return error;
   if (error instanceof GoogleAdsHttpError) {
-    const code = error.oauth ?? error.code ?? error.statusWord ?? String(error.status);
+    const code = safeCode(error.oauth ?? error.code ?? error.statusWord) ?? String(error.status);
     // The refresh token was revoked, expired (an app in testing mode gets 7 day tokens) or unused for six months: recorded, never retried.
     if (error.oauth === 'invalid_grant') return new AdPlatformError('token_expired', code);
     // The project's own client id or secret is wrong.
@@ -148,6 +161,8 @@ interface TokenAnswer {
   scope?: unknown;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
+
 // What the platform and the connector share: the project's client, the token endpoint, and the two Ads API requests.
 class GoogleAdsClient {
   private readonly fetch: Fetch;
@@ -174,15 +189,16 @@ class GoogleAdsClient {
       headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
       body: new URLSearchParams({ client_id: this.app.clientId, client_secret: this.app.clientSecret, ...form }).toString(),
     });
-    const json = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-    if (!response.ok || !json) throw new GoogleAdsHttpError(response.status, json);
+    const json = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) throw new GoogleAdsHttpError(response.status, isRecord(json) ? json : null);
+    if (!isRecord(json)) throw new AdPlatformError('transient', 'BAD_STREAM');
     return json as TokenAnswer;
   }
 
   // An access token for a refresh token, asked for each time the reader reads: it lives an hour and is never stored.
   async accessToken(refreshToken: string): Promise<string> {
     const answer = await this.token({ grant_type: 'refresh_token', refresh_token: refreshToken });
-    if (typeof answer.access_token !== 'string' || !answer.access_token) throw new AdPlatformError('unknown', 'NO_ACCESS_TOKEN');
+    if (typeof answer.access_token !== 'string' || !answer.access_token) throw new AdPlatformError('transient', 'NO_ACCESS_TOKEN');
     return answer.access_token;
   }
 
@@ -192,8 +208,9 @@ class GoogleAdsClient {
       method: 'GET',
       headers: { authorization: `Bearer ${accessToken}`, accept: 'application/json' },
     });
-    const json = (await response.json().catch(() => null)) as ({ resourceNames?: unknown } & Record<string, unknown>) | null;
-    if (!response.ok || !json) throw new GoogleAdsHttpError(response.status, json);
+    const json = (await response.json().catch(() => null)) as unknown;
+    if (!response.ok) throw new GoogleAdsHttpError(response.status, isRecord(json) ? json : null);
+    if (!isRecord(json)) throw new AdPlatformError('transient', 'BAD_STREAM');
     const ids: string[] = [];
     for (const name of Array.isArray(json.resourceNames) ? json.resourceNames : []) {
       const id = typeof name === 'string' ? /^customers\/(\d{10})$/.exec(name)?.[1] : undefined;
@@ -203,6 +220,8 @@ class GoogleAdsClient {
   }
 
   // One GAQL query as a stream: one request, one operation however many batches the answer has (a read). The query is text this file builds.
+  // An ok answer must be a JSON array of batch objects with no trailing `{error}` element, or the sync would take a cut-off stream as zero rows and
+  // wipe stored figures for the window.
   async search(accessToken: string, customerId: string, query: string): Promise<Array<Record<string, unknown>>> {
     if (!GOOGLE_CUSTOMER_ID.test(customerId)) throw new AdPlatformError('bad_request', 'BAD_ACCOUNT');
     const response = await this.fetch(`https://googleads.googleapis.com/${this.version}/customers/${customerId}/googleAds:searchStream`, {
@@ -211,11 +230,18 @@ class GoogleAdsClient {
       body: JSON.stringify({ query }),
     });
     const json = (await response.json().catch(() => null)) as unknown;
-    if (!response.ok) throw new GoogleAdsHttpError(response.status, json !== null && typeof json === 'object' && !Array.isArray(json) ? (json as Record<string, unknown>) : Array.isArray(json) ? ((json[0] ?? null) as Record<string, unknown> | null) : null);
-    // The stream is a list of batches, each with its rows (REST answers one JSON array).
+    if (!response.ok) throw new GoogleAdsHttpError(response.status, isRecord(json) ? json : Array.isArray(json) && isRecord(json[0]) ? json[0] : null);
+    if (!Array.isArray(json) || !json.every(isRecord)) throw new AdPlatformError('transient', 'BAD_STREAM');
+    // The stream is a list of batches, each with its rows (REST answers one JSON array). A mid-stream failure arrives as a batch with `error`.
     const rows: Array<Record<string, unknown>> = [];
-    for (const batch of Array.isArray(json) ? json : json !== null && typeof json === 'object' ? [json] : []) {
-      for (const row of Array.isArray((batch as { results?: unknown }).results) ? ((batch as { results: unknown[] }).results as Array<Record<string, unknown>>) : []) rows.push(row);
+    for (const batch of json) {
+      if (batch.error !== undefined && batch.error !== null) {
+        const status = isRecord(batch.error) && typeof batch.error.code === 'number' ? batch.error.code : 500;
+        throw new GoogleAdsHttpError(status, batch);
+      }
+      if (batch.results === undefined) continue;
+      if (!Array.isArray(batch.results) || !batch.results.every(isRecord)) throw new AdPlatformError('transient', 'BAD_STREAM');
+      for (const row of batch.results) rows.push(row);
     }
     return rows;
   }
@@ -257,9 +283,10 @@ function rowOf(result: Json, level: 'account' | 'campaign', accountId: string): 
   const segments = objectOf(result.segments);
   const metrics = objectOf(result.metrics);
   const day = typeof segments.date === 'string' && DAY.test(segments.date) ? segments.date : null;
-  const spend = microsToDecimal(metrics.costMicros);
-  const impressions = countOf(metrics.impressions);
-  const clicks = countOf(metrics.clicks);
+  // An absent metric counts as 0 (not a dropped row), while a present malformed value still drops the row.
+  const spend = microsToDecimal(metrics.costMicros ?? 0);
+  const impressions = countOf(metrics.impressions ?? 0);
+  const clicks = countOf(metrics.clicks ?? 0);
   if (day === null || spend === null || impressions === null || clicks === null) return null;
   const campaign = objectOf(result.campaign);
   const campaignId = typeof campaign.id === 'string' && /^\d{1,20}$/.test(campaign.id) ? campaign.id : null;
@@ -278,27 +305,34 @@ function rowOf(result: Json, level: 'account' | 'campaign', accountId: string): 
   };
 }
 
-// The accounts a signed-in person can read: not a manager account (it has no figures of its own) and not one that is cancelled or suspended. An
-// account that answers a missing permission or a bad request is left out; any other failure (a refused token, a limit, Google's own) is the caller's.
-async function readableAccounts(client: GoogleAdsClient, accessToken: string): Promise<AdPlatformAccount[]> {
+// The accounts a signed-in person can read: not a manager account (it has no figures of its own) and not one that is cancelled or suspended. A
+// per-account failure other than a refused token or a rate limit is skipped so one unreadable account in `listAccessibleCustomers` does not break
+// the rest; if the only accounts reached are manager accounts, `MANAGER_ACCOUNT_UNSUPPORTED` is raised.
+async function readableAccounts(client: GoogleAdsClient, accessToken: string, onlyIds?: readonly string[]): Promise<AdPlatformAccount[]> {
   const out: AdPlatformAccount[] = [];
-  for (const id of await client.listAccessible(accessToken)) {
+  let sawManager = false;
+  for (const id of onlyIds ?? (await client.listAccessible(accessToken))) {
     let rows: Json[];
     try {
       rows = await client.search(accessToken, id, ACCOUNT_QUERY);
     } catch (error) {
       const mapped = googleAdsError(error);
-      if (mapped.kind === 'permission' || mapped.kind === 'bad_request') continue;
-      throw error;
+      if (mapped.kind === 'token_expired' || mapped.kind === 'rate_limited') throw error;
+      continue;
     }
     const customer = objectOf(rows[0]?.customer);
+    if (customer.manager === true) {
+      sawManager = true;
+      continue;
+    }
     const currency = customer.currencyCode;
     const timeZone = customer.timeZone;
-    if (customer.manager === true || customer.status !== 'ENABLED') continue;
+    if (customer.status !== 'ENABLED') continue;
     if (typeof currency !== 'string' || !/^[A-Z]{3}$/.test(currency) || typeof timeZone !== 'string' || !timeZone) continue;
     const name = typeof customer.descriptiveName === 'string' && customer.descriptiveName.trim() ? customer.descriptiveName.trim().slice(0, 200) : `Google Ads account ${id}`;
     out.push({ externalAccountId: id, displayName: name, currency, timeZone });
   }
+  if (out.length === 0 && sawManager) throw new AdPlatformError('permission', 'MANAGER_ACCOUNT_UNSUPPORTED');
   return out;
 }
 
@@ -321,10 +355,11 @@ export class GoogleAdsPlatform implements AdPlatform {
     this.now = options.now ?? (() => new Date());
   }
 
-  async accounts(secret: string): Promise<AdPlatformAccount[]> {
+  async accounts(secret: string, externalAccountId?: string): Promise<AdPlatformAccount[]> {
     const { refreshToken } = parseSecret(secret);
+    if (externalAccountId !== undefined && !GOOGLE_CUSTOMER_ID.test(externalAccountId)) throw new AdPlatformError('bad_request', 'BAD_ACCOUNT');
     try {
-      return await readableAccounts(this.client, await this.client.accessToken(refreshToken));
+      return await readableAccounts(this.client, await this.client.accessToken(refreshToken), externalAccountId ? [externalAccountId] : undefined);
     } catch (error) {
       throw googleAdsError(error, this.now);
     }
@@ -353,7 +388,8 @@ function connectorError(error: unknown, codeStep = false): ConnectorError {
   }
   if (error instanceof GoogleAdsHttpError) {
     if (codeStep && error.oauth === 'invalid_grant') return new ConnectorError('invalid_grant', 'Google refused the authorization code', 'invalid_grant');
-    return new ConnectorError(error.status === 403 || error.status === 429 ? 'denied' : 'provider', 'Google refused the request', error.code ?? error.oauth ?? error.statusWord ?? String(error.status));
+    const code = safeCode(error.code ?? error.oauth ?? error.statusWord) ?? String(error.status);
+    return new ConnectorError(error.status === 403 || error.status === 429 ? 'denied' : 'provider', 'Google refused the request', code);
   }
   return new ConnectorError('provider', 'Google could not be reached');
 }
