@@ -50,7 +50,7 @@ catalog:
   oxlint: 1.88.0
   pg-boss: 12.38.0
   pg: 8.23.1
-  postal-mime: 4.0.5
+  postal-mime: 4.0.8
   postcss: 8.5.30
   react-dom: 19.3.0
   react: 19.3.0

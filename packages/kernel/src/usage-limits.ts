@@ -26,6 +26,7 @@ export const DEFAULT_USAGE_LIMITS: UsageLimits = {
   attachment_bytes: String(1000 * 1024 * 1024),
   extraction_pages: '1500',
   ai_cost: '20',
+  conversation_emails: '300',
 };
 
 const zAmount = z.string().regex(/^\d{1,14}(\.\d{1,6})?$/);
@@ -93,6 +94,7 @@ const METRIC_LABELS: Record<UsageMetric, string> = {
   attachment_bytes: 'dung lượng tệp đính kèm',
   extraction_pages: 'số trang đọc chứng từ',
   ai_cost: 'chi phí AI',
+  conversation_emails: 'số email khách gửi vào Hộp thư',
 };
 
 // An item kept for later because its org is over a limit. The owners are mailed at most once per metric in any 24
@@ -140,7 +142,7 @@ export const usageDefer = defineCommand({
           templateKey: USAGE_DEFERRED_TEMPLATE,
           to: person.email,
           subject: `Tổ chức đã dùng hết hạn mức ${METRIC_LABELS[input.metric as UsageMetric]} trong ngày`,
-          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: `/o/${org.slug}/inbox` },
+          payload: { metric: input.metric, org: org.name, retryAt: input.retryAt, path: input.metric === 'conversation_emails' ? `/o/${org.slug}/social/inbox` : `/o/${org.slug}/inbox` },
           status: 'queued',
         });
         if (mail.status === 'queued') queued++;

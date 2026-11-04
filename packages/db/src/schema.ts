@@ -347,7 +347,7 @@ export const MAIL_EVENT_KINDS = ['delivered', 'deferred', 'bounce_hard', 'bounce
 export type MailEventTable = Refine<G.KernelMailEventTable, { kind: (typeof MAIL_EVENT_KINDS)[number] }>;
 
 // Per-org abuse limits (#675): what an org used, and the items kept for its next day's budget.
-export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost'] as const;
+export const USAGE_METRICS = ['inbound_emails', 'attachment_bytes', 'extraction_pages', 'ai_cost', 'conversation_emails'] as const;
 export type UsageMetric = (typeof USAGE_METRICS)[number];
 // What a deferral may wait for: a limit above, or the AI budget of the month (#2382).
 export const USAGE_DEFERRAL_METRICS = [...USAGE_METRICS, 'ai_budget'] as const;
@@ -784,7 +784,7 @@ export type CrmImportRowTable = Refine<
 >;
 // The conversation core (#2303): a thread is a comment thread or a private message, and is new until a member answers, pending
 // while the customer has not, resolved when a person closes it; an outbound message is queued, sending, sent, failed or unknown.
-export const CONVERSATION_KINDS = ['comment_thread', 'direct'] as const;
+export const CONVERSATION_KINDS = ['comment_thread', 'direct', 'email'] as const;
 export const CONVERSATION_STATUSES = ['new', 'pending', 'resolved'] as const;
 // The intent a person applies to a conversation (CV3, #2306); what the AI coworker suggests is never stored, only this decision is.
 export const CONVERSATION_INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -913,6 +913,18 @@ export type AdsAdLaunchTable = Refine<
   }
 >;
 
+// What a launch created at the platform (#2296, W2-3): the level of each object and what Ludy set it to (paused or archived; nothing here un-pauses). The
+// database's guard holds who writes it.
+export const AD_OBJECT_LEVELS = ['campaign', 'ad_set', 'creative', 'ad'] as const;
+export const AD_OBJECT_STATUSES = ['paused', 'archived'] as const;
+export type AdsAdObjectTable = Refine<
+  G.AdsAdObjectTable,
+  {
+    level: (typeof AD_OBJECT_LEVELS)[number];
+    configured_status: Generated<(typeof AD_OBJECT_STATUSES)[number]>;
+  }
+>;
+
 // The revoke at the platform of a closed ads connection's token (#2296, W2-1): which token it was, where the obligation stands, how it ended or why it gave
 // up, and the kinds of error a try ended in. Read only for tenant roles: the definers write it.
 export const AD_TOKEN_KINDS = ['write', 'read_spend'] as const;
@@ -936,6 +948,7 @@ type Refined = Tables<{
   'crove_ads.ad_campaign_draft': AdsAdCampaignDraftTable;
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
   'crove_ads.ad_sync_run': AdsAdSyncRunTable;

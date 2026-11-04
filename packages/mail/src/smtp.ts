@@ -42,6 +42,15 @@ export function classifySmtpError(error: unknown): SendResult {
   return reject('transient');
 }
 
+// The configured sender with another display name (the org's, #2439): the address is the deployment's, never the caller's. Control
+// characters, quotes and angle brackets are dropped from the name, so it cannot add a header or a second address.
+export function withDisplayName(from: string, name: string): { name: string; address: string } {
+  const address = /<([^<>\s]+)>/.exec(from)?.[1] ?? from.trim();
+  // oxlint-disable-next-line no-control-regex
+  const clean = name.replace(/[\u0000-\u001f\u007f"<>\\]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
+  return { name: clean || address, address };
+}
+
 export function createSmtpProvider(options: SmtpOptions): MailProvider {
   const auth = options.user && options.pass ? { user: options.user, pass: options.pass } : undefined;
   // 465 is implicit TLS; other ports upgrade with STARTTLS when the server offers it, and must when credentials
@@ -69,13 +78,15 @@ export function createSmtpProvider(options: SmtpOptions): MailProvider {
     async send(mail) {
       try {
         await transport.sendMail({
-          from,
+          from: mail.fromName ? withDisplayName(options.from, mail.fromName) : from,
           to: mail.to,
           subject: mail.subject,
           text: mail.text,
           html: mail.html,
           ...(mail.messageId ? { messageId: mail.messageId } : {}),
           ...(mail.replyTo ? { replyTo: mail.replyTo } : {}),
+          ...(mail.inReplyTo ? { inReplyTo: mail.inReplyTo } : {}),
+          ...(mail.references?.length ? { references: [...mail.references] } : {}),
           ...(mail.attachments?.length ? { attachments: mail.attachments.map((a) => ({ filename: a.filename, contentType: a.contentType, content: a.content })) } : {}),
           // The From header stays; only the envelope sender, where bounce reports go, changes.
           ...(mail.returnPath ? { envelope: { from: mail.returnPath, to: mail.to } } : {}),

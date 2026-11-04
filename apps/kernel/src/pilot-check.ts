@@ -302,6 +302,16 @@ export function checkEnv(env: Env): CheckResult[] {
   if (stepUp !== undefined && stepUp !== 'required') auth.push(`AUTH_STEP_UP=${stepUp}: approvals and member changes must need MFA; set AUTH_STEP_UP=required`);
   add('Email confirmation and MFA step-up', auth, 'AUTH_AUTOCONFIRM=false with an SMTP server, and AUTH_STEP_UP=required');
 
+  // Ads live launch (ADR-0043, #2296 W2-3): with ADS_LIVE_LAUNCH on the worker creates campaign objects at Meta (every one paused). That is for the owner's own live
+  // check, not for a deployment others reach, until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. The kernel's own
+  // config refuses it on a public PUBLIC_URL too, but this check reads the raw environment, so it says so itself.
+  const liveLaunch = value(env, 'ADS_LIVE_LAUNCH');
+  add(
+    'Ads live launch off',
+    liveLaunch === 'true' ? ['ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only, until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false'] : [],
+    'ADS_LIVE_LAUNCH is off (the default)',
+  );
+
   // Sign-up closed (the bundled Supabase Auth refuses new accounts, GOTRUE_DISABLE_SIGNUP), or limited by the kernel's
   // /auth/v1 proxy to invited emails or allowed domains (AUTH_SIGNUP_POLICY, #350).
   const signup = value(env, 'AUTH_DISABLE_SIGNUP');

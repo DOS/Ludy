@@ -54,6 +54,11 @@ export const EXTRACT_LIMITS = {
   maxPageTextChars: 4000,
   // A mail's text (#779): its text/plain part, or its HTML reduced to text, for an AI draft of a Social post.
   maxMailTextChars: 20_000,
+  // The Message-IDs of a mail's References header that are kept (#2439).
+  maxMailRefs: 50,
+  // The Authentication-Results headers a mail carries (#2439): how many are returned, each cut at this length.
+  maxAuthResults: 5,
+  maxAuthResultChars: 1000,
   // A blog's feed (#708): at most this many bytes, of which the newest items come back.
   maxFeedBytes: 1024 * 1024,
   maxFeedItems: 50,
@@ -200,6 +205,20 @@ export const zExtractedEmail = z.strictObject({
   deliveredTo: zText.nullable(),
   to: z.array(zText).max(EXTRACT_LIMITS.maxRecipients),
   attachments: z.array(z.strictObject({ filename: zText.nullable(), content: z.base64() })).max(EXTRACT_LIMITS.maxAttachments),
+  // What a customer's mail needs beyond the invoice reader's fields (#2439), all optional so a worker accepts an older sandbox's answer: the sender's
+  // display name, the Date header, the Message-IDs it answers (In-Reply-To) and follows (References, "<id>" each, at most maxMailRefs), and whether
+  // it is automated (Auto-Submitted other than "no", Precedence bulk, junk or list, a List-Id or List-Unsubscribe header, an auto-response
+  // suppression header): such a mail opens no conversation and gets no reply.
+  fromName: zText.nullable().optional(),
+  sentAt: z.iso.datetime({ offset: true }).nullable().optional(),
+  inReplyTo: zText.nullable().optional(),
+  references: z.array(zText).max(EXTRACT_LIMITS.maxMailRefs).optional(),
+  automated: z.boolean().optional(),
+  // The From header names more than one mailbox (a list, or several From headers): `from` is only the first of them, so the Inbox ignores the mail.
+  multipleFrom: z.boolean().optional(),
+  // The Authentication-Results headers of the mail, topmost first, as written (RFC 8601): the receiving server's verdict on SPF, DKIM and DMARC. The
+  // sandbox only copies them; the worker believes the topmost one written by its own server (INBOUND_AUTHSERV_ID) and no other.
+  authResults: z.array(z.string().max(EXTRACT_LIMITS.maxAuthResultChars)).max(EXTRACT_LIMITS.maxAuthResults).optional(),
 });
 export type ExtractedEmail = z.infer<typeof zExtractedEmail>;
 

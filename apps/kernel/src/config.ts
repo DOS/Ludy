@@ -264,6 +264,8 @@ const schema = z.object({
   ORG_LIMIT_INBOUND_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_ATTACHMENT_MB_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1000),
   ORG_LIMIT_EXTRACTION_PAGES_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(1500),
+  // Customer mail to the org's conversation address (#2439) has a budget of its own, so spam on a published address never defers an invoice.
+  ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY: z.coerce.number().int().min(1).max(999_999).default(300),
   ORG_LIMIT_AI_COST_PER_DAY: z.string().regex(/^\d{1,9}(\.\d{1,6})?$/).default('20'),
   AI_PRICE_INPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
   AI_PRICE_OUTPUT_PER_MTOK: z.string().regex(/^\d{1,6}(\.\d{1,6})?$/).default('0'),
@@ -322,6 +324,10 @@ const schema = z.object({
   // platform account. Off unless asked for here; `docker compose up` turns it on, as it does CHANNEL_SANDBOX. Its figures
   // reach no books: the ads screen only shows them beside the ledger's total.
   ADS_SANDBOX: z.enum(['true', 'false']).default('false'),
+  // Whether the worker may create the objects of an approved campaign at Meta (#2296, W2-3: a campaign, an ad set, a creative and an ad, every one PAUSED; nothing
+  // un-pauses). Off by default: with it off a launch on a Meta account stays queued, untouched. It is for the owner's own live check on a stack the owner runs;
+  // a public deployment refuses it until the activation, the pause on switch-off (W2-4) and the live-check runbook (W2-5) are on main.
+  ADS_LIVE_LAUNCH: z.enum(['true', 'false']).default('false'),
   // Bluesky (S9): accounts connect with an app password, no app of the deployment's own is needed. On unless false.
   CHANNEL_BLUESKY: z.enum(['true', 'false']).default('true'),
   // Telegram channels (#747): a bot the shop makes with @BotFather posts to its channel; no app of the deployment's own is
@@ -555,6 +561,10 @@ const schema = z.object({
   // Inbound email: <token>@INBOUND_DOMAIN, delivered by a mail worker to POST /api/inbound/email.
   INBOUND_DOMAIN: optional,
   INBOUND_SECRET: optional,
+  // The name your receiving mail server writes in the Authentication-Results header it adds to each mail (its authserv-id, RFC 8601, usually its host
+  // name). With it, a customer mail whose sender passes DMARC, or DKIM for the From domain, is shown as verified, may join a thread by its References and
+  // brings the contact link with it; unset, no sender is verified (#2439). Never a name an earlier hop can write: your server must replace such a header.
+  INBOUND_AUTHSERV_ID: optional.pipe(z.string().regex(/^[A-Za-z0-9.-]{1,253}$/, 'INBOUND_AUTHSERV_ID is a host name').optional()),
   // During a rotation of INBOUND_SECRET (#1214): the value the mail worker may still send, accepted as well until the
   // worker sends the new one; then remove it (docs/runbooks/secret-rotation.md, section 2).
   INBOUND_SECRET_PREVIOUS: optional,
@@ -784,6 +794,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     if (config.ADS_SANDBOX === 'true' && (config.CROVE_MODULES as readonly string[]).includes('ads')) {
       throw new Error('ADS_SANDBOX=true shows made-up ad spend next to the real books; it is for local development only: set ADS_SANDBOX=false');
     }
+    // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
+    // the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. Turning it on in production is a step the owner approves.
+    if (config.ADS_LIVE_LAUNCH === 'true') {
+      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only and a public deployment refuses it until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false');
+    }
     // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
     // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A
     // deployment others reach runs ads with a Meta app of its own.
@@ -985,5 +1000,6 @@ export function usageLimits(config: Config): UsageLimits {
     attachment_bytes: String(config.ORG_LIMIT_ATTACHMENT_MB_PER_DAY * 1024 * 1024),
     extraction_pages: String(config.ORG_LIMIT_EXTRACTION_PAGES_PER_DAY),
     ai_cost: config.ORG_LIMIT_AI_COST_PER_DAY,
+    conversation_emails: String(config.ORG_LIMIT_CONVERSATION_EMAILS_PER_DAY),
   };
 }

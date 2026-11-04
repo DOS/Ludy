@@ -18,6 +18,7 @@ export interface CroveAdsSchema {
   'crove_ads.ad_campaign_request': AdsAdCampaignRequestTable;
   'crove_ads.ad_flag_setting': AdsAdFlagSettingTable;
   'crove_ads.ad_launch': AdsAdLaunchTable;
+  'crove_ads.ad_object': AdsAdObjectTable;
   'crove_ads.ad_org_setting': AdsAdOrgSettingTable;
   'crove_ads.ad_spend_cap': AdsAdSpendCapTable;
   'crove_ads.ad_spend_day': AdsAdSpendDayTable;
@@ -321,6 +322,25 @@ export interface AdsAdLaunchTable {
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
   started_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   finished_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+}
+
+/** crove_ads.ad_object */
+export interface AdsAdObjectTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  ad_account_id: ColumnType<string, string, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  launch_id: ColumnType<string, string, NotGranted>;
+  slot: ColumnType<string, string, NotGranted>;
+  level: ColumnType<string, string, NotGranted>;
+  external_id: ColumnType<string, string, NotGranted>;
+  name: ColumnType<string, string, NotGranted>;
+  configured_status: Generated<string>;
+  effective_status: string | null;
+  review_reason: string | null;
+  last_seen_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
 }
 
 /** crove_ads.ad_org_setting */
@@ -1447,6 +1467,8 @@ export interface KernelConversationMessageTable {
   platform_removed_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
   tainted: ColumnType<boolean, boolean | undefined, NotGranted>;
   author_identity_id: ColumnType<string | null, string | null, NotGranted>;
+  email_refs: ColumnType<string[], string[] | undefined, NotGranted>;
+  sender_verified: ColumnType<boolean | null, boolean | null, NotGranted>;
 }
 
 /** crove_kernel.conversation_note */
@@ -1505,6 +1527,8 @@ export interface KernelConversationTable {
   intent: string | null;
   intent_set_by: string | null;
   intent_set_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  subject: ColumnType<string | null, string | null, NotGranted>;
+  sender_unverified: Generated<boolean>;
 }
 
 /** crove_kernel.currency */
@@ -1677,8 +1701,8 @@ export interface KernelMailMessageTable {
   template_version: ColumnType<number, number | undefined, NotGranted>;
   to_address: string | null;
   to_hash: ColumnType<string, string, NotGranted>;
-  subject: ColumnType<string | null, string | null, NotGranted>;
-  payload: ColumnType<unknown, string | null | undefined, NotGranted>;
+  subject: string | null;
+  payload: ColumnType<unknown, string | null | undefined, string | null>;
   message_id_header: ColumnType<string, string, NotGranted>;
   status: Generated<string>;
   attempts: Generated<number>;
@@ -2072,6 +2096,7 @@ export interface KernelTenantTable {
   missing_invoice_reminder_day: number | null;
   approval_preset: Generated<string>;
   approval_policy_version: Generated<number>;
+  conversation_token: string | null;
 }
 
 /** crove_kernel.today_mail */

@@ -19,7 +19,7 @@ const OWNERS: readonly MemberRole[] = ['owner'];
 // words of the row's own columns. The snapshot reads as the system actor, so only tables an owner may read in full
 // belong here.
 export const EXPORT_TABLES = {
-  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token'] },
+  'kernel.tenant': { from: 'crove_kernel.tenant', omit: ['inbound_token', 'conversation_token'] },
   'kernel.tenant_member': { from: 'crove_kernel.tenant_member', omit: [] },
   // Who held which built-in role (#1279), org-wide or for one legal entity.
   'kernel.role_assignment': { from: 'crove_kernel.role_assignment', omit: [] },

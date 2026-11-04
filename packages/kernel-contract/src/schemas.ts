@@ -318,6 +318,8 @@ export const zOrgDetail = z.object({
   // sets it.
   contactEmail: z.string().nullable(),
   inboundAddress: z.string().nullable(),
+  // The org's conversation address, where customers write to reach the Inbox (#2439): the inbound address with the conversation tag; null when inboundAddress is.
+  conversationAddress: z.string().nullable().optional(),
   // Messages to the org's addresses retired in the last 30 days that were dropped (#139); null when inboundAddress is.
   inboundDroppedCount: z.number().int().nonnegative().nullable(),
   members: z.array(z.object({ userId: zId, email: z.string(), displayName: z.string().nullable(), role: zRole })),
