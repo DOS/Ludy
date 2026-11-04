@@ -88,7 +88,8 @@ export interface SandboxWrittenObject {
   level: AdObjectLevel;
   name: string;
   accountId: string;
-  status: 'paused' | 'archived';
+  // paused when created, archived by `setStatus`, and what the sandbox's activation sets (sandbox-activate.ts).
+  status: string;
   // The campaign of an ad set, the ad set of an ad (a creative has none).
   parentId: string | null;
 }
@@ -99,7 +100,8 @@ export interface SandboxWriterFault {
   level: AdObjectLevel;
   // `find` fails a `findByTag` of the level (by default as an answer with more pages than the first, which is unknowable); `status` fails a `setStatus` of an
   // object of the level, with nothing changed.
-  when: 'before' | 'after' | 'find' | 'status';
+  // `status_after` makes the change of an object's status and loses the answer; `read` fails the read of an object's status (the activation's, sandbox-activate.ts).
+  when: 'before' | 'after' | 'find' | 'status' | 'status_after' | 'read';
   error?: AdPlatformError;
   times?: number;
 }
@@ -154,6 +156,16 @@ export class SandboxAdWriter implements AdWriter {
   async revokeToken(secret: string): Promise<AdWriterRevocation> {
     parseSecret(secret);
     return { how: 'sandbox' };
+  }
+
+  // The secret must be this sandbox's (a garbled one is a refused token): for the activation's calls, which reach an object by its id.
+  checkSecret(secret: string): void {
+    parseSecret(secret);
+  }
+
+  // The fault of a level and a kind that is due, taken off the list as it is used (sandbox-activate.ts takes its own through this).
+  takeFault(level: AdObjectLevel, when: SandboxWriterFault['when']): SandboxWriterFault | undefined {
+    return this.due(level, when);
   }
 
   private reach(secret: string, account: AdWriterAccount): string {

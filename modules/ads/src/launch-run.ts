@@ -23,7 +23,7 @@ import { zId, type AdsCampaignPlan } from '@crove/kernel-contract';
 import { planHash } from './campaign-plan.ts';
 import { todayIn } from './domain.ts';
 import { contextBase, draftPlanOf } from './campaign-draft.ts';
-import { committedLaunches, type LaunchState } from './launch-ledger.ts';
+import { committedLaunches, stopRunningLaunch, type LaunchState } from './launch-ledger.ts';
 import { committedProblems } from './launch-caps.ts';
 import {
   LAUNCH_STEP_PAUSED,
@@ -38,7 +38,9 @@ import {
   stepAction,
   stepLevel,
   stepVariant,
+  STARTED_STALE_SECONDS,
   targetingNames,
+  unsettledEarlier,
   zoneKnown,
   zonedMidnight,
   type LaunchLevel,
@@ -46,9 +48,9 @@ import {
 } from './launch-steps.ts';
 import { currentSetting, lockedSetting } from './write.ts';
 
-type Db = Pick<CommandContext, 'trx' | 'orgId'>;
+export type Db = Pick<CommandContext, 'trx' | 'orgId'>;
 
-const requireSystem = (ctx: Pick<CommandContext, 'actor'>) => {
+export const requireSystem = (ctx: Pick<CommandContext, 'actor'>) => {
   if (ctx.actor.type !== 'system') throw new DomainError('FORBIDDEN', 403, 'Chỉ hệ thống mới được thực hiện thao tác này');
 };
 
@@ -118,8 +120,8 @@ export interface LaunchRecorded {
 
 const none = (reason: string): LaunchBegin => ({ action: 'none', reason });
 
-const launchColumns = ['id', 'ad_account_id', 'draft_id', 'plan_hash', 'tag', 'state', 'attempt', 'step', 'currency', 'start_on', 'end_on', 'commit_until', 'legal_entity_id'] as const;
-const launchSelect = (ctx: Db) =>
+const launchColumns = ['id', 'ad_account_id', 'draft_id', 'plan_hash', 'tag', 'state', 'attempt', 'step', 'currency', 'start_on', 'end_on', 'commit_until', 'legal_entity_id', 'retry_requested_at'] as const;
+export const launchSelect = (ctx: Db) =>
   ctx.trx
     .selectFrom('crove_ads.ad_launch')
     .select([...launchColumns, sql<string>`daily_budget::text`.as('daily_budget'), sql<string>`start_on::text`.as('start_text'), sql<string>`end_on::text`.as('end_text'), sql<string | null>`commit_until::text`.as('commit_text')])
@@ -127,7 +129,7 @@ const launchSelect = (ctx: Db) =>
 
 // The account of a launch, locked FOR SHARE first (an account's move to another legal entity cascades to its launches, so the order account then launch is the one
 // every command takes), with the write connection's provider and state.
-async function accountOf(ctx: Db, adAccountId: string) {
+export async function launchAccountOf(ctx: Db, adAccountId: string) {
   const account = await ctx.trx
     .selectFrom('crove_ads.ad_account')
     .select(['id', 'currency', 'time_zone', 'write_enabled', 'write_connection_id', 'external_account_id', 'legal_entity_id'])
@@ -148,7 +150,7 @@ interface LaunchUpdate {
   stop_reason?: string;
   commit_until?: null;
 }
-async function setLaunch(ctx: Db, launchId: string, values: LaunchUpdate): Promise<void> {
+export async function setLaunch(ctx: Db, launchId: string, values: LaunchUpdate): Promise<void> {
   await ctx.trx.updateTable('crove_ads.ad_launch').set(values).where('org_id', '=', ctx.orgId).where('id', '=', launchId).execute();
 }
 
@@ -156,11 +158,11 @@ async function setLaunch(ctx: Db, launchId: string, values: LaunchUpdate): Promi
 // it ends, because nothing ran.
 const failLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'failed', stop_reason: reason, commit_until: null });
 const stopLaunch = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'stopped', stop_reason: reason, commit_until: null });
-const needAttention = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'needs_attention', stop_reason: reason });
+export const needAttention = (ctx: Db, launchId: string, reason: string) => setLaunch(ctx, launchId, { state: 'needs_attention', stop_reason: reason });
 
 // The condition that stops a launch right now, or null: the org's switch, the launches blocked, the account's switch, the write connection active. Read before every step
 // (`begin`), and again before a create that follows a reconcile that found nothing (`record` of `missing`), since the owner can stop while the lookup runs.
-function stopConditionOf(
+export function stopConditionOf(
   setting: { write_enabled: boolean; launches_blocked: boolean } | undefined,
   account: { write_enabled: boolean },
   connection: { status: string } | null,
@@ -172,8 +174,32 @@ function stopConditionOf(
   return null;
 }
 
+// What the caps say of a launch right now, as problems (none when it fits), under the org's lock the caller holds. The launch's own commitment is one of the rows the ledger
+// lists, so it is taken out first (one row of the same account, budget and window); `from` is the first day that still counts (the launch's first day before it has started,
+// today after), so a cap lowered for days that are over does not stop a launch that has days to run.
+export async function launchCapsProblems(
+  ctx: Db,
+  launch: { ad_account_id: string; currency: string; daily_budget: string; start_text: string; end_text: string; commit_text: string | null },
+  accountId: string,
+  from: string,
+) {
+  const base = await contextBase(ctx, accountId);
+  const committed = await committedLaunches(ctx, launch.currency, from, launch.end_text);
+  const own = committed.findIndex((c) => c.adAccountId === launch.ad_account_id && c.dailyBudget === launch.daily_budget && c.startOn === launch.start_text && c.endOn === launch.commit_text);
+  const others = committed.filter((_, i) => i !== own);
+  return committedProblems({ adAccountId: launch.ad_account_id, currency: launch.currency, dailyBudget: launch.daily_budget, startOn: from, endOn: launch.end_text }, others, base.caps);
+}
+
+// Whether the activation of any object of the launch was ever begun (a row of its calls in the ledger, whatever came of it): from then on an object may be on at the
+// platform, so a launch that ends keeps its commitment against the caps until it is wound down, and what it made is paused from the queue.
+export async function activationEverBegun(ctx: Db, launchId: string): Promise<boolean> {
+  const { rows } = await sql<{ n: number }>`
+    SELECT count(*)::int AS n FROM crove_kernel.external_call WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launchId}:%:activate\\_%`}`.execute(ctx.trx);
+  return (rows[0]?.n ?? 0) > 0;
+}
+
 // A code as the ledger holds a reason: lower case letters and underscores, at most 40.
-const reasonOf = (code: string): string => code.toLowerCase().replace(/[^a-z_]/g, '_').slice(0, 40) || 'unknown';
+export const reasonOf = (code: string): string => code.toLowerCase().replace(/[^a-z_]/g, '_').slice(0, 40) || 'unknown';
 
 export const adsLaunchBegin = defineCommand({
   name: 'ads.launch.begin',
@@ -189,15 +215,16 @@ export const adsLaunchBegin = defineCommand({
     if (!seen) return none('not_found');
     if (seen.state === 'stopped' || seen.state === 'failed' || seen.state === 'cancelled') return none('final');
     if (seen.state === 'live') return none('live');
-    if (seen.state === 'needs_attention') return none('needs_attention');
+    // A launch that needs attention runs again only when an owner or an admin asked (ads.launch.retry): the request is taken below, with the move.
+    if (seen.state === 'needs_attention' && !seen.retry_requested_at) return none('needs_attention');
     if (seen.state === 'launching' && seen.step === LAUNCH_STEP_PAUSED) return none('paused');
     // The org's lock first for a launch that has not started (the approvals, the cancel and the stops take it, so a stop and this begin queue), then the account, then the launch.
     const setting = seen.state === 'queued' ? await lockedSetting(ctx) : await currentSetting(ctx);
-    const found = await accountOf(ctx, seen.ad_account_id);
+    const found = await launchAccountOf(ctx, seen.ad_account_id);
     if (!found) return none('no_account');
     const { account, connection } = found;
     const launch = await launchSelect(ctx).where('id', '=', launchId).forUpdate().executeTakeFirst();
-    if (!launch || (launch.state !== 'queued' && launch.state !== 'launching') || (launch.state === 'launching' && launch.step === LAUNCH_STEP_PAUSED)) return none('settled');
+    if (!launch || (launch.state !== 'queued' && launch.state !== 'launching' && !(launch.state === 'needs_attention' && launch.retry_requested_at)) || (launch.state === 'launching' && launch.step === LAUNCH_STEP_PAUSED)) return none('settled');
     // A worker with no writer for the connection's provider leaves the launch as it is: queued, untouched, until a deployment that has one runs it.
     const writer = connection ? input.writers.find((w) => w.provider === connection.provider) : undefined;
     if (connection && !writer) return none('no_writer');
@@ -207,7 +234,10 @@ export const adsLaunchBegin = defineCommand({
     if (stop) {
       if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'cancelled', stop_reason: stop, commit_until: null });
       else {
-        await stopLaunch(ctx, launch.id, stop);
+        // A launch whose objects were never switched on commits nothing when it ends (nothing ran); one that ever began an activation keeps its commitment to at least
+        // today, like any stop, since an object may be on (W2-4b).
+        if (await activationEverBegun(ctx, launch.id)) await stopRunningLaunch(ctx, stop, launch.id);
+        else await stopLaunch(ctx, launch.id, stop);
         // What it made at the platform is paused from the queue after the commit (W2-4a): the stop commands of the org and the account write the same event for the launches
         // they stop, and this is the one that finds a launch a condition stopped while the job was running (a connection that closed, a switch that went off between).
         await ctx.emit('ads.pause.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
@@ -222,7 +252,11 @@ export const adsLaunchBegin = defineCommand({
     // The plan that was approved is the plan that runs: its hash is the one the ledger holds.
     if (!plan || account.currency !== launch.currency || planHash(plan, launch.ad_account_id, launch.currency) !== launch.plan_hash) {
       if (launch.state === 'queued') await setLaunch(ctx, launch.id, { state: 'launching' });
-      await failLaunch(ctx, launch.id, 'plan_changed');
+      if (launch.state !== 'queued' && (await activationEverBegun(ctx, launch.id))) {
+        // An object may be on: the launch is stopped with its commitment kept and what it made is paused, not failed.
+        await stopRunningLaunch(ctx, 'plan_changed', launch.id);
+        await ctx.emit('ads.pause.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
+      } else await failLaunch(ctx, launch.id, 'plan_changed');
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, failed: 'plan_changed' });
       return none('plan_changed');
     }
@@ -265,11 +299,7 @@ export const adsLaunchBegin = defineCommand({
       }
       // The caps again, under the org's lock taken above: a cap lowered since the approval cancels the launch and releases its commitment. The launch's own
       // commitment is one of the rows the ledger lists, so it is taken out first (one row of the same account, budget and window).
-      const base = await contextBase(ctx, account.id);
-      const committed = await committedLaunches(ctx, launch.currency, launch.start_text, launch.end_text);
-      const own = committed.findIndex((c) => c.adAccountId === launch.ad_account_id && c.dailyBudget === launch.daily_budget && c.startOn === launch.start_text && c.endOn === launch.commit_text);
-      const others = committed.filter((_, i) => i !== own);
-      const problems = committedProblems({ adAccountId: launch.ad_account_id, currency: launch.currency, dailyBudget: launch.daily_budget, startOn: launch.start_text, endOn: launch.end_text }, others, base.caps);
+      const problems = await launchCapsProblems(ctx, launch, account.id, launch.start_text);
       if (problems.length > 0) {
         await setLaunch(ctx, launch.id, { state: 'cancelled', stop_reason: 'cap_lowered', commit_until: null });
         ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, cancelled: 'cap_lowered', problems: problems.slice(0, 5).map((p) => `${p.scope}:${p.period}:${p.day ?? p.month ?? ''}:${p.cap}:${p.committed}:${p.plan}`) });
@@ -281,6 +311,14 @@ export const adsLaunchBegin = defineCommand({
       await needAttention(ctx, launch.id, 'page_inactive');
       return none('page_inactive');
     }
+    // The retry: the request of the person is taken, and the launch runs again as the next attempt (the database counts it, and clears the request in the same statement).
+    if (launch.state === 'needs_attention') {
+      const { rows: taken } = await sql<{ attempt: number | null }>`SELECT crove_ads.launch_take_retry(${ctx.orgId}::uuid, ${launch.id}::uuid) AS attempt`.execute(ctx.trx);
+      if (taken[0]?.attempt == null) return none('settled');
+      launch.attempt = taken[0].attempt;
+      launch.state = 'launching';
+      ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, retry: true, attempt: launch.attempt });
+    }
 
     // Which object is next: the first of the plan's steps that has no recorded object.
     const objects = await ctx.trx.selectFrom('crove_ads.ad_object').select(['slot', 'external_id']).where('org_id', '=', ctx.orgId).where('launch_id', '=', launch.id).execute();
@@ -288,6 +326,9 @@ export const adsLaunchBegin = defineCommand({
     const next = launchSteps(plan.variants.length).find((s) => !idOf.has(s));
     if (!next) {
       await setLaunch(ctx, launch.id, { step: LAUNCH_STEP_PAUSED });
+      // The objects are all created, paused: the approved launch goes on to its activation (the next job, with its own view of the platform), which re-checks everything
+      // before each call. The event carries ids only.
+      await ctx.emit('ads.activate.queued', { launchId: launch.id, adAccountId: launch.ad_account_id });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step: LAUNCH_STEP_PAUSED, objects: objects.length });
       return none('paused');
     }
@@ -302,15 +343,39 @@ export const adsLaunchBegin = defineCommand({
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step: next, attempt: launch.attempt, calls: row.calls, stopped: 'reconcile_unclear' });
       return none('reconcile_unclear');
     }
-    const action = stepAction(row ? { state: row.state, updatedAt: row.updated_at } : null, ctx.now);
+    // A retry looks at what the earlier attempts left of this very step before it creates anything: a call begun and never settled, or one whose answer was unclear, may
+    // have made the object. Such a row is reconciled by the launch's tag first (found: recorded, no create; none found: the call is made once more); the earlier row is
+    // settled as superseded. A call still young enough to be in flight waits. A row the platform refused, or that succeeded, is not one of these.
+    let earlierUnsettled = false;
+    if (!row && launch.attempt > 1) {
+      const { rows: calls } = await sql<{ id: string; key: string; state: string; updated_at: Date }>`
+        SELECT id, key, state, updated_at FROM crove_kernel.external_call
+        WHERE org_id = ${ctx.orgId}::uuid AND key LIKE ${`ads.launch:${launch.id}:%:${next}`} AND state IN ('started', 'ambiguous') FOR UPDATE`.execute(ctx.trx);
+      const earlier = unsettledEarlier(calls, launch.id, launch.attempt, next);
+      if (earlier.some((e) => e.state === 'started' && (ctx.now.getTime() - e.updated_at.getTime()) / 1000 < STARTED_STALE_SECONDS)) return none('in_flight');
+      if (earlier.length > 0) {
+        earlierUnsettled = true;
+        for (const e of earlier) {
+          await ctx.trx
+            .updateTable('crove_kernel.external_call')
+            .set({ state: 'failed', error_kind: 'unknown', error_code: 'SUPERSEDED', finished_at: ctx.now, updated_at: ctx.now })
+            .where('org_id', '=', ctx.orgId)
+            .where('id', '=', e.id)
+            .execute();
+        }
+      }
+    }
+    const action = earlierUnsettled ? 'reconcile' : stepAction(row ? { state: row.state, updatedAt: row.updated_at } : null, ctx.now);
     if (action === 'settled') {
       // A call the platform refused ended the launch's run (needs attention); one that succeeded has its object. Nothing to do either way.
       if (row?.state === 'failed') await needAttention(ctx, launch.id, 'step_failed');
       return none(row?.state === 'failed' ? 'step_failed' : 'settled');
     }
     if (action === 'wait') return none(row?.state === 'started' ? 'in_flight' : 'reconcile_wait');
-    if (action === 'call') {
+    if (action === 'call' || earlierUnsettled) {
       await ctx.trx.insertInto('crove_kernel.external_call').values({ org_id: ctx.orgId, key: callKey, module: 'ads', target: 'launch', step: next, retry_safety: 'reconcile_only', started_at: ctx.now }).execute();
+      // The row of a retry's reconcile is unclear from the start: the job asks the platform before anything is made.
+      if (earlierUnsettled) await ctx.trx.updateTable('crove_kernel.external_call').set({ state: 'ambiguous', updated_at: ctx.now }).where('org_id', '=', ctx.orgId).where('key', '=', callKey).execute();
     } else if (row) {
       // A reconcile: the row is taken by this run. A call begun and never settled, and old enough to be lost, is unclear now, and an unclear one is touched, so a
       // job that begins at the same moment finds it young and waits: only one job reconciles a step, and only it may make the call again if the object is missing.
@@ -362,7 +427,7 @@ export const adsLaunchBegin = defineCommand({
   },
 });
 
-const callErrorKind = (code: string): 'token_expired' | 'permission' | 'bad_request' => (/token|expired/.test(code) ? 'token_expired' : /connector|connection|cannot_run|permission|owner/.test(code) ? 'permission' : 'bad_request');
+export const callErrorKind = (code: string): 'token_expired' | 'permission' | 'bad_request' => (/token|expired/.test(code) ? 'token_expired' : /connector|connection|cannot_run|permission|owner/.test(code) ? 'permission' : 'bad_request');
 
 export const adsLaunchRecord = defineCommand({
   name: 'ads.launch.record',
@@ -378,7 +443,7 @@ export const adsLaunchRecord = defineCommand({
     const seen = await launchSelect(ctx).where('id', '=', launchId).executeTakeFirst();
     if (!seen) return { recorded: false, reason: 'not_found' };
     if (!parsed || parsed.launchId !== launchId) return { recorded: false, reason: 'stale' };
-    const found = await accountOf(ctx, seen.ad_account_id);
+    const found = await launchAccountOf(ctx, seen.ad_account_id);
     if (!found) return { recorded: false, reason: 'not_found' };
     const launch = await launchSelect(ctx).where('id', '=', launchId).forUpdate().executeTakeFirst();
     const result = input.result;
@@ -431,10 +496,12 @@ export const adsLaunchRecord = defineCommand({
       await settle({ state: 'succeeded', external_ref: result.externalId, finished_at: ctx.now });
       const last = steps.at(-1) === step;
       // A launch that is still running moves to the level reached (or to the end); one that was stopped meanwhile is left as it is and the run ends.
-      if (running) await setLaunch(ctx, launch.id, { step: last ? LAUNCH_STEP_PAUSED : stepLevel(step) });
+      // The last create leaves the level it reached too: the job's next begin finds nothing left to create, settles the step `paused` and queues the activation (an
+      // event is written by a command that is declared external, which this one, a record, is not).
+      if (running) await setLaunch(ctx, launch.id, { step: stepLevel(step) });
       ctx.audit({ launchId: launch.id, adAccountId: launch.ad_account_id, step, attempt: launch.attempt, phase: input.phase, outcome: result.kind, externalId: result.externalId, done: last && running });
       if (!running) return { recorded: true, state: launch.state, step: launch.step, next: 'stop' };
-      return { recorded: true, state: 'launching', step: last ? LAUNCH_STEP_PAUSED : stepLevel(step), next: last ? 'stop' : 'continue' };
+      return { recorded: true, state: 'launching', step: stepLevel(step), next: 'continue' };
     }
     if (result.kind === 'missing') {
       // The platform has no such object: the call may be made again, once, and the row says so (a call counted more). Only from an unclear row, which a reconcile

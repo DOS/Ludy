@@ -7624,6 +7624,7 @@ export const vi = {
       ADS_LAUNCH_NOT_FOUND: 'Không tìm thấy lần chạy này.',
       ADS_LAUNCH_NOT_QUEUED: 'Lần chạy này đã bắt đầu hoặc đã kết thúc nên không hủy được nữa.',
       ADS_LAUNCH_NOT_RUNNING: 'Lần chạy này chưa bắt đầu, đã dừng hoặc đã kết thúc nên không dừng được nữa.',
+      ADS_LAUNCH_NOT_RETRYABLE: 'Chỉ chạy lại được lần chạy đang chờ người xem xét.',
       ADS_LAUNCH_NOT_WOUND_DOWN: 'Tài khoản này còn một lần chạy quảng cáo chưa dừng hẳn. Hãy dừng nó và chờ các quảng cáo được tạm dừng trước khi xóa lịch sử.',
       ADS_DRAFT_REQUEST_NOT_FOUND: 'Không tìm thấy yêu cầu soạn nháp này.',
       ADS_DRAFT_REQUEST_OPEN: 'Bạn đang có một yêu cầu soạn nháp chờ trả lời. Chờ xong rồi nhờ tiếp.',
@@ -8062,10 +8063,15 @@ export const vi = {
       flag_settings: 'Xem các ngưỡng của cảnh báo chi tiêu',
       flag_settings_set: 'Đặt các ngưỡng của cảnh báo chi tiêu',
       flags: 'Xem các cảnh báo tốc độ chi tiêu và chi phí cho mỗi kết quả của tài khoản quảng cáo',
+      activate: {
+        begin: 'Quyết định lần bật tiếp theo của một lần chạy quảng cáo đã duyệt, sau khi kiểm tra lại các điều kiện dừng, kế hoạch và hạn mức',
+        record: 'Ghi kết quả một lần bật đối tượng quảng cáo của lần chạy',
+      },
       launch: {
         begin: 'Quyết định lần gọi tiếp theo của một lần chạy quảng cáo đã duyệt',
         cancel: 'Hủy một lần chạy chưa bắt đầu và trả lại số tiền của nó',
         record: 'Ghi kết quả một lần gọi nền tảng của lần chạy quảng cáo',
+        retry: 'Chạy lại một lần chạy quảng cáo đang chờ người xem xét',
         stop: 'Dừng một lần chạy quảng cáo đã bắt đầu',
       },
       pause: {

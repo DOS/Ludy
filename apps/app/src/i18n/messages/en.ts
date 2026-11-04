@@ -7628,6 +7628,7 @@ export const en = {
       ADS_LAUNCH_NOT_FOUND: 'This launch was not found.',
       ADS_LAUNCH_NOT_QUEUED: 'This launch has already started or ended, so it can no longer be cancelled.',
       ADS_LAUNCH_NOT_RUNNING: 'This launch has not started, or has already stopped or ended, so it cannot be stopped.',
+      ADS_LAUNCH_NOT_RETRYABLE: 'Only a launch that is waiting for someone to look at it can be run again.',
       ADS_LAUNCH_NOT_WOUND_DOWN: 'This account still has an ad launch that is not fully stopped. Stop it and wait for its ads to be paused before deleting the history.',
       ADS_DRAFT_REQUEST_NOT_FOUND: 'This request for a draft was not found.',
       ADS_DRAFT_REQUEST_OPEN: 'You already have a request for a draft waiting for an answer. Wait for it, then ask again.',
@@ -8065,10 +8066,15 @@ export const en = {
       flag_settings: 'Read the thresholds of the spend flags',
       flag_settings_set: 'Set the thresholds of the spend flags',
       flags: 'Read the spend-pace and cost-per-result flags of the ad accounts',
+      activate: {
+        begin: 'Decide the next activation call of an approved ad launch, after re-checking the stop conditions, the plan and the caps',
+        record: 'Record the result of switching on one ad object of a launch',
+      },
       launch: {
         begin: 'Decide the next platform call of an approved ad launch',
         cancel: 'Cancel a launch that has not started and release its amount',
         record: 'Record the result of one platform call of an ad launch',
+        retry: 'Run an ad launch that is waiting for someone again',
         stop: 'Stop an ad launch that has started',
       },
       pause: {

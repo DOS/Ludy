@@ -126,7 +126,7 @@ export interface StoppedLaunch {
 // is cancelled instead (cancelQueuedLaunches).
 export async function stopStartedLaunches(
   ctx: Db,
-  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected',
+  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected' | 'connection_closed' | 'plan_changed' | 'flight_over' | 'cap_lowered' | 'zone_unknown' | 'reconcile_unclear' | 'activation_unconfirmed',
   filter: { adAccountId?: string; launchId?: string } = {},
 ): Promise<StoppedLaunch[]> {
   const account = filter.adAccountId ?? null;
@@ -140,6 +140,10 @@ export async function stopStartedLaunches(
     RETURNING l.id, l.ad_account_id`.execute(ctx.trx);
   return rows.map((r) => ({ id: r.id, adAccountId: r.ad_account_id }));
 }
+
+// Stops one started launch for the launch job and the activation job (W2-4b), with the rule of any stop (the commitment kept to at least today, never cleared). The caller writes
+// the event of the pause at its own call, as a literal, after it commits.
+export const stopRunningLaunch = (ctx: Db, reason: Parameters<typeof stopStartedLaunches>[1], launchId: string): Promise<StoppedLaunch[]> => stopStartedLaunches(ctx, reason, { launchId });
 
 // Whether an account has a launch that is not wound down: one that has started and is still going (launching, needs attention, live), or one that was stopped and whose
 // objects are not yet paused at the platform (and Ludy has not given up on). Its history may not be deleted until it is.

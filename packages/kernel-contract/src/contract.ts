@@ -287,7 +287,7 @@ import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
 import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchStopCall } from './ads-campaign.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -1903,6 +1903,9 @@ export const contract = {
     // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's
     // stop never releases spend that ran or is in flight), and the objects it made at the platform are paused from the queue after the commit.
     stopLaunch: oc.input(zAdsLaunchStopCall).output(z.object({ launchId: zId, state: z.literal('stopped'), commitUntil: z.string().nullable() })),
+    // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
+    // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
+    retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),

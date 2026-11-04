@@ -308,7 +308,7 @@ export function checkEnv(env: Env): CheckResult[] {
   const liveLaunch = value(env, 'ADS_LIVE_LAUNCH');
   add(
     'Ads live launch off',
-    liveLaunch === 'true' ? ['ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only, until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false'] : [],
+    liveLaunch === 'true' ? ['ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta and switch them on, which spends real money; it is for the owner\'s own live check only, until the live-check runbook is done and the owner has approved the production step list: set ADS_LIVE_LAUNCH=false'] : [],
     'ADS_LIVE_LAUNCH is off (the default)',
   );
 
