@@ -57,7 +57,7 @@ An action that can **start or raise spend** declares `sideEffect: 'financial'`, 
 | `ads.campaign.draft_save`, `draft_edit`, `draft_discard` | R1 | owner, admin, marketing | Local only, reversible |
 | `ads.campaign.submit` (ask for approval) | R1, creates the proposal | owner, admin, marketing | Freezes the draft and its input hash |
 | `ads.campaign.launch` (create and activate) | **R3 financial**, proposal | approver per P10 to P12 | The approval card names the amounts (3.2). Executed once (P13) |
-| `ads.campaign.activate` / resume | **R3 financial** | approver | Spend restarts |
+| `ads.campaign.activate` / resume | **R3 financial** | approver | Spend restarts. Activating the objects of a launch is the last step of `ads.campaign.launch`, on its own approval (W2-4b); only a **resume** of something stopped or paused is this command's own R3 (W4) |
 | `ads.budget.raise`, `ads.schedule.extend` | **R3 financial** | approver | Anything that raises the money a plan can spend |
 | `ads.budget.lower`, `ads.schedule.shorten`, pause, archive | R2 external | owner, admin, marketing | Reduces or stops spend; no approval, always audited |
 | `ads.pause_all` (kill switch, 3.6) | R2 external | owner, admin, marketing | Pauses everything Ludy launched in the org and blocks new launches until an owner clears the flag |
