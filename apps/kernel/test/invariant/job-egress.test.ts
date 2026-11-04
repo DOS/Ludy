@@ -110,6 +110,12 @@ const OTHER_SENDS: Readonly<Record<string, { command: string } | { reason: strin
   startWorker: { command: 'ads.account.link' },
 };
 
+// Sends a later change adds (#2502: the e-invoice sweep queues its due drafts from inside the queue's own handler, as the bank feed's and the ads sweeps do), accepted whether or not
+// the send exists yet, so the two steps of the change can land apart. A site found here is held to the same checks as one in OTHER_SENDS; the step-two change moves it there.
+const LATER_SENDS: Readonly<Record<string, { command: string }>> = {
+  'finance-einvoice-issue handler': { command: 'finance.einvoice.issue' },
+};
+
 // Events that feed a queue with egress and that no command emits: a definer writes them for a request without one.
 const NO_COMMAND: Readonly<Record<string, string>> = {
   // A client's answer on a review link (crove_social review link definers, run by the public link's route).
@@ -323,8 +329,11 @@ describe('job egress (#1653)', () => {
       // register() already holds the declared risk at or above the derived one.
       return def?.sideEffect !== undefined && RANK[deriveRisk(def.sideEffect)] >= RANK.R2;
     };
-    expect([...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort()).toEqual(Object.keys(OTHER_SENDS).sort());
-    for (const [site, why] of Object.entries(OTHER_SENDS)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
+    const found = [...new Set(sends.filter((s) => s.within !== 'the outbox relay').map((s) => s.within))].sort();
+    // The reviewed sites: those above, and those of a later change that are there already.
+    const reviewed: Readonly<Record<string, { command: string } | { reason: string }>> = { ...OTHER_SENDS, ...Object.fromEntries(Object.entries(LATER_SENDS).filter(([site]) => found.includes(site))) };
+    expect(found).toEqual(Object.keys(reviewed).sort());
+    for (const [site, why] of Object.entries(reviewed)) if ('command' in why) expect(external(why.command), `${site}: ${why.command}`).toBe(true);
 
     const { commands, runs, problems } = emittersOf(feeds, sources, known, ['packages/kernel/src', 'modules', 'apps/kernel/src'], dynamicRuns(all()));
     expect(problems).toEqual([]);
@@ -340,7 +349,7 @@ describe('job egress (#1653)', () => {
     expect(pendingEmitters.problems).toEqual([]);
     expect(pendingProblems(NO_COMMAND_PENDING, NO_COMMAND, pendingEmitters.commands, new Date().toISOString().slice(0, 10))).toEqual([]);
     // A command that runs one of the commands that decide the other sends, at any depth, declares an external effect.
-    for (const [site, why] of Object.entries(OTHER_SENDS)) {
+    for (const [site, why] of Object.entries(reviewed)) {
       if (!('command' in why)) continue;
       const callers = new Set([why.command]);
       for (let grown = true; grown; ) {

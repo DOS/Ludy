@@ -5,7 +5,7 @@
 // is never retried by the caller after an unknown answer.
 import { randomBytes } from 'node:crypto';
 
-export type ConversationKindId = 'comment_thread' | 'direct';
+export type ConversationKindId = 'comment_thread' | 'direct' | 'email';
 
 // One thing a notice told us. `contact` is the customer of the thread; `direction` out is the org's own message seen from
 // the platform's inbox (an echo).

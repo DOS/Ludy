@@ -2,12 +2,12 @@
 // The Inbox screen's search params (CV3, #2306): which tab, which kind of thread, which channel and assignee, the search text and the thread open in the
 // middle pane. A param that fails its check is left out, so the screen falls back to its default (plan §9, #1513). No React imports, so it is unit tested.
 import { z } from 'zod';
-import { CONVERSATION_INTENTS } from '@crove/kernel-contract';
+import { CONVERSATION_INTENTS, CONVERSATION_KINDS, type ConversationKind } from '@crove/kernel-contract';
 import { readSearch, type Defined } from './search.ts';
 
 const zInboxSearch = z.object({
   status: z.enum(['new', 'pending', 'resolved']).optional().catch(undefined),
-  kind: z.enum(['comment_thread', 'direct']).optional().catch(undefined),
+  kind: z.enum(CONVERSATION_KINDS).optional().catch(undefined),
   c: z.uuid().optional().catch(undefined),
   channel: z.uuid().optional().catch(undefined),
   assignee: z.enum(['me', 'none']).optional().catch(undefined),
@@ -27,7 +27,7 @@ export function parseConversationInboxSearch(search: Record<string, unknown>): I
 // What the list asks the server for: the tab and the filters in force (a tab is New unless the address names another).
 export function inboxListInput(search: InboxSearch): {
   status: 'new' | 'pending' | 'resolved';
-  kind?: 'comment_thread' | 'direct';
+  kind?: ConversationKind;
   connectionId?: string;
   assignee?: 'me' | 'none';
   intent?: InboxSearch['intent'];
@@ -46,6 +46,6 @@ export function inboxListInput(search: InboxSearch): {
 }
 
 // The counts of the tabs follow the kind and channel filters (the same threads as the list, whatever its tab).
-export function inboxCountsInput(search: InboxSearch): { kind?: 'comment_thread' | 'direct'; connectionId?: string } {
+export function inboxCountsInput(search: InboxSearch): { kind?: ConversationKind; connectionId?: string } {
   return { ...(search.kind ? { kind: search.kind } : {}), ...(search.channel ? { connectionId: search.channel } : {}) };
 }
