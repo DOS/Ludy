@@ -520,7 +520,7 @@ export function SocialChannelsPage() {
       return;
     }
     if (oauth.includes(c.provider as OAuthProvider)) {
-      const comments = c.provider === 'facebook_page' && c.scopes.includes('pages_read_user_content') && c.scopes.includes('pages_manage_metadata');
+      const comments = c.provider === 'facebook_page' && (c.scopes.includes('pages_read_user_content') || c.scopes.includes('pages_messaging')) && c.scopes.includes('pages_manage_metadata');
       start.mutate({ provider: c.provider as OAuthProvider, ...(comments ? { comments: true } : {}) });
     }
   };
@@ -624,7 +624,7 @@ export function SocialChannelsPage() {
                       </Button>
                     )}
                     {c.provider === 'facebook_page' && c.status === 'active' && (
-                      c.scopes.includes('pages_read_user_content') && c.scopes.includes('pages_manage_metadata') ? (
+                      c.scopes.includes('pages_read_user_content') && c.scopes.includes('pages_manage_metadata') && c.scopes.includes('pages_messaging') ? (
                         <p className="mt-1 text-xs text-subtle-foreground">{t('facebookCommentsEnabled')}</p>
                       ) : canReconnect(c) ? (
                         <Button variant="outline" size="sm" className="mt-2" disabled={start.isPending} onClick={() => start.mutate({ provider: 'facebook_page', comments: true })}>

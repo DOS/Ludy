@@ -377,4 +377,241 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
     expect(leakedAudit.rows).toHaveLength(0);
     expect(leakedEvents.rows).toHaveLength(0);
   });
+
+  it('ingests Messenger direct messages, sends replies, reconciles echoes, and sends one private reply per Page comment (#2308)', async () => {
+    const owner = await person('owner-cv4');
+    const plainMember = await person('member-cv4');
+    const { orgId } = await createOrg(rt, asUser(owner), `Org CV4 ${randomUUID().slice(0, 6)}`);
+    // Add plainMember as an ordinary member without desk.agent.
+    await admin((c) =>
+      c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgId, plainMember]),
+    );
+
+    const pageId = '200300400500600';
+    const postId = `${pageId}_800700600500400`;
+    const commentExternalId = '800700600500400_555';
+    const psid = '700800900100200';
+    const pageSecret = JSON.stringify({ accessToken: 'page-token-cv4' });
+    const sealed = broker.seal(pageSecret, { orgId, provider: 'facebook_page', externalAccountId: pageId });
+
+    const { connectionId } = await rt.execute<{ connectionId: string; reconnected: boolean }>(
+      'kernel.channel.connect',
+      {
+        provider: 'facebook_page',
+        externalAccountId: pageId,
+        displayName: 'Tiệm Trà Sữa CV4',
+        scopes: [
+          'pages_show_list',
+          'pages_manage_posts',
+          'pages_read_engagement',
+          'pages_manage_engagement',
+          'pages_read_user_content',
+          'pages_manage_metadata',
+          'pages_messaging',
+        ],
+        expiresAt: null,
+        credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+      },
+      { actor: asUser(owner), orgId },
+    );
+
+    const app = buildApp();
+    const nowMs = Date.now();
+    const nowSec = Math.floor(nowMs / 1000);
+
+    // 1. Customer sends a Messenger DM (`entry[].messaging[]`) and a Standby entry (ignored).
+    const dmPayload = JSON.stringify({
+      object: 'page',
+      entry: [
+        {
+          id: pageId,
+          time: nowMs,
+          messaging: [
+            {
+              sender: { id: psid },
+              recipient: { id: pageId },
+              timestamp: nowMs - 5_000,
+              message: {
+                mid: 'm_dm_in_1',
+                text: 'Shop ơi cho mình hỏi menu trà sữa',
+              },
+            },
+          ],
+          standby: [
+            {
+              sender: { id: 'psid_standby_ignored' },
+              recipient: { id: pageId },
+              timestamp: nowMs - 4_000,
+              message: { mid: 'm_standby_1', text: 'Ignored standby message' },
+            },
+          ],
+        },
+      ],
+    });
+    const resDm = await app.request(FACEBOOK_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [FACEBOOK_SIGNATURE_HEADER]: signHub(dmPayload) },
+      body: dmPayload,
+    });
+    expect(resDm.status).toBe(200);
+    await runConversationIntake({ workerDb, runtime: worker });
+
+    // Plain member without desk.agent cannot see direct conversations under RLS.
+    const plainListed = await rt.query<ConversationListed>('kernel.conversation.list', { kind: 'direct' }, { actor: asUser(plainMember), orgId });
+    expect(plainListed.conversations).toHaveLength(0);
+
+    const dmListed = await rt.query<ConversationListed>('kernel.conversation.list', { kind: 'direct' }, { actor: asUser(owner), orgId });
+    expect(dmListed.conversations).toHaveLength(1);
+    const dmConvId = dmListed.conversations[0]!.id;
+    let dmDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: dmConvId }, { actor: asUser(owner), orgId });
+    expect(dmDetail.conversation.kind).toBe('direct');
+    expect(dmDetail.conversation.replyWindowUntil).not.toBeNull();
+    expect(dmDetail.reply).toEqual({ allowed: true, reason: null });
+
+    // 2. Owner replies to the Messenger DM; simulate a drop after Graph call (`unknown`), then reconcile via `message_echoes`.
+    const sentBodies: Record<string, unknown>[] = [];
+    let failNetworkOnce = true;
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(input);
+      if (init?.method === 'POST' && url.pathname === `/v24.0/${pageId}/messages`) {
+        const parsed = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+        sentBodies.push(parsed);
+        if (failNetworkOnce) {
+          failNetworkOnce = false;
+          throw new Error('socket hang up after send');
+        }
+        return new Response(JSON.stringify({ recipient_id: psid, message_id: `m_out_${sentBodies.length}` }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+    const publisher = new FacebookPagePublisher({ appSecret: APP_SECRET }, fetchImpl);
+    const sendDeps = { runtime: worker, broker, adapter: (p: string) => (p === 'facebook_page' ? publisher.conversations : undefined) };
+
+    const { messageId: dmReplyId } = await rt.execute<{ messageId: string }>(
+      'kernel.conversation.reply',
+      { conversationId: dmConvId, body: 'Dạ menu trà sữa của tiệm đây ạ!', lastSeenSeq: 1 },
+      { actor: asUser(owner), orgId },
+    );
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: dmReplyId, action: 'reply' })).toBe('unknown');
+
+    dmDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: dmConvId }, { actor: asUser(owner), orgId });
+    expect(dmDetail.messages.find((m) => m.id === dmReplyId)?.sendState).toBe('unknown');
+
+    // Webhook delivers `message_echoes` for that outbound reply -> reconciles the `unknown` row to `sent` without duplicating!
+    const dmEchoPayload = JSON.stringify({
+      object: 'page',
+      entry: [
+        {
+          id: pageId,
+          time: nowMs + 1_000,
+          messaging: [
+            {
+              sender: { id: pageId },
+              recipient: { id: psid },
+              timestamp: nowMs + 1_000,
+              message: {
+                mid: 'm_echo_reconciled_1',
+                is_echo: true,
+                text: 'Dạ menu trà sữa của tiệm đây ạ!',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await app.request(FACEBOOK_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [FACEBOOK_SIGNATURE_HEADER]: signHub(dmEchoPayload) },
+      body: dmEchoPayload,
+    });
+    await runConversationIntake({ workerDb, runtime: worker });
+
+    dmDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: dmConvId }, { actor: asUser(owner), orgId });
+    expect(dmDetail.messages).toHaveLength(2);
+    expect(dmDetail.messages.find((m) => m.id === dmReplyId)?.sendState).toBe('sent');
+
+    // 3. Customer posts a Page comment, and owner sends a Private Reply (`kernel.conversation.reply_privately`).
+    const commentPayload = JSON.stringify({
+      object: 'page',
+      entry: [
+        {
+          id: pageId,
+          time: nowSec + 2,
+          changes: [
+            {
+              field: 'feed',
+              value: {
+                item: 'comment',
+                verb: 'add',
+                comment_id: commentExternalId,
+                post_id: postId,
+                parent_id: postId,
+                created_time: nowSec - 60,
+                message: 'Cho mình xin giá sỉ vào hộp thư nhé',
+                from: { id: 'psid_commenter_1', name: 'Phạm Minh' },
+              },
+            },
+          ],
+        },
+      ],
+    });
+    await app.request(FACEBOOK_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [FACEBOOK_SIGNATURE_HEADER]: signHub(commentPayload) },
+      body: commentPayload,
+    });
+    await runConversationIntake({ workerDb, runtime: worker });
+
+    const commentListed = await rt.query<ConversationListed>('kernel.conversation.list', { kind: 'comment_thread' }, { actor: asUser(owner), orgId });
+    expect(commentListed.conversations).toHaveLength(1);
+    const commentConvId = commentListed.conversations[0]!.id;
+    let commentDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: commentConvId }, { actor: asUser(owner), orgId });
+    const inboundCommentId = commentDetail.messages[0]!.id;
+    expect(commentDetail.messages[0]?.privateReplyConversationId).toBeNull();
+    // Comment threads do not have a 7-day reply window!
+    expect(commentDetail.conversation.replyWindowUntil).toBeNull();
+
+    // Plain member without desk.agent is refused from sending a private reply.
+    await expect(
+      rt.execute(
+        'kernel.conversation.reply_privately',
+        { messageId: inboundCommentId, body: 'Không có quyền desk.agent' },
+        { actor: asUser(plainMember), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const privReplied = await rt.execute<{ conversationId: string; messageId: string }>(
+      'kernel.conversation.reply_privately',
+      { messageId: inboundCommentId, body: 'Dạ tiệm gửi bảng giá sỉ riêng cho bạn ạ!' },
+      { actor: asUser(owner), orgId },
+    );
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: privReplied.messageId, action: 'reply' })).toBe('accepted');
+    expect(sentBodies.at(-1)).toEqual({
+      recipient: { comment_id: commentExternalId },
+      message: { text: 'Dạ tiệm gửi bảng giá sỉ riêng cho bạn ạ!' },
+    });
+
+    // The comment now links to `privateReplyConversationId`, and the private reply conversation links back via `parentConversationId`.
+    commentDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: commentConvId }, { actor: asUser(owner), orgId });
+    expect(commentDetail.messages[0]?.privateReplyConversationId).toBe(privReplied.conversationId);
+
+    const privDetail = await rt.query<ConversationDetail>(
+      'kernel.conversation.get',
+      { conversationId: privReplied.conversationId },
+      { actor: asUser(owner), orgId },
+    );
+    expect(privDetail.conversation.kind).toBe('direct');
+    expect(privDetail.parentId).toBe(commentConvId);
+    expect(privDetail.reply.allowed).toBe(false);
+    expect(privDetail.reply.reason).toBe('not_supported');
+
+    // A second private reply to the same comment is refused with PRIVATE_REPLY_ALREADY_SENT.
+    await expect(
+      rt.execute(
+        'kernel.conversation.reply_privately',
+        { messageId: inboundCommentId, body: 'Nhắn lần 2' },
+        { actor: asUser(owner), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'PRIVATE_REPLY_ALREADY_SENT' });
+  });
 });

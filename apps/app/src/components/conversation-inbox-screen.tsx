@@ -183,6 +183,7 @@ export function InboxScreen({ search, onSearch }: { search: InboxSearch; onSearc
                 gone.current = openId;
                 change({});
               }}
+              onOpenConversation={(id) => onSearch({ ...search, c: id })}
             />
           ) : (
             <Empty title={t('pick')} />

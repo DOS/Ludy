@@ -26,6 +26,7 @@ export const HIDE_REQUESTS = ['hide', 'unhide'] as const;
 
 export const CONVERSATION_BODY_MAX = 20_000;
 export const CONVERSATION_REPLY_MAX = 8_000;
+export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
 export const CONVERSATION_NOTE_MAX = 5_000;
 export const CONVERSATION_EVENTS_MAX = 1_000;
 export const CONVERSATION_LIST_MAX = 100;
@@ -53,9 +54,10 @@ export interface ConversationProviderRules {
 }
 export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationProviderRules>> = {
   sandbox: { kinds: ['comment_thread', 'direct'], replyMax: 2000, canHide: true, windowHours: null },
-  // Facebook Page comments (CV2, #2307, plan section 6.2): public comment threads under Page posts, up to 8000 characters per reply,
-  // reversible hide/unhide (`is_hidden`), and no 24-hour messaging window on public comments.
-  facebook_page: { kinds: ['comment_thread'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: null },
+  // Facebook Page comments and Messenger (CV2 #2307, CV4 #2308, plan section 6.2): public comment threads under Page posts (up to 8000
+  // characters, reversible hide/unhide, no reply window) and Messenger direct messages (up to 2000 characters, 24-hour standard window
+  // plus 7-day HUMAN_AGENT window = 168 hours).
+  facebook_page: { kinds: ['comment_thread', 'direct'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: 168 },
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
@@ -199,6 +201,8 @@ export const zConversationMessage = z.strictObject({
   hideRequest: z.enum(HIDE_REQUESTS).nullable(),
   hideErrorCode: z.string().nullable(),
   removed: z.boolean(),
+  // The private-reply conversation started from this comment (CV4, #2308), when the reader may see it.
+  privateReplyConversationId: zId.nullable().optional(),
 });
 export type ConversationMessage = z.infer<typeof zConversationMessage>;
 
@@ -305,6 +309,18 @@ export const zConversationReply = z.strictObject({
   savedReplyId: zId.optional(),
 });
 export const zConversationReplied = z.strictObject({ messageId: zId, seq: z.number().int() });
+// A private reply in Messenger to a customer's comment on a Facebook Page post (CV4, #2308, plan section 7): opens a `direct` conversation
+// linked to the comment thread (`parent_conversation_id`) and sends one message to `recipient: { comment_id }` within seven days of the comment.
+export const zConversationPrivateReply = z.strictObject({
+  messageId: zId,
+  body: z.string().trim().min(1).max(CONVERSATION_FACEBOOK_DIRECT_MAX).refine(noNul, 'NUL character'),
+});
+export const zConversationPrivateReplied = z.strictObject({
+  conversationId: zId,
+  messageId: zId,
+  seq: z.number().int(),
+});
+export type ConversationPrivateReplied = z.infer<typeof zConversationPrivateReplied>;
 export const zConversationSettle = z.strictObject({ messageId: zId, action: z.enum(['retry', 'mark_sent']) });
 export const zConversationHide = z.strictObject({ messageId: zId, hidden: z.boolean() });
 export const zConversationAssign = z.strictObject({ conversationId: zId, assigneeUserId: zId.nullable() });

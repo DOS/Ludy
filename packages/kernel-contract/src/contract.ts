@@ -221,6 +221,8 @@ import {
   zAvailabilityEntry,
   zAvailabilitySet,
   zConversationNoteAdd,
+  zConversationPrivateReplied,
+  zConversationPrivateReply,
   zConversationReplied,
   zConversationReply,
   zConversationRetention,
@@ -1476,6 +1478,7 @@ export const contract = {
     counts: oc.input(zConversationCounts).output(zConversationCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
+    replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
     // A refused or unclear reply: send it again as a new attempt, or record that it did go out.
     settle: oc.input(zConversationSettle).output(z.object({ messageId: zId, state: z.string() })),
     hide: oc.input(zConversationHide).output(z.object({ messageId: zId })),

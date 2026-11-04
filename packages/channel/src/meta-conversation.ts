@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Facebook Page comments in the conversation core (issue #2307, plan docs/plan/conversations.md sections 6.1, 6.2, 6.3 and 13 CV2):
-// verifying X-Hub-Signature-256 on raw webhook bytes, turning a Page `feed` comment notice into core events, replying to a comment
-// (`POST /{comment-id}/comments`), hiding or unhiding a customer's comment (`POST /{comment-id}` with `is_hidden`), subscribing the Page
-// (`POST /{page-id}/subscribed_apps?subscribed_fields=feed`), and reconciling recent posts' comments when a webhook was missed.
+// Facebook Page comments and Messenger direct messages in the conversation core (issues #2307 and #2308, plan docs/plan/conversations.md
+// sections 6.1, 6.2, 6.3, 7 and 13 CV2 & CV4): verifying X-Hub-Signature-256 on raw webhook bytes, turning Page `feed` comment notices and
+// `messaging` (`messages`, `message_echoes`) notices into core events, replying to a comment (`POST /{comment-id}/comments`), sending a
+// Messenger reply or a private reply to a comment (`POST /{page-id}/messages` with 24h `RESPONSE`, 7d `HUMAN_AGENT`, or `recipient.comment_id`),
+// hiding or unhiding a customer's comment (`POST /{comment-id}` with `is_hidden`), subscribing the Page (`POST /{page-id}/subscribed_apps`),
+// and reconciling recent posts' comments when a webhook was missed.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   ConversationNoticeError,
@@ -24,6 +26,11 @@ import { graphTime } from './recent.ts';
 export const FACEBOOK_MAX_NOTICE_BYTES = 256 * 1024;
 export const FACEBOOK_SIGNATURE_HEADER = 'x-hub-signature-256';
 export const META_USER_ID = /^\d{1,32}$/;
+// The hosts Meta serves a customer's Messenger image attachments from (CV4 #2308, CV5c #2357), checked on every redirect hop by the egress guard.
+export const FACEBOOK_MEDIA_HOSTS: readonly string[] = ['fbcdn.net', 'fbsbx.com'];
+export const FACEBOOK_DIRECT_TEXT_MAX = 2000;
+const STANDARD_WINDOW_MS = 24 * 3_600_000;
+const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 3_600_000;
 
 // Keyed hash of the Meta user who granted a connection, with the same domain separation as @crove/ad-platform so one Meta data-deletion
 // callback (`/api/ads/meta/data-deletion`) matches both Ads and Page connections granted by that person (#2305, #2307).
@@ -38,8 +45,13 @@ const COMMENT_TARGET_ID = /^\d{1,32}(_\d{1,32})?$/;
 const TEXT_MAX = 20_000;
 const ID_MAX = 200;
 const MESSAGE_ID_MAX = 300;
+const IMAGES_MAX = 5;
+const IMAGE_URL_MAX = 2000;
 const CUSTOMER_ATTACHMENT_PLACEHOLDER = '[Khách gửi bình luận đính kèm]';
 const PAGE_ATTACHMENT_PLACEHOLDER = '[Trang đã gửi bình luận đính kèm]';
+const DIRECT_CUSTOMER_IMAGE_PLACEHOLDER = '[Khách gửi ảnh]';
+const DIRECT_CUSTOMER_ATTACHMENT_PLACEHOLDER = '[Khách gửi tin nhắn đính kèm]';
+const DIRECT_PAGE_ATTACHMENT_PLACEHOLDER = '[Trang đã gửi tin nhắn đính kèm]';
 
 export interface MetaSignatureInput {
   // The raw request bytes, before any UTF-8 or JSON decoding (Meta escapes non-ASCII characters as \uXXXX before signing).
@@ -108,15 +120,97 @@ interface WebhookChange {
   value?: FeedCommentValue | null;
 }
 
+interface MessagingAttachment {
+  type?: unknown;
+  payload?: { url?: unknown } | null;
+}
+
+interface MessagingMessage {
+  mid?: unknown;
+  text?: unknown;
+  is_echo?: unknown;
+  is_deleted?: unknown;
+  attachments?: MessagingAttachment[] | null;
+}
+
+interface MessagingItem {
+  sender?: { id?: unknown } | null;
+  recipient?: { id?: unknown } | null;
+  timestamp?: unknown;
+  message?: MessagingMessage | null;
+}
+
 interface WebhookEntry {
   id?: unknown;
   time?: unknown;
   changes?: WebhookChange[] | null;
+  messaging?: MessagingItem[] | null;
+  // Handover protocol standby events are received when Meta Business Suite / Page Inbox holds the primary thread receiver role.
+  // They are ignored here so Crove never double-stores or answers while standing by (plan section 6.2).
+  standby?: unknown;
 }
 
 interface WebhookPayload {
   object?: unknown;
   entry?: WebhookEntry[] | null;
+}
+
+function imagesOf(value: unknown): Array<{ kind: 'image'; url: string }> {
+  if (!Array.isArray(value)) return [];
+  const out: Array<{ kind: 'image'; url: string }> = [];
+  for (const item of value) {
+    if (out.length >= IMAGES_MAX) break;
+    const a = item as MessagingAttachment | null;
+    if (!a || typeof a !== 'object') continue;
+    const url = a.payload?.url;
+    if (a.type !== 'image' || typeof url !== 'string' || url.length === 0 || url.length > IMAGE_URL_MAX || !url.startsWith('https://') || url.includes('\u0000')) continue;
+    out.push({ kind: 'image', url });
+  }
+  return out;
+}
+
+function eventFromMessaging(pageId: string, entryTime: unknown, item: MessagingItem, now: number): InboundConversationEvent | null {
+  if (!item || typeof item !== 'object') return null;
+  const msg = item.message;
+  if (!msg || typeof msg !== 'object') return null;
+  const senderId = idOf(item.sender?.id);
+  const recipientId = idOf(item.recipient?.id);
+  const mid = idOf(msg.mid);
+  const isEcho = msg.is_echo === true || senderId === pageId;
+  const customerId = isEcho ? recipientId : senderId;
+  const at = atOf(item.timestamp ?? entryTime, now);
+  if (!mid || !customerId || customerId === pageId || !at || mid.length > MESSAGE_ID_MAX || customerId.length > ID_MAX) return null;
+  if (msg.is_deleted === true) {
+    return {
+      kind: 'direct',
+      threadId: customerId,
+      messageId: mid,
+      direction: isEcho ? 'out' : 'in',
+      contact: { id: customerId },
+      text: '',
+      at,
+      removed: true,
+    };
+  }
+  const rawText = typeof msg.text === 'string' ? clean(msg.text).slice(0, TEXT_MAX) : '';
+  const images = !isEcho ? imagesOf(msg.attachments) : [];
+  const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+  if (rawText === '' && !hasAttachments) return null;
+  const placeholder = isEcho
+    ? DIRECT_PAGE_ATTACHMENT_PLACEHOLDER
+    : images.length > 0
+      ? DIRECT_CUSTOMER_IMAGE_PLACEHOLDER
+      : DIRECT_CUSTOMER_ATTACHMENT_PLACEHOLDER;
+  return {
+    kind: 'direct',
+    threadId: customerId,
+    messageId: mid,
+    direction: isEcho ? 'out' : 'in',
+    contact: { id: customerId },
+    text: rawText !== '' ? rawText : placeholder,
+    at,
+    ...(images.length > 0 ? { attachments: images } : {}),
+  };
 }
 
 function eventFromChange(pageId: string, entryTime: unknown, change: WebhookChange, now: number): InboundConversationEvent | null {
@@ -215,6 +309,10 @@ export function parseFacebookNotices(body: Uint8Array, now: number = Date.now())
       const event = eventFromChange(pageId, entry.time, change, now);
       if (event) list.push(event);
     }
+    for (const msg of Array.isArray(entry.messaging) ? entry.messaging : []) {
+      const event = eventFromMessaging(pageId, entry.time, msg, now);
+      if (event) list.push(event);
+    }
     byPage.set(pageId, list);
   }
   return [...byPage.entries()].map(([accountId, events]) => ({ accountId, events: sortCommentEvents(events) }));
@@ -249,6 +347,27 @@ function conversationCallError(error: unknown): ConversationCallResult {
     };
   }
   return { kind: 'unknown', ...(res.kind === 'unknown' && res.code ? { code: res.code } : {}) };
+}
+
+function messengerCallError(error: unknown): ConversationCallResult {
+  if (error instanceof GraphError) {
+    // 2018278 / 2018065: outside the allowed messaging window (24h standard or 7d HUMAN_AGENT).
+    if (error.subcode === 2018278 || error.subcode === 2018065) {
+      return { kind: 'rejected', error: 'bad_request', code: 'FB_WINDOW_CLOSED' };
+    }
+    // 10900 / subcode 1772011: a private reply was already sent to this comment, or the 7-day private-reply window passed.
+    if (error.code === 10900 || error.subcode === 10900 || error.subcode === 1772011) {
+      return { kind: 'rejected', error: 'bad_request', code: 'FB_PRIVATE_REPLIED' };
+    }
+    // 551: the person is unavailable on Messenger (blocked the Page or deactivated).
+    if (error.code === 551 || error.subcode === 551) {
+      return { kind: 'rejected', error: 'bad_request', code: 'FB_RECIPIENT_UNAVAILABLE' };
+    }
+    if (error.code === 100 && error.subcode === 33) {
+      return { kind: 'rejected', error: 'bad_request', code: 'FB_NOT_FOUND' };
+    }
+  }
+  return conversationCallError(error);
 }
 
 function conversationHideError(error: unknown): ConversationHideResult {
@@ -291,14 +410,64 @@ export class FacebookPageConversations implements ConversationAdapter {
     this.graph = graph;
   }
 
-  // Replies to a comment thread on the Page (`POST /{comment-id}/comments` with `message`). Never retried automatically after an unclear
-  // answer because Graph comment creation has no idempotency key.
+  // Replies to a comment thread (`POST /{comment-id}/comments`) or sends a Messenger direct message / private reply to a comment
+  // (`POST /{page-id}/messages`). Never retried automatically after an unclear answer because neither Graph endpoint takes an idempotency key.
   async reply(input: ConversationReplyInput): Promise<ConversationCallResult> {
     const token = pageToken(input.secret);
     if (!token) return { kind: 'rejected', error: 'token_expired', code: 'NO_PAGE_TOKEN' };
-    if (! NUMERIC_ID.test(input.externalAccountId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_PAGE_ID' };
-    if (!COMMENT_TARGET_ID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_COMMENT_ID' };
+    if (!NUMERIC_ID.test(input.externalAccountId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_PAGE_ID' };
     if (input.text.trim().length === 0) return { kind: 'rejected', error: 'bad_request', code: 'EMPTY' };
+    if (input.kind === 'direct') {
+      if (input.text.length > FACEBOOK_DIRECT_TEXT_MAX) {
+        return { kind: 'rejected', error: 'bad_request', code: 'FB_TEXT_LENGTH' };
+      }
+      if (input.threadId.startsWith('private:')) {
+        const commentId = input.threadId.slice('private:'.length);
+        if (!COMMENT_TARGET_ID.test(commentId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_COMMENT_ID' };
+        try {
+          const answer = await this.graph.call<{ message_id?: unknown; id?: unknown }>('POST', `${input.externalAccountId}/messages`, {
+            token,
+            json: { recipient: { comment_id: commentId }, message: { text: input.text } },
+          });
+          const msgId = typeof answer.message_id === 'string' && answer.message_id ? answer.message_id : typeof answer.id === 'string' && answer.id ? answer.id : null;
+          if (!msgId) return { kind: 'unknown', code: 'FB_NO_MESSAGE_ID' };
+          return { kind: 'accepted', externalId: msgId.slice(0, MESSAGE_ID_MAX) };
+        } catch (error) {
+          return messengerCallError(error);
+        }
+      }
+      if (!NUMERIC_ID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_RECIPIENT_ID' };
+      let useHumanAgent = false;
+      if (typeof input.lastInboundAt === 'string' && input.lastInboundAt) {
+        const inboundMs = Date.parse(input.lastInboundAt);
+        if (Number.isFinite(inboundMs)) {
+          const ageMs = Date.now() - inboundMs;
+          if (ageMs > HUMAN_AGENT_WINDOW_MS) {
+            return { kind: 'rejected', error: 'bad_request', code: 'FB_WINDOW_CLOSED' };
+          }
+          if (ageMs > STANDARD_WINDOW_MS) {
+            useHumanAgent = true;
+          }
+        }
+      }
+      try {
+        const answer = await this.graph.call<{ message_id?: unknown; id?: unknown }>('POST', `${input.externalAccountId}/messages`, {
+          token,
+          json: {
+            recipient: { id: input.threadId },
+            messaging_type: useHumanAgent ? 'MESSAGE_TAG' : 'RESPONSE',
+            ...(useHumanAgent ? { tag: 'HUMAN_AGENT' } : {}),
+            message: { text: input.text },
+          },
+        });
+        const msgId = typeof answer.message_id === 'string' && answer.message_id ? answer.message_id : typeof answer.id === 'string' && answer.id ? answer.id : null;
+        if (!msgId) return { kind: 'unknown', code: 'FB_NO_MESSAGE_ID' };
+        return { kind: 'accepted', externalId: msgId.slice(0, MESSAGE_ID_MAX) };
+      } catch (error) {
+        return messengerCallError(error);
+      }
+    }
+    if (!COMMENT_TARGET_ID.test(input.threadId)) return { kind: 'rejected', error: 'bad_request', code: 'BAD_COMMENT_ID' };
     try {
       const answer = await this.graph.call<{ id?: unknown }>('POST', `${input.threadId}/comments`, {
         token,
@@ -328,19 +497,24 @@ export class FacebookPageConversations implements ConversationAdapter {
     }
   }
 
-  // Subscribes the Page to `feed` webhook deliveries (`POST /{page-id}/subscribed_apps` with `subscribed_fields=feed`). Idempotent.
-  async subscribe(input: { externalAccountId: string; secret: string }): Promise<{ ok: true } | { ok: false; error: ConversationErrorKind | 'unknown'; code?: string }> {
+  // Subscribes the Page to `feed`, `messages` and `message_echoes` webhook deliveries (`POST /{page-id}/subscribed_apps`). Falls back to
+  // `feed` alone if the Page token was granted comment scopes without `pages_messaging`. Idempotent.
+  async subscribe(input: { externalAccountId: string; secret: string; fields?: string }): Promise<{ ok: true } | { ok: false; error: ConversationErrorKind | 'unknown'; code?: string }> {
     const token = pageToken(input.secret);
     if (!token) return { ok: false, error: 'token_expired', code: 'NO_PAGE_TOKEN' };
     if (!NUMERIC_ID.test(input.externalAccountId)) return { ok: false, error: 'bad_request', code: 'BAD_PAGE_ID' };
+    const fields = input.fields ?? 'feed,messages,message_echoes';
     try {
       const answer = await this.graph.call<{ success?: unknown }>('POST', `${input.externalAccountId}/subscribed_apps`, {
         token,
-        form: { subscribed_fields: 'feed' },
+        form: { subscribed_fields: fields },
       });
       return answer.success === true ? { ok: true } : { ok: false, error: 'unknown', code: 'SUBSCRIBE_NOT_CONFIRMED' };
     } catch (error) {
       const res = graphPublishResult(error);
+      if (!input.fields && res.kind === 'rejected' && res.error === 'permission') {
+        return this.subscribe({ externalAccountId: input.externalAccountId, secret: input.secret, fields: 'feed' });
+      }
       if (res.kind === 'rejected') return { ok: false, error: res.error, ...(res.code ? { code: res.code } : {}) };
       return { ok: false, error: 'unknown', ...(res.kind === 'unknown' && res.code ? { code: res.code } : {}) };
     }

@@ -2006,6 +2006,9 @@ export function createRpcHandler(
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
       get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
+      replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
+        inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_privately', input, { actor, orgId })),
+      ),
       settle: os.conversations.settle.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_settle', input, { actor, orgId }))),
       hide: os.conversations.hide.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.hide', input, { actor, orgId }))),
       assign: os.conversations.assign.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.assign', input, { actor, orgId }))),
