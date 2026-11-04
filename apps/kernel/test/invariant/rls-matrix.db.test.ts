@@ -56,6 +56,8 @@ const MACHINERY = new Set([
 // until the table exists, neither its factory nor its MACHINERY entry is stale. Remove an entry once its table is on
 // main. One table per line, sorted, with a trailing comma, so PRs adding different tables touch different lines.
 const PENDING_TABLES = new Set<string>([
+  'crove_finance.channel_order',
+  'crove_finance.channel_order_line',
   'crove_finance.stock_alias',
   'crove_finance.stock_item',
   'crove_finance.stock_move',
@@ -166,6 +168,9 @@ const einvoiceTaxCode = () => String(1_000_000_000 + einvoiceTaxSeq++);
 // Stock items (#2512) are unique per entity by code, and an alias by its key: each seeded one takes the next.
 let stockSeq = 0;
 const stockCode = () => `SP${(stockSeq++).toString().padStart(5, '0')}`;
+// Marketplace orders (#2515) are unique per entity, platform and order number, and a line per order and line key: each seeded one takes the next number.
+let channelOrderSeq = 0;
+const channelOrderNo = () => `RLS${(channelOrderSeq++).toString().padStart(8, '0')}`;
 let lineNo = 100;
 const balancingLine = (org: string, entry: string, lineNo: number, side: 'debit' | 'credit'): Row => ({
   table: 'crove_finance.journal_line',
@@ -705,6 +710,23 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   // #1399: a learned account rule. An org-wide keyword rule names no vendor and no source document.
   'crove_finance.categorization_rule': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), match_kind: 'keyword', match_text: `rls matrix ${tag()}`, debit_account: '6422' } }),
+  },
+  // #2515: an order of a marketplace (ADR-0045 point 5), read from a report a member confirmed: the platform, the platform's order number and the day; it takes the org's default
+  // entity by its trigger, and carries no buyer data. Tenant roles read and insert; nothing updates or deletes it.
+  'crove_finance.channel_order': {
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), platform: 'shopee', order_no: channelOrderNo() } }),
+  },
+  // #2515: one line of an order (the SKU, the quantity, the amounts, how far it has got). It takes its order's entity, and the order is seeded with it. Tenant roles read, insert and
+  // move a line's stage forward, so the update probes assign the stage to itself.
+  'crove_finance.channel_order_line': {
+    update: { set: 'stage = stage' },
+    make: (o) => {
+      const order = randomUUID();
+      return {
+        setup: [{ table: 'crove_finance.channel_order', values: { org_id: o.id, id: order, platform: 'shopee', order_no: channelOrderNo() } }],
+        row: { org_id: o.id, id: randomUUID(), order_id: order, line_key: 'RLS-matrix', quantity: '1', stage: 'placed' },
+      };
+    },
   },
   // #2488: the org's one row of payment reminder settings: the days after an invoice date a sale falls due, and the switch of the weekly "Hôm nay cần bạn"
   // item. Org-wide, so no entity. Tenant roles update the two values and who set them (a column grant), so the update probes assign a value to itself.
