@@ -2014,8 +2014,8 @@ export const vi = {
       discardedToast: 'Đã bỏ bản nháp.',
       waiting: 'Đang chờ duyệt ở Chứng từ chờ duyệt',
       openInbox: 'Mở Chứng từ chờ duyệt',
-      approvedNote: 'Đã duyệt. Chưa gửi gì lên nền tảng quảng cáo.',
-      launchQueued: 'Đã duyệt. {amount} đang được giữ chỗ trong hạn mức chi tiêu của bạn từ {from} đến {until}. Chưa gửi gì lên nền tảng quảng cáo.',
+      approvedNote: 'Đã duyệt. Chưa tiêu đồng nào.',
+      launchQueued: 'Đã duyệt. {amount} đang được giữ chỗ trong hạn mức chi tiêu của bạn từ {from} đến {until}. Chiến dịch đến nền tảng quảng cáo ở trạng thái tạm dừng nên chưa tiêu đồng nào.',
       launchCancelled: 'Lần chạy này đã bị hủy. Số tiền giữ chỗ trong hạn mức chi tiêu đã được trả lại.',
       launchCancel: 'Hủy và trả lại số tiền',
       launchCancelTitle: 'Hủy lần chạy này?',
@@ -7881,7 +7881,9 @@ export const vi = {
       flag_settings_set: 'Đặt các ngưỡng của cảnh báo chi tiêu',
       flags: 'Xem các cảnh báo tốc độ chi tiêu và chi phí cho mỗi kết quả của tài khoản quảng cáo',
       launch: {
+        begin: 'Quyết định lần gọi tiếp theo của một lần chạy quảng cáo đã duyệt',
         cancel: 'Hủy một lần chạy chưa bắt đầu và trả lại số tiền của nó',
+        record: 'Ghi kết quả một lần gọi nền tảng của lần chạy quảng cáo',
       },
       launches: {
         prepare_unblock: 'Đề nghị mở lại các lần chạy quảng cáo',
