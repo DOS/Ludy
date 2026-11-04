@@ -14,6 +14,7 @@
 import {
   ConversationNoticeError,
   parseFacebookNotices,
+  parseInstagramNotices,
   parseSandboxNotice,
   parseZaloNotice,
   type ConversationAdapter,
@@ -42,6 +43,8 @@ export const NOTICE_PARSERS: Readonly<Record<string, NoticeParser>> = {
   sandbox: parseSandboxNotice,
   // Facebook Page comments (#2307): X-Hub-Signature-256 was checked by the route before the body was parked.
   facebook_page: parseFacebookNotices,
+  // Instagram Business comments and direct messages (#2309): X-Hub-Signature-256 was checked by the route before the body was parked.
+  instagram: parseInstagramNotices,
   // Zalo OA (#2304): its signature was checked by the route before the body was parked.
   zalo_oa: parseZaloNotice,
 };

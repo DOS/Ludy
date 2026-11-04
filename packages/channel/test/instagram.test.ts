@@ -1,7 +1,7 @@
 // Instagram through Facebook Login against recorded Graph answers (shapes from Meta's docs); no live call.
 import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { InstagramConnector, InstagramPublisher, type Fetch, type PublishInput } from '../src/index.ts';
+import { InstagramConnector, InstagramPublisher, platformUserHash, type Fetch, type PublishInput } from '../src/index.ts';
 
 const APP = { appId: '1234567890', appSecret: 'test-app-secret-not-real' };
 const IG = '17841400000000001';
@@ -74,6 +74,68 @@ describe('InstagramConnector', () => {
       },
     ]);
     expect(calls.find((c) => c.route === 'GET /me/accounts')?.query.get('fields')).toContain('instagram_business_account');
+  });
+
+  it('requests inbox scopes when comments is true, computes grantedByHash, and subscribes the linked Page (#2309)', async () => {
+    const { fetchImpl, calls } = graph({
+      'POST /oauth/access_token': [{ body: { access_token: 'short' } }, { body: { access_token: 'long-user-token' } }],
+      'GET /me/permissions': [
+        {
+          body: {
+            data: [
+              'pages_show_list',
+              'pages_read_engagement',
+              'instagram_basic',
+              'instagram_content_publish',
+              'instagram_manage_insights',
+              'instagram_manage_comments',
+              'instagram_manage_messages',
+              'pages_manage_metadata',
+            ].map((permission) => ({ permission, status: 'granted' })),
+          },
+        },
+      ],
+      'GET /me': [{ body: { id: '999888777666555' } }],
+      'GET /me/accounts': [
+        {
+          body: {
+            data: [
+              { id: '111', name: 'Quán A', access_token: 'page-token-111', tasks: ['CREATE_CONTENT'], instagram_business_account: { id: IG, username: 'quan.a' } },
+            ],
+          },
+        },
+      ],
+      'POST /111/subscribed_apps': [{ body: { success: true } }],
+    });
+    const connector = new InstagramConnector(APP, fetchImpl);
+    const url = new URL(connector.authorizeUrl({ state: 'st', redirectUri: REDIRECT, codeChallenge: null, comments: true }));
+    expect(url.searchParams.get('scope')).toBe(
+      'pages_show_list,pages_read_engagement,instagram_basic,instagram_content_publish,instagram_manage_insights,instagram_manage_comments,instagram_manage_messages,pages_manage_metadata',
+    );
+    const accounts = await connector.exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null });
+    expect(accounts).toEqual([
+      {
+        provider: 'instagram',
+        externalAccountId: IG,
+        displayName: '@quan.a',
+        scopes: [
+          'pages_show_list',
+          'pages_read_engagement',
+          'instagram_basic',
+          'instagram_content_publish',
+          'instagram_manage_insights',
+          'instagram_manage_comments',
+          'instagram_manage_messages',
+          'pages_manage_metadata',
+        ],
+        expiresAt: null,
+        secret: JSON.stringify({ accessToken: 'page-token-111', pageId: '111' }),
+        grantedByHash: platformUserHash(APP.appSecret, '999888777666555'),
+      },
+    ]);
+    expect(calls.find((c) => c.route === 'POST /111/subscribed_apps')?.form).toEqual({
+      subscribed_fields: 'feed,messages,message_echoes',
+    });
   });
 });
 

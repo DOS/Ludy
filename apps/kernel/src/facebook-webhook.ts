@@ -15,6 +15,7 @@ import {
   FACEBOOK_SIGNATURE_HEADER,
   metaSignatureOk,
   parseFacebookNotices,
+  parseInstagramNotices,
   type InboundConversationEvent,
 } from '@crove/channel';
 import { DomainError, type Runtime } from '@crove/kernel-runtime';
@@ -124,13 +125,17 @@ export async function acceptFacebookWebhook(
     return { status: 401, code: 'WEBHOOK_SIGNATURE' };
   }
   const now = (config.now ?? Date.now)();
-  let notices: ReturnType<typeof parseFacebookNotices>;
+  let pageNotices: ReturnType<typeof parseFacebookNotices>;
+  let igNotices: ReturnType<typeof parseInstagramNotices>;
   try {
-    notices = parseFacebookNotices(request.body, now);
+    pageNotices = parseFacebookNotices(request.body, now);
+    igNotices = parseInstagramNotices(request.body, now);
   } catch (error) {
     if (error instanceof ConversationNoticeError) return { status: 400, code: 'WEBHOOK_MALFORMED' };
     throw error;
   }
+  const provider = igNotices.length > 0 ? 'instagram' : 'facebook_page';
+  const notices = igNotices.length > 0 ? igNotices : pageNotices;
   const freshKeys: string[] = [];
   for (const notice of notices) {
     for (const event of notice.events) {
@@ -142,7 +147,7 @@ export async function acceptFacebookWebhook(
   if (freshKeys.length === 0) return { status: 200, parked: false };
   try {
     await runtime.orgless(async (db) => {
-      await sql`SELECT crove_kernel.conversation_inbound_enqueue('facebook_page', ${Buffer.from(request.body)}::bytea)`.execute(db);
+      await sql`SELECT crove_kernel.conversation_inbound_enqueue(${provider}, ${Buffer.from(request.body)}::bytea)`.execute(db);
     });
   } catch (error) {
     if (error instanceof DomainError && error.code === 'OVERLOADED') return { status: 503, code: 'BACKLOG' };

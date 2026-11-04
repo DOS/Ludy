@@ -36,6 +36,7 @@ import { graphTime, pagingCursor, platformLink, RECENT_PAGES_MAX, RECENT_POSTS_M
 import { videoCoverOf } from './cover.ts';
 import { postTypeOf } from './post-type.ts';
 import { Graph, GraphError, graphPublishResult, MetaLogin, type MetaAppConfig } from './meta.ts';
+import { InstagramConversations, platformUserHash } from './meta-conversation.ts';
 import type { AuthorizeInput, ExchangeInput, Fetch, OAuthConnector } from './oauth.ts';
 
 // instagram_manage_insights: reach, saves, shares and views of the account's posts (S8 metrics) and its Stories'
@@ -44,6 +45,8 @@ import type { AuthorizeInput, ExchangeInput, Fetch, OAuthConnector } from './oau
 export const INSTAGRAM_SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_content_publish', 'instagram_manage_insights'] as const;
 // Asked for, not required: first comments (#609); an account connects without it and its comments fail with permission.
 export const INSTAGRAM_COMMENT_SCOPES = ['instagram_manage_comments'] as const;
+// Opt-in inbox scopes (CV7, #2309, plan section 6.4): comments, Instagram Messaging DMs, and subscribing the linked Page.
+export const INSTAGRAM_INBOX_SCOPES = ['instagram_manage_comments', 'instagram_manage_messages', 'pages_manage_metadata'] as const;
 // How long a publish waits for Meta to process the containers before it reports the post as pending; with the creates it
 // stays well inside the job's 60 second call timeout.
 const WAIT_MS = 15_000;
@@ -73,25 +76,39 @@ function secretOf(secret: string): InstagramSecret | null {
 export class InstagramConnector implements OAuthConnector {
   readonly provider = 'instagram' as const;
   readonly pkce = false;
+  private readonly app: MetaAppConfig;
   private readonly login: MetaLogin;
 
   constructor(app: MetaAppConfig, fetchImpl?: Fetch) {
+    this.app = app;
     this.login = new MetaLogin(app, INSTAGRAM_SCOPES, fetchImpl, INSTAGRAM_COMMENT_SCOPES);
   }
 
   authorizeUrl(input: AuthorizeInput): string {
-    return this.login.authorizeUrl(input);
+    return this.login.authorizeUrl(input, input.comments ? INSTAGRAM_INBOX_SCOPES : []);
   }
 
   // Every Instagram business account linked to a Page the user may post on.
   async exchange(input: ExchangeInput): Promise<ConnectedAccount[]> {
-    const { token, scopes } = await this.login.userToken(input);
+    const { token, scopes } = await this.login.userToken(input, INSTAGRAM_INBOX_SCOPES);
+    const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } }).catch(() => ({ id: undefined }));
+    const grantedByHash = typeof me.id === 'string' && NUMERIC_ID.test(me.id) ? platformUserHash(this.app.appSecret, me.id) : undefined;
+    const subscribedFields = [
+      ...(scopes.includes('instagram_manage_comments') ? ['feed'] : []),
+      ...(scopes.includes('instagram_manage_messages') ? ['messages', 'message_echoes'] : []),
+    ].join(',');
+    const canSubscribe = scopes.includes('pages_manage_metadata') && subscribedFields !== '';
     const accounts: ConnectedAccount[] = [];
     for (const row of await this.login.pages(token, 'id,name,access_token,tasks,instagram_business_account{id,username,name}')) {
       const ig = row.instagram_business_account;
       const tasks = Array.isArray(row.tasks) ? row.tasks : [];
       if (typeof row.id !== 'string' || !NUMERIC_ID.test(row.id) || typeof row.access_token !== 'string' || !row.access_token) continue;
       if (!ig || typeof ig.id !== 'string' || !NUMERIC_ID.test(ig.id) || !tasks.includes('CREATE_CONTENT')) continue;
+      if (canSubscribe) {
+        await this.login.graph
+          .call('POST', `${row.id}/subscribed_apps`, { token: row.access_token, form: { subscribed_fields: subscribedFields } })
+          .catch(() => undefined);
+      }
       const handle = typeof ig.username === 'string' && ig.username ? `@${ig.username}` : typeof ig.name === 'string' && ig.name ? ig.name : `Instagram ${ig.id}`;
       accounts.push({
         provider: 'instagram',
@@ -100,6 +117,7 @@ export class InstagramConnector implements OAuthConnector {
         scopes: [...scopes],
         expiresAt: null,
         secret: JSON.stringify({ accessToken: row.access_token, pageId: row.id } satisfies InstagramSecret),
+        ...(grantedByHash ? { grantedByHash } : {}),
       });
     }
     return accounts;
@@ -191,6 +209,7 @@ export class InstagramPublisher implements Publisher {
   readonly publishSafety: RetrySafety = 'reconcile_only';
   // A video uploaded by Crove (#772) takes minutes; the job waits as long as for the other video adapters.
   readonly callTimeoutMs = 420_000;
+  readonly conversations: InstagramConversations;
   private readonly graph: Graph;
   private readonly waitMs: number;
   private readonly pollMs: number;
@@ -198,6 +217,7 @@ export class InstagramPublisher implements Publisher {
   constructor(app: Pick<MetaAppConfig, 'appSecret' | 'graphVersion'>, fetchImpl?: Fetch, timing: { waitMs?: number; pollMs?: number } = {}) {
     if (!app.appSecret) throw new Error('missing Meta app secret');
     this.graph = new Graph(app.appSecret, app.graphVersion, fetchImpl);
+    this.conversations = new InstagramConversations(this.graph);
     this.waitMs = timing.waitMs ?? WAIT_MS;
     this.pollMs = timing.pollMs ?? POLL_MS;
   }

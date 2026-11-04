@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -47,7 +47,7 @@ function UnverifiedMark() {
   );
 }
 
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -488,7 +488,9 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
     detail.conversation.kind === 'comment_thread' &&
     !mine &&
     !m.removed &&
-    (detail.conversation.channel.provider === 'facebook_page' || detail.conversation.channel.provider === 'sandbox');
+    (detail.conversation.channel.provider === 'facebook_page' ||
+      detail.conversation.channel.provider === 'instagram' ||
+      detail.conversation.channel.provider === 'sandbox');
   const withinPrivateWindow = Date.now() - Date.parse(m.sentAt) <= 7 * 24 * 3_600_000;
   // An email from the customer: what they wrote this time, and the history and signature behind "show quoted text" (a display rule; the whole text is stored).
   const [showQuoted, setShowQuoted] = useState(false);
@@ -571,7 +573,7 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
             <Textarea
               aria-label={t('privateReplyLabel')}
               rows={2}
-              maxLength={CONVERSATION_FACEBOOK_DIRECT_MAX}
+              maxLength={detail.conversation.channel.provider === 'instagram' ? CONVERSATION_INSTAGRAM_DIRECT_MAX : CONVERSATION_FACEBOOK_DIRECT_MAX}
               value={privateText}
               placeholder={t('privateReplyPlaceholder')}
               onChange={(e) => setPrivateText(e.target.value)}
@@ -662,7 +664,15 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <Textarea
         aria-label={t('replyLabel')}
         rows={3}
-        maxLength={detail.conversation.channel.provider === 'facebook_page' && detail.conversation.kind === 'direct' ? CONVERSATION_FACEBOOK_DIRECT_MAX : CONVERSATION_REPLY_MAX}
+        maxLength={
+          detail.conversation.channel.provider === 'instagram'
+            ? detail.conversation.kind === 'direct'
+              ? CONVERSATION_INSTAGRAM_DIRECT_MAX
+              : CONVERSATION_INSTAGRAM_COMMENT_MAX
+            : detail.conversation.channel.provider === 'facebook_page' && detail.conversation.kind === 'direct'
+              ? CONVERSATION_FACEBOOK_DIRECT_MAX
+              : CONVERSATION_REPLY_MAX
+        }
         value={text}
         placeholder={t('replyPlaceholder')}
         onChange={(e) => {

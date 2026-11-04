@@ -27,6 +27,8 @@ export const HIDE_REQUESTS = ['hide', 'unhide'] as const;
 export const CONVERSATION_BODY_MAX = 20_000;
 export const CONVERSATION_REPLY_MAX = 8_000;
 export const CONVERSATION_FACEBOOK_DIRECT_MAX = 2_000;
+export const CONVERSATION_INSTAGRAM_COMMENT_MAX = 2_200;
+export const CONVERSATION_INSTAGRAM_DIRECT_MAX = 1_000;
 export const CONVERSATION_NOTE_MAX = 5_000;
 export const CONVERSATION_EVENTS_MAX = 1_000;
 export const CONVERSATION_LIST_MAX = 100;
@@ -58,6 +60,10 @@ export const CONVERSATION_PROVIDER_RULES: Readonly<Record<string, ConversationPr
   // characters, reversible hide/unhide, no reply window) and Messenger direct messages (up to 2000 characters, 24-hour standard window
   // plus 7-day HUMAN_AGENT window = 168 hours).
   facebook_page: { kinds: ['comment_thread', 'direct'], replyMax: CONVERSATION_REPLY_MAX, canHide: true, windowHours: 168 },
+  // Instagram Business comments and direct messages (CV7 #2309, plan section 6.4): public comment threads under Instagram media (up to
+  // 2200 characters, reversible hide/unhide, no reply window) and Instagram direct messages (up to 1000 characters, 24-hour standard
+  // window plus 7-day HUMAN_AGENT window = 168 hours).
+  instagram: { kinds: ['comment_thread', 'direct'], replyMax: CONVERSATION_INSTAGRAM_COMMENT_MAX, canHide: true, windowHours: 168 },
   // Zalo OA (#2304): private chats only (no comment API found); 2000 characters a message and a 48-hour free window from the customer's
   // last message [S, U until the live check settles them].
   zalo_oa: { kinds: ['direct'], replyMax: 2000, canHide: false, windowHours: 48 },
