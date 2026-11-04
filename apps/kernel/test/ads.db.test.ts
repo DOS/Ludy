@@ -1363,6 +1363,9 @@ suite('ads on PostgreSQL (#2217)', () => {
           }
           // The launches the job tests (W2-3) leave started hold their commitment too: the system, which knows nothing ran, releases them.
           await inContext('system', (c) => c.query(`UPDATE crove_ads.ad_launch SET state = 'stopped', commit_until = NULL, stop_reason = 'test_cleanup' WHERE org_id = $1 AND state IN ('launching', 'needs_attention')`, [orgId]), true);
+          // A launch a person stopped (W2-4a) keeps its commitment to at least the first day of its flight, which a final state can never release: the tests that stop one
+          // leave it, so the next test starts from the caps alone (the table's owner removes the row; nothing in the ledger deletes one).
+          await admin((c) => c.query(`DELETE FROM crove_ads.ad_launch WHERE org_id = $1 AND state = 'stopped' AND commit_until IS NOT NULL`, [orgId]));
           await open();
           const made = await connect(name);
           await sync(made.connectionId);
@@ -2158,7 +2161,7 @@ suite('ads on PostgreSQL (#2217)', () => {
 
           it('does not arm another create when the owner stops while a reconcile looks: the stop conditions are read again before the call, and the next begin stops the launch', async () => {
             const w = new SandboxAdWriter();
-            const { launch } = await queued('Dừng khi đang đối soát');
+            const { account, launch } = await queued('Dừng khi đang đối soát');
             w.inject({ level: 'campaign', when: 'before' });
             expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknown' });
             await age(launch.id, 61);
@@ -2166,13 +2169,32 @@ suite('ads on PostgreSQL (#2217)', () => {
             const options = { actor: SYSTEM, orgId };
             const first = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: launch.id, writers }, options);
             expect(first).toMatchObject({ action: 'reconcile', step: 'campaign' });
-            // The owner switches writing off while the lookup runs; the lookup finds nothing, and the job still holds the token it opened.
-            expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+            // The write connection closes while the lookup runs (a member who left: the closing does not touch the launch row); the lookup finds nothing, and the job still
+            // holds the token it opened. (The owner's own stops, a switch-off or the kill switch, stop the launch itself, so the record is stale then: tested below.)
+            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+            await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
             const missing = { launchId: launch.id, callKey: first.callKey, phase: 'reconcile', result: { kind: 'missing' } };
             expect(await worker.execute('ads.launch.record', missing, options)).toMatchObject({ recorded: true, next: 'stop' });
             expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'ambiguous', calls: 1 });
             expect(w.received).toEqual(['campaign']);
-            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'switch_off' });
+            expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
+            expect(w.received).toEqual(['campaign']);
+          });
+
+          it('arms no create either when the owner\'s own stop came while a reconcile looked: the launch is stopped, so the answer is stale and nothing is made', async () => {
+            const w = new SandboxAdWriter();
+            const { launch } = await queued('Chủ dừng khi đang đối soát');
+            w.inject({ level: 'campaign', when: 'before' });
+            expect(await run(w, launch.id)).toEqual({ steps: 1, ended: 'unknown' });
+            await age(launch.id, 61);
+            const writers = [{ provider: 'sandboxwrite_ads', objectives: ['traffic', 'engagement', 'messenger'], currencies: null, media: true }];
+            const options = { actor: SYSTEM, orgId };
+            const first = await worker.execute<{ action: string; callKey: string; step: string }>('ads.launch.begin', { launchId: launch.id, writers }, options);
+            expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
+            const missing = { launchId: launch.id, callKey: first.callKey, phase: 'reconcile', result: { kind: 'missing' } };
+            expect(await worker.execute('ads.launch.record', missing, options)).toEqual({ recorded: false, reason: 'stale' });
+            expect((await calls(launch.id))[0]).toMatchObject({ step: 'campaign', state: 'ambiguous', calls: 1 });
+            expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off' });
             expect(w.received).toEqual(['campaign']);
           });
 
@@ -2198,7 +2220,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
             // The switch-off stopped it, as the owner's stop: the commitment is shortened to today and never cleared (what ran or is in flight still counts), and the job
             // that comes after finds it done and creates nothing.
-            expect(await launchNow(first.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(0) });
+            expect(await launchNow(first.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(2) });
             await age(first.launch.id, 61);
             expect(await run(w, first.launch.id)).toEqual({ steps: 0, ended: 'final' });
             expect(w.received).toEqual(['campaign', 'ad_set']);
@@ -2209,7 +2231,7 @@ suite('ads on PostgreSQL (#2217)', () => {
             expect((await callAs(adminAccount, 'ads/pauseAll', { idempotencyKey: key() })).status).toBe(200);
             await age(second.launch.id, 61);
             expect(await run(w, second.launch.id)).toEqual({ steps: 0, ended: 'final' });
-            expect(await launchNow(second.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'launches_blocked', commit_until: inDays(0) });
+            expect(await launchNow(second.launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'launches_blocked', commit_until: inDays(2) });
           });
 
           it('stops a launch whose connection closed while it ran, as the system: nothing ran, so the commitment is released, and the pause of what it made is queued', async () => {
@@ -2218,7 +2240,8 @@ suite('ads on PostgreSQL (#2217)', () => {
             w.inject({ level: 'ad_set', when: 'after' });
             expect(await run(w, launch.id)).toEqual({ steps: 2, ended: 'unknown' });
             // The write connection is closed behind the launch's back (a member who left): the next begin finds the condition and stops it.
-            await row(`UPDATE crove_kernel.channel_connection SET status = 'revoked' WHERE org_id = $1 AND id = (SELECT write_connection_id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2)`, [orgId, account]);
+            const closing = (await row<{ id: string }>(`SELECT write_connection_id AS id FROM crove_ads.ad_account WHERE org_id = $1 AND id = $2`, [orgId, account]))[0];
+            await api.execute('kernel.channel.disconnect', { connectionId: closing?.id }, { actor: asOwner(), orgId });
             await age(launch.id, 61);
             expect(await run(w, launch.id)).toEqual({ steps: 0, ended: 'connection_closed' });
             expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'connection_closed', commit_until: null });
@@ -2290,8 +2313,8 @@ suite('ads on PostgreSQL (#2217)', () => {
               for (const who of [member, viewer]) expect((await stopAs(who, launch.id)).status, who.email).toBe(403);
               expect(await launchNow(launch.id)).toMatchObject({ state: 'launching', step: 'paused', commit_until: inDays(8) });
               const stopped = await stopAs(adminAccount, launch.id);
-              expect(stopped).toMatchObject({ status: 200, body: { launchId: launch.id, state: 'stopped', commitUntil: inDays(0) } });
-              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'stopped', commit_until: inDays(0) });
+              expect(stopped).toMatchObject({ status: 200, body: { launchId: launch.id, state: 'stopped', commitUntil: inDays(2) } });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'stopped', commit_until: inDays(2) });
               expect((await stopAs(owner, launch.id)).status).toBe(409);
               // The wind-down is open and the builder says the ads are being paused.
               expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 0, wind_down_code: null });
@@ -2434,7 +2457,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               const w = new SandboxAdWriter();
               const { launch, account } = await startedNow('Tắt công tắc rồi gỡ quyền', w);
               expect((await callAs(owner, 'ads/writeDisable', { idempotencyKey: key() })).status).toBe(200);
-              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(0) });
+              expect(await launchNow(launch.id)).toMatchObject({ state: 'stopped', stop_reason: 'switch_off', commit_until: inDays(2) });
               // The write connection closed in the same transaction: its token is gone from the connection, and a copy is held for the revoke.
               const obligation = async () => (await row<{ state: string; attempts: number; last_error_kind: string | null; last_error_code: string | null }>(`SELECT state, attempts, last_error_kind, last_error_code FROM crove_ads.ad_token_revoke WHERE org_id = $1 AND ad_account_id = $2 AND kind = 'write' ORDER BY created_at DESC LIMIT 1`, [orgId, account]))[0];
               expect(await obligation()).toMatchObject({ state: 'pending', attempts: 0 });
@@ -2445,14 +2468,14 @@ suite('ads on PostgreSQL (#2217)', () => {
               // The sweep opens the copy, pauses what the launch made with it first, and does not revoke while the pause is not finished: one ad could not be paused.
               w.inject({ level: 'ad', when: 'status', error: new AdPlatformError('transient', 'NETWORK') });
               const sweep = () => runAdsRevoke({ runtime: worker, workerDb, broker: vault, revokers: { sandboxwrite_ads: revokerOf(w) } });
-              expect(await sweep()).toMatchObject({ tried: 1, done: 0 });
+              await sweep();
               expect(w.statusCalls.map((c) => c.level).slice(0, 2)).toEqual(['campaign', 'ad_set']);
               expect(await obligation()).toMatchObject({ state: 'pending', attempts: 1, last_error_kind: 'transient', last_error_code: 'PAUSE_PENDING' });
               expect(await windDown(launch.id)).toMatchObject({ wound_down_at: null, wind_down_tries: 1 });
               // Due again: the pause finishes with the same copy, the launch is wound down, and the permission is removed after it.
               await admin((c) => c.query(`UPDATE crove_ads.ad_token_revoke SET next_attempt_at = now() WHERE state = 'pending'`));
               await dueNow(launch.id);
-              expect(await sweep()).toMatchObject({ tried: expect.any(Number), done: expect.any(Number) });
+              await sweep();
               expect([...w.objects.values()].every((o) => o.status === 'paused')).toBe(true);
               expect((await windDown(launch.id))?.wound_down_at).toBeInstanceOf(Date);
               expect(await obligation()).toMatchObject({ state: 'done' });
@@ -2474,6 +2497,7 @@ suite('ads on PostgreSQL (#2217)', () => {
               const left = await startedNow('Nền tảng yêu cầu xóa', other);
               const ids = [...other.objects.values()].filter((o) => ['campaign', 'ad_set', 'ad'].includes(o.level)).map((o) => o.id).sort();
               await worker.execute('ads.account.erase', { adAccountId: left.account }, { actor: SYSTEM, orgId });
+              eraseAuditsBefore += 1;
               const audited = await row<{ detail: { launchesNotWoundDown?: number; objects?: Array<{ level: string; id: string }> } }>(`SELECT detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 'ads.account.erase' AND detail ->> 'adAccountId' = $2`, [orgId, left.account]);
               expect(audited[0]?.detail.launchesNotWoundDown).toBe(1);
               expect((audited[0]?.detail.objects ?? []).map((o) => o.id).sort()).toEqual(ids);

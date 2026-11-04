@@ -120,7 +120,8 @@ export interface StoppedLaunch {
 // Stops the launches that have started, of the org, of one account or one launch, in the actor's own context (an owner's or an admin's, or the system's): each moves to
 // `stopped` and keeps its commitment against the caps to at least the earlier of what it was and today in the account's own time zone, never cleared (the database's
 // guard holds the rule whoever stops it, crove_ads.launch_guard: a person's stop must not release spend that ran or is in flight, and crove_ads.launch_today is the one
-// definition of today, tomorrow in UTC when no zone is known). The objects at the platform are paused afterwards, by the pause job, from the event the caller writes
+// definition of today, tomorrow in UTC when no zone is known). A flight that has not begun keeps its first day (the ledger holds a commitment inside the flight, never
+// before its first day), which is never less than the guard allows. The objects at the platform are paused afterwards, by the pause job, from the event the caller writes
 // for each launch returned (`ads.pause.queued`, ids only): never inside this transaction, so a platform that is down cannot stop a stop. A launch that has not started
 // is cancelled instead (cancelQueuedLaunches).
 export async function stopStartedLaunches(
@@ -133,7 +134,7 @@ export async function stopStartedLaunches(
   const { rows } = await sql<{ id: string; ad_account_id: string }>`
     UPDATE crove_ads.ad_launch l
     SET state = 'stopped', stop_reason = ${reason},
-        commit_until = LEAST(l.commit_until, crove_ads.launch_today((SELECT a.time_zone FROM crove_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id)))
+        commit_until = GREATEST(l.start_on, LEAST(l.commit_until, crove_ads.launch_today((SELECT a.time_zone FROM crove_ads.ad_account a WHERE a.org_id = l.org_id AND a.id = l.ad_account_id))))
     WHERE l.org_id = ${ctx.orgId}::uuid AND l.state IN ('launching', 'needs_attention', 'live')
       AND (${account}::uuid IS NULL OR l.ad_account_id = ${account}::uuid) AND (${launch}::uuid IS NULL OR l.id = ${launch}::uuid)
     RETURNING l.id, l.ad_account_id`.execute(ctx.trx);

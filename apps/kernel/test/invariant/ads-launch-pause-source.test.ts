@@ -64,7 +64,8 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     expect(job.match(/\.open\(/g)).toHaveLength(1);
     expect(job).toContain("'kernel.channel.credential'");
     expect(job).not.toMatch(/\.(verify|accounts|read\w*|create\w*|setStatus|findByTag|resolveTargeting|revokeToken)\(/);
-    expect(job).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b|\b(activate|unpause|resume)\w*\s*\(/i);
+    expect(job).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
+    expect(job).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);
     const imports = [...read('apps/kernel/src/ads-pause.ts').matchAll(/import (?:type )?\{([^}]*)\} from '@crove\/ad-platform'/g)].flatMap((m) => (m[1] ?? '').split(',').map((s) => s.replace(/\btype\b/, '').trim()));
     expect(imports.sort()).toEqual(['AdPauser']);
     // Nothing it logs or records carries the secret.
@@ -85,7 +86,9 @@ describe('what the pause job may reach of the platform\'s writer (#2296, W2-4a)'
     for (const path of ['modules/ads/src/launch-pause.ts', 'modules/ads/src/launch-pause-policy.ts']) {
       const file = code(path);
       expect(file, path).not.toMatch(/@crove\/ad-platform|\bfetch\b|\bhttps?:\/\//);
-      expect(file, path).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b|\b(activate|unpause|resume)\w*\s*\(/i);
+      // The platform's status words are upper case; the module's `'active'` is a channel connection's own status, a different word for a different thing.
+      expect(file, path).not.toMatch(/\b(ACTIVE|PAUSED|ARCHIVED)\b/);
+      expect(file, path).not.toMatch(/\b(activate|unpause|resume)\w*\s*\(/i);
     }
     // The pause commands are the system's alone, and the stop is a person's and only stops.
     const commands = code('modules/ads/src/launch-pause.ts');

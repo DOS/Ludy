@@ -28,19 +28,21 @@ function report(out: PauseResult): PauseResultInput {
   };
 }
 
+class PauseTimeout extends Error {}
+
 export async function pauseWork(pauser: AdPauser, secret: string, work: PauseWork): Promise<PauseResultInput> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const out = await Promise.race([
       pauser.pauseLaunch(secret, work.account, { tag: work.tag, known: work.objects.map((o) => ({ level: o.level, id: o.externalId })) }),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('timeout')), PAUSE_TIMEOUT_MS);
+        timer = setTimeout(() => reject(new PauseTimeout('timeout')), PAUSE_TIMEOUT_MS);
       }),
     ]);
     return report(out);
   } catch (error) {
     // Never the error's own text (a message may carry a value): a class of failure only.
-    return { kind: 'blocked', code: error instanceof Error && error.message === 'timeout' ? 'TIMEOUT' : 'ADAPTER_ERROR' };
+    return { kind: 'blocked', code: error instanceof PauseTimeout ? 'TIMEOUT' : 'ADAPTER_ERROR' };
   } finally {
     if (timer) clearTimeout(timer);
   }

@@ -224,10 +224,22 @@ suite('the stop of a launch and the wind-down of what it made (#2296, W2-4a)', (
     it('never moves a commitment the system already shortened later: the stop leaves the earlier of the two', async () => {
       const org = await makeOrg();
       const l = await started(org, 'live');
-      // The system, which knows what the writer did, shortened it to five days ago.
-      await inContext(org, 'system', (c) => move(c, org, l.id, `commit_until = '${addDays(l.today, -5)}'`), true);
-      expect(await stop(org, 'owner', l.id)).toEqual({ launchId: l.id, state: 'stopped', commitUntil: addDays(l.today, -5) });
-      expect(await get(org, l.id)).toMatchObject({ state: 'stopped', commit_until: addDays(l.today, -5) });
+      // The system, which knows what the writer did, shortened it to two days ago (the flight began three days ago).
+      await inContext(org, 'system', (c) => move(c, org, l.id, `commit_until = '${addDays(l.today, -2)}'`), true);
+      expect(await stop(org, 'owner', l.id)).toEqual({ launchId: l.id, state: 'stopped', commitUntil: addDays(l.today, -2) });
+      expect(await get(org, l.id)).toMatchObject({ state: 'stopped', commit_until: addDays(l.today, -2) });
+    });
+
+    it('keeps the first day of a flight that has not begun, since the ledger holds a commitment inside the flight and never before it', async () => {
+      const org = await makeOrg();
+      for (const who of ['owner', 'admin'] as const) {
+        const today = await todayIn('Asia/Ho_Chi_Minh');
+        const acct = await account(org);
+        const id = await launch(org, acct, addDays(today, 3), addDays(today, 10));
+        await inContext(org, 'system', (c) => move(c, org, id, `state = 'launching'`), true);
+        expect(await stop(org, who, id), who).toEqual({ launchId: id, state: 'stopped', commitUntil: addDays(today, 3) });
+        expect(await get(org, id)).toMatchObject({ state: 'stopped', commit_until: addDays(today, 3) });
+      }
     });
 
     it('is refused for a member, a viewer and an agent, and changes nothing', async () => {
