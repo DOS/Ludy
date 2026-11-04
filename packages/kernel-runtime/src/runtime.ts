@@ -268,6 +268,9 @@ export interface QueryDef<I = unknown, O = unknown> {
   // row names the actor, the query and the hash of its input, never a value. It runs only through Runtime.query() and
   // Runtime.stream(): ctx.query refuses it (SENSITIVE_ONLY), because a nested read could not be audited first.
   sensitive?: true;
+  // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
+  // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
+  target?: (input: I) => { type: string; id: string } | null;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -2360,10 +2363,12 @@ export class Runtime {
   // transaction checks the session, enters the context and the access of the query first, so a caller who may not read
   // leaves no row and gets the refusal; then it writes one row (the query's name, the actor, the hash of its input, no
   // value) and commits. Any failure propagates: the handler never runs without its row.
-  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }): Promise<void> {
+  // `onEntered` runs once the context is entered, so a refusal after it is not counted as a pre-membership one (as in query()).
+  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }, onEntered: () => void): Promise<void> {
     const db = await this.#cells.resolveTenant(options.orgId);
     await db.transaction().execute(async (trx) => {
       const entered = await this.enter(trx, options.actor, options.orgId);
+      onEntered();
       this.authorizeQuery(def, options.actor, entered);
       await this.writeAudit(trx, {
         orgId: options.orgId,
@@ -2372,9 +2377,10 @@ export class Runtime {
         commandId: uuidv7(),
         outcome: 'ok',
         input: stableStringify(input),
-        target: null,
+        target: def.target?.(input) ?? null,
         proposalId: null,
-        detail: { ...actorDetail(options.actor), read: 'sensitive' },
+        // The row says a read was started: the handler may still fail after it.
+        detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
       });
     });
   }
@@ -2388,7 +2394,9 @@ export class Runtime {
       const db = await this.#cells.resolveTenant(options.orgId);
       if (def.sensitive) {
         refuseStreamed(def);
-        await this.auditSensitiveRead(def, input, options);
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
       }
       return await db.transaction().execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
@@ -2422,7 +2430,11 @@ export class Runtime {
     let reached = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
-      if (def.sensitive) await this.auditSensitiveRead(def, input, options);
+      if (def.sensitive) {
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+      }
       return await db
         .transaction()
         .setIsolationLevel('repeatable read')

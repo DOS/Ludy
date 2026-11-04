@@ -12,7 +12,8 @@ import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
-import { DomainError, Runtime, defineQuery, type QueryDef } from '@crove/kernel-runtime';
+import { financeCommands, financeQueries } from '@crove/mod-finance';
+import { DomainError, Runtime, defineQuery, type AgentActor, type QueryDef } from '@crove/kernel-runtime';
 import { TEST_MANIFESTS } from './fixtures/manifests.ts';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
@@ -20,6 +21,7 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const suite = ADMIN ? describe : describe.skip;
 
 const SECRET = 'canary-salary-8123456';
+const SYSTEM = { type: 'system' as const, component: 't2639-worker' };
 
 suite('sensitive queries on PostgreSQL (#2639)', () => {
   const dbName = `crove_test_sensitive_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
@@ -28,9 +30,11 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   let workerPool: pg.Pool;
   let rt: Runtime;
   let workerRt: Runtime;
-  // What each probe handler saw: how many audit rows of its own name were already committed when it ran.
-  const seen: Record<string, number[]> = {};
-  const ran: Record<string, number> = {};
+  // What each probe handler saw, per org and query: how many audit rows of its own name were already committed, seen from another connection, when it ran.
+  const seen = new Map<string, number[]>();
+  const ran = new Map<string, number>();
+  const key = (orgId: string, name: string) => `${orgId}:${name}`;
+  const ranCount = (orgId: string, name: string) => ran.get(key(orgId, name)) ?? 0;
 
   async function withAdmin<T>(fn: (admin: pg.Client) => Promise<T>): Promise<T> {
     const admin = new pg.Client({ connectionString: adminUrl });
@@ -45,29 +49,39 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   const committedRows = (orgId: string, name: string) =>
     withAdmin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [orgId, name])).rows[0]?.n));
 
-  // A query whose handler records how many rows of its own audit were committed, seen from another connection, when it started.
+  // Records that the handler ran and how many rows of its own audit were committed when it started.
+  async function observe(name: string, input: unknown): Promise<void> {
+    const { orgId } = input as { orgId: string };
+    ran.set(key(orgId, name), ranCount(orgId, name) + 1);
+    const list = seen.get(key(orgId, name)) ?? [];
+    list.push(await committedRows(orgId, name));
+    seen.set(key(orgId, name), list);
+  }
+
   const probe = (name: string, access: QueryDef['access'], over: Partial<QueryDef<unknown, unknown>> = {}) =>
     defineQuery({
       name,
-      input: z.object({ orgId: z.uuid(), note: z.string().optional() }),
+      input: z.object({ orgId: z.uuid(), note: z.string().optional(), recordId: z.uuid().optional() }),
       access,
       sensitive: true,
       handler: async (_ctx, input) => {
-        const { orgId } = input as { orgId: string };
-        ran[name] = (ran[name] ?? 0) + 1;
-        (seen[name] ??= []).push(await committedRows(orgId, name));
+        await observe(name, input);
         return { rows: 1 };
       },
       ...over,
     }) as QueryDef<unknown, unknown>;
 
   const QUERIES = {
-    owner: probe('t2639.owner_read', ['owner']),
+    owner: probe('t2639.owner_read', ['owner'], {
+      agent: { roles: 'any' },
+      target: (input) => {
+        const recordId = (input as { recordId?: string }).recordId;
+        return recordId ? { type: 't2639.record', id: recordId } : null;
+      },
+    }),
     boom: probe('t2639.boom', ['owner'], {
       handler: async (_ctx, input) => {
-        const { orgId } = input as { orgId: string };
-        ran['t2639.boom'] = (ran['t2639.boom'] ?? 0) + 1;
-        (seen['t2639.boom'] ??= []).push(await committedRows(orgId, 't2639.boom'));
+        await observe('t2639.boom', input);
         throw new Error('the read fails after its audit');
       },
     }),
@@ -76,37 +90,40 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     streamed: probe('t2639.streamed', ['owner'], {
       stream: true,
       handler: async (_ctx, input, sink) => {
-        const { orgId } = input as { orgId: string };
-        ran['t2639.streamed'] = (ran['t2639.streamed'] ?? 0) + 1;
-        (seen['t2639.streamed'] ??= []).push(await committedRows(orgId, 't2639.streamed'));
+        await observe('t2639.streamed', input);
         await sink?.({ batch: 1 });
         return { rows: 1 };
       },
     }),
-    plain: defineQuery({
-      name: 't2639.plain',
-      input: z.object({}),
-      access: ['owner', 'admin', 'member'],
-      handler: async () => ({ ok: true }),
-    }) as QueryDef<unknown, unknown>,
+    plain: defineQuery({ name: 't2639.plain', input: z.object({}), access: ['owner', 'admin', 'member'], handler: async () => ({ ok: true }) }) as QueryDef<unknown, unknown>,
     // A query that tries to read a sensitive one inside its own transaction.
-    nested: defineQuery({
-      name: 't2639.nested',
-      input: z.object({ orgId: z.uuid() }),
-      access: ['owner'],
-      handler: async (ctx, input) => ctx.query('t2639.owner_read', input),
-    }) as QueryDef<unknown, unknown>,
+    nested: defineQuery({ name: 't2639.nested', input: z.object({ orgId: z.uuid() }), access: ['owner'], handler: async (ctx, input) => ctx.query('t2639.owner_read', input) }) as QueryDef<unknown, unknown>,
   };
 
   const person = (name: string) => upsertIdentity(createDb(pool), { issuer: 'test', subject: randomUUID(), email: `${name}-${randomUUID().slice(0, 8)}@sensitive.test`, name: null });
   const user = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal1' as const });
+  const mfa = (userId: string) => ({ type: 'user' as const, userId, aal: 'aal2' as const, sessionId: '7e1c2b4a-5d6f-4a8b-9c0d-1e2f3a4b5c6d', mfaAt: Math.floor(Date.now() / 1000) });
 
   async function org() {
     const owner = await person('owner');
     const member = await person('member');
+    const outsider = await person('outsider');
     const { orgId } = await createOrg(rt, user(owner), `Sensitive ${randomUUID().slice(0, 6)}`);
     await withAdmin((c) => c.query("INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')", [orgId, member]));
-    return { orgId, owner, member };
+    return { orgId, owner, member, outsider };
+  }
+
+  // A live agent of the org (the template and the run, the way agents.db.test.ts makes them).
+  async function liveAgent(orgId: string, ownerId: string): Promise<AgentActor> {
+    const { agentId, positionId } = await rt.execute<{ agentId: string; positionId: string }>(
+      'kernel.agent.template.install',
+      { templateKey: 'finance.chief_accountant', reportsTo: null },
+      { actor: mfa(ownerId), orgId, idempotencyKey: randomUUID() },
+    );
+    await rt.execute('kernel.task.create', { title: 'Việc thử', assigneePositionId: positionId }, { actor: user(ownerId), orgId, idempotencyKey: randomUUID() });
+    const started = await workerRt.execute<{ runId: string | null }>('kernel.agent.run.start', { agentId }, { actor: { type: 'system', component: 'kernel.agent' }, orgId, idempotencyKey: randomUUID() });
+    if (!started.runId) throw new Error('no run');
+    return { type: 'agent', agentId, runId: started.runId };
   }
 
   beforeAll(async () => {
@@ -123,13 +140,14 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     url.username = 'crove_app';
     url.password = 'test-app-pw';
     pool = createPool({ connectionString: url.toString(), max: 4 });
-    const queries = [...kernelQueries({ inboundDomain: null }), ...Object.values(QUERIES)];
-    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries });
-    // The system context is entered by the worker's login role only.
+    const queries = [...kernelQueries({ inboundDomain: null }), ...financeQueries, ...Object.values(QUERIES)];
+    const commands = [...kernelCommands, ...financeCommands];
+    rt = new Runtime(createDb(pool), { manifests: TEST_MANIFESTS }).register({ commands, queries });
+    // The system and agent contexts are entered by the worker's login role only.
     url.username = 'crove_worker';
     url.password = 'test-worker-pw';
     workerPool = createPool({ connectionString: url.toString(), max: 2 });
-    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands: kernelCommands, queries });
+    workerRt = new Runtime(createDb(workerPool), { manifests: TEST_MANIFESTS }).register({ commands, queries });
   }, 120_000);
 
   afterAll(async () => {
@@ -142,19 +160,23 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     await root.end();
   });
 
-  it('commits the audit row before the handler reads, and writes one row naming the query, the actor and the hash of the input', async () => {
+  it('commits the audit row before the handler reads, and writes one row naming the query, the actor, the record and the hash of the input', async () => {
     const o = await org();
-    expect(await rt.query('t2639.owner_read', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).toEqual({ rows: 1 });
+    const recordId = randomUUID();
+    expect(await rt.query('t2639.owner_read', { orgId: o.orgId, recordId }, { actor: user(o.owner), orgId: o.orgId })).toEqual({ rows: 1 });
     // The handler, from another connection, already saw its own row committed.
-    expect(seen['t2639.owner_read']).toEqual([1]);
-    const rows = await withAdmin(async (c) =>
-      (await c.query<{ actor_type: string; actor_id: string; outcome: string; detail: Record<string, unknown>; input_sha256: string; target_id: string | null }>(
-        "SELECT actor_type, actor_id, outcome, detail, input_sha256, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.owner_read'",
-        [o.orgId],
-      )).rows,
+    expect(seen.get(key(o.orgId, 't2639.owner_read'))).toEqual([1]);
+    const rows = await withAdmin(
+      async (c) =>
+        (
+          await c.query<{ actor_type: string; actor_id: string; outcome: string; detail: Record<string, unknown>; input_sha256: string; target_type: string | null; target_id: string | null }>(
+            "SELECT actor_type, actor_id, outcome, detail, input_sha256, target_type, target_id FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.owner_read'",
+            [o.orgId],
+          )
+        ).rows,
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ actor_type: 'user', actor_id: o.owner, outcome: 'ok', detail: { read: 'sensitive' }, target_id: null });
+    expect(rows[0]).toMatchObject({ actor_type: 'user', actor_id: o.owner, outcome: 'ok', detail: { read: 'sensitive', stage: 'before_read' }, target_type: 't2639.record', target_id: recordId });
     expect(rows[0]?.input_sha256).toMatch(/^(k1:)?[0-9a-f]{64}$/);
   });
 
@@ -168,16 +190,28 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
   it('keeps the row when the read itself fails afterwards', async () => {
     const o = await org();
     await expect(rt.query('t2639.boom', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toBeInstanceOf(DomainError);
-    expect(seen['t2639.boom']).toEqual([1]);
+    expect(seen.get(key(o.orgId, 't2639.boom'))).toEqual([1]);
     expect(await committedRows(o.orgId, 't2639.boom')).toBe(1);
   });
 
   it('leaves no row, and never runs the handler, for a caller the query does not admit', async () => {
     const o = await org();
-    const before = ran['t2639.gated'] ?? 0;
+    // A member without the role, someone who is not a member at all, and a user on a query only the system may run.
     await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(ran['t2639.gated'] ?? 0).toBe(before);
+    await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.outsider), orgId: o.orgId })).rejects.toBeInstanceOf(DomainError);
+    await expect(rt.query('t2639.system_read', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(ranCount(o.orgId, 't2639.gated')).toBe(0);
+    expect(ranCount(o.orgId, 't2639.system_read')).toBe(0);
     expect(await committedRows(o.orgId, 't2639.gated')).toBe(0);
+    expect(await committedRows(o.orgId, 't2639.system_read')).toBe(0);
+  });
+
+  it('does not note an established member refused by the role as a pre-membership security event', async () => {
+    const o = await org();
+    const count = () => withAdmin(async (c) => Number((await c.query<{ n: string }>('SELECT count(*) AS n FROM crove_kernel.security_event')).rows[0]?.n));
+    const before = await count();
+    await expect(rt.query('t2639.gated', { orgId: o.orgId }, { actor: user(o.member), orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await count()).toBe(before);
   });
 
   it('fails closed: with the audit write refused, the handler does not run and nothing is read', async () => {
@@ -188,31 +222,45 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
         CREATE TRIGGER t2639_refuse BEFORE INSERT ON crove_kernel.audit_event FOR EACH ROW WHEN (NEW.command = 't2639.owner_read') EXECUTE FUNCTION public.t2639_refuse_audit();`),
     );
     try {
-      const before = ran['t2639.owner_read'] ?? 0;
-      await expect(rt.query('t2639.owner_read', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'INTERNAL' });
-      expect(ran['t2639.owner_read'] ?? 0).toBe(before);
+      await expect(rt.query('t2639.owner_read', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toBeInstanceOf(DomainError);
+      expect(ranCount(o.orgId, 't2639.owner_read')).toBe(0);
       expect(await committedRows(o.orgId, 't2639.owner_read')).toBe(0);
     } finally {
       await withAdmin((c) => c.query('DROP TRIGGER t2639_refuse ON crove_kernel.audit_event; DROP FUNCTION public.t2639_refuse_audit()'));
     }
   });
 
-  it('audits a system actor with its component, and a streamed read as well', async () => {
+  it('audits a system actor with its component, an agent with its run, and a streamed read as well', async () => {
     const o = await org();
-    await workerRt.query('t2639.system_read', { orgId: o.orgId }, { actor: { type: 'system', component: 't2639-worker' }, orgId: o.orgId });
-    const system = await withAdmin(async (c) => (await c.query<{ actor_type: string; detail: Record<string, unknown> }>("SELECT actor_type, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.system_read'", [o.orgId])).rows);
+    const rows = (name: string) =>
+      withAdmin(async (c) => (await c.query<{ actor_type: string; actor_id: string | null; detail: Record<string, unknown> }>('SELECT actor_type, actor_id, detail FROM crove_kernel.audit_event WHERE org_id = $1 AND command = $2', [o.orgId, name])).rows);
+    await workerRt.query('t2639.system_read', { orgId: o.orgId }, { actor: SYSTEM, orgId: o.orgId });
     // The database stamps the worker process on a system row (workerInstance).
+    const system = await rows('t2639.system_read');
     expect(system).toHaveLength(1);
     expect(system[0]).toMatchObject({ actor_type: 'system', detail: { component: 't2639-worker', read: 'sensitive' } });
+    const agent = await liveAgent(o.orgId, o.owner);
+    await workerRt.query('t2639.owner_read', { orgId: o.orgId }, { actor: agent, orgId: o.orgId });
+    const agentRows = await rows('t2639.owner_read');
+    expect(agentRows).toHaveLength(1);
+    expect(agentRows[0]).toMatchObject({ actor_type: 'agent', actor_id: agent.agentId, detail: { agentRun: agent.runId, read: 'sensitive' } });
+    expect(seen.get(key(o.orgId, 't2639.owner_read'))).toEqual([1]);
     const batches: unknown[] = [];
     await rt.stream('t2639.streamed', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId }, async (b) => void batches.push(b));
     expect(batches).toEqual([{ batch: 1 }]);
-    expect(seen['t2639.streamed']).toEqual([1]);
+    expect(seen.get(key(o.orgId, 't2639.streamed'))).toEqual([1]);
+  });
+
+  it('refuses a streamed sensitive query on the plain path before any audit', async () => {
+    const o = await org();
+    await expect(rt.query('t2639.streamed', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'STREAM_ONLY' });
+    expect(await committedRows(o.orgId, 't2639.streamed')).toBe(0);
   });
 
   it('refuses a sensitive query inside another query (ctx.query), where its audit could not be committed first', async () => {
     const o = await org();
     await expect(rt.query('t2639.nested', { orgId: o.orgId }, { actor: user(o.owner), orgId: o.orgId })).rejects.toMatchObject({ code: 'SENSITIVE_ONLY' });
+    expect(ranCount(o.orgId, 't2639.owner_read')).toBe(0);
     expect(await committedRows(o.orgId, 't2639.owner_read')).toBe(0);
   });
 
@@ -221,7 +269,9 @@ suite('sensitive queries on PostgreSQL (#2639)', () => {
     await rt.query('t2639.plain', {}, { actor: user(o.owner), orgId: o.orgId });
     expect(await committedRows(o.orgId, 't2639.plain')).toBe(0);
     await rt.query('t2639.owner_read', { orgId: o.orgId, note: SECRET }, { actor: user(o.owner), orgId: o.orgId });
-    const text = await withAdmin(async (c) => (await c.query<{ row: string }>("SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.owner_read'", [o.orgId])).rows.map((r) => r.row).join('\n'));
+    const text = await withAdmin(async (c) =>
+      (await c.query<{ row: string }>("SELECT audit_event::text AS row FROM crove_kernel.audit_event WHERE org_id = $1 AND command = 't2639.owner_read'", [o.orgId])).rows.map((r) => r.row).join('\n'),
+    );
     expect(text).not.toContain(SECRET);
   });
 });
