@@ -263,6 +263,11 @@ export interface QueryDef<I = unknown, O = unknown> {
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
   stream?: true;
+  // A read of data the org keeps narrow (a salary, an identity number): the kernel commits an audit row of the read in its
+  // own transaction BEFORE the handler runs, and a failed audit write stops the read (plan section 4.4, "Query"). The
+  // row names the actor, the query and the hash of its input, never a value. It runs only through Runtime.query() and
+  // Runtime.stream(): ctx.query refuses it (SENSITIVE_ONLY), because a nested read could not be audited first.
+  sensitive?: true;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -714,6 +719,11 @@ export const STREAM_IDLE_MINUTES = 10;
 // A streamed query answers only through Runtime.stream(), which gives it a sink and a single snapshot.
 function refuseStreamed(def: QueryDef<unknown, unknown>): void {
   if (def.stream) throw new DomainError('STREAM_ONLY', 400, `Truy vấn ${def.name} chỉ đọc theo luồng`);
+}
+
+// A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
+function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
+  if (def.sensitive) throw new DomainError('SENSITIVE_ONLY', 400, `Truy vấn ${def.name} chỉ đọc qua cổng có ghi nhật ký`);
 }
 
 function isCellResolver(value: CellResolver | Db): value is CellResolver {
@@ -1332,6 +1342,7 @@ export class Runtime {
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
+    refuseSensitiveLookup(def);
     const value = (await def.handler(this.queryContext(trx, orgId, actor, entered), input)) as O;
     return { status: 'ok', value };
   }
@@ -2345,6 +2356,29 @@ export class Runtime {
     }
   }
 
+  // The audit row of a sensitive read (QueryDef.sensitive), committed in its own transaction before the read starts. The
+  // transaction checks the session, enters the context and the access of the query first, so a caller who may not read
+  // leaves no row and gets the refusal; then it writes one row (the query's name, the actor, the hash of its input, no
+  // value) and commits. Any failure propagates: the handler never runs without its row.
+  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }): Promise<void> {
+    const db = await this.#cells.resolveTenant(options.orgId);
+    await db.transaction().execute(async (trx) => {
+      const entered = await this.enter(trx, options.actor, options.orgId);
+      this.authorizeQuery(def, options.actor, entered);
+      await this.writeAudit(trx, {
+        orgId: options.orgId,
+        actor: options.actor,
+        command: def.name,
+        commandId: uuidv7(),
+        outcome: 'ok',
+        input: stableStringify(input),
+        target: null,
+        proposalId: null,
+        detail: { ...actorDetail(options.actor), read: 'sensitive' },
+      });
+    });
+  }
+
   async query<O = unknown>(name: string, rawInput: unknown, options: { actor: Actor; orgId: string }): Promise<O> {
     const def = this.#queries.get(name);
     if (!def) throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
@@ -2352,6 +2386,10 @@ export class Runtime {
     let reached = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        refuseStreamed(def);
+        await this.auditSensitiveRead(def, input, options);
+      }
       return await db.transaction().execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
@@ -2384,6 +2422,7 @@ export class Runtime {
     let reached = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) await this.auditSensitiveRead(def, input, options);
       return await db
         .transaction()
         .setIsolationLevel('repeatable read')
