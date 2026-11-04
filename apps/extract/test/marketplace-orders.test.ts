@@ -14,7 +14,7 @@ import { statementXlsx } from './statement-fixture.ts';
 import { buildXlsx, type XlsxCell } from './xlsx-fixture.ts';
 
 // The buyer columns these files carry, and values that must come out of nowhere.
-const BUYER = { name: 'Trần Thị Mua Thử', phone: '0900000002', email: 'mua.thu@example.com', address: '2 Phố Thử, Quận Thử, Hà Nội' };
+const BUYER = { name: 'Trần Thị Mua Thử', phone: '0900000007', email: 'mua.thu@example.com', address: '2 Phố Thử, Quận Thử, Hà Nội' };
 
 const SHOPEE_HEAD: XlsxCell[] = ['Mã đơn hàng', 'Ngày đặt hàng', 'Trạng Thái Đơn Hàng', 'Người Mua', 'Số điện thoại', 'Địa chỉ nhận hàng', 'Email', 'SKU phân loại hàng', 'Tên sản phẩm', 'Giá ưu đãi', 'Số lượng', 'Tổng giá bán (sản phẩm)'];
 const shopeeRow = (order: string, status: string, sku: string, qty: number, price: number): XlsxCell[] => [
