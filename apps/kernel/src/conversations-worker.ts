@@ -434,6 +434,7 @@ export async function runConversationJob(deps: SendDeps, job: ConversationJob): 
       threadId: work.threadId,
       postId: work.postId ?? null,
       contactId: work.contactId,
+      lastInboundAt: work.lastInboundAt ?? null,
       text: work.text,
       callKey: work.callKey,
     });

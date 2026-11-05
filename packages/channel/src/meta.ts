@@ -50,9 +50,9 @@ export const FACEBOOK_PAGE_SCOPES = ['pages_show_list', 'pages_manage_posts', 'p
 // Asked for, not required: first comments (#609) need it, and a Page connects without it (its comments then fail with
 // permission, shown on the post). Meta may hold it back until App Review approves it.
 export const FACEBOOK_PAGE_COMMENT_SCOPES = ['pages_manage_engagement'] as const;
-// Asked for only when the member ticks "also read and answer comments" on the Channels screen (CV2, #2307), so connecting a Page for
-// publishing alone never asks for comment-reading or webhook-subscription permissions.
-export const FACEBOOK_PAGE_INBOX_SCOPES = ['pages_read_user_content', 'pages_manage_metadata'] as const;
+// Asked for only when the member ticks "also read and answer comments and messages" on the Channels screen (CV2 #2307, CV4 #2308), so
+// connecting a Page for publishing alone never asks for comment-reading, Messenger or webhook-subscription permissions.
+export const FACEBOOK_PAGE_INBOX_SCOPES = ['pages_read_user_content', 'pages_manage_metadata', 'pages_messaging'] as const;
 
 export interface MetaAppConfig {
   appId: string;
@@ -105,7 +105,7 @@ export class Graph {
   }
 
   // video: the call goes to Graph's video host; timeoutMs: longer than the default for an upload.
-  async call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, options: { token?: string; params?: Record<string, string>; form?: Record<string, string>; multipart?: FormData; video?: boolean; timeoutMs?: number } = {}): Promise<T> {
+  async call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, options: { token?: string; params?: Record<string, string>; form?: Record<string, string>; json?: Record<string, unknown>; multipart?: FormData; video?: boolean; timeoutMs?: number } = {}): Promise<T> {
     const params = { ...options.params };
     const headers: Record<string, string> = { accept: 'application/json' };
     if (options.token) {
@@ -116,6 +116,9 @@ export class Graph {
     if (options.form) {
       headers['content-type'] = 'application/x-www-form-urlencoded';
       body = new URLSearchParams(options.form).toString();
+    } else if (options.json) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(options.json);
     } else if (options.multipart) {
       // fetch sets the multipart content type with its boundary.
       body = options.multipart;
@@ -283,16 +286,20 @@ export class FacebookPageConnector implements OAuthConnector {
     const { token, scopes } = await this.login.userToken(input, FACEBOOK_PAGE_INBOX_SCOPES);
     const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } }).catch(() => ({ id: undefined }));
     const grantedByHash = typeof me.id === 'string' && NUMERIC_ID.test(me.id) ? platformUserHash(this.app.appSecret, me.id) : undefined;
-    const canSubscribeFeed = scopes.includes('pages_read_user_content') && scopes.includes('pages_manage_metadata');
+    const subscribedFields = [
+      ...(scopes.includes('pages_read_user_content') ? ['feed'] : []),
+      ...(scopes.includes('pages_messaging') ? ['messages', 'message_echoes'] : []),
+    ].join(',');
+    const canSubscribe = scopes.includes('pages_manage_metadata') && subscribedFields !== '';
     const accounts: ConnectedAccount[] = [];
     for (const row of await this.login.pages(token, 'id,name,access_token,tasks')) {
       // Posting needs the CREATE_CONTENT task on the Page; a Page the user only moderates cannot be connected.
       const tasks = Array.isArray(row.tasks) ? row.tasks : [];
       if (typeof row.id !== 'string' || !NUMERIC_ID.test(row.id) || typeof row.access_token !== 'string' || !row.access_token) continue;
       if (!tasks.includes('CREATE_CONTENT')) continue;
-      if (canSubscribeFeed) {
+      if (canSubscribe) {
         await this.login.graph
-          .call('POST', `${row.id}/subscribed_apps`, { token: row.access_token, form: { subscribed_fields: 'feed' } })
+          .call('POST', `${row.id}/subscribed_apps`, { token: row.access_token, form: { subscribed_fields: subscribedFields } })
           .catch(() => undefined);
       }
       const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim().slice(0, 200) : `Facebook Page ${row.id}`;

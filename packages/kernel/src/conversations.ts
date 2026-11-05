@@ -21,6 +21,7 @@ import { sql } from 'kysely';
 import {
   CONVERSATION_CALL_STALE_MS,
   CONVERSATION_DRAFT_MAX,
+  CONVERSATION_FACEBOOK_DIRECT_MAX,
   CONVERSATION_PREVIEW_CHARS,
   EMAIL_PROVIDER,
   EMAIL_REFS_MAX,
@@ -51,6 +52,7 @@ import {
   zConversationList,
   zConversationMarkRead,
   zConversationNoteAdd,
+  zConversationPrivateReply,
   zConversationProfileApply,
   zConversationProfileBegin,
   zConversationPurgeExpired,
@@ -84,6 +86,7 @@ import {
   type ConversationAutoDraft,
   type ConversationCounted,
   type ConversationErased,
+  type ConversationPrivateReplied,
   type ConversationPurged,
   type ConversationRetention,
   type ConversationDetail,
@@ -530,6 +533,62 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .returning(['id'])
     .executeTakeFirstOrThrow();
 
+  const sentAt = new Date(event.at);
+  // Before opening a new direct thread on an outbound echo, check whether this echo is the platform's confirmation of an in-flight
+  // one-shot private reply (`external_thread_id LIKE 'private:%'`) whose Graph answer did not reach us. Matching here avoids creating
+  // an empty ghost thread under the PSID and works even when the original comment had no `from.id`.
+  if (event.direction === 'out' && event.kind === 'direct') {
+    const privateConvs = await ctx.trx
+      .selectFrom('crove_kernel.conversation')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('channel_connection_id', '=', connectionId)
+      .where('kind', '=', 'direct')
+      .where('external_thread_id', 'like', 'private:%')
+      .execute();
+    if (privateConvs.length > 0) {
+      const privateOurs = await ctx.trx
+        .selectFrom('crove_kernel.conversation_message')
+        .select(['id', 'send_attempt'])
+        .where('org_id', '=', ctx.orgId)
+        .where('conversation_id', 'in', privateConvs.map((pc) => pc.id))
+        .where('direction', '=', 'out')
+        .where('send_state', 'in', ['sending', 'unknown'])
+        .where('body', '=', event.text)
+        .where('external_message_id', 'is', null)
+        .where('received_at', '<=', new Date(sentAt.getTime() + 5 * 60_000))
+        .where('received_at', '>=', new Date(sentAt.getTime() - 24 * HOUR_MS))
+        .orderBy('received_at')
+        .orderBy('id')
+        .limit(1)
+        .executeTakeFirst();
+      if (privateOurs) {
+        const againPrivate = await ctx.trx
+          .selectFrom('crove_kernel.conversation_message')
+          .select('id')
+          .where('org_id', '=', ctx.orgId)
+          .where('channel_connection_id', '=', connectionId)
+          .where('external_message_id', '=', event.messageId)
+          .executeTakeFirst();
+        if (againPrivate) return 'duplicates';
+        await ctx.trx
+          .updateTable('crove_kernel.conversation_message')
+          .set({ external_message_id: event.messageId, send_state: 'sent', send_error_code: null, sent_at: sentAt })
+          .where('org_id', '=', ctx.orgId)
+          .where('id', '=', privateOurs.id)
+          .execute();
+        await ctx.trx
+          .updateTable('crove_kernel.external_call')
+          .set({ state: 'succeeded', finished_at: ctx.now, updated_at: ctx.now })
+          .where('org_id', '=', ctx.orgId)
+          .where('key', '=', replyCallKey(privateOurs.id, privateOurs.send_attempt))
+          .where('state', 'in', ['started', 'ambiguous'])
+          .execute();
+        return 'stored';
+      }
+    }
+  }
+
   // The thread, made on first sight. A person's link of this customer's other threads of the same kind (never of the other kind: a
   // private message's contact is not shown on a public comment) brings its party to the new thread.
   const linked = await ctx.trx
@@ -581,7 +640,6 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
     .executeTakeFirst();
   if (again) return 'duplicates';
 
-  const sentAt = new Date(event.at);
   // The org's own message seen from the platform's inbox: a reply of ours still being sent takes the platform's id, else it
   // is a message written outside Crove.
   if (event.direction === 'out') {
@@ -676,7 +734,8 @@ async function ingestEvent(ctx: CommandContext, connectionId: string, provider: 
       last_seq: seq,
       last_message_at: newest,
       last_inbound_at: lastInbound,
-      reply_window_until: lastInbound && windowHours !== null ? new Date(lastInbound.getTime() + windowHours * HOUR_MS) : conversation.reply_window_until,
+      // Only direct-message threads have a platform reply window (24h/7d on Messenger, 48h on Zalo OA); public comment threads do not.
+      reply_window_until: lastInbound && windowHours !== null && event.kind === 'direct' ? new Date(lastInbound.getTime() + windowHours * HOUR_MS) : conversation.reply_window_until,
       status,
       // A thread that stays resolved (the org's own message seen from the platform) keeps who resolved it and when.
       ...(status === 'resolved' ? {} : { resolved_at: null, resolved_by: null }),
@@ -854,12 +913,27 @@ export const conversationGet = defineQuery({
     if (!row) throw notFound();
     const messages = await ctx.trx
       .selectFrom('crove_kernel.conversation_message')
-      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'author_identity_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
+      .select(['id', 'seq', 'direction', 'author_kind', 'author_user_id', 'author_identity_id', 'external_message_id', 'body', 'attachments', 'sent_at', 'send_state', 'send_error_code', 'hidden_at', 'hide_request', 'hide_error_code', 'platform_removed_at'])
       .where('org_id', '=', ctx.orgId)
       .where('conversation_id', '=', input.conversationId)
       .orderBy('seq', 'desc')
       .limit(CONVERSATION_MESSAGES_MAX)
       .execute();
+    const privateReplies = new Map<string, string>();
+    if (row.kind === 'comment_thread' && messages.length > 0) {
+      const children = await ctx.trx
+        .selectFrom('crove_kernel.conversation')
+        .select(['id', 'external_thread_id'])
+        .where('org_id', '=', ctx.orgId)
+        .where('parent_conversation_id', '=', input.conversationId)
+        .where('kind', '=', 'direct')
+        .execute();
+      for (const child of children) {
+        if (child.external_thread_id.startsWith('private:')) {
+          privateReplies.set(child.external_thread_id.slice('private:'.length), child.id);
+        }
+      }
+    }
     // Who wrote each customer message: in a comment thread the replies are other people's, not the thread's contact.
     const authorIds = [...new Set(messages.map((m) => m.author_identity_id).filter((id): id is string => id !== null))];
     const authors = new Map<string, { name: string | null; tail: string }>();
@@ -896,7 +970,7 @@ export const conversationGet = defineQuery({
       .execute();
     const parent = await ctx.trx
       .selectFrom('crove_kernel.conversation')
-      .select(['parent_conversation_id'])
+      .select(['parent_conversation_id', 'external_thread_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.conversationId)
       .executeTakeFirst();
@@ -911,7 +985,7 @@ export const conversationGet = defineQuery({
     const rules = connection ? conversationRules(connection.provider) : null;
     let reason: ConversationDetail['reply']['reason'] = null;
     if (!connection || connection.status !== 'active') reason = 'channel_inactive';
-    else if (!rules || !rules.kinds.includes(row.kind as ConversationKind)) reason = 'not_supported';
+    else if (!rules || !rules.kinds.includes(row.kind as ConversationKind) || parent?.external_thread_id?.startsWith('private:')) reason = 'not_supported';
     else if (row.reply_window_until && row.reply_window_until.getTime() < Date.now()) reason = 'window_closed';
     let gap: ConversationDetail['gap'] = null;
     const lastAt = row.last_message_at;
@@ -974,6 +1048,7 @@ export const conversationGet = defineQuery({
           hideRequest: m.hide_request as ConversationDetail['messages'][number]['hideRequest'],
           hideErrorCode: m.hide_error_code,
           removed: m.platform_removed_at !== null,
+          privateReplyConversationId: m.external_message_id ? (privateReplies.get(m.external_message_id) ?? null) : null,
         })),
       notes: notes.map((n) => ({ id: n.id, authorUserId: n.author_user_id, body: n.body, createdAt: n.created_at.toISOString() })),
       parentId,
@@ -1016,8 +1091,11 @@ export const conversationReply = defineCommand({
     const connection = await connectionOf(ctx, conversation.channel_connection_id);
     if (!connection || connection.status !== 'active') throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     const rules = conversationRules(connection.provider);
-    if (!rules || !rules.kinds.includes(conversation.kind)) throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
-    if (input.body.length > rules.replyMax) throw new DomainError('REPLY_TOO_LONG', 422, `Câu trả lời dài tối đa ${rules.replyMax} ký tự`, { max: String(rules.replyMax) });
+    if (!rules || !rules.kinds.includes(conversation.kind) || conversation.external_thread_id.startsWith('private:')) {
+      throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
+    }
+    const replyMax = connection.provider === 'facebook_page' && conversation.kind === 'direct' ? CONVERSATION_FACEBOOK_DIRECT_MAX : rules.replyMax;
+    if (input.body.length > replyMax) throw new DomainError('REPLY_TOO_LONG', 422, `Câu trả lời dài tối đa ${replyMax} ký tự`, { max: String(replyMax) });
     if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
       throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
     }
@@ -1098,6 +1176,156 @@ export const conversationReply = defineCommand({
   },
 });
 
+// Sends a one-shot private reply in Messenger to a customer's comment on a Facebook Page post (CV4, #2308, plan section 7): opens a `direct`
+// conversation linked to the comment thread (`parent_conversation_id`) with `external_thread_id = 'private:' + comment.external_message_id`,
+// queues the message, and emits `REPLY_QUEUED`. When the customer answers in Messenger, Meta delivers a standard `messages` webhook under
+// their PSID and the conversation continues there.
+export const conversationReplyPrivately = defineCommand({
+  name: 'kernel.conversation.reply_privately',
+  input: zConversationPrivateReply,
+  risk: 'R2',
+  sideEffect: 'external',
+  access: WRITERS,
+  target: (input) => ({ type: 'kernel.conversation_message', id: input.messageId }),
+  handler: async (ctx, input): Promise<ConversationPrivateReplied> => {
+    const me = requireUser(ctx);
+    const comment = await ctx.trx
+      .selectFrom('crove_kernel.conversation_message')
+      .select(['id', 'conversation_id', 'channel_connection_id', 'kind', 'direction', 'external_message_id', 'author_identity_id', 'sent_at', 'platform_removed_at'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.messageId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!comment) throw messageNotFound();
+    if (comment.kind !== 'comment_thread' || comment.direction !== 'in' || comment.platform_removed_at !== null || !comment.external_message_id) {
+      throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Chỉ có thể trả lời riêng cho bình luận của khách hàng');
+    }
+    const parentConv = await lockConversation(ctx, comment.conversation_id);
+    const connection = await ctx.trx
+      .selectFrom('crove_kernel.channel_connection')
+      .select(['id', 'provider', 'status', 'scopes'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', comment.channel_connection_id)
+      .executeTakeFirst();
+    if (!connection || connection.status !== 'active') {
+      throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
+    }
+    if (connection.provider !== 'facebook_page' && connection.provider !== 'sandbox') {
+      throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời riêng cho bình luận');
+    }
+    if (connection.provider === 'facebook_page' && !connection.scopes.includes('pages_messaging')) {
+      throw new DomainError('CHANNEL_SCOPE_MISSING', 409, 'Trang Facebook chưa cấp quyền nhắn tin Messenger (pages_messaging), hãy kết nối lại kênh');
+    }
+    if (ctx.now.getTime() - comment.sent_at.getTime() > 7 * 24 * HOUR_MS) {
+      throw new DomainError('PRIVATE_REPLY_WINDOW_CLOSED', 409, 'Đã quá 7 ngày kể từ khi khách bình luận, Meta không còn cho phép trả lời riêng');
+    }
+    const access = await sql<{ ok: boolean }>`SELECT crove_kernel.conversation_access('direct', ${connection.id}::uuid, true) AS ok`.execute(ctx.trx);
+    if (!access.rows[0]?.ok) {
+      throw new DomainError('FORBIDDEN', 403, 'Bạn không có quyền gửi tin nhắn riêng trên kênh này');
+    }
+    const identityId = comment.author_identity_id ?? parentConv.identity_id;
+    if (!identityId) {
+      throw new DomainError('NO_RECIPIENT', 409, 'Bình luận này không có thông tin người gửi để trả lời riêng');
+    }
+    const linked = await ctx.trx
+      .selectFrom('crove_kernel.conversation')
+      .select('party_id')
+      .where('org_id', '=', ctx.orgId)
+      .where('identity_id', '=', identityId)
+      .where('kind', '=', 'direct')
+      .where('party_id', 'is not', null)
+      .orderBy('updated_at', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    const externalThreadId = `private:${comment.external_message_id}`;
+    await ctx.trx
+      .insertInto('crove_kernel.conversation')
+      .values({
+        org_id: ctx.orgId,
+        channel_connection_id: connection.id,
+        kind: 'direct',
+        external_thread_id: externalThreadId,
+        external_post_id: parentConv.external_post_id,
+        parent_conversation_id: parentConv.id,
+        identity_id: identityId,
+        party_id: linked?.party_id ?? null,
+        status: 'pending',
+        assignee_user_id: me,
+        opened_at: ctx.now,
+        created_at: ctx.now,
+        updated_at: ctx.now,
+      })
+      .onConflict((oc) => oc.columns(['org_id', 'channel_connection_id', 'kind', 'external_thread_id']).doNothing())
+      .execute();
+    const directConv = (await ctx.trx
+      .selectFrom('crove_kernel.conversation')
+      .select(CONVERSATION_COLUMNS)
+      .where('org_id', '=', ctx.orgId)
+      .where('channel_connection_id', '=', connection.id)
+      .where('kind', '=', 'direct')
+      .where('external_thread_id', '=', externalThreadId)
+      .forUpdate()
+      .executeTakeFirstOrThrow()) as ConversationRow;
+    const existingMsg = await ctx.trx
+      .selectFrom('crove_kernel.conversation_message')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('conversation_id', '=', directConv.id)
+      .where('direction', '=', 'out')
+      .where('send_state', 'in', ['queued', 'sending', 'sent', 'unknown'])
+      .limit(1)
+      .executeTakeFirst();
+    if (existingMsg) {
+      throw new DomainError('PRIVATE_REPLY_ALREADY_SENT', 409, 'Bình luận này đã được gửi tin nhắn trả lời riêng');
+    }
+    const seq = directConv.last_seq + 1;
+    const message = await ctx.trx
+      .insertInto('crove_kernel.conversation_message')
+      .values({
+        org_id: ctx.orgId,
+        conversation_id: directConv.id,
+        channel_connection_id: connection.id,
+        kind: 'direct',
+        seq,
+        direction: 'out',
+        sent_at: ctx.now,
+        received_at: ctx.now,
+        author_kind: 'member',
+        author_user_id: me,
+        body: input.body,
+        send_state: 'queued',
+        send_attempt: 1,
+        tainted: false,
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow();
+    await ctx.trx
+      .updateTable('crove_kernel.conversation')
+      .set({
+        last_seq: seq,
+        last_message_at: ctx.now,
+        status: 'pending',
+        resolved_at: null,
+        resolved_by: null,
+        assignee_user_id: directConv.assignee_user_id ?? me,
+        updated_at: ctx.now,
+      })
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', directConv.id)
+      .execute();
+    await markRead(ctx, directConv.id, me, seq);
+    await ctx.emit(REPLY_QUEUED, { conversationId: directConv.id, messageId: message.id, connectionId: connection.id });
+    ctx.audit({
+      conversation_id: directConv.id,
+      parent_conversation_id: parentConv.id,
+      comment_message_id: comment.id,
+      message_id: message.id,
+      length: input.body.length,
+    });
+    return { conversationId: directConv.id, messageId: message.id, seq };
+  },
+});
+
 // An email reply (#2439) is a mail of the kernel pipeline (ADR-0034), queued in the transaction that wrote the message: the mail queue renders
 // it from the template, sends it once, and records the outcome, which settles the message (settleEmailReply in mail.ts). The mail's own
 // Message-ID becomes the message's external id, so the customer's next reply, which names it, finds this thread. In-Reply-To names the customer's
@@ -1158,6 +1386,7 @@ export interface ReplyWork {
   threadId?: string;
   postId?: string | null;
   contactId?: string;
+  lastInboundAt?: string | null;
   text?: string;
 }
 
@@ -1213,7 +1442,7 @@ export const conversationReplyBegin = defineCommand({
     const conversation = await ctx.trx
       .selectFrom('crove_kernel.conversation')
       .innerJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'crove_kernel.conversation.org_id').onRef('i.id', '=', 'crove_kernel.conversation.identity_id'))
-      .select(['crove_kernel.conversation.external_thread_id as thread', 'crove_kernel.conversation.external_post_id as post', 'i.external_user_id as contact'])
+      .select(['crove_kernel.conversation.external_thread_id as thread', 'crove_kernel.conversation.external_post_id as post', 'crove_kernel.conversation.last_inbound_at as lastInboundAt', 'i.external_user_id as contact'])
       .where('crove_kernel.conversation.org_id', '=', ctx.orgId)
       .where('crove_kernel.conversation.id', '=', message.conversation_id)
       .executeTakeFirst();
@@ -1239,6 +1468,7 @@ export const conversationReplyBegin = defineCommand({
       threadId: conversation.thread,
       postId: conversation.post,
       contactId: conversation.contact,
+      lastInboundAt: conversation.lastInboundAt ? conversation.lastInboundAt.toISOString() : null,
       text: message.body,
     };
   },
@@ -2258,8 +2488,8 @@ export const conversationHistoryBegin = defineCommand({
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row || row.status !== 'active') return { action: 'none' };
-    // A Facebook Page connected only for publishing (without pages_read_user_content) has no comment permissions to read with: mark its
-    // sync timestamp so the sweep does not ask again for an hour, and make no platform call.
+    // A Facebook Page connected without pages_read_user_content has no comment-reading permission for history reconciliation:
+    // mark its sync timestamp so the sweep does not ask again for an hour, and make no platform call.
     if (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
@@ -2880,6 +3110,7 @@ export const conversationCommands = [
   conversationEmailIngest,
   conversationIngest,
   conversationReply,
+  conversationReplyPrivately,
   conversationReplyBegin,
   conversationReplyRecord,
   conversationReplySettle,

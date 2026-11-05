@@ -65,6 +65,8 @@ export interface ConversationReplyInput {
   postId: string | null;
   contactId: string;
   text: string;
+  // When the customer last sent a message in this thread (ISO 8601), so a direct-message adapter can pick standard vs human-agent messaging.
+  lastInboundAt?: string | null | undefined;
   // The deterministic key of the call, for the platform's own record and the tests.
   callKey: string;
 }

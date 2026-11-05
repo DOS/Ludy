@@ -137,11 +137,11 @@ describe('FacebookPageConnector', () => {
     await expect(new FacebookPageConnector(APP, down.fetchImpl).exchange({ code: 'c', redirectUri: REDIRECT, codeVerifier: null })).rejects.toMatchObject({ kind: 'provider' });
   });
 
-  it('requests comment scopes on opt-in, records grantedByHash, and subscribes each Page to feed webhooks (#2307)', async () => {
+  it('requests comment and messaging scopes on opt-in, records grantedByHash, and subscribes each Page (#2307, #2308)', async () => {
     const connector = new FacebookPageConnector(APP);
     const optInUrl = new URL(connector.authorizeUrl({ state: 'st', redirectUri: REDIRECT, codeChallenge: null, comments: true }));
     expect(optInUrl.searchParams.get('scope')).toBe(
-      'pages_show_list,pages_manage_posts,pages_read_engagement,pages_manage_engagement,pages_read_user_content,pages_manage_metadata',
+      'pages_show_list,pages_manage_posts,pages_read_engagement,pages_manage_engagement,pages_read_user_content,pages_manage_metadata,pages_messaging',
     );
 
     const withComments = graphFake({
@@ -156,6 +156,7 @@ describe('FacebookPageConnector', () => {
             { permission: 'pages_manage_engagement', status: 'granted' },
             { permission: 'pages_read_user_content', status: 'granted' },
             { permission: 'pages_manage_metadata', status: 'granted' },
+            { permission: 'pages_messaging', status: 'granted' },
           ],
         },
       },
@@ -169,7 +170,7 @@ describe('FacebookPageConnector', () => {
         provider: 'facebook_page',
         externalAccountId: '111',
         displayName: 'Quán Cà Phê A',
-        scopes: ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement', 'pages_read_user_content', 'pages_manage_metadata'],
+        scopes: ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement', 'pages_read_user_content', 'pages_manage_metadata', 'pages_messaging'],
         expiresAt: null,
         secret: JSON.stringify({ accessToken: 'page-token-111' }),
         grantedByHash: expectedHash,
@@ -178,7 +179,7 @@ describe('FacebookPageConnector', () => {
         provider: 'facebook_page',
         externalAccountId: '333',
         displayName: 'Tiệm Bánh B',
-        scopes: ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement', 'pages_read_user_content', 'pages_manage_metadata'],
+        scopes: ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement', 'pages_manage_engagement', 'pages_read_user_content', 'pages_manage_metadata', 'pages_messaging'],
         expiresAt: null,
         secret: JSON.stringify({ accessToken: 'page-token-333' }),
         grantedByHash: expectedHash,
@@ -186,8 +187,8 @@ describe('FacebookPageConnector', () => {
     ]);
     const subscriptions = withComments.seen.filter((s) => s.url.pathname.endsWith('/subscribed_apps'));
     expect(subscriptions.map((s) => ({ path: s.url.pathname, method: s.method, fields: s.form.get('subscribed_fields'), auth: s.authorization }))).toEqual([
-      { path: '/v24.0/111/subscribed_apps', method: 'POST', fields: 'feed', auth: 'Bearer page-token-111' },
-      { path: '/v24.0/333/subscribed_apps', method: 'POST', fields: 'feed', auth: 'Bearer page-token-333' },
+      { path: '/v24.0/111/subscribed_apps', method: 'POST', fields: 'feed,messages,message_echoes', auth: 'Bearer page-token-111' },
+      { path: '/v24.0/333/subscribed_apps', method: 'POST', fields: 'feed,messages,message_echoes', auth: 'Bearer page-token-333' },
     ]);
   });
 

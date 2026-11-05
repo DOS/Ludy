@@ -359,4 +359,270 @@ describe('FacebookPageConversations adapter (#2307)', () => {
       }),
     ).toMatchObject({ kind: 'rejected', error: 'bad_request', code: '100' });
   });
+
+  it('parses Messenger messages, message_echoes, is_deleted, attachments, and ignores standby (#2308)', () => {
+    const now = 1762000500 * 1000;
+    const payload = {
+      object: 'page',
+      entry: [
+        {
+          id: PAGE_ID,
+          time: 1762000400 * 1000,
+          messaging: [
+            {
+              sender: { id: 'psid-customer-1' },
+              recipient: { id: PAGE_ID },
+              timestamp: 1762000401 * 1000,
+              message: {
+                mid: 'm_inbound_1',
+                text: 'Chào shop, mình muốn đặt bánh sinh nhật',
+                attachments: [
+                  {
+                    type: 'image',
+                    payload: { url: 'https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=123' },
+                  },
+                ],
+              },
+            },
+            {
+              sender: { id: PAGE_ID },
+              recipient: { id: 'psid-customer-1' },
+              timestamp: 1762000402 * 1000,
+              message: {
+                mid: 'm_echo_1',
+                is_echo: true,
+                text: 'Dạ shop chào bạn ạ!',
+              },
+            },
+            {
+              sender: { id: 'psid-customer-1' },
+              recipient: { id: PAGE_ID },
+              timestamp: 1762000403 * 1000,
+              message: {
+                mid: 'm_inbound_1',
+                is_deleted: true,
+              },
+            },
+            {
+              sender: { id: 'psid-customer-1' },
+              recipient: { id: PAGE_ID },
+              timestamp: 1762000404 * 1000,
+              message: {
+                mid: 'm_sticker_1',
+                attachments: [{ type: 'audio', payload: { url: 'https://lookaside.fbsbx.com/audio.mp3' } }],
+              },
+            },
+            // Delivery/read notice without message is ignored.
+            {
+              sender: { id: 'psid-customer-1' },
+              recipient: { id: PAGE_ID },
+              timestamp: 1762000405 * 1000,
+              delivery: { mids: ['m_echo_1'], watermark: 1762000405 * 1000 },
+            },
+          ],
+          standby: [
+            {
+              sender: { id: 'psid-customer-2' },
+              recipient: { id: PAGE_ID },
+              timestamp: 1762000406 * 1000,
+              message: { mid: 'm_standby_ignored', text: 'Should be ignored while in standby' },
+            },
+          ],
+        },
+      ],
+    };
+
+    const notices = parseFacebookNotices(new TextEncoder().encode(JSON.stringify(payload)), now);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.events).toEqual([
+      {
+        kind: 'direct',
+        threadId: 'psid-customer-1',
+        messageId: 'm_inbound_1',
+        direction: 'in',
+        contact: { id: 'psid-customer-1' },
+        text: 'Chào shop, mình muốn đặt bánh sinh nhật',
+        attachments: [{ kind: 'image', url: 'https://lookaside.fbsbx.com/ig_messaging_cdn/?asset_id=123' }],
+        at: new Date(1762000401 * 1000).toISOString(),
+      },
+      {
+        kind: 'direct',
+        threadId: 'psid-customer-1',
+        messageId: 'm_echo_1',
+        direction: 'out',
+        contact: { id: 'psid-customer-1' },
+        text: 'Dạ shop chào bạn ạ!',
+        at: new Date(1762000402 * 1000).toISOString(),
+      },
+      {
+        kind: 'direct',
+        threadId: 'psid-customer-1',
+        messageId: 'm_inbound_1',
+        direction: 'in',
+        removed: true,
+        contact: { id: 'psid-customer-1' },
+        text: '',
+        at: new Date(1762000403 * 1000).toISOString(),
+      },
+      {
+        kind: 'direct',
+        threadId: 'psid-customer-1',
+        messageId: 'm_sticker_1',
+        direction: 'in',
+        contact: { id: 'psid-customer-1' },
+        text: '[Khách gửi tin nhắn đính kèm]',
+        at: new Date(1762000404 * 1000).toISOString(),
+      },
+    ]);
+  });
+
+  it('sends Messenger RESPONSE within 24h, HUMAN_AGENT up to 7d, private reply by comment_id, and maps Messenger subcodes (#2308)', async () => {
+    const psid = '700800900100200';
+    const sentPayloads: Record<string, unknown>[] = [];
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(input);
+      if (init?.method === 'POST' && url.pathname === `/v24.0/${PAGE_ID}/messages`) {
+        const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>;
+        sentPayloads.push(body);
+        return new Response(JSON.stringify({ recipient_id: psid, message_id: `m_out_${sentPayloads.length}` }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ error: { message: 'unexpected', code: 1 } }), { status: 500 });
+    };
+    const conversations = new FacebookPagePublisher({ appSecret: SECRET }, fetchImpl).conversations!;
+
+    // 1. Within 24h -> RESPONSE
+    const twoHoursAgo = new Date(Date.now() - 2 * 3600_000).toISOString();
+    const res24h = await conversations.reply({
+      secret: TOKEN,
+      externalAccountId: PAGE_ID,
+      kind: 'direct',
+      threadId: psid,
+      postId: null,
+      contactId: psid,
+      text: 'Dạ tiệm gửi báo giá ạ',
+      lastInboundAt: twoHoursAgo,
+      callKey: 'dm-1',
+    });
+    expect(res24h).toEqual({ kind: 'accepted', externalId: 'm_out_1' });
+    expect(sentPayloads[0]).toEqual({
+      recipient: { id: psid },
+      messaging_type: 'RESPONSE',
+      message: { text: 'Dạ tiệm gửi báo giá ạ' },
+    });
+
+    // 2. Between 24h and 7d -> MESSAGE_TAG + HUMAN_AGENT
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 3600_000).toISOString();
+    const res7d = await conversations.reply({
+      secret: TOKEN,
+      externalAccountId: PAGE_ID,
+      kind: 'direct',
+      threadId: psid,
+      postId: null,
+      contactId: psid,
+      text: 'Tiệm cập nhật đơn hàng của bạn ạ',
+      lastInboundAt: threeDaysAgo,
+      callKey: 'dm-2',
+    });
+    expect(res7d).toEqual({ kind: 'accepted', externalId: 'm_out_2' });
+    expect(sentPayloads[1]).toEqual({
+      recipient: { id: psid },
+      messaging_type: 'MESSAGE_TAG',
+      tag: 'HUMAN_AGENT',
+      message: { text: 'Tiệm cập nhật đơn hàng của bạn ạ' },
+    });
+
+    // 3. Past 7d -> rejected locally with FB_WINDOW_CLOSED
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 3600_000).toISOString();
+    const resClosed = await conversations.reply({
+      secret: TOKEN,
+      externalAccountId: PAGE_ID,
+      kind: 'direct',
+      threadId: psid,
+      postId: null,
+      contactId: psid,
+      text: 'Quá hạn 7 ngày',
+      lastInboundAt: eightDaysAgo,
+      callKey: 'dm-3',
+    });
+    expect(resClosed).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_WINDOW_CLOSED' });
+
+    // 4. Private reply to comment (`threadId: "private:<comment_id>"`)
+    const resPriv = await conversations.reply({
+      secret: TOKEN,
+      externalAccountId: PAGE_ID,
+      kind: 'direct',
+      threadId: 'private:900800700600500_111',
+      postId: POST_ID,
+      contactId: '777888999',
+      text: 'Chào bạn, tiệm nhắn riêng báo giá nhé!',
+      callKey: 'priv-1',
+    });
+    expect(resPriv).toEqual({ kind: 'accepted', externalId: 'm_out_3' });
+    expect(sentPayloads[2]).toEqual({
+      recipient: { comment_id: '900800700600500_111' },
+      message: { text: 'Chào bạn, tiệm nhắn riêng báo giá nhé!' },
+    });
+
+    // 5. >2000 chars rejected locally
+    const resTooLong = await conversations.reply({
+      secret: TOKEN,
+      externalAccountId: PAGE_ID,
+      kind: 'direct',
+      threadId: psid,
+      postId: null,
+      contactId: psid,
+      text: 'x'.repeat(2001),
+      lastInboundAt: twoHoursAgo,
+      callKey: 'dm-long',
+    });
+    expect(resTooLong).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_TEXT_LENGTH' });
+
+    // 6. Messenger Graph subcodes map to structured rejection reasons
+    const makeErrAdapter = (code: number, error_subcode?: number) =>
+      new FacebookPagePublisher(
+        { appSecret: SECRET },
+        async () => new Response(JSON.stringify({ error: { message: 'Messenger error', code, ...(error_subcode ? { error_subcode } : {}) } }), { status: 400 }),
+      ).conversations!;
+
+    expect(
+      await makeErrAdapter(10, 2018278).reply({
+        secret: TOKEN,
+        externalAccountId: PAGE_ID,
+        kind: 'direct',
+        threadId: psid,
+        postId: null,
+        contactId: psid,
+        text: 'Hi',
+        lastInboundAt: twoHoursAgo,
+        callKey: 'err-win',
+      }),
+    ).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_WINDOW_CLOSED' });
+
+    expect(
+      await makeErrAdapter(100, 10900).reply({
+        secret: TOKEN,
+        externalAccountId: PAGE_ID,
+        kind: 'direct',
+        threadId: 'private:900800700600500_111',
+        postId: POST_ID,
+        contactId: '777888999',
+        text: 'Hi',
+        callKey: 'err-priv',
+      }),
+    ).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_PRIVATE_REPLIED' });
+
+    expect(
+      await makeErrAdapter(551).reply({
+        secret: TOKEN,
+        externalAccountId: PAGE_ID,
+        kind: 'direct',
+        threadId: psid,
+        postId: null,
+        contactId: psid,
+        text: 'Hi',
+        lastInboundAt: twoHoursAgo,
+        callKey: 'err-551',
+      }),
+    ).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_RECIPIENT_UNAVAILABLE' });
+  });
 });
