@@ -123,4 +123,17 @@ test('answers, hides, notes and resolves a comment on a published post, and the 
   await page.getByTestId('conversation-erase-confirm').getByRole('button', { name: 'Hủy' }).click();
   await expect(page.getByTestId('conversation-erase-confirm')).toBeHidden();
   await expect(page.getByTestId('conversation-thread')).toBeVisible();
+
+  // The contact's timeline (#2333): opening Chị Mai Hương on the Contacts screen shows the linked conversation (channel, kind, status)
+  // without the message body, and clicking the channel link opens the Inbox on that thread.
+  await page.goto(`/o/${slug}/contacts`);
+  await page.getByRole('button', { name: 'Mở Chị Mai Hương' }).click();
+  const contactConvs = page.getByTestId('contact-conversations');
+  await expect(contactConvs).toContainText('Trang Bình Luận');
+  await expect(contactConvs).toContainText('Bình luận');
+  await expect(contactConvs).toContainText('Đang chờ');
+  await expect(contactConvs).not.toContainText('Còn hàng không shop?');
+  await contactConvs.getByRole('link', { name: 'Trang Bình Luận' }).click();
+  await expect(page).toHaveURL(new RegExp(`/o/${slug}/social/inbox\\?c=[0-9a-f-]{36}`));
+  await expect(page.getByTestId('conversation-thread').getByText('Dạ còn hàng ạ, bạn nhắn số điện thoại nhé.')).toBeVisible();
 });

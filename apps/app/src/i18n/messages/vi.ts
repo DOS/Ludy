@@ -1256,6 +1256,10 @@ export const vi = {
       close: 'dự kiến chốt {date}',
       kind: { open: 'Đang mở', won: 'Thắng', lost: 'Thua' },
     },
+    conversations: {
+      title: 'Hội thoại',
+      empty: 'Chưa có hội thoại nào gắn với liên hệ này.',
+    },
     timeline: 'Dòng thời gian',
     timelineEmpty: 'Chưa có gì ghi lại.',
     loading: 'Đang tải…',
@@ -1705,6 +1709,10 @@ export const vi = {
       create: 'Thêm',
       save: 'Lưu',
       cancel: 'Hủy',
+    },
+    conversations: {
+      title: 'Hội thoại từ khi mở cơ hội',
+      empty: 'Chưa có hội thoại nào của khách này từ khi mở cơ hội.',
     },
   },
   bookings: {
@@ -8226,6 +8234,7 @@ export const vi = {
       },
       deal: {
         board: 'Xem bảng cơ hội bán hàng',
+        conversations: 'Xem các hội thoại của một cơ hội bán hàng',
         create: 'Tạo cơ hội bán hàng',
         delete: 'Xóa cơ hội bán hàng',
         get: 'Xem một cơ hội bán hàng',
@@ -8257,6 +8266,7 @@ export const vi = {
         snooze: 'Hoãn việc tiếp theo của cơ hội',
       },
       party: {
+        conversations: 'Xem các hội thoại của một khách hàng',
         deals: 'Xem các cơ hội của một khách hàng',
         search: 'Tìm khách hàng cho cơ hội',
       },

@@ -1258,6 +1258,10 @@ export const en = {
       close: 'expected to close {date}',
       kind: { open: 'Open', won: 'Won', lost: 'Lost' },
     },
+    conversations: {
+      title: 'Conversations',
+      empty: 'No conversation is linked to this contact yet.',
+    },
     timeline: 'Timeline',
     timelineEmpty: 'Nothing recorded yet.',
     loading: 'Loading…',
@@ -1707,6 +1711,10 @@ export const en = {
       create: 'Add',
       save: 'Save',
       cancel: 'Cancel',
+    },
+    conversations: {
+      title: 'Conversations since the deal opened',
+      empty: 'No conversation of this customer since the deal opened.',
     },
   },
   bookings: {
@@ -8229,6 +8237,7 @@ export const en = {
       },
       deal: {
         board: 'View the deal board',
+        conversations: 'List the conversations of a deal',
         create: 'Create a deal',
         delete: 'Delete a deal',
         get: 'View a deal',
@@ -8260,6 +8269,7 @@ export const en = {
         snooze: 'Snooze the next steps of deals',
       },
       party: {
+        conversations: 'List the conversations of a customer',
         deals: 'List the deals of a customer',
         search: 'Search customers for a deal',
       },
