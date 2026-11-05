@@ -22,6 +22,7 @@ import {
   CONVERSATION_CALL_STALE_MS,
   CONVERSATION_DRAFT_MAX,
   CONVERSATION_FACEBOOK_DIRECT_MAX,
+  CONVERSATION_INSTAGRAM_DIRECT_MAX,
   CONVERSATION_PREVIEW_CHARS,
   EMAIL_PROVIDER,
   EMAIL_REFS_MAX,
@@ -1094,7 +1095,12 @@ export const conversationReply = defineCommand({
     if (!rules || !rules.kinds.includes(conversation.kind) || conversation.external_thread_id.startsWith('private:')) {
       throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời tại đây');
     }
-    const replyMax = connection.provider === 'facebook_page' && conversation.kind === 'direct' ? CONVERSATION_FACEBOOK_DIRECT_MAX : rules.replyMax;
+    const replyMax =
+      connection.provider === 'facebook_page' && conversation.kind === 'direct'
+        ? CONVERSATION_FACEBOOK_DIRECT_MAX
+        : connection.provider === 'instagram' && conversation.kind === 'direct'
+          ? CONVERSATION_INSTAGRAM_DIRECT_MAX
+          : rules.replyMax;
     if (input.body.length > replyMax) throw new DomainError('REPLY_TOO_LONG', 422, `Câu trả lời dài tối đa ${replyMax} ký tự`, { max: String(replyMax) });
     if (conversation.reply_window_until && conversation.reply_window_until.getTime() < ctx.now.getTime()) {
       throw new DomainError('REPLY_WINDOW_CLOSED', 409, 'Đã quá thời gian nền tảng cho phép trả lời cuộc trò chuyện này');
@@ -1210,11 +1216,17 @@ export const conversationReplyPrivately = defineCommand({
     if (!connection || connection.status !== 'active') {
       throw new DomainError('CHANNEL_NOT_ACTIVE', 409, 'Kênh này không còn hoạt động, hãy kết nối lại');
     }
-    if (connection.provider !== 'facebook_page' && connection.provider !== 'sandbox') {
+    if (connection.provider !== 'facebook_page' && connection.provider !== 'instagram' && connection.provider !== 'sandbox') {
       throw new DomainError('REPLY_NOT_SUPPORTED', 409, 'Kênh này chưa hỗ trợ trả lời riêng cho bình luận');
     }
     if (connection.provider === 'facebook_page' && !connection.scopes.includes('pages_messaging')) {
       throw new DomainError('CHANNEL_SCOPE_MISSING', 409, 'Trang Facebook chưa cấp quyền nhắn tin Messenger (pages_messaging), hãy kết nối lại kênh');
+    }
+    if (connection.provider === 'instagram' && !connection.scopes.includes('instagram_manage_messages')) {
+      throw new DomainError('CHANNEL_SCOPE_MISSING', 409, 'Tài khoản Instagram chưa cấp quyền nhắn tin (instagram_manage_messages), hãy kết nối lại kênh');
+    }
+    if (connection.provider === 'instagram' && input.body.length > CONVERSATION_INSTAGRAM_DIRECT_MAX) {
+      throw new DomainError('REPLY_TOO_LONG', 422, `Câu trả lời dài tối đa ${CONVERSATION_INSTAGRAM_DIRECT_MAX} ký tự`, { max: String(CONVERSATION_INSTAGRAM_DIRECT_MAX) });
     }
     if (ctx.now.getTime() - comment.sent_at.getTime() > 7 * 24 * HOUR_MS) {
       throw new DomainError('PRIVATE_REPLY_WINDOW_CLOSED', 409, 'Đã quá 7 ngày kể từ khi khách bình luận, Meta không còn cho phép trả lời riêng');
@@ -2488,9 +2500,13 @@ export const conversationHistoryBegin = defineCommand({
       .where('id', '=', input.connectionId)
       .executeTakeFirst();
     if (!row || row.status !== 'active') return { action: 'none' };
-    // A Facebook Page connected without pages_read_user_content has no comment-reading permission for history reconciliation:
-    // mark its sync timestamp so the sweep does not ask again for an hour, and make no platform call.
-    if (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) {
+    // A Facebook Page connected without pages_read_user_content or an Instagram account connected without instagram_manage_comments
+    // has no comment-reading permission for history reconciliation: mark its sync timestamp so the sweep does not ask again for an
+    // hour, and make no platform call.
+    if (
+      (row.provider === 'facebook_page' && !row.scopes.includes('pages_read_user_content')) ||
+      (row.provider === 'instagram' && !row.scopes.includes('instagram_manage_comments'))
+    ) {
       await ctx.trx
         .updateTable('crove_kernel.channel_connection')
         .set({ history_synced_at: ctx.now })
@@ -3013,7 +3029,7 @@ export const conversationDraftSource = defineQuery({
     const conversation = await ctx.trx
       .selectFrom('crove_kernel.conversation as c')
       .leftJoin('crove_kernel.conversation_identity as i', (join) => join.onRef('i.org_id', '=', 'c.org_id').onRef('i.id', '=', 'c.identity_id'))
-      .select(['c.last_seq', 'i.display_name as customer_name'])
+      .select(['c.last_seq', 'c.kind', 'i.display_name as customer_name'])
       .where('c.org_id', '=', ctx.orgId)
       .where('c.id', '=', draft.conversation_id)
       .executeTakeFirst();
@@ -3034,12 +3050,16 @@ export const conversationDraftSource = defineQuery({
       .map((m) => ({ from: m.direction === 'in' ? ('customer' as const) : ('business' as const), text: m.body }));
     const lastCustomer = [...messages].reverse().find((m) => m.from === 'customer');
     const rules = conversationRules(connection.provider);
+    const channelMax =
+      connection.provider === 'instagram' && conversation.kind === 'direct'
+        ? CONVERSATION_INSTAGRAM_DIRECT_MAX
+        : (rules?.replyMax ?? CONVERSATION_DRAFT_MAX);
     const tenant = await ctx.trx.selectFrom('crove_kernel.tenant').select('name').where('org_id', '=', ctx.orgId).executeTakeFirst();
     const matched = lastCustomer ? matchSavedReplies(lastCustomer.text, await savedRepliesOf(ctx), 5) : [];
     return {
       conversationId: draft.conversation_id,
       provider: connection.provider,
-      maxChars: Math.min(rules?.replyMax ?? CONVERSATION_DRAFT_MAX, CONVERSATION_DRAFT_MAX),
+      maxChars: Math.min(channelMax, CONVERSATION_DRAFT_MAX),
       customerName: conversation.customer_name,
       orgName: tenant?.name ?? null,
       messages,

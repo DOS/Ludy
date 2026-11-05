@@ -8,7 +8,7 @@ import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FacebookPagePublisher, platformUserHash, type Fetch } from '@crove/channel';
+import { FacebookPagePublisher, InstagramPublisher, platformUserHash, type Fetch } from '@crove/channel';
 import { createDb, createPool, type Db } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
 import { createOrg, kernelCommands, kernelQueries, upsertIdentity } from '@crove/kernel';
@@ -613,5 +613,162 @@ suite('Facebook Page conversations on PostgreSQL (#2307)', () => {
         { actor: asUser(owner), orgId },
       ),
     ).rejects.toMatchObject({ code: 'PRIVATE_REPLY_ALREADY_SENT' });
+  });
+
+  it('ingests Instagram comments and DMs, replies, hides, and enforces the 1000-character Instagram DM cap (#2309)', async () => {
+    const owner = await person('IG Owner');
+    const { orgId } = await createOrg(rt, asUser(owner), `IG Shop ${randomUUID().slice(0, 6)}`);
+    const app = buildApp();
+    const igId = '17841400000000055';
+    const pageId = '900100200300400';
+    const mediaId = '18000000000000088';
+    const commentId = '17900000000000555';
+    const igsid = '700800900100399';
+    const pageToken = 't'.repeat(28);
+    const igSecret = JSON.stringify({ accessToken: pageToken, pageId });
+    const sealed = broker.seal(igSecret, { orgId, provider: 'instagram', externalAccountId: igId });
+    const { connectionId } = await rt.execute<{ connectionId: string; reconnected: boolean }>(
+      'kernel.channel.connect',
+      {
+        provider: 'instagram',
+        externalAccountId: igId,
+        displayName: '@tiem.ig',
+        scopes: [
+          'pages_show_list',
+          'pages_read_engagement',
+          'instagram_basic',
+          'instagram_content_publish',
+          'instagram_manage_comments',
+          'instagram_manage_messages',
+          'pages_manage_metadata',
+        ],
+        expiresAt: null,
+        credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+      },
+      { actor: asUser(owner), orgId },
+    );
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const nowMs = nowSec * 1000;
+
+    // 1. Deliver `object: "instagram"` webhook with both a comment and a direct message.
+    const igWebhook = JSON.stringify({
+      object: 'instagram',
+      entry: [
+        {
+          id: igId,
+          time: nowSec,
+          changes: [
+            {
+              field: 'comments',
+              value: {
+                id: commentId,
+                text: 'Váy này có màu trắng không shop?',
+                timestamp: nowSec - 30,
+                from: { id: '800100200300400', username: 'thu.ha' },
+                media: { id: mediaId },
+              },
+            },
+          ],
+          messaging: [
+            {
+              sender: { id: igsid },
+              recipient: { id: igId },
+              timestamp: nowMs - 10_000,
+              message: {
+                mid: 'ig_dm_in_1',
+                text: 'Cho mình hỏi phí ship nội thành nhé',
+              },
+            },
+          ],
+        },
+      ],
+    });
+    const res = await app.request(FACEBOOK_WEBHOOK_PATH, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', [FACEBOOK_SIGNATURE_HEADER]: signHub(igWebhook) },
+      body: igWebhook,
+    });
+    expect(res.status).toBe(200);
+    await runConversationIntake({ workerDb, runtime: worker });
+
+    const comments = await rt.query<ConversationListed>('kernel.conversation.list', { kind: 'comment_thread' }, { actor: asUser(owner), orgId });
+    expect(comments.conversations).toHaveLength(1);
+    expect(comments.conversations[0]?.contact.displayName).toBe('thu.ha');
+    const commentConvId = comments.conversations[0]!.id;
+
+    const dms = await rt.query<ConversationListed>('kernel.conversation.list', { kind: 'direct' }, { actor: asUser(owner), orgId });
+    expect(dms.conversations).toHaveLength(1);
+    const dmConvId = dms.conversations[0]!.id;
+
+    // 2. Instagram DM enforces 1000-character limit on both `reply` and `reply_privately`.
+    await expect(
+      rt.execute(
+        'kernel.conversation.reply',
+        { conversationId: dmConvId, body: 'x'.repeat(1001), lastSeenSeq: 1 },
+        { actor: asUser(owner), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'REPLY_TOO_LONG' });
+
+    const commentDetail = await rt.query<ConversationDetail>('kernel.conversation.get', { conversationId: commentConvId }, { actor: asUser(owner), orgId });
+    const inboundCommentMsgId = commentDetail.messages[0]!.id;
+
+    await expect(
+      rt.execute(
+        'kernel.conversation.reply_privately',
+        { messageId: inboundCommentMsgId, body: 'x'.repeat(1001) },
+        { actor: asUser(owner), orgId },
+      ),
+    ).rejects.toMatchObject({ code: 'REPLY_TOO_LONG' });
+
+    // 3. Public comment reply, comment hide, DM reply, and private reply via InstagramPublisher.
+    const calls: { method: string; path: string; body: string }[] = [];
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(input);
+      const method = init?.method ?? 'GET';
+      const path = url.pathname;
+      const body = typeof init?.body === 'string' ? init.body : '';
+      calls.push({ method, path, body });
+      if (method === 'POST' && path === `/v24.0/${commentId}/replies`) {
+        return new Response(JSON.stringify({ id: '17900000000000666' }), { status: 200 });
+      }
+      if (method === 'POST' && path === `/v24.0/${commentId}`) {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (method === 'POST' && path === `/v24.0/${igId}/messages`) {
+        return new Response(JSON.stringify({ recipient_id: igsid, message_id: `ig_out_${calls.length}` }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    };
+    const publisher = new InstagramPublisher({ appSecret: APP_SECRET }, fetchImpl);
+    const sendDeps = { runtime: worker, broker, adapter: (p: string) => (p === 'instagram' ? publisher.conversations : undefined) };
+
+    const { messageId: pubReplyId } = await rt.execute<{ messageId: string }>(
+      'kernel.conversation.reply',
+      { conversationId: commentConvId, body: 'Dạ shop có sẵn màu trắng size S và M ạ!', lastSeenSeq: 1 },
+      { actor: asUser(owner), orgId },
+    );
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: pubReplyId, action: 'reply' })).toBe('accepted');
+
+    await rt.execute('kernel.conversation.hide', { messageId: inboundCommentMsgId, hidden: true }, { actor: asUser(owner), orgId });
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: inboundCommentMsgId, action: 'hide' })).toBe('done');
+
+    const { messageId: dmReplyId } = await rt.execute<{ messageId: string }>(
+      'kernel.conversation.reply',
+      { conversationId: dmConvId, body: 'Dạ phí ship nội thành 25k ạ!', lastSeenSeq: 1 },
+      { actor: asUser(owner), orgId },
+    );
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: dmReplyId, action: 'reply' })).toBe('accepted');
+
+    const privReplied = await rt.execute<{ conversationId: string; messageId: string }>(
+      'kernel.conversation.reply_privately',
+      { messageId: inboundCommentMsgId, body: 'Shop gửi hình màu trắng qua tin nhắn riêng cho bạn nhé!' },
+      { actor: asUser(owner), orgId },
+    );
+    expect(await runConversationJob(sendDeps, { orgId, connectionId, messageId: privReplied.messageId, action: 'reply' })).toBe('accepted');
+    expect(JSON.parse(calls.at(-1)!.body)).toEqual({
+      recipient: { comment_id: commentId },
+      message: { text: 'Shop gửi hình màu trắng qua tin nhắn riêng cho bạn nhé!' },
+    });
   });
 });

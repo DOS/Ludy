@@ -2498,7 +2498,9 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
             .filter(([id, p]) => {
               if (typeof p.conversations?.[method] !== 'function') return false;
               if (method !== 'history') return true;
-              if (id === 'facebook_page') return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
+              if (id === 'facebook_page' || id === 'instagram') {
+                return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
+              }
               return Boolean(deps.channels?.conversationHistory);
             })
             .map(([id]) => id);

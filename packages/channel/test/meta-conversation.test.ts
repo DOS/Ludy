@@ -4,9 +4,12 @@ import { describe, expect, it } from 'vitest';
 import {
   FACEBOOK_MAX_NOTICE_BYTES,
   FacebookPagePublisher,
+  InstagramPublisher,
   metaSignatureOk,
   parseFacebookNotice,
   parseFacebookNotices,
+  parseInstagramNotice,
+  parseInstagramNotices,
   platformUserHash,
   type Fetch,
 } from '../src/index.ts';
@@ -624,5 +627,345 @@ describe('FacebookPageConversations adapter (#2307)', () => {
         callKey: 'err-551',
       }),
     ).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'FB_RECIPIENT_UNAVAILABLE' });
+  });
+});
+
+describe('parseInstagramNotices & InstagramConversations (#2309)', () => {
+  const IG_ID = '17841400000000001';
+  const IG_MEDIA_ID = '18000000000000099';
+  const IG_SECRET = JSON.stringify({ accessToken: 'p'.repeat(24), pageId: PAGE_ID });
+
+  it('parses Instagram comments, live_comments, and direct messages, and ignores standby', () => {
+    const now = 1762000600 * 1000;
+    const payload = {
+      object: 'instagram',
+      entry: [
+        {
+          id: IG_ID,
+          time: 1762000500,
+          changes: [
+            {
+              field: 'comments',
+              value: {
+                id: '17900000000000111',
+                text: 'Áo này còn size M không shop?',
+                timestamp: 1762000501,
+                from: { id: '900100200300400', username: 'linh.nguyen' },
+                media: { id: IG_MEDIA_ID, media_product_type: 'FEED' },
+              },
+            },
+            {
+              field: 'comments',
+              value: {
+                id: '17900000000000222',
+                parent_id: '17900000000000111',
+                text: 'Dạ còn bạn nhé!',
+                timestamp: 1762000502,
+                from: { id: IG_ID, username: 'quan.a' },
+                media: { id: IG_MEDIA_ID },
+              },
+            },
+          ],
+          messaging: [
+            {
+              sender: { id: 'igsid-customer-1' },
+              recipient: { id: IG_ID },
+              timestamp: 1762000505 * 1000,
+              message: {
+                mid: 'ig_mid_1',
+                text: 'Gửi ảnh mẫu giúp mình nhé',
+                attachments: [
+                  {
+                    type: 'image',
+                    payload: { url: 'https://scontent.cdninstagram.com/v/t51.2885-15/sample.jpg' },
+                  },
+                ],
+              },
+            },
+            {
+              sender: { id: 'igsid-customer-1' },
+              recipient: { id: IG_ID },
+              timestamp: 1762000506 * 1000,
+              message: {
+                mid: 'ig_mid_unsupported',
+                is_unsupported: true,
+              },
+            },
+          ],
+          standby: [
+            {
+              sender: { id: 'igsid-customer-2' },
+              recipient: { id: IG_ID },
+              timestamp: 1762000507 * 1000,
+              message: { mid: 'ig_standby_1', text: 'Ignored standby' },
+            },
+          ],
+        },
+      ],
+    };
+
+    const raw = new TextEncoder().encode(JSON.stringify(payload));
+    const notices = parseInstagramNotices(raw, now);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.accountId).toBe(IG_ID);
+    expect(notices[0]?.events).toEqual([
+      {
+        kind: 'comment_thread',
+        threadId: '17900000000000111',
+        postId: IG_MEDIA_ID,
+        messageId: '17900000000000111',
+        direction: 'in',
+        contact: { id: '900100200300400', name: 'linh.nguyen' },
+        text: 'Áo này còn size M không shop?',
+        at: new Date(1762000501 * 1000).toISOString(),
+      },
+      {
+        kind: 'comment_thread',
+        threadId: '17900000000000111',
+        postId: IG_MEDIA_ID,
+        messageId: '17900000000000222',
+        direction: 'out',
+        contact: { id: 'commenter:17900000000000111' },
+        text: 'Dạ còn bạn nhé!',
+        at: new Date(1762000502 * 1000).toISOString(),
+      },
+      {
+        kind: 'direct',
+        threadId: 'igsid-customer-1',
+        messageId: 'ig_mid_1',
+        direction: 'in',
+        contact: { id: 'igsid-customer-1' },
+        text: 'Gửi ảnh mẫu giúp mình nhé',
+        attachments: [{ kind: 'image', url: 'https://scontent.cdninstagram.com/v/t51.2885-15/sample.jpg' }],
+        at: new Date(1762000505 * 1000).toISOString(),
+      },
+      {
+        kind: 'direct',
+        threadId: 'igsid-customer-1',
+        messageId: 'ig_mid_unsupported',
+        direction: 'in',
+        contact: { id: 'igsid-customer-1' },
+        text: '[Khách gửi tin nhắn đính kèm]',
+        at: new Date(1762000506 * 1000).toISOString(),
+      },
+    ]);
+    expect(parseInstagramNotice(raw, now).accountId).toBe(IG_ID);
+    expect(parseFacebookNotices(raw, now)).toEqual([]);
+  });
+
+  it('replies to Instagram comments, DMs (24h/7d/1000-char cap), private replies, hides comments, subscribes Page, and reconciles media comments', async () => {
+    const IGSID = '700800900100300';
+    const calls: { method: string; path: string; form: URLSearchParams; json: Record<string, unknown> | null; query: URLSearchParams }[] = [];
+    const fetchImpl: Fetch = async (input, init) => {
+      const url = new URL(input);
+      const method = init?.method ?? 'GET';
+      const path = url.pathname;
+      const contentType = new Headers(init?.headers).get('content-type') ?? '';
+      const rawBody = typeof init?.body === 'string' ? init.body : '';
+      const json = contentType.includes('application/json') && rawBody ? (JSON.parse(rawBody) as Record<string, unknown>) : null;
+      const form = new URLSearchParams(json ? '' : rawBody);
+      calls.push({ method, path, form, json, query: url.searchParams });
+
+      if (method === 'POST' && path === '/v24.0/17900000000000111/replies') {
+        return new Response(JSON.stringify({ id: '17900000000000333' }), { status: 200 });
+      }
+      if (method === 'POST' && path === `/v24.0/${IG_ID}/messages`) {
+        return new Response(JSON.stringify({ recipient_id: IGSID, message_id: `ig_out_${calls.length}` }), { status: 200 });
+      }
+      if (method === 'POST' && path === '/v24.0/17900000000000111') {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (method === 'POST' && path === `/v24.0/${PAGE_ID}/subscribed_apps`) {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      if (method === 'GET' && path === `/v24.0/${IG_ID}/media`) {
+        return new Response(JSON.stringify({ data: [{ id: IG_MEDIA_ID }] }), { status: 200 });
+      }
+      if (method === 'GET' && path === `/v24.0/${IG_MEDIA_ID}/comments`) {
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: '17900000000000111',
+                text: 'Bình luận gốc trên IG',
+                timestamp: '2026-11-04T10:00:00+0000',
+                username: 'khach.ig',
+                from: { id: '900100200300400', username: 'khach.ig' },
+                hidden: false,
+                replies: {
+                  data: [
+                    {
+                      id: '17900000000000222',
+                      text: 'Shop trả lời trên IG',
+                      timestamp: '2026-11-04T10:05:00+0000',
+                      username: 'quan.a',
+                      from: { id: IG_ID, username: 'quan.a' },
+                      hidden: false,
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ error: { message: 'unexpected', code: 1 } }), { status: 500 });
+    };
+
+    const conversations = new InstagramPublisher({ appSecret: SECRET }, fetchImpl).conversations;
+
+    // 1. Public comment reply (up to 2200 chars)
+    const commentReply = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'comment_thread',
+      threadId: '17900000000000111',
+      postId: IG_MEDIA_ID,
+      contactId: '900100200300400',
+      text: 'Dạ shop còn hàng ạ!',
+      callKey: 'ig-c-1',
+    });
+    expect(commentReply).toEqual({ kind: 'accepted', externalId: '17900000000000333' });
+    expect(calls[0]?.form.get('message')).toBe('Dạ shop còn hàng ạ!');
+
+    const commentTooLong = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'comment_thread',
+      threadId: '17900000000000111',
+      postId: IG_MEDIA_ID,
+      contactId: '900100200300400',
+      text: 'x'.repeat(2201),
+      callKey: 'ig-c-long',
+    });
+    expect(commentTooLong).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'IG_COMMENT_LENGTH' });
+
+    // 2. Direct message within 24h and between 24h-7d, plus 1000-char limit
+    const oneHourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const dm24h = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'direct',
+      threadId: IGSID,
+      postId: null,
+      contactId: IGSID,
+      text: 'Chào bạn trên Instagram!',
+      lastInboundAt: oneHourAgo,
+      callKey: 'ig-dm-1',
+    });
+    expect(dm24h).toEqual({ kind: 'accepted', externalId: 'ig_out_2' });
+    expect(calls[1]?.json).toEqual({
+      recipient: { id: IGSID },
+      messaging_type: 'RESPONSE',
+      message: { text: 'Chào bạn trên Instagram!' },
+    });
+
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 3600_000).toISOString();
+    const dm7d = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'direct',
+      threadId: IGSID,
+      postId: null,
+      contactId: IGSID,
+      text: 'Nhân viên hỗ trợ trả lời sau 24h',
+      lastInboundAt: twoDaysAgo,
+      callKey: 'ig-dm-2',
+    });
+    expect(dm7d).toEqual({ kind: 'accepted', externalId: 'ig_out_3' });
+    expect(calls[2]?.json).toEqual({
+      recipient: { id: IGSID },
+      messaging_type: 'MESSAGE_TAG',
+      tag: 'HUMAN_AGENT',
+      message: { text: 'Nhân viên hỗ trợ trả lời sau 24h' },
+    });
+
+    const dmTooLong = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'direct',
+      threadId: IGSID,
+      postId: null,
+      contactId: IGSID,
+      text: 'x'.repeat(1001),
+      lastInboundAt: oneHourAgo,
+      callKey: 'ig-dm-long',
+    });
+    expect(dmTooLong).toMatchObject({ kind: 'rejected', error: 'bad_request', code: 'IG_TEXT_LENGTH' });
+
+    // 3. Private reply to an Instagram comment
+    const privReply = await conversations.reply({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      kind: 'direct',
+      threadId: 'private:17900000000000111',
+      postId: IG_MEDIA_ID,
+      contactId: '900100200300400',
+      text: 'Shop gửi báo giá qua tin nhắn riêng nhé!',
+      callKey: 'ig-priv-1',
+    });
+    expect(privReply).toEqual({ kind: 'accepted', externalId: 'ig_out_4' });
+    expect(calls[3]?.json).toEqual({
+      recipient: { comment_id: '17900000000000111' },
+      message: { text: 'Shop gửi báo giá qua tin nhắn riêng nhé!' },
+    });
+
+    // 4. Hide comment (`hide=true`)
+    const hidden = await conversations.hide!({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      externalMessageId: '17900000000000111',
+      hidden: true,
+      callKey: 'ig-hide-1',
+    });
+    expect(hidden).toEqual({ kind: 'done' });
+    expect(calls[4]?.form.get('hide')).toBe('true');
+
+    // 5. Subscribe linked Facebook Page
+    const sub = await conversations.subscribe({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+    });
+    expect(sub).toEqual({ ok: true });
+    expect(calls[5]?.path).toBe(`/v24.0/${PAGE_ID}/subscribed_apps`);
+    expect(calls[5]?.form.get('subscribed_fields')).toBe('feed,messages,message_echoes');
+
+    // 6. History reconciliation
+    const history = await conversations.history!({
+      secret: IG_SECRET,
+      externalAccountId: IG_ID,
+      since: new Date('2026-11-04T00:00:00Z'),
+      maxChats: 10,
+    });
+    expect(history).toEqual({
+      kind: 'ok',
+      complete: true,
+      oldest: '2026-11-04T10:00:00.000Z',
+      events: [
+        {
+          kind: 'comment_thread',
+          threadId: '17900000000000111',
+          postId: IG_MEDIA_ID,
+          messageId: '17900000000000111',
+          direction: 'in',
+          hidden: false,
+          contact: { id: '900100200300400', name: 'khach.ig' },
+          text: 'Bình luận gốc trên IG',
+          at: '2026-11-04T10:00:00.000Z',
+        },
+        {
+          kind: 'comment_thread',
+          threadId: '17900000000000111',
+          postId: IG_MEDIA_ID,
+          messageId: '17900000000000222',
+          direction: 'out',
+          hidden: false,
+          contact: { id: 'commenter:17900000000000111' },
+          text: 'Shop trả lời trên IG',
+          at: '2026-11-04T10:05:00.000Z',
+        },
+      ],
+    });
   });
 });
