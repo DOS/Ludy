@@ -69,8 +69,8 @@ describe('no cross-module SQL (plan §5.4)', () => {
 const KERNEL_DIRS = ['packages/kernel/src', 'packages/kernel-runtime/src', 'apps/kernel/src', 'packages/db/src'];
 // The kernel source files that name a module's schema, with the modules they name and why.
 const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why: string }> = {
-  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
-  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
+  'packages/db/src/generated/database.ts': { modules: ['ads', 'crm', 'finance', 'meetings', 'notes', 'social'], why: 'Kysely types of every table crove_tenant reads, generated (pnpm db:types); types only, no SQL' },
+  'packages/db/src/schema.ts': { modules: ['ads', 'crm', 'finance', 'meetings', 'notes', 'social'], why: 'refinements of the generated table types (CHECK unions, trigger-set columns); types only, no SQL' },
   'packages/kernel/src/offboarding.ts': {
     modules: ['ads', 'crm', 'finance', 'notes', 'social'],
     why: 'the org export lists every table of every schema (its manifest needs a part per table): a module left out exports its old rows or none, and its data stays, as ADR-0031 says',
@@ -95,7 +95,7 @@ const KERNEL_MODULE_REFERENCES: Record<string, { modules: readonly string[]; why
   'apps/kernel/src/booking-page.ts': { modules: ['crm'], why: 'public booking routes, registered only when crm is installed (http.ts)' },
   'apps/kernel/src/calendar-feed.ts': { modules: ['social'], why: 'the post calendar feed, served only when social is installed (http.ts)' },
   'apps/kernel/src/crm-worker.ts': { modules: ['crm'], why: 'the contact import staging sweep, worked and scheduled only when crm is installed (worker.ts)' },
-  'apps/kernel/src/credential-reseal.ts': { modules: ['social'], why: 'the chat alert targets are resealed only when social is installed; the channel credentials are kernel work' },
+  'apps/kernel/src/credential-reseal.ts': { modules: ['meetings', 'social'], why: 'the chat alert targets are resealed only when social is installed; media keys are resealed only when meetings is installed; the channel credentials are kernel work' },
   'apps/kernel/src/feeds.ts': { modules: ['social'], why: 'the RSS feed sweep, timed only when social is installed (worker.ts)' },
   'apps/kernel/src/missing-invoice-mail.ts': { modules: ['finance'], why: 'the missing invoice reminders, timed only when finance is installed (worker.ts)' },
   'apps/kernel/src/notes-worker.ts': { modules: ['notes'], why: 'the notes jobs, worked and scheduled only when notes is installed (worker.ts)' },

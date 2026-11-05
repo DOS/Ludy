@@ -89,6 +89,8 @@ export interface CredentialBroker {
   // A key for another purpose, derived from the broker's current key (HKDF-SHA256, `info` names the purpose), so the
   // root never leaves the broker and one purpose's key is no other's. Absent when the broker holds no key.
   derive?(info: string): Buffer;
+  // A key for another purpose, derived from a specific key by id (e.g. for key rotation resealing or older envelopes).
+  deriveKey?(keyId: string, info: string): Buffer;
 }
 
 export class CredentialVault implements CredentialBroker {
@@ -121,6 +123,12 @@ export class CredentialVault implements CredentialBroker {
 
   derive(info: string): Buffer {
     return Buffer.from(hkdfSync('sha256', this.current.key, Buffer.alloc(0), info, KEY));
+  }
+
+  deriveKey(keyId: string, info: string): Buffer {
+    const key = this.keys.get(keyId);
+    if (!key) throw new CredentialError(`unknown key (${keyId})`);
+    return Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, KEY));
   }
 
   seal(secret: string, binding: CredentialBinding): SealedCredential {

@@ -1,0 +1,661 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+import { createHash, randomUUID } from 'node:crypto';
+import { sql } from 'kysely';
+import type { MemberRole } from '@crove/db';
+import { CONSENT_NOTICE_VERSION, MEETING } from './manifest.ts';
+import {
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
+  auditValue,
+  zMeetingClaimMedia,
+  zMeetingCreate,
+  zMeetingListInput,
+  zMeetingReaderAdd,
+  zMeetingReaderRemove,
+  zMeetingRef,
+  type ConsentMethod,
+  type MeetingDetail,
+  type MeetingLanguage,
+  type MeetingStatus,
+  type MeetingSummary,
+  type MeetingVisibility,
+} from '@crove/kernel-contract';
+import {
+  DomainError,
+  defineCommand,
+  defineQuery,
+  encryptBlobBuffer,
+  fileKey,
+  generateMediaDataKey,
+  wrapMediaKeyWithSubkey,
+  type BlobMediaBinding,
+  type BlobStore,
+  type CommandContext,
+  type CredentialBroker,
+  type MediaKeyBinding,
+  type QueryContext,
+} from '@crove/kernel-runtime';
+
+const WRITERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+const READERS: readonly MemberRole[] = ['owner', 'admin', 'member'];
+
+function userOf(actor: CommandContext['actor'] | QueryContext['actor']): string {
+  if (actor.type !== 'user') {
+    throw new DomainError('FORBIDDEN', 403, 'Only authenticated members can perform this action');
+  }
+  return actor.userId;
+}
+
+export interface MeetingsDeps {
+  store?: BlobStore;
+  broker?: CredentialBroker;
+}
+
+interface MeetingRow {
+  id: string;
+  recorder_user_id: string;
+  visibility: MeetingVisibility;
+  title: string;
+  language: MeetingLanguage;
+  status: MeetingStatus;
+  started_at: Date | string | null;
+  ended_at: Date | string | null;
+  length_seconds: number | null;
+  keep_video: boolean;
+  consent_method: ConsentMethod;
+  consent_confirmed_by: string;
+  consent_confirmed_at: Date | string;
+  consent_notice_version: string;
+  audio_retention_date: Date | string;
+  text_retention_date: Date | string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+function toSummary(r: MeetingRow, readersCount: number, hasAudio: boolean, hasVideo: boolean): MeetingSummary {
+  return {
+    id: r.id,
+    recorderUserId: r.recorder_user_id,
+    visibility: r.visibility,
+    title: r.title,
+    language: r.language,
+    status: r.status,
+    startedAt: r.started_at ? new Date(r.started_at).toISOString() : null,
+    endedAt: r.ended_at ? new Date(r.ended_at).toISOString() : null,
+    lengthSeconds: r.length_seconds,
+    keepVideo: r.keep_video,
+    audioRetentionDate: typeof r.audio_retention_date === 'string' ? r.audio_retention_date.slice(0, 10) : new Date(r.audio_retention_date).toISOString().slice(0, 10),
+    textRetentionDate: typeof r.text_retention_date === 'string' ? r.text_retention_date.slice(0, 10) : new Date(r.text_retention_date).toISOString().slice(0, 10),
+    hasAudio,
+    hasVideo,
+    readersCount,
+    createdAt: new Date(r.created_at).toISOString(),
+    updatedAt: new Date(r.updated_at).toISOString(),
+  };
+}
+
+export function buildMeetingCreate(_deps?: MeetingsDeps) {
+  return defineCommand({
+    name: 'meetings.meeting.create',
+    input: zMeetingCreate,
+    risk: 'R1',
+    sideEffect: 'internal',
+    access: WRITERS,
+    target: () => ({ type: 'meetings.meeting', id: 'new' }),
+    handler: async (ctx, input) => {
+      const userId = userOf(ctx.actor);
+      const meetingId = randomUUID();
+      const startedAt = ctx.now;
+      const audioRetentionDate = new Date(startedAt.getTime() + 30 * 86_400_000).toISOString().slice(0, 10);
+      const textRetentionDate = new Date(startedAt.getTime() + 365 * 86_400_000).toISOString().slice(0, 10);
+
+      await ctx.trx
+        .insertInto('crove_meetings.meeting')
+        .values({
+          org_id: ctx.orgId,
+          id: meetingId,
+          recorder_user_id: userId,
+          visibility: input.visibility,
+          title: input.title,
+          language: input.language,
+          status: 'ready',
+          started_at: startedAt,
+          ended_at: null,
+          length_seconds: input.lengthSeconds ?? null,
+          keep_video: input.keepVideo,
+          consent_method: input.consentMethod,
+          consent_confirmed_by: userId,
+          consent_confirmed_at: startedAt,
+          consent_notice_version: CONSENT_NOTICE_VERSION,
+          audio_retention_date: audioRetentionDate,
+          text_retention_date: textRetentionDate,
+        })
+        .execute();
+
+      if (input.visibility === 'attendees' && input.readerUserIds && input.readerUserIds.length > 0) {
+        for (const readerId of input.readerUserIds) {
+          if (readerId !== userId) {
+            await ctx.trx
+              .insertInto('crove_meetings.meeting_reader')
+              .values({
+                org_id: ctx.orgId,
+                id: randomUUID(),
+                meeting_id: meetingId,
+                user_id: readerId,
+              })
+              .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'user_id']).doNothing())
+              .execute();
+          }
+        }
+      }
+
+      ctx.audit({
+        meetingId,
+        title: auditValue(MEETING, 'title', input.title),
+        visibility: input.visibility,
+        consentMethod: input.consentMethod,
+      });
+
+      return { meetingId };
+    },
+  });
+}
+
+export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
+  return defineCommand({
+    name: 'meetings.media.claim',
+    input: zMeetingClaimMedia,
+    risk: 'R1',
+    sideEffect: 'internal',
+    access: WRITERS,
+    target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+    handler: async (ctx, input) => {
+      const userId = userOf(ctx.actor);
+      const meeting = await ctx.trx
+        .selectFrom('crove_meetings.meeting')
+        .select(['id', 'recorder_user_id', 'keep_video'])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.meetingId)
+        .executeTakeFirst();
+      if (!meeting) {
+        throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+      }
+      if (meeting.recorder_user_id !== userId) {
+        throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may claim media');
+      }
+      if (input.kind === 'video' && !meeting.keep_video) {
+        throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
+      }
+
+      const upload = await ctx.trx
+        .selectFrom('crove_kernel.file_upload')
+        .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.uploadId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!upload || upload.created_by !== userId) {
+        throw new DomainError('UPLOAD_MISSING', 404, 'Upload grant not found');
+      }
+      if (upload.used_at) {
+        throw new DomainError('UPLOAD_USED', 409, 'Upload grant already used');
+      }
+      if (upload.expired) {
+        throw new DomainError('UPLOAD_EXPIRED', 409, 'Upload grant expired');
+      }
+
+      await ctx.trx
+        .updateTable('crove_kernel.file_upload')
+        .set({ used_at: sql`pg_catalog.now()` })
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.uploadId)
+        .execute();
+
+      if (!deps?.store || !deps?.broker) {
+        throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Storage or encryption broker is unavailable');
+      }
+
+      const limit = input.kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
+      let plaintext: Buffer;
+      if (deps.store.direct) {
+        const staged = await deps.store.direct.readStaged(upload.staging_key, Math.min(Number(upload.max_bytes), limit));
+        plaintext = Buffer.from(staged.bytes);
+      } else {
+        const raw = await deps.store.get(upload.staging_key, null, limit);
+        plaintext = Buffer.from(raw);
+      }
+
+      if (plaintext.length === 0) {
+        throw new DomainError('UPLOAD_MISSING', 400, 'Uploaded media is empty');
+      }
+
+      const dataKey = generateMediaDataKey();
+      const binding: BlobMediaBinding = {
+        orgId: ctx.orgId,
+        meetingId: input.meetingId,
+        kind: input.kind,
+      };
+
+      const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
+      const sha256 = createHash('sha256').update(ciphertext).digest('hex');
+      const storageKey = fileKey(ctx.orgId, sha256);
+      const contentType = input.kind === 'audio' ? 'audio/ogg' : 'video/mp4';
+
+      await deps.store.put(storageKey, ciphertext, contentType);
+      await deps.store.delete(upload.staging_key).catch((err) => console.error('[meetings] staging deletion', err));
+
+      if (!deps.broker?.derive) {
+        throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+      }
+      const keyId = (deps.broker as { keyId?: string }).keyId ?? 'k1-default';
+      const wrapSubkey = deps.broker.derive('crove.meetings.v1|wrap');
+      const keyBinding: MediaKeyBinding = { ...binding, keyId };
+      const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
+
+      await sql`SELECT crove_meetings.media_key_seal(
+        ${ctx.orgId}::uuid,
+        ${input.meetingId}::uuid,
+        ${keyId}::text,
+        ${input.kind}::text,
+        ${wrappedKey}::bytea
+      )`.execute(ctx.trx);
+
+      const fileId = randomUUID();
+      const filename = `meeting-${input.meetingId}.${input.kind === 'audio' ? 'opus' : 'mp4'}`;
+      await ctx.trx
+        .insertInto('crove_kernel.file')
+        .values({
+          org_id: ctx.orgId,
+          id: fileId,
+          filename,
+          content_type: contentType,
+          size_bytes: String(ciphertext.length),
+          sha256,
+          storage_key: storageKey,
+          source: input.kind === 'audio' ? 'meeting_audio' : 'meeting_video',
+          created_by: userId,
+        })
+        .execute();
+
+      if (input.kind === 'audio') {
+        await ctx.trx
+          .insertInto('crove_meetings.audio_segment')
+          .values({
+            org_id: ctx.orgId,
+            id: randomUUID(),
+            meeting_id: input.meetingId,
+            file_id: fileId,
+            segment_order: 0,
+            start_offset_seconds: 0,
+            length_seconds: input.lengthSeconds ?? 1800,
+          })
+          .execute();
+      } else {
+        const videoRetentionDate = new Date(ctx.now.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+        await ctx.trx
+          .insertInto('crove_meetings.meeting_video')
+          .values({
+            org_id: ctx.orgId,
+            id: randomUUID(),
+            meeting_id: input.meetingId,
+            file_id: fileId,
+            length_seconds: input.lengthSeconds ?? 1800,
+            video_retention_date: videoRetentionDate,
+          })
+          .execute();
+      }
+
+      ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId });
+      return { fileId };
+    },
+  });
+}
+
+export const meetingDelete = defineCommand({
+  name: 'meetings.meeting.delete',
+  input: zMeetingRef,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const isOwnerOrAdmin = ctx.role === 'owner' || ctx.role === 'admin';
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'recorder_user_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+
+    if (!meeting) {
+      if (isOwnerOrAdmin) {
+        const { rows } = await sql<{ deleted: boolean }>`
+          SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
+        `.execute(ctx.trx);
+        if (!rows[0]?.deleted) {
+          throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+        }
+        await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+        ctx.audit({ meetingId: input.meetingId, shredded: true });
+        return { meetingId: input.meetingId, shredded: true };
+      }
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+
+    const isRecorder = meeting.recorder_user_id === userId;
+    if (!isRecorder && !isOwnerOrAdmin) {
+      throw new DomainError('FORBIDDEN', 403, 'Only the recorder or an owner/admin can delete this meeting');
+    }
+
+    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    if (isRecorder) {
+      await ctx.trx
+        .deleteFrom('crove_meetings.meeting')
+        .where('org_id', '=', ctx.orgId)
+        .where('id', '=', input.meetingId)
+        .execute();
+    } else {
+      await sql`SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+    }
+
+    ctx.audit({ meetingId: input.meetingId, shredded: true });
+    return { meetingId: input.meetingId, shredded: true };
+  },
+});
+
+export const meetingReaderAdd = defineCommand({
+  name: 'meetings.reader.add',
+  input: zMeetingReaderAdd,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'recorder_user_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) {
+      throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can add readers');
+    }
+
+    await ctx.trx
+      .insertInto('crove_meetings.meeting_reader')
+      .values({
+        org_id: ctx.orgId,
+        id: randomUUID(),
+        meeting_id: input.meetingId,
+        user_id: input.userId,
+      })
+      .onConflict((oc) => oc.columns(['org_id', 'meeting_id', 'user_id']).doNothing())
+      .execute();
+
+    ctx.audit({ meetingId: input.meetingId, addedUserId: input.userId });
+    return { meetingId: input.meetingId, userId: input.userId };
+  },
+});
+
+export const meetingReaderRemove = defineCommand({
+  name: 'meetings.reader.remove',
+  input: zMeetingReaderRemove,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'recorder_user_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    if (meeting.recorder_user_id !== userId) {
+      throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder can remove readers');
+    }
+
+    await ctx.trx
+      .deleteFrom('crove_meetings.meeting_reader')
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .where('user_id', '=', input.userId)
+      .execute();
+
+    ctx.audit({ meetingId: input.meetingId, removedUserId: input.userId });
+    return { meetingId: input.meetingId, userId: input.userId };
+  },
+});
+
+export const meetingList = defineQuery({
+  name: 'meetings.meeting.list',
+  input: zMeetingListInput,
+  access: READERS,
+  handler: async (ctx, input): Promise<MeetingSummary[]> => {
+    let query = ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId);
+
+    if (input.visibility) {
+      query = query.where('visibility', '=', input.visibility);
+    }
+
+    const rows = (await query
+      .orderBy('started_at', 'desc')
+      .limit(input.limit ?? 50)
+      .execute()) as unknown as MeetingRow[];
+
+    if (rows.length === 0) return [];
+
+    const meetingIds = rows.map((r) => r.id);
+
+    const readers = await ctx.trx
+      .selectFrom('crove_meetings.meeting_reader')
+      .select(['meeting_id', sql<string>`count(*)::text`.as('count')])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', 'in', meetingIds)
+      .groupBy('meeting_id')
+      .execute();
+    const readersMap = new Map(readers.map((r) => [r.meeting_id, Number(r.count)]));
+
+    const audioSegments = await ctx.trx
+      .selectFrom('crove_meetings.audio_segment')
+      .select(['meeting_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', 'in', meetingIds)
+      .execute();
+    const audioSet = new Set(audioSegments.map((a) => a.meeting_id));
+
+    const videos = await ctx.trx
+      .selectFrom('crove_meetings.meeting_video')
+      .select(['meeting_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', 'in', meetingIds)
+      .execute();
+    const videoSet = new Set(videos.map((v) => v.meeting_id));
+
+    return rows.map((r) =>
+      toSummary(r, readersMap.get(r.id) ?? 0, audioSet.has(r.id), videoSet.has(r.id)),
+    );
+  },
+});
+
+export const meetingGet = defineQuery({
+  name: 'meetings.meeting.get',
+  input: zMeetingRef,
+  access: READERS,
+  handler: async (ctx, input): Promise<MeetingDetail> => {
+    const userId = userOf(ctx.actor);
+    const meeting = (await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .selectAll()
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst()) as unknown as MeetingRow | undefined;
+    if (!meeting) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+
+    const readers = await ctx.trx
+      .selectFrom('crove_meetings.meeting_reader')
+      .select(['user_id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .execute();
+    const readerIds = readers.map((r) => r.user_id);
+
+    const audioSegment = await ctx.trx
+      .selectFrom('crove_meetings.audio_segment')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+
+    const video = await ctx.trx
+      .selectFrom('crove_meetings.meeting_video')
+      .select(['id', 'video_retention_date'])
+      .where('org_id', '=', ctx.orgId)
+      .where('meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+
+    const videoRetentionDate = video?.video_retention_date
+      ? typeof video.video_retention_date === 'string'
+        ? video.video_retention_date.slice(0, 10)
+        : new Date(video.video_retention_date).toISOString().slice(0, 10)
+      : null;
+
+    const summary = toSummary(meeting, readerIds.length, audioSegment !== undefined, video !== undefined);
+    return {
+      ...summary,
+      consentMethod: meeting.consent_method,
+      consentConfirmedBy: meeting.consent_confirmed_by,
+      consentConfirmedAt: new Date(meeting.consent_confirmed_at).toISOString(),
+      consentNoticeVersion: meeting.consent_notice_version,
+      readers: readerIds,
+      videoRetentionDate,
+      isRecorder: meeting.recorder_user_id === userId,
+    };
+  },
+});
+
+export const meetingAudioRead = defineQuery({
+  name: 'meetings.meeting.audio_read',
+  input: zMeetingRef,
+  access: READERS,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const { rows: readerRows } = await sql<{ ok: boolean }>`
+      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+    `.execute(ctx.trx);
+    if (!readerRows[0]?.ok) {
+      throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting audio');
+    }
+
+    const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
+      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'audio')
+    `.execute(ctx.trx);
+    if (keyRows.length === 0 || !keyRows[0]) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting audio key has been shredded');
+    }
+
+    const segment = await ctx.trx
+      .selectFrom('crove_meetings.audio_segment as s')
+      .innerJoin('crove_kernel.file as f', (join) =>
+        join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
+      )
+      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.sha256', 'f.content_type as contentType'])
+      .where('s.org_id', '=', ctx.orgId)
+      .where('s.meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!segment) {
+      throw new DomainError('AUDIO_NOT_FOUND', 404, 'Meeting audio segment not found');
+    }
+
+    return {
+      meetingId: input.meetingId,
+      fileId: segment.fileId,
+      storageKey: segment.storageKey,
+      sha256: segment.sha256,
+      contentType: segment.contentType,
+      keyId: keyRows[0].key_id,
+      wrappedKey: keyRows[0].wrapped_key,
+    };
+  },
+});
+
+export const meetingVideoRead = defineQuery({
+  name: 'meetings.meeting.video_read',
+  input: zMeetingRef,
+  access: READERS,
+  sensitive: true,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const { rows: readerRows } = await sql<{ ok: boolean }>`
+      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+    `.execute(ctx.trx);
+    if (!readerRows[0]?.ok) {
+      throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting video');
+    }
+
+    const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
+      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, 'video')
+    `.execute(ctx.trx);
+    if (keyRows.length === 0 || !keyRows[0]) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting video key has been shredded');
+    }
+
+    const video = await ctx.trx
+      .selectFrom('crove_meetings.meeting_video as v')
+      .innerJoin('crove_kernel.file as f', (join) =>
+        join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
+      )
+      .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.sha256', 'f.content_type as contentType'])
+      .where('v.org_id', '=', ctx.orgId)
+      .where('v.meeting_id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!video) {
+      throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
+    }
+
+    return {
+      meetingId: input.meetingId,
+      fileId: video.fileId,
+      storageKey: video.storageKey,
+      sha256: video.sha256,
+      contentType: video.contentType,
+      keyId: keyRows[0].key_id,
+      wrappedKey: keyRows[0].wrapped_key,
+    };
+  },
+});
+
+export function buildMeetingsCommands(deps?: MeetingsDeps) {
+  return [
+    buildMeetingCreate(deps),
+    buildMeetingClaimMedia(deps),
+    meetingDelete,
+    meetingReaderAdd,
+    meetingReaderRemove,
+  ];
+}
+
+export function buildMeetingsQueries() {
+  return [
+    meetingList,
+    meetingGet,
+    meetingAudioRead,
+    meetingVideoRead,
+  ];
+}
+
+export const meetingsCommands = buildMeetingsCommands();
+export const meetingsQueries = buildMeetingsQueries();

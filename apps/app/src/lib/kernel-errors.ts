@@ -169,6 +169,8 @@ export const KERNEL_ERROR_CODES = [
   'NOTE_LINK_LIMIT',
   'NOTE_LINK_NOT_FOUND',
   'NOTE_LINK_TARGET_NOT_FOUND',
+  // AI Meeting Notes (#2576).
+  'MEETING_NOT_FOUND',
   // A member's own to-dos (#1673).
   'TODO_NOT_FOUND',
   'TODO_IN_TRASH',

@@ -417,6 +417,21 @@ export function createRpcHandler(
     <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
       inNotes(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
 
+  // The meetings module (#2576): its procedures answer 404 when the deployment leaves it out.
+  const meetings = runtime.installed('meetings');
+  const inMeetings = async <T>(context: RpcContext, fn: (orgId: string, actor: UserActor) => Promise<T>) => {
+    if (!meetings) throw new ORPCError('NOT_FOUND', { status: 404, message: 'Mô-đun Cuộc họp chưa được bật' });
+    return inOrg(context, fn);
+  };
+  const meetingsCommand =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inMeetings(context, (orgId, actor) => runtime.execute<O>(name, input, { actor, orgId }));
+  const meetingsQuery =
+    (name: string) =>
+    <I, O>({ context, input }: { context: RpcContext; input: I }): Promise<O> =>
+      inMeetings(context, (orgId, actor) => runtime.query<O>(name, input, { actor, orgId }));
+
   // The ads module (#2217): its procedures answer 404 when the deployment leaves it out, as the notes module's do.
   const ads = runtime.installed('ads');
   // The proposal request an ads change makes (kernel.proposal.request): the command it would run once approved, and what that
@@ -747,6 +762,17 @@ export function createRpcHandler(
         handOver: os.notes.todos.handOver.handler(notesCommand('notes.todo.hand_over')),
         myWork: os.notes.todos.myWork.handler(notesQuery('notes.my_work')),
         counts: os.notes.todos.counts.handler(notesQuery('notes.todo.counts')),
+      },
+    },
+    meetings: {
+      list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
+      get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
+      create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
+      claimMedia: os.meetings.claimMedia.handler(meetingsCommand('meetings.media.claim')),
+      delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
+      readers: {
+        add: os.meetings.readers.add.handler(meetingsCommand('meetings.reader.add')),
+        remove: os.meetings.readers.remove.handler(meetingsCommand('meetings.reader.remove')),
       },
     },
     crm: {

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   ANOMALY_CHECK_PREFIX,
   MAX_IMPORT_BYTES,
+  MAX_MEETING_AUDIO_BYTES,
+  MAX_MEETING_VIDEO_BYTES,
   MAX_SOCIAL_VIDEO_BYTES,
   MAX_UPLOAD_BYTES,
   UPLOAD_PURPOSES,
@@ -347,7 +349,15 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
       const userId = ctx.actor.userId;
       // import: a spreadsheet for a module's import (#465), at most 10 MB.
-      const maxBytes = input.purpose === 'social' ? MAX_SOCIAL_VIDEO_BYTES : input.purpose === 'import' ? MAX_IMPORT_BYTES : MAX_UPLOAD_BYTES;
+      const maxBytes = input.purpose === 'meeting_audio'
+        ? MAX_MEETING_AUDIO_BYTES
+        : input.purpose === 'meeting_video'
+          ? MAX_MEETING_VIDEO_BYTES
+          : input.purpose === 'social'
+            ? MAX_SOCIAL_VIDEO_BYTES
+            : input.purpose === 'import'
+              ? MAX_IMPORT_BYTES
+              : MAX_UPLOAD_BYTES;
       // Serializes begins of one user in one org, so concurrent requests cannot pass either cap together.
       await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`crove.file_upload:${ctx.orgId}:${userId}`}, 0))`.execute(ctx.trx);
       // Both counts use the database clock: the insert trigger sets created_at and expires_at from now(), the start

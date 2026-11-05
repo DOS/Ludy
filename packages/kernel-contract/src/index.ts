@@ -62,9 +62,14 @@ export const SOCIAL_IMAGE_TYPES = [...SOCIAL_PHOTO_TYPES, ...SOCIAL_DOCUMENT_TYP
 export const SOCIAL_VIDEO_TYPES = ['video/mp4', 'video/quicktime'];
 export const MAX_SOCIAL_VIDEO_BYTES = 100 * 1024 * 1024;
 export const MAX_SOCIAL_VIDEO_MS = 3 * 3600 * 1000;
+// Meeting audio and video (issue #2576, ADR-0047, meetings plan M2): audio up to 300 MB, video up to 2 GB.
+export const MAX_MEETING_AUDIO_BYTES = 300 * 1024 * 1024;
+export const MAX_MEETING_VIDEO_BYTES = 2 * 1024 * 1024 * 1024;
+export const MEETING_AUDIO_TYPES = ['audio/ogg', 'audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
+export const MEETING_VIDEO_TYPES = ['video/mp4', 'video/webm', 'video/quicktime'];
 // import: a spreadsheet for a module's import (the tax portal's purchase list, #465). Stored with source 'import' and
 // never read as a document; the module that imports it has it read in the parsing sandbox.
-export const UPLOAD_PURPOSES = ['document', 'social', 'import'] as const;
+export const UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
 // An import spreadsheet is an .xlsx workbook (a ZIP container) of at most this size.
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 export const XLSX_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
@@ -92,6 +97,7 @@ export * from './brand.ts';
 export * from './calendar.ts';
 export * from './crm.ts';
 export * from './notes.ts';
+export * from './meetings.ts';
 export * from './ads.ts';
 export * from './ads-campaign.ts';
 export * from './manifest.ts';

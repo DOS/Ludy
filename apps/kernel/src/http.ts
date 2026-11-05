@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
@@ -36,7 +36,11 @@ import {
   putFile,
   readVerified,
   sha256Hex,
+  decryptBlobBuffer,
+  unwrapMediaKeyWithSubkey,
   type BlobStore,
+  type CredentialBroker,
+  type MediaKeyBinding,
   type Runtime,
   type UserActor,
 } from '@crove/kernel-runtime';
@@ -110,6 +114,7 @@ import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import { createInviteMailSender } from './invite-mail.ts';
+import { createCredentialBroker } from './credentials.ts';
 import { pgBossSchemaVersion } from './jobs-schema.ts';
 import type { MailProvider } from './mail.ts';
 import { RateLimiter } from './rate-limit.ts';
@@ -169,6 +174,7 @@ export interface HttpDeps {
   workerBuildCheck?: boolean;
   runtime: Runtime;
   store: BlobStore;
+  broker?: CredentialBroker;
   authenticate: Authenticate;
   pool: pg.Pool;
   aiEnabled: boolean;
@@ -1291,7 +1297,8 @@ export function createHttpApp(deps: HttpDeps) {
   app.use('/api/*', async (c, next) => {
     let user: AuthUser;
     try {
-      user = await authenticate(c.req.header('authorization'));
+      const authHeader = c.req.header('authorization') ?? (c.req.query('token') ? `Bearer ${c.req.query('token')}` : undefined);
+      user = await authenticate(authHeader);
     } catch (error) {
       return problem(c, error);
     }
@@ -1437,6 +1444,8 @@ export function createHttpApp(deps: HttpDeps) {
     if (value === undefined || value === null || value === '' || value === 'document') return 'document';
     if (value === 'social') return 'social';
     if (value === 'import') return 'import';
+    if (value === 'meeting_audio') return 'meeting_audio';
+    if (value === 'meeting_video') return 'meeting_video';
     throw new DomainError('INVALID', 400, 'Mục đích tải lên không hợp lệ');
   }
 
@@ -1481,6 +1490,9 @@ export function createHttpApp(deps: HttpDeps) {
       const body = await c.req.parseBody({ all: true });
       const files = ([] as unknown[]).concat(body.file ?? []).filter((f): f is File => f instanceof File);
       const purpose = uploadPurpose(body.purpose);
+      if (purpose === 'meeting_audio' || purpose === 'meeting_video') {
+        throw new DomainError('STAGED_UPLOAD_REQUIRED', 400, 'Tệp phương tiện cuộc họp phải tải lên qua cơ chế phân đoạn (POST /api/files/uploads)');
+      }
       const legalEntityId = uploadEntity(body.legalEntityId);
       if (files.length === 0) throw new DomainError('NO_FILE', 400, 'Chưa chọn tệp');
       if (files.length > MAX_FILES_PER_UPLOAD) throw new DomainError('TOO_MANY_FILES', 413, `Tối đa ${MAX_FILES_PER_UPLOAD} tệp mỗi lần`);
@@ -1546,8 +1558,8 @@ export function createHttpApp(deps: HttpDeps) {
         c.header('retry-after', String(UPLOAD_BUSY_RETRY_SECONDS));
         throw new DomainError('UPLOAD_BUSY', 503, 'Máy chủ đang xử lý nhiều tệp; hãy thử lại sau vài giây');
       }
-      // A Social upload may be a video of up to 100 MB: it also takes a large slot, before the grant is used.
-      const releaseLarge = purpose === 'social' ? large.tryAcquire(user.userId) : () => undefined;
+      // A Social upload may be a video of up to 100 MB, meeting audio/video up to 300 MB / 2 GB: it also takes a large slot, before the grant is used.
+      const releaseLarge = purpose === 'social' || purpose === 'meeting_audio' || purpose === 'meeting_video' ? large.tryAcquire(user.userId) : () => undefined;
       if (!releaseLarge) {
         release();
         throw busy(c);
@@ -1582,11 +1594,14 @@ export function createHttpApp(deps: HttpDeps) {
     try {
       const user = c.get('user');
       const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
-      const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string }>(
+      const file = await runtime.query<{ filename: string; content_type: string; storage_key: string; generation: string | null; sha256: string; size_bytes: string; source: string }>(
         'kernel.file.get',
         { id: c.req.param('id') },
         { actor: actorOf(user), orgId },
       );
+      if (file.source === 'meeting_audio' || file.source === 'meeting_video') {
+        throw new DomainError('FORBIDDEN', 403, 'Tệp phương tiện cuộc họp không tải trực tiếp được; hãy nghe/xem qua giao diện cuộc họp');
+      }
       const ref = { key: file.storage_key, generation: file.generation, sha256: file.sha256 };
       // With S3, a presigned GET of the exact version the row recorded (60 seconds, as an attachment), after the
       // same authorization as a streamed download. A generation that cannot be pinned streams, checked by sha256.
@@ -1622,6 +1637,159 @@ export function createHttpApp(deps: HttpDeps) {
           'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
           'content-security-policy': "sandbox; default-src 'none'; img-src data:; style-src 'unsafe-inline'",
           'x-content-type-options': 'nosniff',
+          'cache-control': 'private, no-store',
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  // Sensitive-audited playback routes for encrypted meeting audio and video (#2576).
+  app.get('/api/meetings/:id/audio', async (c) => {
+    try {
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+      const media = await runtime.query<{
+        meetingId: string;
+        fileId: string;
+        storageKey: string;
+        sha256: string;
+        contentType: string;
+        keyId: string;
+        wrappedKey: Buffer;
+      }>('meetings.meeting.audio_read', { meetingId }, { actor: actorOf(user), orgId });
+
+      const broker = deps.broker ?? createCredentialBroker(config);
+      const wrapSubkey = broker.deriveKey
+        ? broker.deriveKey(media.keyId, 'crove.meetings.v1|wrap')
+        : broker.derive
+          ? broker.derive('crove.meetings.v1|wrap')
+          : null;
+      if (!wrapSubkey) {
+        throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
+      }
+      const binding: MediaKeyBinding = {
+        orgId,
+        meetingId: media.meetingId,
+        kind: 'audio',
+        keyId: media.keyId,
+      };
+      const dataKey = unwrapMediaKeyWithSubkey(media.wrappedKey, binding, wrapSubkey);
+      const ciphertext = await store.get(media.storageKey);
+      const actualSha256 = createHash('sha256').update(ciphertext).digest('hex');
+      if (actualSha256 !== media.sha256) {
+        throw new DomainError('CORRUPT_MEDIA', 500, 'Media integrity verification failed');
+      }
+      const plaintext = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, {
+        orgId,
+        meetingId: media.meetingId,
+        kind: 'audio',
+      });
+
+      const range = c.req.header('range');
+      if (range && range.startsWith('bytes=')) {
+        const parts = range.slice(6).split('-');
+        const start = parseInt(parts[0] ?? '0', 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : plaintext.length - 1;
+        if (start < plaintext.length && end >= start) {
+          const chunk = plaintext.subarray(start, Math.min(end + 1, plaintext.length));
+          return new Response(new Uint8Array(chunk), {
+            status: 206,
+            headers: {
+              'content-type': media.contentType,
+              'content-range': `bytes ${start}-${start + chunk.length - 1}/${plaintext.length}`,
+              'content-length': String(chunk.length),
+              'accept-ranges': 'bytes',
+              'cache-control': 'private, no-store',
+            },
+          });
+        }
+      }
+
+      return new Response(new Uint8Array(plaintext), {
+        status: 200,
+        headers: {
+          'content-type': media.contentType,
+          'content-length': String(plaintext.length),
+          'accept-ranges': 'bytes',
+          'cache-control': 'private, no-store',
+        },
+      });
+    } catch (error) {
+      return problem(c, error);
+    }
+  });
+
+  app.get('/api/meetings/:id/video', async (c) => {
+    try {
+      const user = c.get('user');
+      const orgId = await resolveOrg(runtime, user, c.req.header(ORG_HEADER) ?? null);
+      const meetingId = c.req.param('id');
+      const media = await runtime.query<{
+        meetingId: string;
+        fileId: string;
+        storageKey: string;
+        sha256: string;
+        contentType: string;
+        keyId: string;
+        wrappedKey: Buffer;
+      }>('meetings.meeting.video_read', { meetingId }, { actor: actorOf(user), orgId });
+
+      const broker = deps.broker ?? createCredentialBroker(config);
+      const wrapSubkey = broker.deriveKey
+        ? broker.deriveKey(media.keyId, 'crove.meetings.v1|wrap')
+        : broker.derive
+          ? broker.derive('crove.meetings.v1|wrap')
+          : null;
+      if (!wrapSubkey) {
+        throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media decryption key unavailable');
+      }
+      const binding: MediaKeyBinding = {
+        orgId,
+        meetingId: media.meetingId,
+        kind: 'video',
+        keyId: media.keyId,
+      };
+      const dataKey = unwrapMediaKeyWithSubkey(media.wrappedKey, binding, wrapSubkey);
+      const ciphertext = await store.get(media.storageKey);
+      const actualSha256 = createHash('sha256').update(ciphertext).digest('hex');
+      if (actualSha256 !== media.sha256) {
+        throw new DomainError('CORRUPT_MEDIA', 500, 'Media integrity verification failed');
+      }
+      const plaintext = decryptBlobBuffer(Buffer.from(ciphertext), dataKey, {
+        orgId,
+        meetingId: media.meetingId,
+        kind: 'video',
+      });
+
+      const range = c.req.header('range');
+      if (range && range.startsWith('bytes=')) {
+        const parts = range.slice(6).split('-');
+        const start = parseInt(parts[0] ?? '0', 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : plaintext.length - 1;
+        if (start < plaintext.length && end >= start) {
+          const chunk = plaintext.subarray(start, Math.min(end + 1, plaintext.length));
+          return new Response(new Uint8Array(chunk), {
+            status: 206,
+            headers: {
+              'content-type': media.contentType,
+              'content-range': `bytes ${start}-${start + chunk.length - 1}/${plaintext.length}`,
+              'content-length': String(chunk.length),
+              'accept-ranges': 'bytes',
+              'cache-control': 'private, no-store',
+            },
+          });
+        }
+      }
+
+      return new Response(new Uint8Array(plaintext), {
+        status: 200,
+        headers: {
+          'content-type': media.contentType,
+          'content-length': String(plaintext.length),
+          'accept-ranges': 'bytes',
           'cache-control': 'private, no-store',
         },
       });

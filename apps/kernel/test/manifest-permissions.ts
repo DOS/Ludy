@@ -11,6 +11,7 @@ import { crmManifest } from '@crove/mod-crm';
 import { financeManifest } from '@crove/mod-finance';
 import { notesManifest } from '@crove/mod-notes';
 import { socialManifest } from '@crove/mod-social';
+import { meetingsManifest } from '@crove/mod-meetings';
 import { loadConfig } from '../src/config.ts';
 import { moduleDefinitions } from '../src/kernel.ts';
 import { orgPurgeCommand } from '../src/org-purge.ts';
@@ -31,6 +32,7 @@ export const MODULE_MANIFESTS: Manifests = {
   ads: { manifest: adsManifest, file: 'modules/ads/src/manifest.ts' },
   crm: { manifest: crmManifest, file: 'modules/crm/src/manifest.ts' },
   notes: { manifest: notesManifest, file: 'modules/notes/src/manifest.ts' },
+  meetings: { manifest: meetingsManifest, file: 'modules/meetings/src/manifest.ts' },
 };
 
 // Something that checks a permission: a command (with its risk), the approval policy, a database function or policy.

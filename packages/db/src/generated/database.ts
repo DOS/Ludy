@@ -3,8 +3,8 @@
 
 import type { ColumnType, Generated } from 'kysely';
 
-/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads that crove_tenant may read. */
-export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveKernelSchema & CroveNotesSchema & CroveSocialSchema;
+/** Every table of crove_kernel, crove_finance, crove_social, crove_crm, crove_notes, crove_ads, crove_meetings that crove_tenant may read. */
+export type Database = CroveAdsSchema & CroveCrmSchema & CroveFinanceSchema & CroveKernelSchema & CroveMeetingsSchema & CroveNotesSchema & CroveSocialSchema;
 
 /**
  * The insert or update type of a column crove_tenant may not insert or update: no value but undefined, which
@@ -146,6 +146,13 @@ export interface CroveKernelSchema {
   'crove_kernel.tenant_member': KernelTenantMemberTable;
   'crove_kernel.today_mail': KernelTodayMailTable;
   'crove_kernel.usage_deferral': KernelUsageDeferralTable;
+}
+
+export interface CroveMeetingsSchema {
+  'crove_meetings.audio_segment': MeetingsAudioSegmentTable;
+  'crove_meetings.meeting': MeetingsMeetingTable;
+  'crove_meetings.meeting_reader': MeetingsMeetingReaderTable;
+  'crove_meetings.meeting_video': MeetingsMeetingVideoTable;
 }
 
 export interface CroveNotesSchema {
@@ -2184,6 +2191,61 @@ export interface NotesLinkTable {
   party_id: ColumnType<string | null, string | null, NotGranted>;
   file_id: ColumnType<string | null, string | null, NotGranted>;
   created_by: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.audio_segment */
+export interface MeetingsAudioSegmentTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  segment_order: ColumnType<number, number, NotGranted>;
+  start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
+  length_seconds: ColumnType<number, number, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting */
+export interface MeetingsMeetingTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  recorder_user_id: ColumnType<string, string, NotGranted>;
+  visibility: Generated<string>;
+  title: string;
+  language: Generated<string>;
+  status: Generated<string>;
+  started_at: ColumnType<Date | null, Date | string | null, NotGranted>;
+  ended_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  length_seconds: ColumnType<number | null, number | null, number | null>;
+  keep_video: Generated<boolean>;
+  consent_method: ColumnType<string, string, NotGranted>;
+  consent_confirmed_by: ColumnType<string, string, NotGranted>;
+  consent_confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  consent_notice_version: ColumnType<string, string | undefined, NotGranted>;
+  audio_retention_date: ColumnType<string, string, string>;
+  text_retention_date: ColumnType<string, string, string>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+  updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+}
+
+/** crove_meetings.meeting_reader */
+export interface MeetingsMeetingReaderTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_video */
+export interface MeetingsMeetingVideoTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  file_id: ColumnType<string, string, NotGranted>;
+  length_seconds: ColumnType<number, number, NotGranted>;
+  video_retention_date: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

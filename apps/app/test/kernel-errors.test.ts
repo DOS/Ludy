@@ -78,6 +78,14 @@ const NOT_SHOWN: Record<string, string> = {
   EXPORT_RECORD_STALE: 'bug',
   // Bulk intake (#314): only the worker records an opened archive.
   NOT_ARCHIVE: 'bug',
+  // AI Meeting Notes (#2576): media playback, shredding and upload internals.
+  AUDIO_NOT_FOUND: 'meetings',
+  VIDEO_NOT_FOUND: 'meetings',
+  MEDIA_KEY_SHREDDED: 'meetings',
+  MEDIA_KEY_UNAVAILABLE: 'meetings',
+  CORRUPT_MEDIA: 'meetings',
+  STAGED_UPLOAD_REQUIRED: 'meetings',
+  VIDEO_NOT_ENABLED: 'meetings',
 };
 
 function sources(dir: string): string[] {

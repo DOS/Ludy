@@ -131,6 +131,10 @@ import {
   AD_REVOKE_STATES,
   AD_TOKEN_KINDS,
   NOTE_VISIBILITIES,
+  MEETING_VISIBILITIES,
+  MEETING_LANGUAGES,
+  MEETING_STATUSES,
+  MEETING_CONSENT_METHODS,
   NUMBER_RESETS,
   PARTY_KINDS,
   IMPORT_BATCH_STATUSES,
@@ -166,7 +170,7 @@ import {
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
-const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads'];
+const SCHEMAS = ['crove_kernel', 'crove_finance', 'crove_social', 'crove_crm', 'crove_notes', 'crove_ads', 'crove_meetings'];
 const suite = ADMIN ? describe : describe.skip;
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
@@ -226,6 +230,10 @@ const UNIONS = unions({
   'crove_crm.import_row.outcome': IMPORT_ROW_OUTCOMES,
   'crove_crm.import_row.company_state': IMPORT_ROW_COMPANY_STATES,
   'crove_crm.pipeline_stage.kind': PIPELINE_STAGE_KINDS,
+  'crove_meetings.meeting.visibility': MEETING_VISIBILITIES,
+  'crove_meetings.meeting.language': MEETING_LANGUAGES,
+  'crove_meetings.meeting.status': MEETING_STATUSES,
+  'crove_meetings.meeting.consent_method': MEETING_CONSENT_METHODS,
   'crove_notes.link.target_type': NOTE_LINK_TARGET_TYPES,
   'crove_notes.note.visibility': NOTE_VISIBILITIES,
   'crove_notes.todo.status': TODO_STATUSES,
