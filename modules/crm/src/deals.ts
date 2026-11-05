@@ -10,6 +10,7 @@
 // title, an amount or a lost reason (they may name a person, and audit rows outlive an erasure).
 import { sql } from 'kysely';
 import {
+  CONVERSATION_LIST_MAX,
   DEAL_PAGE_SIZE,
   DEFAULT_PIPELINE_STAGES,
   REBALANCE_AT,
@@ -24,6 +25,9 @@ import {
   PARTY_SEARCH_LIMIT,
   zPartyDealsQuery,
   zPartySearchQuery,
+  type ConversationKind,
+  type ConversationOther,
+  type ConversationStatus,
   type Deal,
   type DealPage,
   type DealNextStepReason,
@@ -460,6 +464,64 @@ export const partyDeals = defineQuery({
   },
 });
 
+// The conversations linked to a contact (#2333; for a company, its people's too, and duplicates merged into it), read
+// through crove_kernel.conversation under its own row-level security (a member limited to other channels or without
+// kernel.conversation.direct.read sees no entry for a direct or email thread), with no message body.
+async function conversationsForParty(ctx: Reader, partyId: string, since: Date | null): Promise<ConversationOther[]> {
+  const party = await ctx.trx
+    .selectFrom('crove_kernel.party')
+    .select(['id', 'duplicate_of'])
+    .where('org_id', '=', ctx.orgId)
+    .where('id', '=', partyId)
+    .executeTakeFirst();
+  if (!party) throw new DomainError('PARTY_NOT_FOUND', 404, 'Không tìm thấy liên hệ hoặc công ty này');
+  const keepId = party.duplicate_of ?? party.id;
+  let q = ctx.trx
+    .selectFrom('crove_kernel.conversation as c')
+    .innerJoin('crove_kernel.channel_connection as cc', (j) => j.onRef('cc.org_id', '=', 'c.org_id').onRef('cc.id', '=', 'c.channel_connection_id'))
+    .select(['c.id', 'c.kind', 'c.status', 'c.channel_connection_id', 'cc.provider', 'cc.display_name', 'c.last_message_at'])
+    .where('c.org_id', '=', ctx.orgId)
+    .where('c.party_id', 'is not', null)
+    .where(
+      sql<boolean>`EXISTS (
+        SELECT 1 FROM crove_kernel.party p
+        LEFT JOIN crove_kernel.party kp ON kp.org_id = p.org_id AND kp.id = coalesce(p.duplicate_of, p.id)
+        LEFT JOIN crove_kernel.party co ON co.org_id = kp.org_id AND co.id = kp.company_id
+        WHERE p.org_id = c.org_id AND p.id = c.party_id
+          AND (kp.id = ${keepId}::uuid OR coalesce(co.duplicate_of, co.id) = ${keepId}::uuid)
+      )`,
+    );
+  if (since !== null) {
+    q = q.where(sql<boolean>`(c.opened_at >= ${since}::timestamptz OR c.last_message_at >= ${since}::timestamptz)`);
+  }
+  const rows = await q.orderBy(sql`c.last_message_at DESC NULLS LAST`).orderBy('c.id', 'desc').limit(CONVERSATION_LIST_MAX).execute();
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind as ConversationKind,
+    status: r.status as ConversationStatus,
+    channel: { connectionId: r.channel_connection_id, provider: r.provider, displayName: r.display_name },
+    lastMessageAt: r.last_message_at === null ? null : iso(r.last_message_at),
+  }));
+}
+
+export const partyConversations = defineQuery({
+  name: 'crm.party.conversations',
+  input: zPartyDealsQuery,
+  access: ALL,
+  handler: async (ctx, input): Promise<ConversationOther[]> => conversationsForParty(ctx, input.partyId, null),
+});
+
+export const dealConversations = defineQuery({
+  name: 'crm.deal.conversations',
+  input: zDealRef,
+  access: ALL,
+  handler: async (ctx, input): Promise<ConversationOther[]> => {
+    const deal = await ctx.trx.selectFrom('crove_crm.deal').select(['id', 'party_id', 'created_at']).where('org_id', '=', ctx.orgId).where('id', '=', input.dealId).executeTakeFirst();
+    if (!deal) throw notFound();
+    return conversationsForParty(ctx, deal.party_id, new Date(deal.created_at));
+  },
+});
+
 // A few parties whose name or tax code contains the text, for the deal form's picker. The text is matched as typed,
 // with LIKE's own characters escaped.
 export const partySearch = defineQuery({
@@ -476,4 +538,4 @@ export const partySearch = defineQuery({
 });
 
 export const dealCommands = [pipelineSetup, dealCreate, dealUpdate, dealMove, dealDelete];
-export const dealQueries = [pipelineStages, dealGet, dealList, partyDeals, partySearch];
+export const dealQueries = [pipelineStages, dealGet, dealList, partyDeals, partyConversations, dealConversations, partySearch];

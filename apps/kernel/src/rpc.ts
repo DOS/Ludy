@@ -764,6 +764,7 @@ export function createRpcHandler(
         list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
         get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
         byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        conversations: os.crm.deals.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.conversations', input, { actor, orgId }))),
         create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
         update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
         move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
@@ -787,6 +788,7 @@ export function createRpcHandler(
       },
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+        conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
         // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
         // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
         // with it off the companies come in their own order and the answer says `off`.

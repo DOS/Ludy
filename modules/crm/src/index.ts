@@ -11,7 +11,7 @@ import { importCommands, importQueries } from './import.ts';
 import { nextStepCommands, nextStepQueries } from './next-steps.ts';
 import { crmToday } from './today.ts';
 
-export { dealCommands, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
+export { dealCommands, dealConversations, dealCreate, dealDelete, dealGet, dealList, dealMove, dealQueries, dealUpdate, partyConversations, partyDeals, partySearch, pipelineSetup, pipelineStages } from './deals.ts';
 export { boardQueries, dealBoard, stageAdd, stageCommands, stageRemove, stageRename, stageReorder } from './stages.ts';
 export * from './event-types.ts';
 export * from './bookings.ts';

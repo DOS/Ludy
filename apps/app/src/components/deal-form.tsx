@@ -2,20 +2,24 @@
 // The deal form and its party picker (#2225, #2226): one form for adding a deal and editing one, used by the list and by
 // the board. Amounts are decimal strings; the form keeps what was typed and sends the normalized digits.
 import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { DEAL_TITLE_MAX, zDealAmount, type Deal, type PartyChoice } from '@crove/kernel-contract';
+import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { NativeSelect } from '@crove/ui/components/native-select';
 import { AmountInput } from './amount-input.tsx';
 import { ErrorText, Field, focusFirstInvalid, useFieldErrors } from './ui.tsx';
+import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { normalizeAmount } from '../lib/vouchers.ts';
 
 export const refreshDeals = () => {
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.list.key() });
   void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.board.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.conversations.key() });
   // An edit or a move closes the deal's next step, and a done or a snooze changes the badge: the next steps read again with the deals.
   void queryClient.invalidateQueries({ queryKey: orpc.crm.nextSteps.key() });
 };
@@ -154,6 +158,48 @@ export function DealForm({ deal, members, onDone }: { deal: Deal | null; members
           {t('form.cancel')}
         </Button>
       </div>
+      {deal && (
+        <div className="sm:col-span-2">
+          <DealConversations dealId={deal.id} />
+        </div>
+      )}
     </form>
+  );
+}
+
+// The conversations of a deal's customer since the deal opened (#2333): channel, kind, status and last message time, with a
+// link into the Inbox thread. Message bodies stay in the Inbox and are never read or copied here.
+export function DealConversations({ dealId }: { dealId: string }) {
+  const t = useTranslations('deals');
+  const tc = useTranslations('conversations');
+  const f = useFormat();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const conversations = useQuery(orpc.crm.deals.conversations.queryOptions({ input: { dealId } }));
+  return (
+    <div data-testid="deal-conversations" className="border-t border-border pt-3">
+      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('conversations.title')}</p>
+      {conversations.error ? (
+        <ErrorText>{errorMessage(conversations.error)}</ErrorText>
+      ) : (conversations.data?.length ?? 0) === 0 ? (
+        <p className="text-sm text-subtle-foreground">{t('conversations.empty')}</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {conversations.data?.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-x-2">
+              <Link to="/o/$slug/social/inbox" params={{ slug }} search={{ c: c.id }} className="font-medium text-link underline">
+                {c.channel.displayName}
+              </Link>
+              <span className="text-xs text-muted-foreground">{tc(`kind.${c.kind}`)}</span>
+              <Badge variant="outline">{tc(`status.${c.status}`)}</Badge>
+              {c.lastMessageAt && (
+                <time dateTime={c.lastMessageAt} className="text-xs text-subtle-foreground">
+                  {f.dateTime(c.lastMessageAt)}
+                </time>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

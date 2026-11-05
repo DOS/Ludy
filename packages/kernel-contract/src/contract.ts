@@ -236,6 +236,7 @@ import {
   zConversationAutoDraftSet,
   zConversationDraftDiscard,
   zConversationDraftRequest,
+  zConversationOther,
   zSavedReplyId,
   zSavedReplyInput,
   zSavedReplyList,
@@ -538,6 +539,8 @@ export const contract = {
       list: oc.input(zContactList).output(zContactPage),
       // The companies a person may work at (#2438): the sales coworker's suggestion, read only; a person links one with a click.
       companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
+      // The conversations linked to the contact (#2333; for a company, its people's too), newest activity first, with no message body.
+      conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
     },
     // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
     // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every
@@ -565,6 +568,8 @@ export const contract = {
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      // The conversations of the deal's contact since the deal opened (#2333), newest activity first, with no message body.
+      conversations: oc.input(zDealRef).output(z.array(zConversationOther)),
       create: oc.input(zDealCreate).output(zDeal),
       update: oc.input(zDealUpdate).output(zDeal),
       move: oc.input(zDealMove).output(zDeal),
