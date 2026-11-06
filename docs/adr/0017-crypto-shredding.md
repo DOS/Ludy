@@ -211,3 +211,16 @@ The mechanism is built in #2640, for the payroll identity number and bank accoun
 - **A sealed value is bound to its subject.** `ctx.open` takes the `ref` the row belongs to and `subject_key_wrapped` returns the stored ref, so a sealed text copied into another person's record fails instead of reading as theirs.
 - **Rules for the first users (payroll, #2530).** `ctx.open` works only in a sensitive query (`QueryDef.sensitive`, whose read is audited before it starts); a command, a nested `ctx.query` and any other query are refused (`open_sensitive_only`), so a sealed value never reaches an answer or an audit detail without that audit. A sensitive query must still not reach `packages/agent` (plaintext of a sealed value must not go to a model; the coworker works on the pseudonymized sheet of ADR-0046 point 5). A `contact:` reference is a keyed hash (64 hex), never the email or number. The erase command that calls `subject_key_shred` is R3 and checks the fresh second factor itself: the definer asserts an owner, as the role commands do, not the assurance level.
 - **Known, not fixed here (follow-up issue):** a value whose subject id is unknown, or belongs to another org, reads as erased (the database cannot tell a shredded subject from an unknown one); one unreadable key row fails a whole `openMany`; `deriveKeys` is a public method of the broker (the worker has no definer, so it reaches nothing).
+
+## Addendum 2026-11-06: a sealed value stays out of the command's own records (#2666)
+
+Sealing the value in its column is not enough when the command that received it also leaves it in its own records. A command declares `CommandDef.sealedInput`, the input paths that hold a sealed value (`field`, `a.b`, `list[].field`), and the runtime keeps the value out of:
+
+- the hashes: the canonical input is made from a copy where each path holds `[sealed]` (the audit hash, the idempotency request hash, the refusal and nested-command audit rows), because a hash keyed by the database cannot protect a 12-digit number a guess can enumerate; the handler still receives the real value;
+- every other record: a statement parameter (any table, a job's data), the output (stored as `idempotency_key.response`), `ctx.audit`, `ctx.emit`, `ctx.activity`, an error's message and details, and a nested command's input (the nested command declares the path too) are refused or cleaned when they equal a sealed value or its digits. A refusal names the place, never the value.
+
+One idempotency key covers one request: a replay under the same key with another sealed value answers the first answer.
+
+**Proposal commands.** A command that runs from a proposal (`access: 'proposal'` or a reviser) cannot declare `sealedInput`: its input is the stored proposal payload. The later path is that such a command takes values that are already sealed, so the payload holds ciphertext only; until a payroll proposal needs it, a proposal names a person by id and carries amounts.
+
+The invariant suite searches the whole database for a canary identity number, as typed and as digits, after the runs and after a refusal (`sealed-input.db.test.ts`).
