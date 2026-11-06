@@ -205,7 +205,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
 
   it('gives a supplier address only when it is one plain address, so a seller\'s e-mail cannot add a recipient or a body to the mail link', async () => {
     const o = await org();
-    const odd = await party(o, 'Nhà cung cấp lạ', 'a@b.co?bcc=x%40evil.com&body=hi');
+    const odd = await party(o, 'Nhà cung cấp lạ', 'a@example.com?bcc=x%40evil.example&body=hi');
     const customer = await party(o, 'Khách lẻ');
     const item = await makeItem(o, 'Z1');
     await line(o, item, odd, 'purchase', 20, '30');
