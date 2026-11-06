@@ -732,46 +732,56 @@ function maskSealed(input: unknown, paths: readonly string[] | undefined): unkno
   return copy;
 }
 
-// The sealed values of an input: each as written, and its digits alone when it has four or more (an identity number typed with spaces or dots).
+// The sealed values of an input: each as written, and its digits alone when it has four or more (an identity number typed with spaces or dots). A value of
+// fewer than four characters is masked but not searched for (it would match unrelated text). A path that holds an object, a list or anything but a string or
+// a number cannot be searched for, so the command fails rather than run unguarded.
 function sealedSetOf(input: unknown, paths: readonly string[] | undefined, inherited?: ReadonlySet<string>): ReadonlySet<string> {
   const values = new Set<string>(inherited ?? []);
   for (const path of paths ?? []) {
     visitSealed(input, path.split('.'), (holder, key) => {
       const value = holder[key];
-      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return;
+      if (value === undefined || value === null) return;
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') throw new Error(`sealedInput ${path} holds a value that is not a string or a number`);
       const text = String(value);
-      if (text.length === 0) return;
-      values.add(text);
       const digits = onlyDigits(text);
+      if (text.length >= 4) values.add(text);
       if (digits.length >= 4) values.add(digits);
     });
   }
   return values;
 }
 
-// Whether a value, or anything inside it, equals a sealed value (or has its digits).
-function leaksSealed(value: unknown, sealed: ReadonlySet<string>, depth = 0): boolean {
-  if (sealed.size === 0 || value === null || value === undefined || depth > 16) return false;
-  if (typeof value === 'string') return sealed.has(value) || sealed.has(onlyDigits(value));
-  if (typeof value === 'number' || typeof value === 'bigint') return sealed.has(String(value));
-  if (Buffer.isBuffer(value) || value instanceof Date || typeof value !== 'object') return false;
-  const items = Array.isArray(value) ? value : Object.values(value);
-  return items.some((item) => leaksSealed(item, sealed, depth + 1));
-}
-
-// A failure's text that quotes a sealed value (a message is free text).
+// Whether a text holds a sealed value: the value as typed, or its digits within the text's digits (a number written inside a longer string, a jsonb text).
 function mentionsSealed(text: string, sealed: ReadonlySet<string>): boolean {
+  if (sealed.size === 0 || text.length === 0) return false;
   const digits = onlyDigits(text);
-  for (const value of sealed) if (text.includes(value) || (digits.length > 0 && value === onlyDigits(value) && digits.includes(value))) return true;
+  for (const value of sealed) {
+    if (text.includes(value)) return true;
+    if (digits.length >= value.length && value === onlyDigits(value) && digits.includes(value)) return true;
+  }
   return false;
 }
 
-// Refuses a statement of a command whose input has sealed values when one of the statement's parameters is such a value: a job's data, a row of any table.
+// Whether a value, or anything inside it (a key, an item, a text, a buffer), holds a sealed value. Deeper than 16 levels it answers yes: it fails closed.
+function leaksSealed(value: unknown, sealed: ReadonlySet<string>, depth = 0): boolean {
+  if (sealed.size === 0 || value === null || value === undefined) return false;
+  if (depth > 16) return true;
+  if (typeof value === 'string') return mentionsSealed(value, sealed);
+  if (typeof value === 'number' || typeof value === 'bigint') return mentionsSealed(String(value), sealed);
+  if (Buffer.isBuffer(value)) return mentionsSealed(value.toString('utf8'), sealed);
+  if (value instanceof Date || typeof value !== 'object') return false;
+  if (Array.isArray(value)) return value.some((item) => leaksSealed(item, sealed, depth + 1));
+  return Object.entries(value).some(([key, item]) => mentionsSealed(key, sealed) || leaksSealed(item, sealed, depth + 1));
+}
+
+// Refuses a statement of a command whose input has sealed values when one of its parameters, or its text (a literal inlined by sql.lit), holds such a value: a
+// job's data, a row of any table, a jsonb written as one string.
 function refuseSealedParams(command: string, sealed: ReadonlySet<string>): KyselyPlugin {
   const compiler = new PostgresQueryCompiler();
   return Object.freeze({
     transformQuery: ({ node, queryId }) => {
-      if (compiler.compileQuery(node, queryId).parameters.some((p) => leaksSealed(p, sealed))) {
+      const compiled = compiler.compileQuery(node, queryId);
+      if (mentionsSealed(compiled.sql, sealed) || compiled.parameters.some((p) => leaksSealed(p, sealed))) {
         throw new Error(`command ${command}: a statement carries a sealed input value (sealedInput, #2666)`);
       }
       return node;
@@ -780,17 +790,54 @@ function refuseSealedParams(command: string, sealed: ReadonlySet<string>): Kysel
   } satisfies KyselyPlugin);
 }
 
-// An error a handler threw, with no sealed value in its message or details: the caller, the refusal audit row and the logs get this one.
+// An error a handler threw, with no sealed value in its message, details, audit facts or cause: the caller, the refusal audit row and the logs get this one.
 function cleanedError(error: unknown, command: string, sealed: ReadonlySet<string>): unknown {
   if (sealed.size === 0) return error;
+  const dropped = new Error(`command ${command} failed: the error quoted a sealed input value and was dropped (sealedInput, #2666)`);
   if (error instanceof DomainError) {
     const message = mentionsSealed(error.message, sealed) ? 'Lỗi hệ thống' : error.message;
     const details = leaksSealed(error.details, sealed) ? undefined : error.details;
-    if (message === error.message && details === error.details) return error;
-    return new DomainError(error.code, error.status, message, details, error.audit === undefined ? {} : { audit: error.audit });
+    const audit = leaksSealed(error.audit, sealed) ? undefined : error.audit;
+    if (message === error.message && details === error.details && audit === error.audit && !leaksSealed((error as { cause?: unknown }).cause, sealed)) return error;
+    return new DomainError(error.code, error.status, message, details, audit === undefined ? {} : { audit });
   }
-  if (error instanceof Error && mentionsSealed(error.message, sealed)) return new Error(`command ${command} failed: the message quoted a sealed input value and was dropped (sealedInput, #2666)`);
-  return error;
+  if (error instanceof Error) return mentionsSealed(error.message, sealed) || leaksSealed((error as { cause?: unknown }).cause, sealed) ? dropped : error;
+  // A thrown value that is not an Error (a string, an object): logged whole.
+  return leaksSealed(error, sealed) ? dropped : error;
+}
+
+// register(): each sealed path resolves, through the input schema, to a string or a number (or a list of them), so a typo or an object cannot give false safety.
+function sealedPathProblem(schema: unknown, path: string): string | null {
+  const unwrap = (node: unknown): { type: string; def: Record<string, unknown> } | null => {
+    let current = node as { _zod?: { def?: Record<string, unknown> } } | undefined;
+    for (let i = 0; i < 12; i += 1) {
+      const def = current?._zod?.def;
+      if (!def) return null;
+      const type = String(def.type);
+      if (['optional', 'nullable', 'default', 'prefault', 'readonly', 'nonoptional', 'catch'].includes(type)) current = def.innerType as typeof current;
+      else if (type === 'pipe') current = def.in as typeof current;
+      else return { type, def };
+    }
+    return null;
+  };
+  let node: unknown = schema;
+  for (const segment of path.split('.')) {
+    const list = segment.endsWith('[]');
+    const key = list ? segment.slice(0, -2) : segment;
+    const object = unwrap(node);
+    if (!object || object.type !== 'object') return `${path}: ${key} is not under an object of the input schema`;
+    const shape = object.def.shape as Record<string, unknown> | undefined;
+    if (!shape || !Object.hasOwn(shape, key)) return `${path}: the input schema has no field ${key}`;
+    node = shape[key];
+    if (list) {
+      const array = unwrap(node);
+      if (!array || array.type !== 'array') return `${path}: ${key} is not a list`;
+      node = array.def.element;
+    }
+  }
+  const leaf = unwrap(node);
+  if (!leaf || !['string', 'number', 'bigint'].includes(leaf.type)) return `${path}: the value is not a string or a number (it is ${leaf?.type ?? 'unknown'})`;
+  return null;
 }
 
 // Idempotency keys are per user, per agent run (a key never replays another run's answer, such as an old fencing
@@ -1368,6 +1415,11 @@ export class Runtime {
         if (c.access === 'proposal' || c.access === 'proposal_revision') {
           throw new Error(`command ${c.name}: a command that runs from a proposal cannot declare sealedInput, because its input is the stored proposal payload: it takes values that are already sealed`);
         }
+        if (c.bootstrap) throw new Error(`command ${c.name}: an org-less command runs on an unguarded connection and cannot declare sealedInput`);
+        for (const path of c.sealedInput as string[]) {
+          const problem = sealedPathProblem(c.input, path);
+          if (problem) throw new Error(`command ${c.name}: sealedInput ${problem}`);
+        }
       }
       // The contact and payment columns it declares it writes (P04), or null when it declares no writes.
       const contactOrPayment = c.writes === undefined ? null : checkedWrites(c.name, c.writes, this.#manifestTables);
@@ -1819,6 +1871,8 @@ export class Runtime {
     const { permissionEntities } = base;
     // The values this command's input seals, and its callers' (SealedInput, #2666): kept out of every record the command writes.
     const sealed = sealedSetOf(input, def.sealedInput, base.sealed);
+    // The canonical input of this command's audit row, made before the handler runs (it may change the object it was given).
+    const canonicalInput = stableStringify(maskSealed(input, def.sealedInput));
     const refuseSealed = (where: string, value: unknown) => {
       if (leaksSealed(value, sealed)) throw new Error(`command ${def.name}: ${where} carries a sealed input value (sealedInput, #2666)`);
     };
@@ -2067,6 +2121,7 @@ export class Runtime {
         allocate: (n) =>
           pending(async () => {
             refuseClosed('ctx.numbering.allocate');
+            refuseSealed('ctx.numbering.allocate', n);
             const { rows } = await aside(() => sql<{ period_key: string; number: string; allocation_id: string }>`
               SELECT a.period_key, a.number::text AS number, a.allocation_id
               FROM crove_kernel.allocate_number(${n.legalEntityId}::uuid, ${n.docType}::text, ${n.documentDate}::date, ${n.targetType}::text, ${n.targetId}::uuid) a`.execute(trx));
@@ -2078,6 +2133,7 @@ export class Runtime {
         void: (n) =>
           pending(async () => {
             refuseClosed('ctx.numbering.void');
+            refuseSealed('ctx.numbering.void', n.reason);
             const { rows } = await aside(() => sql<{ id: string }>`SELECT crove_kernel.void_number(${n.allocationId}::uuid, ${n.reason}::text) AS id`.execute(trx));
             const voidId = rows[0]?.id;
             if (!voidId) throw new Error(`command ${def.name}: void_number answered no void`);
@@ -2235,8 +2291,7 @@ export class Runtime {
       await settleRunning();
       throw cleanedError(error, def.name, sealed);
     }
-    // The answer is stored for a replay (idempotency_key.response) and returned: it carries ids, never a sealed value.
-    refuseSealed('the output', output);
+
     // Read before waiting: a nested command the handler left running may fail while the runtime's writes settle, and
     // must still fail this command.
     const leftRunning = running.size > 0;
@@ -2244,6 +2299,9 @@ export class Runtime {
     // Before the runtime writes this command's rows: a nested command still running would share the connection with
     // them, and a tryRun's rollback could undo them, so the command fails instead and commits nothing.
     if ((await settleRunning()) || leftRunning) throw new Error(`command ${def.name}: the handler returned while a nested command was still running`);
+    // The answer is stored for a replay (idempotency_key.response) and returned: it carries ids, never a sealed value. Checked as it will be stored, after the
+    // nested commands and the runtime's own writes settled (a refusal earlier would roll back a savepoint under a late statement).
+    refuseSealed('the output', JSON.parse(JSON.stringify(output ?? null)));
     // An entity holder's command that never named its entity fails closed (#1507).
     if (permissionEntities !== null && !entityNamed) {
       throw new DomainError('FORBIDDEN', 403, 'Bạn không có quyền này với pháp nhân đó', { rule: 'permission_entity' });
@@ -2283,7 +2341,7 @@ export class Runtime {
         command: def.name,
         commandId,
         outcome: 'ok',
-        input: stableStringify(maskSealed(input, def.sealedInput)),
+        input: canonicalInput,
         target: def.target?.(input) ?? null,
         proposalId: base.proposalId,
         ...(detail ? { detail } : {}),

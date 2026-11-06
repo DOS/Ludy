@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { createDb, createPool } from '@crove/db';
 import { migrate, setRolePasswords } from '@crove/db/migrate';
@@ -65,6 +65,26 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     command('t2666.statement', async (ctx, i) => {
       await sql`SELECT ${(i as z.infer<typeof input>).idNumber}::text AS value`.execute(ctx.trx);
       return {};
+    }),
+    // The value inside a longer text: an output, an activity summary, a jsonb written as one string.
+    command('t2666.echo_in_text', async (_ctx, i) => ({ message: `Đã lưu ${(i as z.infer<typeof input>).idNumber} lúc 10:30` })),
+    command('t2666.activity_in_text', async (ctx, i) => {
+      await ctx.activity('kernel.party', randomUUID(), 'note', `CCCD ${(i as z.infer<typeof input>).idNumber} của Person (lần 2)`);
+      return {};
+    }),
+    command('t2666.json_parameter', async (ctx, i) => {
+      const value = i as z.infer<typeof input>;
+      await sql`SELECT ${JSON.stringify({ employee: randomUUID(), nationalId: value.idNumber })}::jsonb AS data`.execute(ctx.trx);
+      return {};
+    }),
+    command('t2666.literal', async (ctx, i) => {
+      await sql`SELECT ${sql.lit((i as z.infer<typeof input>).idNumber)}::text AS value`.execute(ctx.trx);
+      return {};
+    }),
+    // A value of the list path alone: the first path is not what leaks.
+    command('t2666.echo_dependent', async (_ctx, i) => ({ taxCode: (i as z.infer<typeof input>).dependents[0]?.taxCode })),
+    command('t2666.audit_error', async (_ctx, i) => {
+      throw new DomainError('T2666_DUP', 409, 'Trùng', undefined, { audit: { number: (i as z.infer<typeof input>).idNumber } });
     }),
     command('t2666.fail', async (_ctx, i) => {
       const value = (i as z.infer<typeof input>).idNumber;
@@ -124,6 +144,20 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     return { orgId, owner, run, hashes };
   }
 
+  // Runs a command that must be refused because its record would carry a sealed value: the caller gets a plain internal error, the log gets the reason (the
+  // place, never the value), and the reason is what the test asserts, so a refusal for another cause fails it.
+  async function refusedForSealed(run: () => Promise<unknown>, name: string) {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await expect(run(), name).rejects.toBeInstanceOf(DomainError);
+      const reasons = logged.mock.calls.flat().map((a) => String((a as { message?: unknown } | null)?.message ?? a));
+      expect(reasons.some((r) => /sealed input value/.test(r)), `${name} was refused for another reason: ${reasons.join(' | ')}`).toBe(true);
+      expect(reasons.join(' ')).not.toContain(DIGITS);
+    } finally {
+      logged.mockRestore();
+    }
+  }
+
   const body = (idNumber = NUMBER) => ({ name: 'Person', idNumber, dependents: [{ taxCode: DIGITS, name: 'Child' }] });
 
   beforeAll(async () => {
@@ -177,10 +211,12 @@ suite('sealed input on PostgreSQL (#2666)', () => {
 
   it('refuses a command whose output, audit detail, event, activity or statement carries a sealed value, and commits nothing of it', async () => {
     const o = await org();
-    for (const name of ['t2666.echo', 't2666.echo_digits', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.statement']) {
-      await expect(o.run(name, body()), name).rejects.toThrow();
+    for (const name of ['t2666.echo', 't2666.echo_digits', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal']) {
+      await refusedForSealed(() => o.run(name, body()), name);
       expect(await o.hashes(name), `${name} wrote an ok audit row`).toEqual([]);
     }
+    // The second path alone: the number of a dependent, with another person number in the first field.
+    await refusedForSealed(() => o.run('t2666.echo_dependent', { name: 'Person', idNumber: OTHER, dependents: [{ taxCode: '555 666 777 888', name: 'Child' }] }), 't2666.echo_dependent');
   });
 
   it('answers a failure without the value in its message or its details, and logs nothing of it', async () => {
@@ -193,28 +229,39 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     expect(refused?.code).toBe('T2666_FAILED');
     expect(JSON.stringify({ message: refused?.message, details: refused?.details })).not.toContain(DIGITS);
     expect(JSON.stringify({ message: refused?.message, details: refused?.details })).not.toContain(NUMBER);
+    // The refusal row's own facts: a DomainError's audit detail loses the value too.
+    const audited = await o.run('t2666.audit_error', body()).then(
+      () => null,
+      (error: unknown) => error as DomainError,
+    );
+    expect(audited?.code).toBe('T2666_DUP');
     const plain = await o.run('t2666.fail_plain', body()).then(
       () => null,
       (error: unknown) => error as Error,
     );
     expect(plain).not.toBeNull();
     expect(plain?.message).not.toContain(NUMBER);
+    expect(plain?.message).not.toContain(DIGITS);
   });
 
   it('makes a nested command declare the sealed values it is given, and masks its row too', async () => {
     const o = await org();
     await expect(o.run('t2666.parent_undeclared', body())).rejects.toThrow();
     await o.run('t2666.parent', body());
-    const [parent] = await o.hashes('t2666.parent');
-    const [child] = await o.hashes('t2666.child');
-    expect(parent).toBeDefined();
-    expect(child).toBeDefined();
+    await o.run('t2666.parent', body(OTHER));
+    // Two runs that differ only in the sealed value: the parent's row and the nested child's row hash alike, so neither carries the value.
+    const [parentOne, parentTwo] = await o.hashes('t2666.parent');
+    const [childOne, childTwo] = await o.hashes('t2666.child');
+    expect(parentOne).toBeDefined();
+    expect(parentOne).toBe(parentTwo);
+    expect(childOne).toBeDefined();
+    expect(childOne).toBe(childTwo);
   });
 
   it('finds the number, as typed and as digits, in no column of any crove table after all of it, and after a refused run', async () => {
     const o = await org();
     for (const name of ['t2666.ok', 't2666.parent']) await o.run(name, body());
-    for (const name of ['t2666.echo', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.statement', 't2666.fail', 't2666.fail_plain', 't2666.parent_undeclared']) {
+    for (const name of ['t2666.echo', 't2666.echo_in_text', 't2666.audit', 't2666.emit', 't2666.activity', 't2666.activity_in_text', 't2666.statement', 't2666.json_parameter', 't2666.literal', 't2666.audit_error', 't2666.fail', 't2666.fail_plain', 't2666.parent_undeclared']) {
       await o.run(name, body()).catch(() => undefined);
     }
     expect(await hits()).toEqual([]);
@@ -229,6 +276,10 @@ suite('sealed input on PostgreSQL (#2666)', () => {
     const fresh = () => new Runtime(createDb(pool), { manifests: TEST_MANIFESTS });
     const proposal = defineCommand({ name: 't2666.proposal', input, risk: 'R1', sideEffect: 'none', access: 'proposal', writes: [], sealedInput: SEALED, handler: async () => ({}) }) as CommandDef<unknown, unknown>;
     expect(() => fresh().register({ commands: [proposal] })).toThrow(/proposal/);
+    // A path the schema does not have gives false safety, and so does one that holds an object.
+    for (const sealedInput of [['idNumbr'], ['dependents'], ['dependents[].nme'], ['name.first']]) {
+      expect(() => fresh().register({ commands: [command('t2666.bad', async () => ({}), { sealedInput })] }), JSON.stringify(sealedInput)).toThrow(/sealedInput/);
+    }
     for (const sealedInput of [[], ['id number'], ['a..b'], ['[]'], 'idNumber' as unknown as string[]]) {
       expect(() => fresh().register({ commands: [command('t2666.bad', async () => ({}), { sealedInput })] }), JSON.stringify(sealedInput)).toThrow(/sealedInput/);
     }
