@@ -288,8 +288,6 @@ import {
   zTodoWritten,
 } from './notes.ts';
 import {
-  zMeetingClaimMedia,
-  zMeetingClaimed,
   zMeetingCreate,
   zMeetingCreated,
   zMeetingDeleted,
@@ -655,7 +653,6 @@ export const contract = {
     list: oc.input(zMeetingListInput).output(z.array(zMeetingSummary)),
     get: oc.input(zMeetingRef).output(zMeetingDetail),
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
-    claimMedia: oc.input(zMeetingClaimMedia).output(zMeetingClaimed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
     ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     readers: {

@@ -17,7 +17,7 @@ import {
   type DirectTransfers,
 } from '@crove/kernel-runtime';
 import { financeCommands, financeQueries } from '@crove/mod-finance';
-import { buildMeetingsCommands, buildMeetingsQueries } from '@crove/mod-meetings';
+import { meetingsCommands, meetingsQueries } from '@crove/mod-meetings';
 import { createAuthenticator } from '../src/auth.ts';
 import { loadConfig } from '../src/config.ts';
 import { createHttpApp, type HttpDeps } from '../src/http.ts';
@@ -131,6 +131,20 @@ suite('meetings module database integration tests (#2576)', () => {
     return { status: response.status, body: (body.json ?? body) as Record<string, unknown> };
   }
 
+  async function claimStagedMedia(name: string, meetingId: string, kind: 'audio' | 'video', uploadId: string) {
+    const response = await app.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await token(name)}`,
+        'content-type': 'application/json',
+        'x-crove-org': slug,
+      },
+      body: JSON.stringify({ uploadId, kind }),
+    });
+    const body = (await response.json()) as Record<string, unknown>;
+    return { status: response.status, body };
+  }
+
   async function join(name: string, role: 'member' | 'viewer') {
     await token(name);
     const email = accounts.get(name)?.email;
@@ -191,12 +205,12 @@ suite('meetings module database integration tests (#2576)', () => {
       commands: [
         ...kernelCommands,
         ...financeCommands,
-        ...buildMeetingsCommands({ store, broker }),
+        ...meetingsCommands,
       ],
       queries: [
         ...kernelQueries({ inboundDomain: null }),
         ...financeQueries,
-        ...buildMeetingsQueries(),
+        ...meetingsQueries,
       ],
     });
 
@@ -342,20 +356,14 @@ suite('meetings module database integration tests (#2576)', () => {
         [orgId, invalidUploadId, stagingKeyInvalid, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
-    const invalidClaim = await rpc('meetings/claimMedia', 'recorder', {
-      meetingId,
-      kind: 'audio',
-      uploadId: invalidUploadId,
-    });
+    const invalidClaim = await claimStagedMedia('recorder', meetingId, 'audio', invalidUploadId);
     expect(invalidClaim.status).toBe(400);
+    expect(store.staged.has(stagingKeyInvalid)).toBe(false);
 
     // Valid claim audio
-    const claimAudioRes = await rpc('meetings/claimMedia', 'recorder', {
-      meetingId,
-      kind: 'audio',
-      uploadId: audioUploadId,
-    });
+    const claimAudioRes = await claimStagedMedia('recorder', meetingId, 'audio', audioUploadId);
     expect(claimAudioRes.status).toBe(200);
+    expect(store.staged.has(stagingKeyAudio)).toBe(false);
     const audioFileId = String(claimAudioRes.body.fileId);
 
     // Check crove_kernel.file and crove_meetings.media_key
@@ -388,12 +396,9 @@ suite('meetings module database integration tests (#2576)', () => {
       );
     });
 
-    const claimVideoRes = await rpc('meetings/claimMedia', 'recorder', {
-      meetingId,
-      kind: 'video',
-      uploadId: videoUploadId,
-    });
+    const claimVideoRes = await claimStagedMedia('recorder', meetingId, 'video', videoUploadId);
     expect(claimVideoRes.status).toBe(200);
+    expect(store.staged.has(stagingKeyVideo)).toBe(false);
   });
 
   it('3. playback queries and Range chunk streaming (200, 206, 416)', async () => {
@@ -424,7 +429,8 @@ suite('meetings module database integration tests (#2576)', () => {
       );
     });
 
-    await rpc('meetings/claimMedia', 'recorder', { meetingId, kind: 'audio', uploadId: audioUploadId });
+    const uploadedRes = await claimStagedMedia('recorder', meetingId, 'audio', audioUploadId);
+    expect(uploadedRes.status).toBe(200);
 
     // HTTP 200 full playback
     const fullRes = await app.request(`/api/meetings/${meetingId}/audio`, {
@@ -440,7 +446,16 @@ suite('meetings module database integration tests (#2576)', () => {
     const fullBody = Buffer.from(await fullRes.arrayBuffer());
     expect(fullBody.equals(originalAudio)).toBe(true);
 
-    // HTTP 206 Partial Content (bytes 10-25)
+    const auditCountAfterFull = await admin(async (c) =>
+      Number((await c.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM crove_kernel.audit_event
+         WHERE org_id = $1 AND action = 'meetings.meeting.audio_read' AND target_id = $2`,
+        [orgId, meetingId],
+      )).rows[0]!.count),
+    );
+    expect(auditCountAfterFull).toBe(1);
+
+    // HTTP 206 Partial Content (bytes 10-25, start > 0 uses media_meta without adding an audio_read audit row)
     const rangeRes = await app.request(`/api/meetings/${meetingId}/audio`, {
       method: 'GET',
       headers: {
@@ -453,6 +468,15 @@ suite('meetings module database integration tests (#2576)', () => {
     expect(rangeRes.headers.get('content-range')).toBe(`bytes 10-25/${originalAudio.length}`);
     const rangeBody = Buffer.from(await rangeRes.arrayBuffer());
     expect(rangeBody.equals(originalAudio.subarray(10, 26))).toBe(true);
+
+    const auditCountAfterMidRange = await admin(async (c) =>
+      Number((await c.query<{ count: string }>(
+        `SELECT count(*)::text AS count FROM crove_kernel.audit_event
+         WHERE org_id = $1 AND action = 'meetings.meeting.audio_read' AND target_id = $2`,
+        [orgId, meetingId],
+      )).rows[0]!.count),
+    );
+    expect(auditCountAfterMidRange).toBe(1);
 
     // HTTP 206 Suffix Range (bytes -20)
     const suffixRes = await app.request(`/api/meetings/${meetingId}/audio`, {
@@ -580,7 +604,8 @@ suite('meetings module database integration tests (#2576)', () => {
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
-    await rpc('meetings/claimMedia', 'recorder', { meetingId, kind: 'audio', uploadId });
+    const shredClaimRes = await claimStagedMedia('recorder', meetingId, 'audio', uploadId);
+    expect(shredClaimRes.status).toBe(200);
 
     // Verify key exists before deletion
     const beforeKeys = await admin(async (c) =>

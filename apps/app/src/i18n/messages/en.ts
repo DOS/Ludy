@@ -9046,7 +9046,6 @@ export const en = {
     },
     meetings: {
       media: {
-        claim: 'Claim meeting audio or video file',
         record: 'Record meeting encrypted media',
       },
       meeting: {

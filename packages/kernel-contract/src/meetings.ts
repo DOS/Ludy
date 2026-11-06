@@ -77,19 +77,6 @@ export const zMeetingCreated = z.strictObject({
 });
 export type MeetingCreated = z.infer<typeof zMeetingCreated>;
 
-export const zMeetingClaimMedia = z.strictObject({
-  meetingId: zId,
-  kind: z.enum(['audio', 'video']),
-  uploadId: zId,
-  lengthSeconds: z.number().int().positive().optional(),
-});
-export type MeetingClaimMedia = z.infer<typeof zMeetingClaimMedia>;
-
-export const zMeetingClaimed = z.strictObject({
-  fileId: zId,
-});
-export type MeetingClaimed = z.infer<typeof zMeetingClaimed>;
-
 export const zMeetingDeleted = z.strictObject({
   meetingId: zId,
   shredded: z.boolean(),
@@ -122,7 +109,7 @@ export type MeetingMediaMeta = z.infer<typeof zMeetingMediaMeta>;
 export const zMeetingMediaRecord = zMeetingRef.extend({
   kind: z.enum(['audio', 'video']),
   keyId: z.string().min(1).max(64),
-  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]+$/),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]{120}$/),
   storageKey: z.string().min(1).max(255),
   generation: z.string().nullable().optional(),
   sizeBytes: z.number().int().positive(),

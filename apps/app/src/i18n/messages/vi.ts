@@ -9043,7 +9043,6 @@ export const vi = {
     },
     meetings: {
       media: {
-        claim: 'Gắn tệp ghi âm hoặc ghi hình vào cuộc họp',
         record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
       meeting: {

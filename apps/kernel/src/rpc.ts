@@ -771,7 +771,6 @@ export function createRpcHandler(
       list: os.meetings.list.handler(meetingsQuery('meetings.meeting.list')),
       get: os.meetings.get.handler(meetingsQuery('meetings.meeting.get')),
       create: os.meetings.create.handler(meetingsCommand('meetings.meeting.create')),
-      claimMedia: os.meetings.claimMedia.handler(meetingsCommand('meetings.media.claim')),
       delete: os.meetings.delete.handler(meetingsCommand('meetings.meeting.delete')),
       ownerDelete: os.meetings.ownerDelete.handler(meetingsCommand('meetings.meeting.owner_delete')),
       readers: {

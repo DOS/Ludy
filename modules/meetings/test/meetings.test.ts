@@ -11,14 +11,14 @@ import {
   VIDEO_RETENTION_DAYS,
 } from '../src/manifest.ts';
 import {
-  buildMeetingsCommands,
-  buildMeetingsQueries,
   meetingAudioRead,
   meetingGet,
   meetingList,
   meetingMediaMeta,
   meetingMediaRecord,
   meetingVideoRead,
+  meetingsCommands,
+  meetingsQueries,
 } from '../src/meetings.ts';
 
 describe('meetings manifest and constants', () => {
@@ -60,15 +60,10 @@ describe('meetings manifest and constants', () => {
 });
 
 describe('meetings commands and queries construction', () => {
-  it('builds all required commands with dependencies', () => {
-    const fakeStore = {} as any;
-    const fakeBroker = {} as any;
-    const commands = buildMeetingsCommands({ store: fakeStore, broker: fakeBroker });
-
-    const names = commands.map((c) => c.name);
+  it('exposes all required commands', () => {
+    const names = meetingsCommands.map((c) => c.name);
     expect(names).toEqual([
       'meetings.meeting.create',
-      'meetings.media.claim',
       'meetings.media.record',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
@@ -77,14 +72,13 @@ describe('meetings commands and queries construction', () => {
     ]);
 
     expect(meetingMediaRecord.name).toBe('meetings.media.record');
-    for (const cmd of commands) {
+    for (const cmd of meetingsCommands) {
       expect(cmd.handler).toBeTypeOf('function');
     }
   });
 
   it('exposes meetings queries', () => {
-    const queries = buildMeetingsQueries();
-    const names = queries.map((q) => q.name);
+    const names = meetingsQueries.map((q) => q.name);
     expect(names).toEqual([
       'meetings.meeting.list',
       'meetings.meeting.get',

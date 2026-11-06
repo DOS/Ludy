@@ -206,6 +206,10 @@ export type FileTable = Refine<
   { [K in Exclude<keyof G.KernelFileTable, 'source'>]: Frozen<G.KernelFileTable[K]> } & { source: Frozen<(typeof FILE_SOURCES)[number]> }
 >;
 
+export const FILE_UPLOAD_PURPOSES = ['document', 'social', 'import', 'meeting_audio', 'meeting_video'] as const;
+export type FileUploadPurpose = (typeof FILE_UPLOAD_PURPOSES)[number];
+export type FileUploadTable = Refine<G.KernelFileUploadTable, { purpose: Generated<FileUploadPurpose> }>;
+
 // archive: a ZIP whose entries were filed as files of their own (#314); such a run never has a proposal.
 export const EXTRACTION_METHODS = ['einvoice_xml', 'pdf_text_ai', 'image_ai', 'unsupported', 'archive'] as const;
 export type ExtractionMethod = (typeof EXTRACTION_METHODS)[number];
@@ -1008,6 +1012,7 @@ type Refined = Tables<{
   'crove_kernel.audit_event': AuditEventTable;
   'crove_kernel.party': PartyTable;
   'crove_kernel.file': FileTable;
+  'crove_kernel.file_upload': FileUploadTable;
   'crove_kernel.extraction': ExtractionTable;
   'crove_kernel.notification': NotificationTable;
   'crove_kernel.inbox_item': InboxItemTable;

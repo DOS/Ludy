@@ -1922,7 +1922,7 @@ export function createHttpApp(deps: HttpDeps) {
         const contentTypeHeader = c.req.header('content-type') ?? '';
         let kind: 'audio' | 'video';
         let lengthSeconds: number | undefined;
-        let plaintext: Buffer;
+        let plaintext: Buffer | null = null;
 
         const verifyRecorderAndKind = async (mediaKind: 'audio' | 'video') => {
           const meeting = await runtime.query<{ isRecorder: boolean; keepVideo: boolean }>(
@@ -1955,10 +1955,8 @@ export function createHttpApp(deps: HttpDeps) {
             lengthSeconds = body.lengthSeconds;
           }
 
-          if (kind === 'video') {
-            releaseLarge = large.tryAcquire(user.userId);
-            if (!releaseLarge) throw busy(c);
-          }
+          releaseLarge = large.tryAcquire(user.userId);
+          if (!releaseLarge) throw busy(c);
 
           await verifyRecorderAndKind(kind);
 
@@ -1996,10 +1994,8 @@ export function createHttpApp(deps: HttpDeps) {
             throw new DomainError('BAD_REQUEST', 400, 'kind must be audio or video');
           }
           kind = kindVal;
-          if (kind === 'video') {
-            releaseLarge = large.tryAcquire(user.userId);
-            if (!releaseLarge) throw busy(c);
-          }
+          releaseLarge = large.tryAcquire(user.userId);
+          if (!releaseLarge) throw busy(c);
 
           await verifyRecorderAndKind(kind);
 
@@ -2040,6 +2036,7 @@ export function createHttpApp(deps: HttpDeps) {
           kind,
         };
         const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
+        plaintext = null;
         const sha256 = createHash('sha256').update(ciphertext).digest('hex');
         const storageKey = fileKey(orgId, sha256);
 

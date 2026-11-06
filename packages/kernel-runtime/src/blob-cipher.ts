@@ -213,24 +213,25 @@ export function encryptBlobBuffer(plaintext: Buffer, dataKey: Buffer, binding: B
   if (dataKey.length !== KEY_LENGTH) {
     throw new Error('Data key must be 32 bytes');
   }
-  const chunks: Buffer[] = [];
-  const header = Buffer.alloc(HEADER_LENGTH);
-  header.writeUInt8(VERSION, 0);
-  header.writeUInt32BE(BLOB_CHUNK_SIZE, 1);
-  chunks.push(header);
-
   const totalBytes = plaintext.length;
+  const numChunks = totalBytes === 0 ? 1 : Math.ceil(totalBytes / BLOB_CHUNK_SIZE);
+  const out = Buffer.allocUnsafe(HEADER_LENGTH + numChunks * CHUNK_OVERHEAD + totalBytes);
+  out.writeUInt8(VERSION, 0);
+  out.writeUInt32BE(BLOB_CHUNK_SIZE, 1);
+
   if (totalBytes === 0) {
     const iv = randomBytes(IV_LENGTH);
     const cipher = createCipheriv('aes-256-gcm', dataKey, iv);
     cipher.setAAD(blobChunkAad(binding, 0, true));
-    const ct = cipher.final();
+    cipher.final();
     const tag = cipher.getAuthTag();
-    chunks.push(iv, tag, ct);
-    return Buffer.concat(chunks);
+    iv.copy(out, HEADER_LENGTH);
+    tag.copy(out, HEADER_LENGTH + IV_LENGTH);
+    return out;
   }
 
   let offset = 0;
+  let outOffset = HEADER_LENGTH;
   let chunkIndex = 0;
   while (offset < totalBytes) {
     const end = Math.min(offset + BLOB_CHUNK_SIZE, totalBytes);
@@ -239,14 +240,27 @@ export function encryptBlobBuffer(plaintext: Buffer, dataKey: Buffer, binding: B
     const iv = randomBytes(IV_LENGTH);
     const cipher = createCipheriv('aes-256-gcm', dataKey, iv);
     cipher.setAAD(blobChunkAad(binding, chunkIndex, isLast));
-    const ct = Buffer.concat([cipher.update(chunkPlaintext), cipher.final()]);
+    const ctPart1 = cipher.update(chunkPlaintext);
+    const ctPart2 = cipher.final();
     const tag = cipher.getAuthTag();
-    chunks.push(iv, tag, ct);
+
+    iv.copy(out, outOffset);
+    outOffset += IV_LENGTH;
+    tag.copy(out, outOffset);
+    outOffset += TAG_LENGTH;
+    ctPart1.copy(out, outOffset);
+    outOffset += ctPart1.length;
+    ctPart2.copy(out, outOffset);
+    outOffset += ctPart2.length;
+
     offset = end;
     chunkIndex += 1;
   }
 
-  return Buffer.concat(chunks);
+  if (outOffset !== out.length) {
+    throw new Error('Ciphertext output size mismatch');
+  }
+  return out;
 }
 
 export function decryptBlobBuffer(ciphertext: Buffer, dataKey: Buffer, binding: BlobMediaBinding): Buffer {
