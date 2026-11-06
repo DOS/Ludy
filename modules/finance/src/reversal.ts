@@ -55,14 +55,15 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   // The entry that posted the cost of a month of stock that was closed (#2513) stays: the month's figures were stored with it and a closed month is not reopened, so a mistake is put
   // right with a move of a later month.
   if (entry.source_type === 'finance.journal_voucher') {
-    const closing = await ctx.trx
+    const posted = await ctx.trx
       .selectFrom('crove_finance.journal_voucher')
-      .select('id')
+      .select(['stock_closing_month', 'stock_count_id'])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', entry.source_id)
-      .where('stock_closing_month', 'is not', null)
       .executeTakeFirst();
-    if (closing) throw new DomainError('STOCK_CLOSE_ENTRY', 409, 'Bút toán này ghi giá vốn của một tháng đã đóng sổ kho nên không đảo được; hãy sửa bằng phát sinh kho của tháng sau');
+    if (posted?.stock_closing_month) throw new DomainError('STOCK_CLOSE_ENTRY', 409, 'Bút toán này ghi giá vốn của một tháng đã đóng sổ kho nên không đảo được; hãy sửa bằng phát sinh kho của tháng sau');
+    // The same for the entry that posted the difference of a count (#2513 part b): its adjustment moves are never reversed, so reversing the entry would leave the books apart from the stock.
+    if (posted?.stock_count_id) throw new DomainError('STOCK_COUNT_ENTRY', 409, 'Bút toán này ghi chênh lệch của một lần kiểm kê kho nên không đảo được; hãy kiểm kê lại');
   }
   const reversed = await ctx.trx
     .selectFrom('crove_finance.journal_entry')
