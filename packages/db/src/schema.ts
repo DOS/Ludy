@@ -481,7 +481,7 @@ export const STOCK_ITEM_KINDS = ['goods'] as const;
 export type StockItemKind = (typeof STOCK_ITEM_KINDS)[number];
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTrade = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count'] as const;
 export type StockMoveSource = (typeof STOCK_MOVE_SOURCES)[number];
 export type StockItemTable = Refine<
   G.FinanceStockItemTable,
@@ -504,6 +504,11 @@ export type StockMoveTable = Refine<
 // The close of a month of stock (#2513): a closed month and what it held of each item, both append-only.
 export type StockPeriodTable = Refine<G.FinanceStockPeriodTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type StockPeriodItemTable = Refine<G.FinanceStockPeriodItemTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+// The count of stock (#2513 part b): a header that is a draft until it is confirmed or cancelled, and what was counted of each item.
+export const STOCK_COUNT_STATUSES = ['draft', 'confirmed', 'cancelled'] as const;
+export type StockCountStatus = (typeof STOCK_COUNT_STATUSES)[number];
+export type StockCountTable = Refine<G.FinanceStockCountTable, { status: ColumnType<StockCountStatus, StockCountStatus | undefined, StockCountStatus>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type StockCountLineTable = Refine<G.FinanceStockCountLineTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderTable = Refine<G.FinanceChannelOrderTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderLineTable = Refine<G.FinanceChannelOrderLineTable, { stage: ChannelStage; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 // A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
@@ -1033,6 +1038,8 @@ type Refined = Tables<{
   'crove_finance.stock_move': StockMoveTable;
   'crove_finance.stock_period': StockPeriodTable;
   'crove_finance.stock_period_item': StockPeriodItemTable;
+  'crove_finance.stock_count': StockCountTable;
+  'crove_finance.stock_count_line': StockCountLineTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

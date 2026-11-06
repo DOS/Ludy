@@ -38,7 +38,9 @@ export interface StockMoveWrite {
     | { type: 'reversal'; reversesMoveId: string }
     // A shipment (out) or a return (in) of a marketplace order line (#2515), each once per line.
     // `attempt` is the line's live attempt (#2633): unassigning a line moves it to the next one.
-    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number };
+    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number }
+    // The adjustment of a count of stock (#2513), one per count line, with its value (whole dong, signed like the quantity).
+    | { type: 'count'; countLineId: string; amount: string };
 }
 
 // The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
@@ -90,6 +92,8 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       order_line_id: move.source.type === 'order_line' ? move.source.orderLineId : null,
       order_move: move.source.type === 'order_line' ? move.source.move : null,
       order_attempt: move.source.type === 'order_line' ? move.source.attempt : 1,
+      count_line_id: move.source.type === 'count' ? move.source.countLineId : null,
+      amount: move.source.type === 'count' ? move.source.amount : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,
     })
@@ -258,6 +262,7 @@ export const stockMoveReverse = defineCommand({
     if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
     if (move.source_type === 'reversal') throw new DomainError('STOCK_MOVE_IS_REVERSAL', 409, 'Đây đã là một phát sinh đảo, không đảo thêm được');
     // The stock an order line moved follows the line's own stage (a return brings it back); reversing it alone would leave the line shipped with nothing to move again.
+    if (move.source_type === 'count') throw new DomainError('STOCK_MOVE_COUNT', 409, 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại');
     if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao');
     const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');

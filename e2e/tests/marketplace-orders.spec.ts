@@ -90,4 +90,17 @@ test('an imported report waits for its shipped line to be assigned, then takes t
     await expect(page.getByTestId('stock-close-confirm')).toContainText('âm kho');
     await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
   });
+
+  await test.step('a count of the item: the draft shows the difference from the books, priced at the cost typed, and is sent for approval (#2513)', async () => {
+    await page.getByTestId('stock-count-new').click();
+    const form = page.getByTestId('stock-count-form');
+    await form.getByLabel('Thực đếm AO01').fill('5');
+    await form.getByLabel('Đơn giá vốn AO01').fill('100000');
+    await page.getByTestId('stock-count-save').click();
+    const card = page.getByTestId('stock-count');
+    await expect(card.getByTestId('stock-count-status')).toContainText('Nháp');
+    await expect(card.getByTestId('stock-count-line')).toContainText('500.000');
+    await card.getByTestId('stock-count-request').click();
+    await expect(page.getByText('Đã gửi đề xuất điều chỉnh kho')).toBeVisible();
+  });
 });
