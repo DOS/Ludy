@@ -821,6 +821,7 @@ export const vi = {
     low: {
       title: 'Hàng sắp hết',
       subtitle: 'Các mặt hàng mà số còn lại không đủ bán cho thời gian nhà cung cấp giao hàng (mặc định 14 ngày), tính theo tốc độ bán 8 tuần gần nhất. Số lượng gợi ý đủ bán thêm hai chu kỳ giao hàng, bạn sửa được. Tin đặt hàng chỉ là bản nháp: bạn đọc, sửa rồi tự gửi.',
+      capped: 'Đang hiện {count, number} mặt hàng sắp hết nhất; xử lý bớt để các mặt hàng còn lại hiện ra.',
       code: 'Mã',
       name: 'Tên',
       onHand: 'Còn',

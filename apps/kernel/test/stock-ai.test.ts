@@ -145,6 +145,17 @@ describe('suggestItems', () => {
   });
 });
 
+describe('a reader with only one of the two methods', () => {
+  it('uses the one it has and says off for the other', async () => {
+    const matchOnly = stockAi({ stockMatch: async () => [{ itemIndex: 0, reason: 'Khớp tên' }, null] }, new DraftBudget());
+    expect(await suggestItems(matchOnly, ORG, USER, SOURCE, 'vi')).toEqual({ ai: 'used', suggestions: [{ documentId: 'doc-1', lineNo: 1, itemId: 'item-a', reason: 'Khớp tên' }] });
+    expect(await draftReorder(matchOnly, ORG, USER, REORDER, 'vi', undefined)).toEqual({ ai: 'off', supplier: REORDER.supplier, text: REORDER.template });
+    const wordOnly = stockAi({ reorderText: async () => ({ kind: 'text', text: 'Chào Phương Nam.' }) }, new DraftBudget());
+    expect(await suggestItems(wordOnly, ORG, USER, SOURCE, 'vi')).toEqual({ ai: 'off', suggestions: [] });
+    expect((await draftReorder(wordOnly, ORG, USER, REORDER, 'vi', undefined)).ai).toBe('used');
+  });
+});
+
 describe('draftReorder', () => {
   it('asks the model once with the names, quantities and units, and answers its text', async () => {
     const { ai, asked } = setup();

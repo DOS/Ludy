@@ -76,7 +76,8 @@ const words = (text: string): Set<string> =>
     text
       .normalize('NFD')
       .replace(/\p{M}/gu, '')
-      .replace(/đ/g, 'd')
+      // Both cases of đ: it has no decomposition, and lower-casing "Đ" first would leave a letter the split below drops ("Đen" is "den").
+      .replace(/[đĐ]/g, 'd')
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .filter((word) => word.length >= 2),

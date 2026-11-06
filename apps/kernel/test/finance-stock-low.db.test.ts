@@ -311,6 +311,10 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       await expect(ask([{ itemId: a, quantity: '1' }, { itemId: a, quantity: '2' }])).rejects.toMatchObject({ code: 'STOCK_REORDER_DUPLICATE' });
       await expect(ask([{ itemId: a, quantity: '0' }])).rejects.toMatchObject({ code: 'STOCK_REORDER_QUANTITY' });
       await expect(ask([{ itemId: foreign, quantity: '1' }])).rejects.toMatchObject({ code: 'STOCK_ITEM_NOT_FOUND' });
+      // An item switched off since the list was loaded.
+      const off = await makeItem(o, 'OFF1');
+      await execute(o, 'finance.stock_item.set_active', { itemId: off, active: false });
+      await expect(ask([{ itemId: off, quantity: '1' }])).rejects.toMatchObject({ code: 'STOCK_ITEM_INACTIVE' });
       await expect(ask([{ itemId: a, quantity: '1' }], { supplierPartyId: randomUUID() })).rejects.toMatchObject({ code: 'PARTY_NOT_FOUND' });
       await expect(ask([{ itemId: a, quantity: '1' }], {}, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     });

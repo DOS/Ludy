@@ -17,7 +17,8 @@ import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
 import type { DraftBudget } from './ai-draft-limit.ts';
 
 export interface StockAi {
-  reader: Pick<InboxReader, 'stockMatch' | 'reorderText'> | null;
+  // Either method may be missing: each use checks its own, so one that is there works without the other.
+  reader: Partial<Pick<InboxReader, 'stockMatch' | 'reorderText'>> | null;
   budget: DraftBudget;
   // Suggestions by content (org, language, the lines and the items offered), with the time they were written.
   kept: Map<string, { suggestions: StockSuggested['suggestions']; at: number }>;
@@ -41,7 +42,8 @@ function suggestKey(orgId: string, language: 'vi' | 'en', source: SuggestSource)
 
 export async function suggestItems(ai: StockAi, orgId: string, userId: string, source: SuggestSource, language: 'vi' | 'en', now: () => number = Date.now): Promise<StockSuggested> {
   const answer = (state: StockSuggested['ai'], suggestions: StockSuggested['suggestions'] = []): StockSuggested => ({ ai: state, suggestions });
-  if (!ai.reader) return answer('off');
+  const match = ai.reader?.stockMatch;
+  if (!match) return answer('off');
   if (source.lines.length === 0 || source.items.length === 0) return answer('quiet');
   const key = suggestKey(orgId, language, source);
   const hit = ai.kept.get(key);
@@ -49,7 +51,7 @@ export async function suggestItems(ai: StockAi, orgId: string, userId: string, s
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
-    const answers = await ai.reader.stockMatch(
+    const answers = await match(
       source.lines.map((l) => ({ description: l.description, unit: l.unit })),
       source.items.map((i) => ({ code: i.code, name: i.name, unit: i.unit })),
       language,
@@ -73,11 +75,12 @@ export async function suggestItems(ai: StockAi, orgId: string, userId: string, s
 
 export async function draftReorder(ai: StockAi, orgId: string, userId: string, source: ReorderSource, language: 'vi' | 'en', hint: string | undefined): Promise<StockReorderDraft> {
   const answer = (state: StockReorderDraft['ai'], text: string = source.template): StockReorderDraft => ({ ai: state, supplier: source.supplier, text });
-  if (!ai.reader) return answer('off');
+  const word = ai.reader?.reorderText;
+  if (!word) return answer('off');
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {
-    const result = await ai.reader.reorderText({
+    const result = await word({
       language,
       orgName: source.orgName,
       // A supplier that is not named is greeted by the same plain word as the template's.

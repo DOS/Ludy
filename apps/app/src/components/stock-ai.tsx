@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
+import { STOCK_LOW_MAX, STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -30,13 +30,20 @@ export interface Suggestion {
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The coworker's suggestions for the unassigned lines, asked ten lines of one entity at a time and only when a person clicks (each ask is a paid model call). A line it was asked
- * about and gave nothing for is remembered as asked; an ask that came back busy, over budget or failed leaves its lines to be asked again. */
-export function useLineSuggestions(lines: readonly StockUnassignedLine[]) {
+ * about and gave nothing for is remembered as asked; an ask that came back busy, over budget or failed leaves its lines to be asked again. A line with no text is never asked about, and
+ * a suggestion whose item is no longer in use is dropped with its mark, so that line can be asked about again. */
+export function useLineSuggestions(lines: readonly StockUnassignedLine[], items: readonly StockItem[]) {
   const lang = useLocale() === 'en' ? 'en' : 'vi';
   const [found, setFound] = useState<ReadonlyMap<string, Suggestion>>(new Map());
   const [asked, setAsked] = useState<ReadonlySet<string>>(new Set());
   const [state, setState] = useState<'usedNone' | 'usedSome' | Exclude<StockAiState, 'used'> | null>(null);
-  const todo = lines.filter((l) => !asked.has(lineKey(l)));
+  const active = new Set(items.filter((i) => i.active).map((i) => i.id));
+  const current = (key: string): Suggestion | undefined => {
+    const suggestion = found.get(key);
+    return suggestion !== undefined && active.has(suggestion.itemId) ? suggestion : undefined;
+  };
+  const isAsked = (key: string) => asked.has(key) && (!found.has(key) || current(key) !== undefined);
+  const todo = lines.filter((l) => l.description.trim() !== '' && !isAsked(lineKey(l)));
   const first = todo[0];
   const next = first ? todo.filter((l) => l.legalEntityId === first.legalEntityId).slice(0, STOCK_SUGGEST_LINES_MAX) : [];
   // The lines asked about travel with the call, so what is marked as asked is exactly what was sent.
@@ -44,16 +51,19 @@ export function useLineSuggestions(lines: readonly StockUnassignedLine[]) {
     mutationFn: (asking: readonly StockUnassignedLine[]) =>
       client.stock.suggest({ legalEntityId: asking[0]?.legalEntityId as string, lines: asking.map((l) => ({ documentId: l.documentId, lineNo: l.lineNo })), lang }),
     onSuccess: (answer, asking) => {
-      if (answer.ai !== 'used') {
+      // Nothing to look at (quiet) moves on like an answer does, so the next click reaches the next lines; busy, budget and failed leave the lines to be asked again.
+      if (answer.ai !== 'used' && answer.ai !== 'quiet') {
         setState(answer.ai);
         return;
       }
-      setAsked((was) => new Set([...was, ...asking.map(lineKey)]));
-      setFound((was) => new Map([...was, ...answer.suggestions.map((s): [string, Suggestion] => [lineKey(s), { itemId: s.itemId, reason: s.reason }])]));
-      setState(answer.suggestions.length > 0 ? 'usedSome' : 'usedNone');
+      const keys = asking.map(lineKey);
+      setAsked((was) => new Set([...was, ...keys]));
+      // Whatever was known of these lines is replaced by what this answer says.
+      setFound((was) => new Map([...[...was].filter(([key]) => !keys.includes(key)), ...answer.suggestions.map((s): [string, Suggestion] => [lineKey(s), { itemId: s.itemId, reason: s.reason }])]));
+      setState(answer.ai === 'quiet' ? 'quiet' : answer.suggestions.length > 0 ? 'usedSome' : 'usedNone');
     },
   });
-  return { found, asked, state, pending: ask.isPending, error: ask.error, send: () => ask.mutate(next), canAsk: next.length > 0, remaining: todo.length };
+  return { suggestionOf: current, isAsked, state, pending: ask.isPending, error: ask.error, send: () => ask.mutate(next), canAsk: next.length > 0, remaining: todo.length };
 }
 
 export function SuggestBar({ suggestions }: { suggestions: ReturnType<typeof useLineSuggestions> }) {
@@ -144,6 +154,10 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
   const [copied, setCopied] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const valid = group.items.every((i) => QUANTITY.test(quantityOf(i)));
+  // A quantity is marked wrong once the person has left the field, not on every keystroke; the message under the table is tied to the fields it is about.
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const wrong = (i: StockLowItem) => touched.has(i.itemId) && !QUANTITY.test(quantityOf(i));
+  const errorId = `${id}-error`;
   // The items and quantities on screen. A message belongs to the ones it was drafted for: when they change (an edit, or the list refreshing after a line was assigned) it is hidden, so the
   // text beside the quantities is always the text for them.
   const signature = group.items.map((i) => `${i.itemId}:${quantityOf(i)}`).join('|');
@@ -204,7 +218,9 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
                 inputMode="decimal"
                 // Locked while a draft is being written, so the message that comes back is always the one for the quantities on screen.
                 disabled={!canWrite || draft.isPending}
-                aria-invalid={!QUANTITY.test(quantityOf(i))}
+                aria-invalid={wrong(i)}
+                aria-describedby={wrong(i) ? errorId : undefined}
+                onBlur={() => setTouched((was) => new Set([...was, i.itemId]))}
                 onChange={(e) => setTyped((was) => ({ ...was, [i.itemId]: e.target.value }))}
                 data-testid="stock-low-quantity"
               />
@@ -226,7 +242,11 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
               {t('draft')}
             </Button>
           </div>
-          {!valid && <p className="text-xs text-destructive">{t('quantityInvalid')}</p>}
+          {group.items.some(wrong) && (
+            <p id={errorId} className="text-xs text-destructive">
+              {t('quantityInvalid')}
+            </p>
+          )}
           {draft.error && <ErrorText>{errorMessage(draft.error)}</ErrorText>}
           {text !== null && draftFor === signature && (
             // What the model wrote is an AI proposal nobody approved (DESIGN.md §3.1): the proposal badge and a dashed outline. The fixed template is the books' own words.
@@ -237,7 +257,10 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
                   {t(`state.${state}`)}
                 </p>
               )}
-              <Textarea ref={textRef} rows={9} maxLength={4000} aria-label={t('messageLabel')} value={text} onChange={(e) => setText(e.target.value)} />
+              <Label htmlFor={`${id}-message`} className="text-xs text-subtle-foreground">
+                {t('messageLabel')}
+              </Label>
+              <Textarea id={`${id}-message`} ref={textRef} rows={9} maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} />
               <div className="flex flex-wrap items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => void copy()} data-testid="stock-low-copy">
                   {copied ? t('copied') : t('copy')}
@@ -266,7 +289,8 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
 
 export function LowStock({ legalEntityId, ready, canWrite }: { legalEntityId: string | undefined; ready: boolean; canWrite: boolean }) {
   const t = useTranslations('stock.low');
-  const low = useQuery({ ...orpc.stock.low.queryOptions({ input: { legalEntityId } }), enabled: ready });
+  // All of them, up to the most one read returns, the shortest cover first; when the list is cut the section says so.
+  const low = useQuery({ ...orpc.stock.low.queryOptions({ input: { legalEntityId, limit: STOCK_LOW_MAX } }), enabled: ready });
   if (low.error) return <ErrorText>{errorMessage(low.error)}</ErrorText>;
   const items = low.data ?? [];
   if (items.length === 0) return null;
@@ -274,6 +298,11 @@ export function LowStock({ legalEntityId, ready, canWrite }: { legalEntityId: st
     <section className="mb-8" aria-label={t('title')} data-testid="stock-low">
       <h2 className="text-base font-medium text-foreground">{t('title')}</h2>
       <p className="mb-3 text-sm text-subtle-foreground">{t('subtitle')}</p>
+      {items.length >= STOCK_LOW_MAX && (
+        <p className="mb-3 text-sm text-subtle-foreground" data-testid="stock-low-capped">
+          {t('capped', { count: STOCK_LOW_MAX })}
+        </p>
+      )}
       {groupsOf(items).map((group) => (
         <ReorderGroup key={group.key} group={group} canWrite={canWrite} />
       ))}

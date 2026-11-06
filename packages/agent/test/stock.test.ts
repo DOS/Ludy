@@ -187,7 +187,26 @@ describe('the reorder message', () => {
     }
     // An address that is part of a name given is that name's own.
     const shop: ReorderRequest = { ...REQUEST, orgName: 'Cửa hàng shop.vn' };
-    expect(checkReorderText(shop, { text: `${base}Cảm ơn. Cửa hàng shop.vn` }).kind).toBe('text');
+    expect(checkReorderText(shop, { text: `${base}- Nước suối 500ml: 12.5 thùng\nCảm ơn. Cửa hàng shop.vn` }).kind).toBe('text');
+  });
+
+  it('is refused when it leaves an item or its quantity out, or swaps the units of two items', () => {
+    const head = 'Chào Nhà cung cấp Phương Nam,\n';
+    const both = `${head}- Áo thun cổ tròn trắng size M: 40 cái\n- Nước suối 500ml: 12.5 thùng\nCảm ơn.`;
+    expect(checkReorderText(REQUEST, { text: both }).kind).toBe('text');
+    // An item left out of the message, and an item named with no quantity: the template would have held them.
+    expect(checkReorderText(REQUEST, { text: `${head}- Áo thun cổ tròn trắng size M: 40 cái\nCảm ơn.` })).toEqual({ kind: 'none', code: 'MISSING' });
+    expect(checkReorderText(REQUEST, { text: `${head}- Áo thun cổ tròn trắng size M: 40 cái\n- Nước suối 500ml\nCảm ơn.` })).toEqual({ kind: 'none', code: 'MISSING' });
+    // The right quantities with the units of the other item.
+    expect(checkReorderText(REQUEST, { text: `${head}- Áo thun cổ tròn trắng size M: 40 thùng\n- Nước suối 500ml: 12.5 cái\nCảm ơn.` })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('reads the message against the names the prompt showed: a name the prompt cut to 120 characters is the one to repeat', () => {
+    const long = `Mặt hàng có tên rất dài ${'đủ chữ '.repeat(30)}hết`;
+    const request: ReorderRequest = { ...REQUEST, items: [{ name: long, quantity: '40.123456', unit: 'cái' }] };
+    const shownName = Array.from(long).slice(0, 120).join('').trim();
+    expect(reorderPrompt(request)).toContain(`- ${shownName}: 40.123456 cái`);
+    expect(checkReorderText(request, { text: `Chào Nhà cung cấp Phương Nam,\n- ${shownName}: 40.123456 cái\nCảm ơn.` }).kind).toBe('text');
   });
 
   it('lets a message of twenty items with ordinary names through, and refuses one past its length', () => {

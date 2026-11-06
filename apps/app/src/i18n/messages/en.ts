@@ -823,6 +823,7 @@ export const en = {
     low: {
       title: 'Running low',
       subtitle: "Items whose stock will not last the supplier's delivery time (14 days by default) at the pace of the last 8 weeks. The suggested quantity covers two delivery times of sales, and you can change it. The reorder message is only a draft: you read it, edit it and send it yourself.",
+      capped: 'Showing the {count, number} items that run out first; deal with some for the others to show.',
       code: 'Code',
       name: 'Name',
       onHand: 'On hand',

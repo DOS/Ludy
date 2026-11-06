@@ -155,7 +155,7 @@ export interface ReorderRequest {
 export type ReorderResult =
   | { kind: 'text'; text: string }
   // No text, and why, as a short code (never the model's words).
-  | { kind: 'none'; code: 'EMPTY' | 'FIGURES' | 'LINK' | 'TOO_LONG' | 'NO_ITEMS' };
+  | { kind: 'none'; code: 'EMPTY' | 'FIGURES' | 'LINK' | 'TOO_LONG' | 'NO_ITEMS' | 'MISSING' };
 
 export interface ReorderOutput {
   text: string;
@@ -170,9 +170,23 @@ export function reorderInstructions(request: ReorderRequest): string {
   ].join(' ');
 }
 
+// The request as the model is shown it: names on one line and cut to their length in the prompt, the quantity whole (21 characters at most: 14 digits, the point and 6 decimals). The checks
+// read the message against this, so a name the prompt cut is the name the message is expected to repeat.
+const NAME_SHOWN = 80;
+const QUANTITY_SHOWN = 24;
+function shownRequest(request: ReorderRequest): ReorderRequest & { items: readonly ReorderItem[] } {
+  return {
+    ...request,
+    orgName: oneLine(request.orgName, NAME_SHOWN),
+    supplierName: oneLine(request.supplierName, NAME_SHOWN),
+    items: request.items.slice(0, REORDER_ITEMS_MAX).map((i) => ({ name: oneLine(i.name, NAME_CHARS), quantity: oneLine(i.quantity, QUANTITY_SHOWN), unit: oneLine(i.unit, 30) })),
+  };
+}
+
 export function reorderPrompt(request: ReorderRequest): string {
-  const items = request.items.slice(0, REORDER_ITEMS_MAX).map((i) => `- ${oneLine(i.name, NAME_CHARS)}: ${oneLine(i.quantity, 20)} ${oneLine(i.unit, 30)}`);
-  const parts = [`Name of the business (untrusted data):\n<<<\n${oneLine(request.orgName, 80)}\n>>>`, `Name of the supplier (untrusted data):\n<<<\n${oneLine(request.supplierName, 80)}\n>>>`, `Items to ask for (untrusted names):\n<<<\n${items.join('\n')}\n>>>`];
+  const shown = shownRequest(request);
+  const items = shown.items.map((i) => `- ${i.name}: ${i.quantity} ${i.unit}`);
+  const parts = [`Name of the business (untrusted data):\n<<<\n${shown.orgName}\n>>>`, `Name of the supplier (untrusted data):\n<<<\n${shown.supplierName}\n>>>`, `Items to ask for (untrusted names):\n<<<\n${items.join('\n')}\n>>>`];
   if (request.hint?.trim()) parts.push(`Hint from the person (untrusted):\n<<<\n${oneLine(request.hint, REORDER_HINT_MAX)}\n>>>`);
   parts.push('Write the message.');
   return parts.join('\n\n');
@@ -181,38 +195,48 @@ export function reorderPrompt(request: ReorderRequest): string {
 // How long a message may be: a greeting and a sign-off, and a line per item.
 export const reorderTextMax = (items: number): number => REORDER_TEXT_BASE + REORDER_TEXT_PER_ITEM * items;
 
-// Every number on a line is the quantity of the item the line names: the line's own item is the longest name it holds, and the names, units and the business's and supplier's names are cut out
-// first. A line that names no item holds no number. So the quantities cannot be swapped between items, repeated for another, or added to with a figure nobody gave.
-function quantitiesTied(text: string, request: ReorderRequest, items: readonly ReorderItem[]): boolean {
-  const names = [request.orgName, request.supplierName];
+const wholeWord = (word: string, flags = 'iu') => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(word)}(?![\\p{L}\\p{N}])`, flags);
+const squeeze = (text: string) => text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
+
+// Each line against the items: every number on a line is the quantity of the item the line names (its own item is the longest name it holds; the names of the business and the supplier and
+// of the items are cut out first, and so is a unit, as a whole word), and a line that names no item holds no number. A unit of another item on the line is a swap. So the quantities
+// cannot be swapped between items, nor their units, repeated for another item or added to with a figure nobody gave; and every item must stand on a line with its own quantity, or the
+// message leaves something out ("MISSING").
+function lineProblem(text: string, request: ReorderRequest): 'FIGURES' | 'MISSING' | null {
+  const items = request.items;
   const byLength = [...items].sort((a, b) => b.name.length - a.name.length);
   const units = items.map((i) => i.unit.trim()).filter((unit) => unit !== '');
+  const complete = new Set<ReorderItem>();
   for (const line of text.split('\n')) {
-    const bare = without(line, names).normalize('NFC');
-    const squeezed = bare.toLowerCase().replace(/\s+/g, ' ');
-    const own = byLength.find((item) => item.name.trim() !== '' && squeezed.includes(item.name.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()));
+    const bare = without(line, [request.orgName, request.supplierName]).normalize('NFC');
+    const squeezed = squeeze(bare);
+    const own = byLength.find((item) => squeeze(item.name) !== '' && squeezed.includes(squeeze(item.name)));
     let rest = without(bare, items.map((i) => i.name));
-    // A unit goes only as a whole word ("m2", "kg"), so a short one never eats part of another word.
-    for (const unit of units) rest = rest.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(unit)}(?![\\p{L}\\p{N}])`, 'giu'), ' ');
+    // The unit of another item, not the item's own: the two were swapped.
+    if (own && items.some((other) => other !== own && other.unit.trim() !== '' && squeeze(other.unit) !== squeeze(own.unit) && wholeWord(other.unit.trim()).test(rest))) return 'FIGURES';
+    for (const unit of units) rest = rest.replace(wholeWord(unit, 'giu'), ' ');
     const numbers = (rest.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(',', '.'));
-    if (numbers.some((n) => own === undefined || n !== plainDecimal(own.quantity))) return false;
+    if (numbers.some((n) => own === undefined || n !== plainDecimal(own.quantity))) return 'FIGURES';
+    if (own && numbers.length > 0) complete.add(own);
   }
-  return true;
+  return items.every((item) => complete.has(item)) ? null : 'MISSING';
 }
 
 /** The message the model wrote, or why there is none. Pure: the model call is the caller's. */
 export function checkReorderText(request: ReorderRequest, output: ReorderOutput | null): ReorderResult {
   if (request.items.length === 0) return { kind: 'none', code: 'NO_ITEMS' };
-  const items = request.items.slice(0, REORDER_ITEMS_MAX);
+  const shown = shownRequest(request);
+  const items = shown.items;
   const text = (output?.text ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (text === '') return { kind: 'none', code: 'EMPTY' };
   if (Array.from(text).length > reorderTextMax(items.length)) return { kind: 'none', code: 'TOO_LONG' };
   // The only source of figures, number words and addresses is what the model was given: the names, the quantities and the units. A unit is not cut out as a name (a short one such as "m"
   // would eat part of every word); it is only trusted as a whole word by the figure checks.
-  const names = [request.orgName, request.supplierName, ...items.map((i) => i.name)];
+  const names = [shown.orgName, shown.supplierName, ...items.map((i) => i.name)];
   const given = [...names, ...items.map((i) => `${i.name} ${i.quantity} ${i.unit}`)];
   if (addressIn(text, names)) return { kind: 'none', code: 'LINK' };
   // A reorder message has no reason to say a number in words (a quantity is written in digits), and each quantity stands on the line of its own item.
-  if (draftFiguresOutside(text, given).length > 0 || numberWordIn(text, names) || !quantitiesTied(text, request, items)) return { kind: 'none', code: 'FIGURES' };
-  return { kind: 'text', text };
+  if (draftFiguresOutside(text, given).length > 0 || numberWordIn(text, names)) return { kind: 'none', code: 'FIGURES' };
+  const problem = lineProblem(text, shown);
+  return problem === null ? { kind: 'text', text } : { kind: 'none', code: problem };
 }

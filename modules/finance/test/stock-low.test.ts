@@ -75,4 +75,10 @@ describe('pickCandidates', () => {
     // No shared word at all: the first by code.
     expect(pickCandidates(['xyz'], all, 2).map((i) => i.code)).toEqual(['A1', 'A2']);
   });
+
+  it('reads an uppercase Đ like a lowercase one', () => {
+    const all = [item('A1', 'Bút bi xanh'), item('A2', 'Áo Đen'), item('A3', 'Nước suối')];
+    expect(pickCandidates(['ao den'], all, 1).map((i) => i.code)).toEqual(['A2']);
+    expect(pickCandidates(['ĐEN'], all, 1).map((i) => i.code)).toEqual(['A2']);
+  });
 });

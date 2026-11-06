@@ -150,7 +150,11 @@ test('an item that sells faster than it lasts shows as running low, with the sup
     const group = page.getByTestId('stock-low-group');
     await group.getByTestId('stock-low-quantity').fill('0');
     await expect(group.getByTestId('stock-low-draft')).toBeDisabled();
+    // The field is marked wrong when the person leaves it, and the message is tied to it.
+    await group.getByTestId('stock-low-quantity').blur();
     await expect(group.getByText('Số lượng phải lớn hơn không')).toBeVisible();
+    await expect(group.getByTestId('stock-low-quantity')).toHaveAttribute('aria-invalid', 'true');
+    await expect(group.getByTestId('stock-low-quantity')).toHaveAttribute('aria-describedby', /.+/);
   });
 
   await test.step('Home counts the item for the people who can act', async () => {

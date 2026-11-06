@@ -207,10 +207,12 @@ export type StockSuggested = z.infer<typeof zStockSuggested>;
 
 // Items running low: the average sales out of the last eight weeks (or of the days since the item's first move, at least seven) against what is on hand. An item is low when its cover
 // (days of sales on hand) is shorter than the lead days. suggestedQuantity covers two lead times of sales, to whole units, less what is on hand.
+// The most items one read returns (the shortest cover first); the screen asks for all of them and says when the list is cut.
+export const STOCK_LOW_MAX = 200;
 export const zStockLowInput = z.strictObject({
   legalEntityId: zId.optional(),
   leadDays: z.number().int().min(1).max(STOCK_LEAD_DAYS_MAX).optional(),
-  limit: z.number().int().min(1).max(200).optional(),
+  limit: z.number().int().min(1).max(STOCK_LOW_MAX).optional(),
 });
 export const zStockLowItem = z.object({
   itemId: zId,

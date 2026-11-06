@@ -78,7 +78,7 @@ async function suppliersOf(ctx: Ctx, itemIds: readonly string[]): Promise<Map<st
 
 /** The items running low (see the header), the shortest cover first, then by code; `legalEntityId` limits the read to one entity (the caller's row policies keep an entity they may not
  * see out of it either way). */
-export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string | undefined; leadDays: number; limit: number }): Promise<StockLowItem[]> {
+export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string | undefined; leadDays: number; limit: number; suppliers?: boolean }): Promise<StockLowItem[]> {
   const today = await databaseToday(ctx.trx);
   const entity = options.legalEntityId ?? null;
   const { rows } = await sql<PaceRow>`
@@ -126,7 +126,8 @@ export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string 
     })
     .sort((a, b) => a.figures.coverDays - b.figures.coverDays || a.row.code.localeCompare(b.row.code))
     .slice(0, options.limit);
-  const suppliers = await suppliersOf(ctx, low.map((l) => l.row.item_id));
+  // A caller that only counts (Home) asks for no suppliers.
+  const suppliers = options.suppliers === false ? new Map<string, Supplier>() : await suppliersOf(ctx, low.map((l) => l.row.item_id));
   return low.map(({ row, figures }) => ({
     itemId: row.item_id,
     legalEntityId: row.legal_entity_id,
@@ -199,12 +200,14 @@ export const stockReorderSource = defineQuery({
     for (const line of input.items) {
       if (!money(line.quantity).greaterThan(0)) throw new DomainError('STOCK_REORDER_QUANTITY', 422, 'Số lượng đặt phải lớn hơn không');
     }
-    const rows = await ctx.trx.selectFrom('crove_finance.stock_item').select(['id', 'legal_entity_id', 'name', 'unit']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
+    const rows = await ctx.trx.selectFrom('crove_finance.stock_item').select(['id', 'legal_entity_id', 'name', 'unit', 'active']).where('org_id', '=', ctx.orgId).where('id', 'in', ids).execute();
     const byId = new Map(rows.map((r) => [r.id, r]));
     const items = input.items.map((line) => {
       const item = byId.get(line.itemId);
       if (!item) throw new DomainError('STOCK_ITEM_NOT_FOUND', 404, 'Không tìm thấy mặt hàng này');
       if (item.legal_entity_id !== entity) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và pháp nhân đang chọn không khớp nhau');
+      // The list only holds items in use: a request for one that was switched off since the list loaded is stale.
+      if (!item.active) throw new DomainError('STOCK_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng, hãy tải lại danh sách');
       return { itemId: item.id, name: oneLine(item.name), unit: oneLine(item.unit, 40), quantity: plainQuantity(line.quantity) };
     });
     let supplier: Supplier | null = null;

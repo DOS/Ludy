@@ -324,7 +324,12 @@ export function createRpcHandler(
   // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
   // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
   const stockCoworker = stockAi(
-    conversationReader?.stockMatch && conversationReader.reorderText ? { stockMatch: conversationReader.stockMatch.bind(conversationReader), reorderText: conversationReader.reorderText.bind(conversationReader) } : null,
+    conversationReader && (conversationReader.stockMatch || conversationReader.reorderText)
+      ? {
+          ...(conversationReader.stockMatch ? { stockMatch: conversationReader.stockMatch.bind(conversationReader) } : {}),
+          ...(conversationReader.reorderText ? { reorderText: conversationReader.reorderText.bind(conversationReader) } : {}),
+        }
+      : null,
     suggestionBudget(),
   );
 

@@ -205,7 +205,7 @@ export class InboxReader {
       generators.stockMatch ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.stock_match', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zStockMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zStockMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -213,7 +213,7 @@ export class InboxReader {
       generators.reorder ??
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.stock_reorder', () =>
-          generateText({ model: chatModel(config), output: Output.object({ schema: zReorderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+          generateText({ model: chatModel(config), output: Output.object({ schema: zReorderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });

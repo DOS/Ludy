@@ -503,7 +503,7 @@ export function StockPage() {
   const list = items.data ?? [];
   const negative = list.filter((i) => i.onHand.startsWith('-'));
   const lines = unassigned.data ?? [];
-  const suggestions = useLineSuggestions(lines);
+  const suggestions = useLineSuggestions(lines, list);
 
   return (
     <>
@@ -553,7 +553,7 @@ export function StockPage() {
           {canWrite && list.some((i) => i.active) && <SuggestBar suggestions={suggestions} />}
           <DataTable head={[t('invoice'), t('description'), t('quantity'), '']} numeric={[2]}>
             {lines.map((line) => (
-              <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} suggestion={suggestions.found.get(lineKey(line))} asked={suggestions.asked.has(lineKey(line))} />
+              <UnassignedRow key={`${line.documentId}-${line.lineNo}`} line={line} items={list} canWrite={canWrite} suggestion={suggestions.suggestionOf(lineKey(line))} asked={suggestions.isAsked(lineKey(line))} />
             ))}
           </DataTable>
         </section>
