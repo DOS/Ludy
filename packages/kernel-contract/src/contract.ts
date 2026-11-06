@@ -1386,7 +1386,7 @@ export const contract = {
           // EINVOICE_DRAFT_INVALID, EINVOICE_DRAFT_MISMATCH, EINVOICE_NOT_DRAFT (409/422), EINVOICE_ISSUE_PENDING (409) while a request for the same content is open.
           z.object({ command: z.literal('finance.einvoice.issue'), input: z.strictObject({ draftId: zId }), idempotencyKey: zId }),
           // The close of a month of stock (#2513): the server builds the cost of goods sold of the month from the stock moves; an owner or an admin approves.
-          // STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_NO_COST (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, PERIOD_LOCKED (409).
+          // STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED, STOCK_CLOSE_NO_COST (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, PERIOD_LOCKED (409).
           z.object({ command: z.literal('finance.stock.close_period'), input: zStockCloseRequest, idempotencyKey: zId }),
         ]),
       )
@@ -1699,8 +1699,8 @@ export const contract = {
     card: oc.input(zStockCardInput).output(zStockCard),
     // The months a person has closed, newest first, with the cost posted for each (#2513).
     periods: oc.input(zStockPeriodsInput).output(z.array(zStockPeriod)),
-    // Closes a month that has no cost to post, with no entry and so with no approval (owners, admins, members; R2). A month with cost goes through inbox.request
-    // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
+    // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
+    // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
     closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
   },
   accountRules: {

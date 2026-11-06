@@ -83,6 +83,23 @@ describe('the cost of a closed month', () => {
     expect(result.items[1]).toMatchObject({ openingQuantity: '4', closingQuantity: '4', closingValue: '400', inQuantity: '0' });
   });
 
+  it('names the items that moved with no value to price them at, and not an item priced from its opening or a purchase', () => {
+    // Ten entered by hand and four out: nothing to average over, so what left would cost zero. A purchase or an opening value gives a price.
+    const result = closeMonth(
+      [
+        item('LOOSE', [{ date: '2026-10-02', quantity: '10', value: null }, { date: '2026-10-05', quantity: '-4', value: null }]),
+        item('BOUGHT', [{ date: '2026-10-02', quantity: '10', value: '1000' }, { date: '2026-10-05', quantity: '-4', value: null }]),
+        item('OPENED', [{ date: '2026-10-05', quantity: '-1', value: null }], { opening: { quantity: '4', value: '400' } }),
+        item('RETURNED', [{ date: '2026-10-05', quantity: '2', value: null }]),
+      ],
+      '2026-10',
+    );
+    expect(result.unpriced.map((u) => [u.code, u.outQuantity])).toEqual([
+      ['LOOSE', '-6'],
+      ['RETURNED', '-2'],
+    ]);
+  });
+
   it('writes the voucher date and description of a month', () => {
     expect(monthEnd('2026-02')).toBe('2026-02-28');
     expect(monthEnd('2028-02')).toBe('2028-02-29');

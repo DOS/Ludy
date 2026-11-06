@@ -211,16 +211,29 @@ suite('the stock month close command (#2513)', () => {
     await move(o, negative, '2026-06-15', '-4');
     await expect(ask(o, '2026-06')).rejects.toMatchObject({ code: 'STOCK_CLOSE_NEGATIVE' });
     await expect(execute(o, 'finance.stock.close_empty', { month: '2026-06' })).rejects.toMatchObject({ code: 'STOCK_CLOSE_NEGATIVE' });
-    // Without a cost there is no entry to approve: asking is refused and the owner closes the month at once; a member may not, and a viewer neither.
+    // Moves that carry no value to price them at are not closed on: what left would be costed at zero.
+    const unpriced = await org();
+    const loose = await makeItem(unpriced, 'U');
+    await move(unpriced, loose, '2026-06-10', '10');
+    await move(unpriced, loose, '2026-06-12', '-4');
+    await expect(ask(unpriced, '2026-06')).rejects.toMatchObject({ code: 'STOCK_CLOSE_UNPRICED' });
+    await expect(execute(unpriced, 'finance.stock.close_empty', { month: '2026-06' })).rejects.toMatchObject({ code: 'STOCK_CLOSE_UNPRICED' });
+    // Without a cost there is no entry to approve: asking is refused and the owner closes the month at once; a member may not, and a viewer neither. September holds nothing but what August carried.
     const quiet = await org();
     const goods = await makeItem(quiet, 'Q');
-    await move(quiet, goods, '2026-06-10', '5');
-    await expect(ask(quiet, '2026-06')).rejects.toMatchObject({ code: 'STOCK_CLOSE_NO_COST' });
-    await expect(execute(quiet, 'finance.stock.close_empty', { month: '2026-06' }, quiet.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    await expect(execute(quiet, 'finance.stock.close_empty', { month: '2026-06' }, quiet.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
-    expect(await execute(quiet, 'finance.stock.close_empty', { month: '2026-06' })).toMatchObject({ periodId: expect.any(String), items: 1 });
-    expect(await query<Array<{ month: string; totalCost: string; voucherId: string | null }>>(quiet, 'finance.stock.periods', {})).toEqual([expect.objectContaining({ month: '2026-06', totalCost: '0', voucherId: null })]);
-    await expect(move(quiet, goods, '2026-06-20', '1')).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
+    await move(quiet, goods, '2026-08-05', '5');
+    await seedClosed(quiet, '2026-08', goods);
+    await expect(ask(quiet, '2026-09')).rejects.toMatchObject({ code: 'STOCK_CLOSE_NO_COST' });
+    await expect(execute(quiet, 'finance.stock.close_empty', { month: '2026-09' }, quiet.member)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(execute(quiet, 'finance.stock.close_empty', { month: '2026-09' }, quiet.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(await execute(quiet, 'finance.stock.close_empty', { month: '2026-09' })).toMatchObject({ periodId: expect.any(String), items: 1 });
+    expect(await query<Array<{ month: string; totalCost: string; voucherId: string | null }>>(quiet, 'finance.stock.periods', {})).toEqual([
+      expect.objectContaining({ month: '2026-09', totalCost: '0', voucherId: null }),
+      expect.objectContaining({ month: '2026-08', totalCost: '0', voucherId: null }),
+    ]);
+    await expect(move(quiet, goods, '2026-09-20', '1')).rejects.toThrow(/STOCK_PERIOD_CLOSED/);
+    // August is closed and September after it, so a month before them is not closed on its own (the message names the later one).
+    await expect(execute(quiet, 'finance.stock.close_empty', { month: '2026-07' })).rejects.toMatchObject({ code: 'STOCK_CLOSE_DONE' });
     // A month with a cost does not close without its approval.
     const costly = await org();
     const widget = await makeItem(costly, 'C');

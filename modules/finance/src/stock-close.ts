@@ -25,8 +25,9 @@ import {
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { closeDescription, closeMonth, monthEnd, stockMoveLockKey, type CloseItem, type CloseResult } from './domain/stock-close.ts';
+import { assertUsableAccounts } from './accounts.ts';
 import { nextMonth, previousMonth } from './domain/stock-cost.ts';
-import { journalVoucherTitle } from './domain/journal-voucher.ts';
+import { journalVoucherProblems, journalVoucherTitle } from './domain/journal-voucher.ts';
 import { postJournalVoucher } from './journal-voucher.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday, dateLabel, periodLockedThrough } from './period-lock.ts';
@@ -62,12 +63,15 @@ async function build(ctx: QueryContext, month: string, legalEntityId: string): P
     SELECT pg_catalog.to_char(p.period_month, 'YYYY-MM') AS month FROM crove_finance.stock_period p
     WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${legalEntityId}::uuid AND p.period_month >= ${`${month}-01`}::date
     ORDER BY p.period_month LIMIT 1`.execute(ctx.trx);
-  if (later[0]) throw new DomainError('STOCK_CLOSE_DONE', 409, `Tháng ${label(month)} đã đóng sổ kho rồi`, { month });
+  if (later[0]) {
+    const same = later[0].month === month;
+    throw new DomainError('STOCK_CLOSE_DONE', 409, same ? `Tháng ${label(month)} đã đóng sổ kho rồi` : `Tháng ${label(later[0].month)} đã đóng sổ kho nên tháng ${label(month)} không đóng riêng được`, { month });
+  }
   const closed = await closedMonths(ctx, previousMonth(month), legalEntityId);
   const last = closed.lastByEntity.get(legalEntityId);
-  const moves = await movesUpTo(ctx, month, { legalEntityId });
-  // Months close in order: no move may sit between the last closed month and this one.
+  // Months close in order: no move may sit between the last closed month and this one. Only the moves after the last closed month are read, the closed ones are stored.
   const gapFrom = last === undefined ? '0000-01-01' : `${nextMonth(last)}-01`;
+  const moves = await movesUpTo(ctx, month, { legalEntityId, ...(last === undefined ? {} : { from: gapFrom }) });
   const gap = moves.find((m) => m.move_date >= gapFrom && m.move_date < `${month}-01`);
   if (gap) {
     const earlier = gap.move_date.slice(0, 7);
@@ -109,6 +113,15 @@ async function build(ctx: QueryContext, month: string, legalEntityId: string): P
       { items: result.negative.slice(0, 50).map((n) => ({ itemId: n.itemId, code: n.code, closingQuantity: n.closingQuantity })), count: result.negative.length },
     );
   }
+  if (result.unpriced.length > 0) {
+    const named = result.unpriced.slice(0, 5).map((n) => n.code).join(', ');
+    throw new DomainError(
+      'STOCK_CLOSE_UNPRICED',
+      422,
+      `Mặt hàng ${named}${result.unpriced.length > 5 ? '…' : ''} có xuất hoặc nhập lại trong tháng ${label(month)} nhưng chưa có giá trị để tính giá vốn (chưa có hóa đơn mua ghi giá trị); hãy nhập hóa đơn mua của mặt hàng trước khi đóng sổ`,
+      { items: result.unpriced.slice(0, 50).map((n) => ({ itemId: n.itemId, code: n.code, outQuantity: n.outQuantity })), count: result.unpriced.length },
+    );
+  }
   return { month, legalEntityId, result, hash: fingerprint(result) };
 }
 
@@ -120,6 +133,15 @@ async function assertLedgerOpen(ctx: QueryContext, month: string, legalEntityId:
       entryDate: monthEnd(month),
     });
   }
+}
+
+// The entry is checked the way a voucher entered by hand is, when it is asked for and again when it is posted: its lines are sound and its accounts exist in the org's chart and are in use
+// (a stock sub-account deactivated since the items were booked is refused here, not posted to).
+async function assertPostable(ctx: QueryContext, built: Built) {
+  const lines = built.result.lines.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
+  const problems = journalVoucherProblems(lines);
+  if (problems.length > 0) throw new DomainError('STOCK_CLOSE_UNSUPPORTED', 422, `Không lập được bút toán giá vốn tháng ${label(built.month)}: bút toán không hợp lệ`, { problems });
+  await assertUsableAccounts(ctx, lines.map((l) => l.account));
 }
 
 function proposalOf(built: Built): StockCloseProposal {
@@ -209,6 +231,7 @@ export const prepareStockClose = defineCommand({
       throw new DomainError('STOCK_CLOSE_NO_COST', 422, `Tháng ${label(month)} không có giá vốn để ghi sổ; đóng sổ kho tháng này trực tiếp, không cần duyệt`);
     }
     await assertLedgerOpen(ctx, month, legalEntityId);
+    await assertPostable(ctx, built);
     const payload = proposalOf(built);
     return { kind: JOURNAL_VOUCHER_KIND, command: STOCK_CLOSE_COMMAND, title: journalVoucherTitle(payload), payload };
   },
@@ -228,6 +251,7 @@ export const recordStockClose = defineCommand({
     await lockEntityMoves(ctx, legalEntityId);
     const built = await build(ctx, month, legalEntityId);
     await assertLedgerOpen(ctx, month, legalEntityId);
+    await assertPostable(ctx, built);
     // The figures are built again from the moves as they read now; a move written since the proposal was made changes them, and the proposal is refused rather than posting a cost
     // that leaves the month's stock behind.
     if (built.result.lines.length === 0 || !sameProposal(proposalOf(built), payload)) {

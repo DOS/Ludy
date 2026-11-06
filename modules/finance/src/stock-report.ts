@@ -30,7 +30,8 @@ interface MoveRow {
 }
 
 // The moves of the org's items (an entity's, or every entity the caller sees) up to the end of `month`, in order, each with the value it brought in.
-export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month: string, filter: { legalEntityId?: string | undefined; itemId?: string | undefined }): Promise<MoveRow[]> {
+// `from` leaves out the moves before that date (a close reads only the months after the last closed one, whose figures are stored).
+export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month: string, filter: { legalEntityId?: string | undefined; itemId?: string | undefined; from?: string | undefined }): Promise<MoveRow[]> {
   const before = `${nextMonth(month)}-01`;
   const { rows } = await sql<MoveRow>`
     SELECT m.id::text AS id, m.item_id::text AS item_id, m.move_date::text AS move_date, m.quantity::text AS quantity, m.source_type, m.document_id::text AS document_id, m.line_no,
@@ -48,6 +49,7 @@ export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month:
     JOIN crove_finance.stock_item i ON i.org_id = m.org_id AND i.id = m.item_id
     WHERE m.org_id = ${ctx.orgId}::uuid
       AND m.move_date < ${before}::date
+      AND (${filter.from ?? null}::date IS NULL OR m.move_date >= ${filter.from ?? null}::date)
       AND (${filter.legalEntityId ?? null}::uuid IS NULL OR i.legal_entity_id = ${filter.legalEntityId ?? null}::uuid)
       AND (${filter.itemId ?? null}::uuid IS NULL OR m.item_id = ${filter.itemId ?? null}::uuid)
     ORDER BY m.item_id, m.move_date, m.id`.execute(ctx.trx);

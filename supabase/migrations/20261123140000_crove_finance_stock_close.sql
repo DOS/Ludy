@@ -3,7 +3,7 @@
 -- The close prices every stock-out of the month at the month's weighted average and posts one entry, Dr 632 / Cr the stock accounts, through the proposal path (the command is in
 -- modules/finance/src/stock-close.ts); this file holds what it leaves behind and the guard that keeps a closed month closed.
 --
--- stock_period       one closed month of one legal entity: the first day of the month, the voucher that posted its cost (empty when nothing went out) and the cost. Unique per entity
+-- stock_period       one closed month of one legal entity: the first day of the month, the voucher that posted its cost (empty when nothing went out) and the total of that entry (its debits). Unique per entity
 --                    and month. APPEND-ONLY, like the books it belongs to: no role updates or deletes a row, and the org purge keeps it with the ledger.
 -- stock_period_item  what that month held of one item: opening, in, out and closing quantity and value, and the unit cost the month's average gave (empty when there was no quantity to
 --                    spread the value over). Append-only too. A report of a closed month reads these rows, and the month after opens with their closing.
@@ -65,7 +65,10 @@ LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
   v_from date;
 BEGIN
-  IF NEW.period_month + interval '1 month' > current_date THEN
+  -- Serialized with the moves of the entity (the lock writeStockMove and the close take, stock-close.ts), whoever writes the period: moves being written commit first, the ones after see it.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('crove_finance.stock_move:' || NEW.org_id::text || ':' || NEW.legal_entity_id::text, 0));
+  -- The day by the clock the app uses (Vietnam), so a month that just ended can be closed in the first hours of its successor.
+  IF NEW.period_month + interval '1 month' > (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date THEN
     RAISE EXCEPTION 'STOCK_PERIOD_NOT_ENDED' USING ERRCODE = '23514';
   END IF;
   IF EXISTS (
@@ -112,6 +115,8 @@ CREATE TABLE IF NOT EXISTS crove_finance.stock_period_item (
   CONSTRAINT stock_period_item_item_fk FOREIGN KEY (org_id, legal_entity_id, item_id) REFERENCES crove_finance.stock_item (org_id, legal_entity_id, id)
 );
 CREATE INDEX IF NOT EXISTS stock_period_item_item_idx ON crove_finance.stock_period_item (org_id, legal_entity_id, item_id);
+-- Backs the foreign key to the period (org, entity, period): the unique key above leads with the item's period but not with the entity.
+CREATE INDEX IF NOT EXISTS stock_period_item_period_idx ON crove_finance.stock_period_item (org_id, legal_entity_id, period_id);
 CREATE INDEX IF NOT EXISTS stock_period_item_entity_idx ON crove_finance.stock_period_item (legal_entity_id, org_id);
 SELECT crove_kernel.apply_tenant_rls('crove_finance.stock_period_item', true);
 DROP TRIGGER IF EXISTS b_legal_entity ON crove_finance.stock_period_item;
@@ -136,6 +141,9 @@ SELECT crove_kernel.make_append_only('crove_finance.stock_period_item');
 CREATE OR REPLACE FUNCTION crove_finance.stock_move_closed_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
+  -- Shared with every other writer of a move of the entity and held to commit, so a close that is running (it holds the lock alone) is waited for and then seen, for a writer that does not
+  -- go through writeStockMove too.
+  PERFORM pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended('crove_finance.stock_move:' || NEW.org_id::text || ':' || NEW.legal_entity_id::text, 0));
   IF EXISTS (
        SELECT 1 FROM crove_finance.stock_period p
        WHERE p.org_id = NEW.org_id AND p.legal_entity_id = NEW.legal_entity_id AND p.period_month >= pg_catalog.date_trunc('month', NEW.move_date)::date) THEN

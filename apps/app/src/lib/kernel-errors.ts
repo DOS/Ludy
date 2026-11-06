@@ -426,6 +426,7 @@ export const KERNEL_ERROR_CODES = [
   // The close of a month of stock (#2513).
   'STOCK_CLOSE_NOT_ENDED',
   'STOCK_CLOSE_NEGATIVE',
+  'STOCK_CLOSE_UNPRICED',
   'STOCK_CLOSE_NO_COST',
   'STOCK_CLOSE_DONE',
   'STOCK_CLOSE_ORDER',

@@ -40,10 +40,10 @@ export interface StockMoveWrite {
     | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return' };
 }
 
-// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261123140000), so a move whose own date falls in one is written on the first
-// day after the last closed month, and the reversal of such a move on today: a correction is a move of the open month, never back-dated. The entity's lock is taken shared first,
-// so this read cannot miss a close that is running: it waits for it and then sees the month closed.
-async function openMoveDate(ctx: CommandContext, itemId: string, date: string, reversal: boolean): Promise<string> {
+// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261123140000), so a move whose own date falls in one is written on today, in the
+// open month, whatever its source: a correction is a move of the open month, never back-dated, and the two halves of a replacement (the reversal of the old document's moves and the moves of
+// the new one) land on the same day. The entity's lock is taken shared first, so this read cannot miss a close that is running: it waits for it and then sees the month closed.
+async function openMoveDate(ctx: CommandContext, itemId: string, date: string): Promise<string> {
   const item = await ctx.trx.selectFrom('crove_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
   // An item that is not there is refused by the insert, with the foreign key's own error.
   if (!item) return date;
@@ -53,12 +53,12 @@ async function openMoveDate(ctx: CommandContext, itemId: string, date: string, r
     WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid`.execute(ctx.trx);
   const firstOpen = rows[0]?.first_open ?? null;
   if (firstOpen === null || date >= firstOpen) return date;
-  return reversal ? databaseToday(ctx.trx) : firstOpen;
+  return databaseToday(ctx.trx);
 }
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
   const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
-  const date = await openMoveDate(ctx, move.itemId, move.date, move.source.type === 'reversal');
+  const date = await openMoveDate(ctx, move.itemId, move.date);
   // The try of a line: one more than the moves it already made (the database accepts it only when the one before was reversed, and keeps two writers from taking the same).
   const attempt =
     move.source.type === 'document_line'

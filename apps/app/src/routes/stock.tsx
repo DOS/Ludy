@@ -18,9 +18,10 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 import { exportQuery } from '../lib/legal-entity-choice.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
@@ -285,7 +286,12 @@ function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEn
   return confirming ? (
     <Card className="mb-4 block p-4" data-testid="stock-close-confirm">
       <p className="max-w-3xl text-sm text-foreground">{t('closeWarning', { month })}</p>
-      {close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>}
+      {isStepUpRequired(close.error) ? (
+        // Closing a month with no cost is R3 (a closed month is not reopened): a second factor of the last 5 minutes, then the same request again.
+        <StepUpPrompt action={t('closeStepUp', { month })} onVerified={() => close.mutate()} onCancel={() => close.reset()} />
+      ) : (
+        close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
+      )}
       <div className="mt-3 flex gap-2">
         <Button loading={close.isPending} onClick={() => close.mutate()} data-testid="stock-close-submit">
           {t('closeSubmit')}
@@ -317,8 +323,11 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
   const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
   // The month is closed when every item the report shows is read from what a close stored.
   const closedAll = report.data !== undefined && report.data.length > 0 && report.data.every((r) => r.closed);
+  // The entity a close is for: the one chosen in the shell, or the only one the report shows. With several on screen and none chosen, none is closed from here.
+  const shown = new Set((report.data ?? []).map((r) => r.legalEntityId));
+  const closeEntity = legalEntityId ?? (shown.size === 1 ? [...shown][0] : undefined);
   // A month that is over and not closed can be closed by anyone who writes stock.
-  const closable = canWrite && valid && month < vietnamToday().slice(0, 7) && !closedAll && report.data !== undefined && report.data.length > 0;
+  const closable = canWrite && valid && closeEntity !== undefined && month < vietnamToday().slice(0, 7) && !closedAll && report.data !== undefined && report.data.length > 0;
   return (
     <section className="mt-10" aria-label={t('reportTitle')} data-testid="stock-report">
       <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
@@ -342,7 +351,7 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
         </div>
       </div>
       {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
-      {closable && <CloseMonthCard key={`${month}-${legalEntityId ?? 'all'}`} month={month} legalEntityId={legalEntityId} slug={slug} />}
+      {closable && <CloseMonthCard key={`${month}-${closeEntity}`} month={month} legalEntityId={closeEntity} slug={slug} />}
       {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} legalEntityId={legalEntityId} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
         <TableSkeleton columns={12} />

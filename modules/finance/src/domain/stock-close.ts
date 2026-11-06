@@ -47,6 +47,9 @@ export interface CloseResult {
   items: CloseItemFigures[];
   // The items below zero at the month's end.
   negative: Array<{ itemId: string; code: string; name: string; closingQuantity: string }>;
+  // The items that moved without a value to price the move at (no opening value and no purchase to average over): what left them would be costed at zero and what came back would
+  // come back worth nothing, so a month is not closed on them.
+  unpriced: Array<{ itemId: string; code: string; name: string; outQuantity: string }>;
   // The entry: empty when no cost left the stock in the month. Whole dong, each line one side.
   lines: CloseLine[];
   // The debits of the entry (equal to its credits), or '0'.
@@ -67,6 +70,7 @@ export function closeMonth(items: readonly CloseItem[], month: string): CloseRes
     figured.push({ ...figures, itemId: item.itemId, code: item.code, name: item.name, unit: item.unit, stockAccount: item.stockAccount });
   }
   const negative = figured.filter((f) => money(f.closingQuantity).lessThan(0)).map((f) => ({ itemId: f.itemId, code: f.code, name: f.name, closingQuantity: f.closingQuantity }));
+  const unpriced = figured.filter((f) => f.unitCost === null && !money(f.outQuantity).isZero()).map((f) => ({ itemId: f.itemId, code: f.code, name: f.name, outQuantity: f.outQuantity }));
   // What left each stock account: positive is cost out of it (credit), negative is cost back into it (debit).
   const byAccount = new Map<string, ReturnType<typeof money>>();
   for (const f of figured) byAccount.set(f.stockAccount, (byAccount.get(f.stockAccount) ?? money(0)).plus(money(f.outValue)));
@@ -80,7 +84,7 @@ export function closeMonth(items: readonly CloseItem[], month: string): CloseRes
   }
   if (!net.isZero()) lines.push(net.greaterThan(0) ? { account: COGS_ACCOUNT, debit: plain(net), credit: '0' } : { account: COGS_ACCOUNT, debit: '0', credit: plain(net.negated()) });
   const total = lines.reduce((sum, l) => sum.plus(money(l.debit)), money(0));
-  return { items: figured, negative, lines, total: plain(total) };
+  return { items: figured, negative, unpriced, lines, total: plain(total) };
 }
 
 // The last day of `month` (YYYY-MM), the date of the entry.
