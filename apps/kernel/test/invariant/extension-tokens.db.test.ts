@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Security properties of extension tokens and PKCE auth codes (issue #2582, ADR-0047, AI Meeting Notes plan M8) on PostgreSQL 17:
-// - no login role (crove_app, crove_worker, crove_tenant, crove_definer_tenant, crove_auth_reader) and no org-chart agent
-//   context directly reads or writes crove_kernel.extension_token or crove_kernel.extension_auth_code (definer-only MACHINERY);
+// - no login role (crove_app, crove_worker, crove_tenant, crove_definer_tenant, crove_auth_reader, crove_prober, crove_reporter, public)
+//   and no org-chart agent context directly reads or writes crove_kernel.extension_token or crove_kernel.extension_auth_code (definer-only MACHINERY);
+// - relforcerowsecurity is false on MACHINERY tables; table owner is migration installer/admin, never any runtime login role;
 // - token_hash and code_hash are 32-byte SHA-256 digests (octet_length = 32), and extension tokens expire in at most 90 days;
-// - PKCE authorization codes are single-use, short-lived, and bound to (org_id, user_id, code_challenge);
+// - PKCE authorization codes are single-use, short-lived (<= 10 min), code_challenge_method = 'S256', and bound to (org_id, user_id, code_challenge);
 // - extension tokens are listed and revoked only by their owning member within that org; another member, owner/admin of
 //   another org, viewer, agent, and system context cannot list or revoke them;
-// - token verification fails immediately when revoked, expired, member removed from tenant_member, or member lacks the module's permission.
+// - verify_extension_token(bytea, text) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[]) or 0 rows;
+//   fails immediately when revoked, expired, member removed, demoted to viewer, user disabled, or scope mismatch;
+// - exchange_extension_auth_code(bytea, text, bytea) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz);
+//   neither raw auth code nor raw extension token is passed to SQL statements or query logs;
+// - agent_write_guard trigger is installed on both tables.
 // While crove_kernel.extension_token or crove_kernel.extension_auth_code do not exist yet (to_regclass is null), the tests pass cleanly with zero skipped tests.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
 // Set CROVE_TEST_ADMIN_URL to a superuser URL; each run makes its own database.
@@ -27,6 +32,17 @@ const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', impo
 const suite = ADMIN ? describe : describe.skip;
 
 const SYSTEM = { type: 'system' as const, component: 'kernel.agent' };
+
+const ALL_RUNTIME_ROLES = [
+  'public',
+  'crove_app',
+  'crove_worker',
+  'crove_tenant',
+  'crove_definer_tenant',
+  'crove_auth_reader',
+  'crove_prober',
+  'crove_reporter',
+];
 
 function sha256Buffer(data: string | Buffer): Buffer {
   return createHash('sha256').update(data).digest();
@@ -326,13 +342,30 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         );
         expect(pk.rows.map((r) => r.attname), `${tbl} primary key`).toEqual(['org_id', 'id']);
 
-        // RLS must be enabled and forced
-        const rls = await c.query<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>(
-          `SELECT relrowsecurity, relforcerowsecurity FROM pg_class WHERE oid = ('crove_kernel.' || $1)::regclass`,
+        // RLS must be enabled and relforcerowsecurity must be false (P0-1)
+        const rls = await c.query<{ relrowsecurity: boolean; relforcerowsecurity: boolean; relowner: string }>(
+          `SELECT c.relrowsecurity, c.relforcerowsecurity, pg_catalog.pg_get_userbyid(c.relowner) AS relowner
+           FROM pg_class c
+           WHERE c.oid = ('crove_kernel.' || $1)::regclass`,
           [tbl],
         );
         expect(rls.rows[0]?.relrowsecurity, `${tbl} relrowsecurity`).toBe(true);
-        expect(rls.rows[0]?.relforcerowsecurity, `${tbl} relforcerowsecurity`).toBe(true);
+        expect(rls.rows[0]?.relforcerowsecurity, `${tbl} relforcerowsecurity`).toBe(false);
+        expect(ALL_RUNTIME_ROLES, `${tbl} relowner must not be a runtime login role`).not.toContain(rls.rows[0]?.relowner);
+
+        // agent_write_guard trigger must be installed on both tables
+        const guard = await c.query<{ exists: boolean }>(
+          `SELECT EXISTS (
+             SELECT 1 FROM pg_trigger t
+             WHERE t.tgrelid = ('crove_kernel.' || $1)::regclass
+               AND t.tgname = 'agent_write_guard'
+               AND NOT t.tgisinternal
+               AND t.tgenabled = 'O'
+               AND t.tgfoid = 'crove_kernel.agent_write_guard()'::regprocedure
+           ) AS exists`,
+          [tbl],
+        );
+        expect(guard.rows[0]?.exists, `${tbl} must have agent_write_guard trigger installed`).toBe(true);
 
         // Foreign key to tenant(org_id)
         const fk = await c.query<{ conname: string }>(
@@ -359,28 +392,53 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       return;
     }
 
-    const RUNTIME_ROLES = ['crove_app', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'PUBLIC'];
     const TARGET_TABLES = ['extension_token', 'extension_auth_code'];
+    const TABLE_OPS = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'];
+    const COLUMN_OPS = ['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'];
 
     await admin(async (c) => {
       for (const tbl of TARGET_TABLES) {
-        for (const role of RUNTIME_ROLES) {
-          const privs = await c.query<{ privilege_type: string }>(
-            `SELECT privilege_type FROM information_schema.table_privileges
-             WHERE table_schema = 'crove_kernel' AND table_name = $1 AND grantee = $2`,
-            [tbl, role],
-          );
-          expect(privs.rows, `crove_kernel.${tbl} grants for ${role}`).toEqual([]);
+        for (const role of ALL_RUNTIME_ROLES) {
+          // Table-level privilege check
+          for (const op of TABLE_OPS) {
+            const priv = await c.query<{ has_priv: boolean }>(
+              `SELECT has_table_privilege($1, ('crove_kernel.' || $2)::regclass, $3) AS has_priv`,
+              [role, tbl, op],
+            );
+            expect(priv.rows[0]?.has_priv, `${role} must not have ${op} on ${tbl}`).toBe(false);
+          }
+          // Column-level privilege check
+          for (const op of COLUMN_OPS) {
+            const colPriv = await c.query<{ has_col_priv: boolean }>(
+              `SELECT has_any_column_privilege($1, ('crove_kernel.' || $2)::regclass, $3) AS has_col_priv`,
+              [role, tbl, op],
+            );
+            expect(colPriv.rows[0]?.has_col_priv, `${role} must not have column ${op} on ${tbl}`).toBe(false);
+          }
         }
       }
     });
 
-    // Verify direct SELECT/INSERT from crove_app and crove_worker fails
+    // Verify direct SELECT/INSERT from crove_app and crove_worker fails with 42501
     const appClient = new pg.Client({ connectionString: appUrl });
     await appClient.connect();
     try {
       await expect(appClient.query('SELECT * FROM crove_kernel.extension_token')).rejects.toMatchObject({ code: '42501' });
       await expect(appClient.query('SELECT * FROM crove_kernel.extension_auth_code')).rejects.toMatchObject({ code: '42501' });
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
+           VALUES ($1, $2, $3, $4, 'Probe', ARRAY['meetings'], now(), now() + interval '30 days', $3)`,
+          [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+      await expect(
+        appClient.query(
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'ch', 'S256', ARRAY['meetings'], 'Probe', now(), now() + interval '5 minutes')`,
+          [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
     } finally {
       await appClient.end();
     }
@@ -398,6 +456,11 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     await expect(
       run(agentA, async (c) => {
         return await c.query('SELECT * FROM crove_kernel.extension_token');
+      }),
+    ).rejects.toMatchObject({ code: '42501' });
+    await expect(
+      run(agentA, async (c) => {
+        return await c.query('SELECT * FROM crove_kernel.extension_auth_code');
       }),
     ).rejects.toMatchObject({ code: '42501' });
   });
@@ -427,11 +490,28 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         ),
       ).rejects.toThrow();
 
-      // 3. expires_at cannot exceed created_at + 90 days
+      // 3. expires_at cannot exceed created_at + 90 days for tokens
       await expect(
         c.query(
           `INSERT INTO crove_kernel.extension_token (org_id, id, user_id, token_hash, device_name, scopes, created_at, expires_at, created_by)
            VALUES ($1, $2, $3, $4, 'Overlong Expiry', ARRAY['meetings'], now(), now() + interval '91 days', $3)`,
+          [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
+        ),
+      ).rejects.toThrow();
+
+      // 4. auth code CHECK constraints: code_challenge_method must be S256, expires_at <= created_at + 10 minutes
+      await expect(
+        c.query(
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'challenge', 'plain', ARRAY['meetings'], 'Device', now(), now() + interval '5 minutes')`,
+          [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
+        ),
+      ).rejects.toThrow();
+
+      await expect(
+        c.query(
+          `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+           VALUES ($1, $2, $3, $4, 'challenge', 'S256', ARRAY['meetings'], 'Device', now(), now() + interval '11 minutes')`,
           [orgAId, randomUUID(), users.memberA1, randomBytes(32)],
         ),
       ).rejects.toThrow();
@@ -469,52 +549,124 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
 
     const hasExchangeProc = await admin(async (c) => {
       const res = await c.query<{ exists: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.exchange_extension_auth_code(text,text)') IS NOT NULL AS exists`,
+        `SELECT to_regprocedure('crove_kernel.exchange_extension_auth_code(bytea,text,bytea)') IS NOT NULL AS exists`,
       );
       return res.rows[0]?.exists === true;
     });
-    expect(hasExchangeProc, 'crove_kernel.exchange_extension_auth_code must exist once tables land').toBe(true);
+    expect(hasExchangeProc, 'crove_kernel.exchange_extension_auth_code(bytea, text, bytea) must exist once tables land').toBe(true);
 
     if (hasExchangeProc) {
-      await admin(async (c) => {
-        // Exchange with wrong verifier fails
-        await expect(
-          c.query(`SELECT crove_kernel.exchange_extension_auth_code($1, 'wrong-verifier-1234567890')`, [
-            authCodes.activeA1.raw,
-          ]),
-        ).rejects.toThrow();
+      // Call exchange as crove_app (appUrl)
+      const appClient = new pg.Client({ connectionString: appUrl });
+      await appClient.connect();
+      try {
+        const dummyTokenHash = randomBytes(32);
+
+        // Exchange with wrong verifier fails (raises or returns 0 rows)
+        const wrongVerifierRes = await appClient.query(
+          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, 'wrong-verifier-1234567890', $2)`,
+          [authCodes.activeA1.hash, dummyTokenHash],
+        ).catch(() => ({ rows: [] }));
+        expect(wrongVerifierRes.rows.length, 'wrong verifier must fail').toBe(0);
 
         // Exchange with expired code fails
-        await expect(
-          c.query(`SELECT crove_kernel.exchange_extension_auth_code($1, $2)`, [
-            authCodes.expiredA1.raw,
-            authCodes.expiredA1.verifier,
-          ]),
-        ).rejects.toThrow();
+        const expiredRes = await appClient.query(
+          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
+          [authCodes.expiredA1.hash, authCodes.expiredA1.verifier, dummyTokenHash],
+        ).catch(() => ({ rows: [] }));
+        expect(expiredRes.rows.length, 'expired code must fail').toBe(0);
 
         // Exchange with already consumed code fails
-        await expect(
-          c.query(`SELECT crove_kernel.exchange_extension_auth_code($1, $2)`, [
-            authCodes.consumedA1.raw,
-            authCodes.consumedA1.verifier,
-          ]),
-        ).rejects.toThrow();
+        const consumedRes = await appClient.query(
+          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
+          [authCodes.consumedA1.hash, authCodes.consumedA1.verifier, dummyTokenHash],
+        ).catch(() => ({ rows: [] }));
+        expect(consumedRes.rows.length, 'already consumed code must fail').toBe(0);
 
-        // Valid exchange succeeds
-        const res = await c.query<{ token: string }>(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2)`,
-          [authCodes.activeA1.raw, authCodes.activeA1.verifier],
+        // Valid exchange succeeds with fresh token hash
+        const newToken = makeToken();
+        const res = await appClient.query<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>(
+          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
+          [authCodes.activeA1.hash, authCodes.activeA1.verifier, newToken.hash],
         );
         expect(res.rows.length).toBe(1);
+        expect(res.rows[0]?.user_id).toBe(users.memberA1);
+        expect(res.rows[0]?.org_id).toBe(orgAId);
+        expect(res.rows[0]?.scopes).toEqual(['meetings']);
 
         // Re-exchange of the now-consumed code fails immediately (single-use enforced!)
-        await expect(
-          c.query(`SELECT crove_kernel.exchange_extension_auth_code($1, $2)`, [
-            authCodes.activeA1.raw,
-            authCodes.activeA1.verifier,
-          ]),
-        ).rejects.toThrow();
+        const replayRes = await appClient.query(
+          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
+          [authCodes.activeA1.hash, authCodes.activeA1.verifier, randomBytes(32)],
+        ).catch(() => ({ rows: [] }));
+        expect(replayRes.rows.length, 'replayed exchange must return 0 rows or throw').toBe(0);
+
+        // Newly exchanged token verifies immediately
+        const verifyRes = await appClient.query<{ token_id: string }>(
+          `SELECT * FROM crove_kernel.verify_extension_token($1, 'meetings')`,
+          [newToken.hash],
+        );
+        expect(verifyRes.rows.length).toBe(1);
+        expect(verifyRes.rows[0]?.token_id).toBe(res.rows[0]?.token_id);
+      } finally {
+        await appClient.end();
+      }
+    }
+
+    // Verify issue_extension_auth_code definer access control
+    const hasIssueProc = await admin(async (c) => {
+      const res = await c.query<{ exists: boolean }>(
+        `SELECT EXISTS (
+           SELECT 1 FROM pg_proc p
+           JOIN pg_namespace n ON n.oid = p.pronamespace
+           WHERE n.nspname = 'crove_kernel' AND p.proname = 'issue_extension_auth_code'
+         ) AS exists`,
+      );
+      return res.rows[0]?.exists === true;
+    });
+
+    if (hasIssueProc) {
+      // Member A1 can issue an auth code
+      const memberCode = makeAuthCode();
+      const issueRes = await run(memberA1, async (c) => {
+        return (
+          await c.query<{ id: string }>(
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device A1') AS id`,
+            [memberCode.hash, memberCode.challenge],
+          )
+        ).rows[0];
       });
+      expect(issueRes?.id).toBeDefined();
+
+      // Viewer A cannot issue an auth code
+      const viewerCode = makeAuthCode();
+      await expect(
+        run(viewerA, async (c) => {
+          return await c.query(
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Viewer') AS id`,
+            [viewerCode.hash, viewerCode.challenge],
+          );
+        }),
+      ).rejects.toThrow();
+
+      // System context and agent context cannot issue auth codes
+      await expect(
+        run(systemA, async (c) => {
+          return await c.query(
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Sys') AS id`,
+            [viewerCode.hash, viewerCode.challenge],
+          );
+        }),
+      ).rejects.toThrow();
+
+      await expect(
+        run(agentA, async (c) => {
+          return await c.query(
+            `SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Device Agent') AS id`,
+            [viewerCode.hash, viewerCode.challenge],
+          );
+        }),
+      ).rejects.toThrow();
     }
   });
 
@@ -608,7 +760,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const res = await c.query<{ revoked: boolean }>(
           `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
           [tokens.activeA1.id],
-        );
+        ).catch(() => ({ rows: [{ revoked: false }] }));
         return res.rows[0]?.revoked ?? false;
       });
       expect(crossMemberRevoke, 'member A2 revoking member A1 token must fail').toBe(false);
@@ -618,7 +770,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const res = await c.query<{ revoked: boolean }>(
           `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
           [tokens.activeA1.id],
-        );
+        ).catch(() => ({ rows: [{ revoked: false }] }));
         return res.rows[0]?.revoked ?? false;
       });
       expect(crossOrgRevoke, 'member B1 revoking Org A token must fail').toBe(false);
@@ -628,34 +780,84 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         const res = await c.query<{ revoked: boolean }>(
           `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
           [tokens.activeA1.id],
-        );
+        ).catch(() => ({ rows: [{ revoked: false }] }));
         return res.rows[0]?.revoked ?? false;
       });
       expect(viewerRevoke, 'viewer A revoking member A1 token must fail').toBe(false);
+
+      // Owner A cannot revoke Member A1's token (only token owner may revoke)
+      const ownerARevoke = await run(ownerA, async (c) => {
+        const res = await c.query<{ revoked: boolean }>(
+          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
+          [tokens.activeA1.id],
+        ).catch(() => ({ rows: [{ revoked: false }] }));
+        return res.rows[0]?.revoked ?? false;
+      });
+      expect(ownerARevoke, 'owner A revoking member A1 token must fail').toBe(false);
 
       // Owner B cannot revoke Org A's token
       const ownerBRevoke = await run(ownerB, async (c) => {
         const res = await c.query<{ revoked: boolean }>(
           `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
           [tokens.activeA1.id],
-        );
+        ).catch(() => ({ rows: [{ revoked: false }] }));
         return res.rows[0]?.revoked ?? false;
       });
       expect(ownerBRevoke, 'owner B revoking Org A token must fail').toBe(false);
 
-      // Member A1 can revoke their own token
-      const selfRevoke = await run(memberA1, async (c) => {
+      // System context cannot revoke member token
+      const sysRevoke = await run(systemA, async (c) => {
         const res = await c.query<{ revoked: boolean }>(
           `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
           [tokens.activeA1.id],
-        );
+        ).catch(() => ({ rows: [{ revoked: false }] }));
         return res.rows[0]?.revoked ?? false;
       });
-      expect(selfRevoke, 'member A1 revoking own token must succeed').toBe(true);
+      expect(sysRevoke, 'system context revoking member token must fail').toBe(false);
+
+      // Agent context cannot revoke member token
+      const agentRevoke = await run(agentA, async (c) => {
+        const res = await c.query<{ revoked: boolean }>(
+          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
+          [tokens.activeA1.id],
+        ).catch(() => ({ rows: [{ revoked: false }] }));
+        return res.rows[0]?.revoked ?? false;
+      });
+      expect(agentRevoke, 'agent context revoking member token must fail').toBe(false);
+
+      // Member A1 can revoke their own token: assert persistence inside transaction (P1-4)
+      await run(memberA1, async (c) => {
+        const selfRevoke = await c.query<{ revoked: boolean }>(
+          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
+          [tokens.activeA1.id],
+        );
+        expect(selfRevoke.rows[0]?.revoked, 'member A1 revoking own token must succeed').toBe(true);
+
+        // Verification immediately fails
+        const verifyRes = await c.query(
+          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+          [tokens.activeA1.hash],
+        );
+        expect(verifyRes.rows.length, 'token must fail verification immediately upon revocation').toBe(0);
+
+        // list_extension_tokens shows revoked_at is not null
+        const listRes = await c.query<{ id: string; revoked_at: string | null }>(
+          `SELECT id, revoked_at FROM crove_kernel.list_extension_tokens() WHERE id = $1`,
+          [tokens.activeA1.id],
+        );
+        expect(listRes.rows[0]?.revoked_at, 'revoked_at must be populated').not.toBeNull();
+
+        // Revoking a second time does not un-revoke or return true for active token
+        const secondRevoke = await c.query<{ revoked: boolean }>(
+          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
+          [tokens.activeA1.id],
+        );
+        expect(secondRevoke.rows[0]?.revoked, 'second revoke on already revoked token must return false').toBe(false);
+      });
     }
   });
 
-  it('refuses token verification when revoked, expired, member removed, or module permission lost', async () => {
+  it('refuses token verification when revoked, expired, member removed, demoted to viewer, or user disabled', async () => {
     if (!tables.extension_token) {
       expect(tables.extension_token).toBe(false);
       return;
@@ -663,60 +865,107 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
 
     const hasVerifyProc = await admin(async (c) => {
       const res = await c.query<{ exists: boolean }>(
-        `SELECT to_regprocedure('crove_kernel.verify_extension_token(bytea)') IS NOT NULL AS exists`,
+        `SELECT to_regprocedure('crove_kernel.verify_extension_token(bytea,text)') IS NOT NULL AS exists`,
       );
       return res.rows[0]?.exists === true;
     });
-    expect(hasVerifyProc, 'crove_kernel.verify_extension_token must exist once tables land').toBe(true);
+    expect(hasVerifyProc, 'crove_kernel.verify_extension_token(bytea, text) must exist once tables land').toBe(true);
 
     if (hasVerifyProc) {
-      await admin(async (c) => {
-        // Active token succeeds
-        const activeRes = await c.query<{ valid: boolean; org_id: string; user_id: string }>(
-          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea)`,
+      // Must run verification as crove_app (appUrl)
+      const appClient = new pg.Client({ connectionString: appUrl });
+      await appClient.connect();
+      try {
+        // Active token with matching scope succeeds
+        const activeRes = await appClient.query<{ token_id: string; org_id: string; user_id: string; scopes: string[] }>(
+          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
           [tokens.activeA2.hash],
         );
         expect(activeRes.rows.length).toBe(1);
-        expect(activeRes.rows[0]?.valid).toBe(true);
+        expect(activeRes.rows[0]?.token_id).toBe(tokens.activeA2.id);
         expect(activeRes.rows[0]?.org_id).toBe(orgAId);
         expect(activeRes.rows[0]?.user_id).toBe(users.memberA2);
+        expect(activeRes.rows[0]?.scopes).toEqual(['meetings']);
 
-        // Revoked token fails
-        const revokedRes = await c.query<{ valid: boolean }>(
-          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea)`,
-          [tokens.revokedA1.hash],
-        );
-        expect(revokedRes.rows[0]?.valid ?? false).toBe(false);
-
-        // Expired token fails
-        const expiredRes = await c.query<{ valid: boolean }>(
-          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea)`,
-          [tokens.expiredA1.hash],
-        );
-        expect(expiredRes.rows[0]?.valid ?? false).toBe(false);
-
-        // Token of removed member fails
-        await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [
-          orgAId,
-          users.memberA2,
-        ]);
-        const removedRes = await c.query<{ valid: boolean }>(
-          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea)`,
+        // Verification for ungranted scope returns 0 rows without throwing (CodeRabbit thread PRRT_kwDOT_fCws60WAoV)
+        const ungrantedScopeRes = await appClient.query(
+          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'crm'::text)`,
           [tokens.activeA2.hash],
         );
-        expect(removedRes.rows[0]?.valid ?? false).toBe(false);
+        expect(ungrantedScopeRes.rows.length, 'ungranted scope must return 0 rows').toBe(0);
 
-        // Verification for an ungranted scope is refused
-        const scopeRes = await c.query<{ valid: boolean }>(
-          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'crm'::text)`,
-          [tokens.activeA1.hash],
-        ).catch(() => ({ rows: [{ valid: false }] }));
-        expect(scopeRes.rows[0]?.valid ?? false).toBe(false);
-      });
+        // Revoked token fails (returns 0 rows)
+        const revokedRes = await appClient.query(
+          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+          [tokens.revokedA1.hash],
+        );
+        expect(revokedRes.rows.length, 'revoked token must return 0 rows').toBe(0);
+
+        // Expired token fails (returns 0 rows)
+        const expiredRes = await appClient.query(
+          `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+          [tokens.expiredA1.hash],
+        );
+        expect(expiredRes.rows.length, 'expired token must return 0 rows').toBe(0);
+
+        // P1-3: Test real post-issuance permission/eligibility loss
+        await admin(async (c) => {
+          // (a) Demoting member from 'member' to 'viewer' immediately causes verify_extension_token to return 0 rows
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [
+            orgAId,
+            users.memberA2,
+          ]);
+          const viewerVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [tokens.activeA2.hash],
+          );
+          expect(viewerVerify.rows.length, 'demoted member token must return 0 rows').toBe(0);
+
+          // Restore member role
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [
+            orgAId,
+            users.memberA2,
+          ]);
+          const restoredVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [tokens.activeA2.hash],
+          );
+          expect(restoredVerify.rows.length, 'restored member token must return 1 row').toBe(1);
+
+          // (b) Setting user_account.disabled_at = now() immediately causes verify_extension_token to return 0 rows
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA2]);
+          const disabledVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [tokens.activeA2.hash],
+          );
+          expect(disabledVerify.rows.length, 'disabled user token must return 0 rows').toBe(0);
+
+          // Restore active user
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.memberA2]);
+          const enabledVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [tokens.activeA2.hash],
+          );
+          expect(enabledVerify.rows.length, 're-enabled user token must return 1 row').toBe(1);
+
+          // (c) Removing member from tenant_member succeeds without FK restrict error and causes verify to return 0 rows
+          await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [
+            orgAId,
+            users.memberA2,
+          ]);
+          const removedVerify = await appClient.query(
+            `SELECT * FROM crove_kernel.verify_extension_token($1::bytea, 'meetings'::text)`,
+            [tokens.activeA2.hash],
+          );
+          expect(removedVerify.rows.length, 'removed member token must return 0 rows').toBe(0);
+        });
+      } finally {
+        await appClient.end();
+      }
     }
   });
 
-  it('secures definer functions: search_path pinned, no EXECUTE to PUBLIC, no secret hashes leaked', async () => {
+  it('secures definer functions: search_path pinned, no EXECUTE to PUBLIC, no secret hashes leaked, EXECUTE matrix correct', async () => {
     if (!tables.extension_token) {
       expect(tables.extension_token).toBe(false);
       return;
@@ -732,19 +981,52 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
            AND (p.proname LIKE '%extension_token%' OR p.proname LIKE '%extension_auth_code%')`,
       );
 
+      // P2-1: Must have at least 5 definers (exchange, issue, list, revoke, verify)
+      expect(definers.rows.length, 'at least 5 extension definer functions expected').toBeGreaterThanOrEqual(5);
+
       for (const d of definers.rows) {
-        // search_path must be pinned
+        // search_path must be pinned to pg_catalog, pg_temp
         expect(
-          d.proconfig?.some((cfg) => cfg.startsWith('search_path=')),
-          `${d.proname} must pin search_path`,
-        ).toBe(true);
+          d.proconfig,
+          `${d.proname} must pin search_path to pg_catalog, pg_temp`,
+        ).toContain('search_path=pg_catalog, pg_temp');
+
+        // Function return type must not leak token_hash or code_hash
+        const returnType = await c.query<{ rettype: string }>(
+          `SELECT pg_get_function_result($1::oid) AS rettype`,
+          [d.oid],
+        );
+        expect(returnType.rows[0]?.rettype, `${d.proname} return type must not leak token_hash`).not.toContain('token_hash');
+        expect(returnType.rows[0]?.rettype, `${d.proname} return type must not leak code_hash`).not.toContain('code_hash');
 
         // No EXECUTE to PUBLIC: check via function OID
         const pubAcl = await c.query<{ has_exec: boolean }>(
           `SELECT has_function_privilege('public', $1::oid, 'EXECUTE') AS has_exec`,
           [d.oid],
         );
-        expect(pubAcl.rows[0]?.has_exec, `${d.proname} PUBLIC EXECUTE`).toBe(false);
+        expect(pubAcl.rows[0]?.has_exec, `${d.proname} PUBLIC EXECUTE must be false`).toBe(false);
+      }
+
+      // Pre-context definers: verify_extension_token and exchange_extension_auth_code EXECUTE matrix
+      const preContextDefiners = definers.rows.filter(
+        (d) => d.proname === 'verify_extension_token' || d.proname === 'exchange_extension_auth_code',
+      );
+      for (const d of preContextDefiners) {
+        // crove_app has EXECUTE
+        const appExec = await c.query<{ has_exec: boolean }>(
+          `SELECT has_function_privilege('crove_app', $1::oid, 'EXECUTE') AS has_exec`,
+          [d.oid],
+        );
+        expect(appExec.rows[0]?.has_exec, `${d.proname} crove_app EXECUTE must be true`).toBe(true);
+
+        // Other runtime roles do NOT have EXECUTE
+        for (const role of ['public', 'crove_worker', 'crove_tenant', 'crove_definer_tenant', 'crove_auth_reader', 'crove_prober', 'crove_reporter']) {
+          const roleExec = await c.query<{ has_exec: boolean }>(
+            `SELECT has_function_privilege($1, $2::oid, 'EXECUTE') AS has_exec`,
+            [role, d.oid],
+          );
+          expect(roleExec.rows[0]?.has_exec, `${d.proname} ${role} EXECUTE must be false`).toBe(false);
+        }
       }
     });
   });
