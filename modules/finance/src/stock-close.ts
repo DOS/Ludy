@@ -42,7 +42,7 @@ const chunks = <T>(rows: readonly T[], size: number): T[][] => Array.from({ leng
 interface Built {
   month: string;
   legalEntityId: string;
-  result: CloseResult;
+  worked: CloseResult;
   // SHA-256 of the canonical figures of every item, in item order: what makes a proposal stale when one changed.
   hash: string;
 }
@@ -122,7 +122,7 @@ async function build(ctx: QueryContext, month: string, legalEntityId: string): P
       { items: result.unpriced.slice(0, 50).map((n) => ({ itemId: n.itemId, code: n.code, outQuantity: n.outQuantity })), count: result.unpriced.length },
     );
   }
-  return { month, legalEntityId, result, hash: fingerprint(result) };
+  return { month, legalEntityId, worked: result, hash: fingerprint(result) };
 }
 
 async function assertLedgerOpen(ctx: QueryContext, month: string, legalEntityId: string) {
@@ -138,7 +138,7 @@ async function assertLedgerOpen(ctx: QueryContext, month: string, legalEntityId:
 // The entry is checked the way a voucher entered by hand is, when it is asked for and again when it is posted: its lines are sound and its accounts exist in the org's chart and are in use
 // (a stock sub-account deactivated since the items were booked is refused here, not posted to).
 async function assertPostable(ctx: QueryContext, built: Built) {
-  const lines = built.result.lines.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
+  const lines = built.worked.lines.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
   const problems = journalVoucherProblems(lines);
   if (problems.length > 0) throw new DomainError('STOCK_CLOSE_UNSUPPORTED', 422, `Không lập được bút toán giá vốn tháng ${label(built.month)}: bút toán không hợp lệ`, { problems });
   await assertUsableAccounts(ctx, lines.map((l) => l.account));
@@ -148,10 +148,10 @@ function proposalOf(built: Built): StockCloseProposal {
   const payload = {
     date: monthEnd(built.month),
     description: closeDescription(built.month),
-    lines: built.result.lines.map((l) => ({ account: l.account, party: null, debit: l.debit, credit: l.credit })),
-    total: built.result.total,
+    lines: built.worked.lines.map((l) => ({ account: l.account, party: null, debit: l.debit, credit: l.credit })),
+    total: built.worked.total,
     closingMonth: built.month,
-    itemCount: built.result.items.length,
+    itemCount: built.worked.items.length,
     figuresHash: built.hash,
     legalEntityId: built.legalEntityId,
   };
@@ -187,12 +187,12 @@ async function storePeriod(ctx: CommandContext, built: Built, voucherId: string 
       legal_entity_id: built.legalEntityId,
       period_month: `${built.month}-01`,
       voucher_id: voucherId,
-      total_cost: built.result.total,
+      total_cost: built.worked.total,
       closed_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning('id')
     .executeTakeFirstOrThrow();
-  for (const batch of chunks(built.result.items, 500)) {
+  for (const batch of chunks(built.worked.items, 500)) {
     await ctx.trx
       .insertInto('crove_finance.stock_period_item')
       .values(
@@ -213,7 +213,7 @@ async function storePeriod(ctx: CommandContext, built: Built, voucherId: string 
       )
       .execute();
   }
-  ctx.audit({ month: built.month, legal_entity_id: built.legalEntityId, items: built.result.items.length, total: built.result.total, entry: voucherId !== null });
+  ctx.audit({ month: built.month, legal_entity_id: built.legalEntityId, items: built.worked.items.length, total: built.worked.total, entry: voucherId !== null });
   return period.id;
 }
 
@@ -227,7 +227,7 @@ export const prepareStockClose = defineCommand({
     // The legal entity whose stock is closed (#1280), stored with the proposal so the approver posts it there.
     const legalEntityId = await resolveLegalEntity(ctx, requested);
     const built = await build(ctx, month, legalEntityId);
-    if (built.result.lines.length === 0) {
+    if (built.worked.lines.length === 0) {
       throw new DomainError('STOCK_CLOSE_NO_COST', 422, `Tháng ${label(month)} không có giá vốn để ghi sổ; đóng sổ kho tháng này trực tiếp, không cần duyệt`);
     }
     await assertLedgerOpen(ctx, month, legalEntityId);
@@ -254,7 +254,7 @@ export const recordStockClose = defineCommand({
     await assertPostable(ctx, built);
     // The figures are built again from the moves as they read now; a move written since the proposal was made changes them, and the proposal is refused rather than posting a cost
     // that leaves the month's stock behind.
-    if (built.result.lines.length === 0 || !sameProposal(proposalOf(built), payload)) {
+    if (built.worked.lines.length === 0 || !sameProposal(proposalOf(built), payload)) {
       throw new DomainError('STOCK_CLOSE_STALE', 409, `Số liệu kho tháng ${label(month)} đã thay đổi từ khi lập đề xuất đóng sổ; hãy từ chối đề xuất này và lập lại`);
     }
     const posted = await postJournalVoucher(ctx, { ...payload, legalEntityId }, null, month);
@@ -274,11 +274,11 @@ export const closeEmptyStockMonth = defineCommand({
     const legalEntityId = await resolveLegalEntity(ctx, requested);
     await lockEntityMoves(ctx, legalEntityId);
     const built = await build(ctx, month, legalEntityId);
-    if (built.result.lines.length > 0) {
+    if (built.worked.lines.length > 0) {
       throw new DomainError('STOCK_CLOSE_HAS_COST', 409, `Tháng ${label(month)} có giá vốn cần ghi sổ; hãy lập đề xuất đóng sổ kho để chủ sở hữu hoặc quản trị viên duyệt`);
     }
     const periodId = await storePeriod(ctx, built, null);
-    return zStockCloseEmptyResult.parse({ periodId, items: built.result.items.length });
+    return zStockCloseEmptyResult.parse({ periodId, items: built.worked.items.length });
   },
 });
 
