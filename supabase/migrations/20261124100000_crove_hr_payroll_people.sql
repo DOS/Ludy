@@ -5,7 +5,7 @@
 --                              key (ADR-0017: `crove:s1:...` text made by ctx.seal under the reference `employee:<id>`; a shred of that key makes both unreadable while
 --                              the row stays as it is). No image of an identity document is stored anywhere. An employee is not an org member and has no login.
 -- crove_hr.payroll_employment  effective-dated terms: contract type, region, base wage. Append-only in the way contracts are: a raise is a new row, so a past month
---                              recomputes to the same figures. The org purge deletes them with the org (its own guard, as the task comments' and approvals').
+--                              recomputes to the same figures. The org purge deletes them with the org (the table's own guard lets only the purge delete).
 -- crove_hr.payroll_dependent   a dependent of an employee: name (pii), relation, the day the deduction starts and, when it stops, the day it ends.
 --
 -- Owners and admins only, in the database and not only in the commands: besides the tenant policy and the legal-entity scope every table has a second RESTRICTIVE
@@ -85,13 +85,33 @@ CREATE TABLE IF NOT EXISTS crove_hr.payroll_employment (
   CONSTRAINT payroll_employment_day_uq UNIQUE (org_id, employee_id, effective_from),
   CONSTRAINT payroll_employment_employee_fk FOREIGN KEY (org_id, legal_entity_id, employee_id) REFERENCES crove_hr.payroll_employee (org_id, legal_entity_id, id)
 );
+-- The composite foreign key's own index, and the order the newest terms are read in.
+CREATE INDEX IF NOT EXISTS payroll_employment_employee_idx ON crove_hr.payroll_employment (org_id, legal_entity_id, employee_id, effective_from);
 CREATE INDEX IF NOT EXISTS payroll_employment_entity_idx ON crove_hr.payroll_employment (legal_entity_id, org_id);
 SELECT crove_kernel.apply_tenant_rls('crove_hr.payroll_employment', true);
--- Append-only: reject_mutation for TRUNCATE, and for UPDATE and DELETE the purge-aware guard, which lets the org's purge delete a closing org's rows and nothing else.
+-- Append-only: reject_mutation for TRUNCATE, and for UPDATE and DELETE this module's own guard, which refuses every UPDATE and lets only the org's purge delete a closing org's rows
+-- (the checks of crove_kernel.purge_append_only_guard, which the invariant suite pins to two tables: the role that owns org_purge, the transaction-local mark it sets around these
+-- deletes, the worker login in the org's system context, the org offboarding). Nested, so every other caller meets only the catalog checks and the append-only error.
+CREATE OR REPLACE FUNCTION crove_hr.employment_append_only() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF TG_OP = 'DELETE'
+     AND (SELECT r.oid FROM pg_catalog.pg_roles r WHERE r.rolname = CURRENT_USER) = (SELECT p.proowner FROM pg_catalog.pg_proc p WHERE p.oid = 'crove_kernel.org_purge(integer)'::pg_catalog.regprocedure)
+     AND pg_catalog.current_setting('crove.org_purge', true) = OLD.org_id::text THEN
+    IF pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
+       AND crove_kernel.ctx_actor_type() = 'system'
+       AND crove_kernel.ctx_org_id() = OLD.org_id
+       AND EXISTS (SELECT 1 FROM crove_kernel.tenant t WHERE t.org_id = OLD.org_id AND t.status = 'offboarding') THEN
+      RETURN OLD;
+    END IF;
+  END IF;
+  RAISE EXCEPTION 'table %.% is append-only', TG_TABLE_SCHEMA, TG_TABLE_NAME USING ERRCODE = '42501';
+END $$;
+REVOKE ALL ON FUNCTION crove_hr.employment_append_only() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 SELECT crove_kernel.make_append_only('crove_hr.payroll_employment');
 DROP TRIGGER IF EXISTS append_only_row ON crove_hr.payroll_employment;
 CREATE TRIGGER append_only_row BEFORE UPDATE OR DELETE ON crove_hr.payroll_employment
-  FOR EACH ROW EXECUTE FUNCTION crove_kernel.purge_append_only_guard();
+  FOR EACH ROW EXECUTE FUNCTION crove_hr.employment_append_only();
 
 CREATE TABLE IF NOT EXISTS crove_hr.payroll_dependent (
   org_id uuid NOT NULL REFERENCES crove_kernel.tenant (org_id) ON DELETE CASCADE,

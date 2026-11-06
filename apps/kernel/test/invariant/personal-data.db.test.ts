@@ -72,27 +72,32 @@ suite('personal-data registry (#923)', () => {
     expect(unclassified, 'classify these in packages/kernel/src/personal-data.ts (PERSONAL_DATA_COLUMNS, or SEALED_COLUMNS for a column sealed under its subject key)').toEqual([]);
   });
 
-  // A sealed column holds sealed text, never a plain value: its type is text, and a CHECK on its table names it and the `crove:s1:` prefix, so listing a plain column as sealed
-  // to get past the name pattern fails here. Passes on main, where the list is empty.
-  it('lists a column as sealed only when it is text and its table checks for the sealed prefix', async () => {
+  // A sealed column holds sealed text, never a plain value: its type is text, and a single-column CHECK of its table, bound to the column by its attribute number (not by
+  // matching its name in the text), requires the `crove:s1:` prefix, so listing a plain column as sealed to get past the name pattern fails here. Passes on main, where the
+  // list is empty.
+  it('lists a column as sealed only when it is text and a CHECK on that column alone requires the sealed prefix', async () => {
     const problems: string[] = [];
     for (const place of Object.keys(SEALED_COLUMNS)) {
       const [schema, table, column] = place.split('.') as [string, string, string];
       const admin = new pg.Client({ connectionString: adminUrl });
       await admin.connect();
       try {
-        const { rows: types } = await admin.query<{ type: string }>(
-          `SELECT format_type(a.atttypid, a.atttypmod) AS type FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        const { rows: columns } = await admin.query<{ type: string; attnum: number; relid: number }>(
+          `SELECT format_type(a.atttypid, a.atttypmod) AS type, a.attnum, c.oid AS relid FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid = a.attrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = $1 AND c.relname = $2 AND a.attname = $3 AND a.attnum > 0 AND NOT a.attisdropped`,
           [schema, table, column],
         );
-        if (types[0]?.type !== 'text') problems.push(`${place} is ${types[0]?.type ?? 'missing'}, not text`);
-        const { rows: checks } = await admin.query<{ def: string }>(
-          `SELECT pg_get_constraintdef(k.oid) AS def FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE k.contype = 'c' AND n.nspname = $1 AND c.relname = $2`,
-          [schema, table],
+        const found = columns[0];
+        if (!found) {
+          problems.push(`${place} does not exist`);
+          continue;
+        }
+        if (found.type !== 'text') problems.push(`${place} is ${found.type}, not text`);
+        const { rowCount } = await admin.query(
+          `SELECT 1 FROM pg_catalog.pg_constraint k WHERE k.contype = 'c' AND k.conrelid = $1 AND $2 = ANY (k.conkey) AND cardinality(k.conkey) = 1 AND pg_get_constraintdef(k.oid) LIKE '%crove:s1:%'`,
+          [found.relid, found.attnum],
         );
-        if (!checks.some((k) => k.def.includes(column) && k.def.includes('crove:s1:'))) problems.push(`${place} has no CHECK naming it and crove:s1:`);
+        if (!rowCount) problems.push(`${place} has no CHECK on that column alone that requires crove:s1:`);
       } finally {
         await admin.end();
       }
