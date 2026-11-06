@@ -147,6 +147,10 @@ suite('the stock month close command (#2513)', () => {
     // The month is closed once.
     await expect(ask(o, '2026-09')).rejects.toMatchObject({ code: 'STOCK_CLOSE_DONE' });
     await expect(execute(o, 'finance.stock.close_empty', { month: '2026-09' })).rejects.toMatchObject({ code: 'STOCK_CLOSE_DONE' });
+    // The entry that posted the cost is not reversed: the month stays closed with its cost.
+    await expect(
+      rt.execute('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({ code: 'STOCK_CLOSE_ENTRY' });
 
     // The database keeps a move of any source out of a closed month, and before one.
     const entity = await entityOf(o);

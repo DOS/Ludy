@@ -20,7 +20,8 @@ import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, client, errorMessage, getCurrentOrg, orpc, queryClient } from '../lib/api.ts';
+import { exportQuery } from '../lib/legal-entity-choice.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
@@ -174,10 +175,27 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   );
 }
 
+// Downloads the stock report of a month as an Excel file, with the card of an item when one is named.
+function useStockExport(month: string, legalEntityId: string | undefined) {
+  const t = useTranslations('stock');
+  return useMutation({
+    mutationFn: async (itemId?: string) => {
+      const response = await apiFetch(`/api/export/stock.xlsx?${exportQuery({ month, ...(itemId ? { itemId } : {}) }, legalEntityId)}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('exportFile', { month, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+}
+
 // The stock card of an item for a month: its moves in order with the balance after each.
-function CardPanel({ item, month, onClose }: { item: { id: string; name: string; unit: string }; month: string; onClose: () => void }) {
+function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string; name: string; unit: string }; month: string; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('stock');
   const f = useFormat();
+  const exportXlsx = useStockExport(month, legalEntityId);
   const card = useQuery(orpc.stock.card.queryOptions({ input: { itemId: item.id, month } }));
   return (
     <Card className="mb-6 block p-4" data-testid="stock-card">
@@ -186,10 +204,16 @@ function CardPanel({ item, month, onClose }: { item: { id: string; name: string;
           {t('cardTitle', { name: item.name, month })}{' '}
           {card.data && <Badge variant={card.data.provisional ? 'secondary' : 'success'}>{card.data.provisional ? t('provisional') : t('closedBadge')}</Badge>}
         </h3>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          {t('close')}
-        </Button>
+        <span className="flex gap-1">
+          <Button variant="ghost" size="sm" loading={exportXlsx.isPending} onClick={() => exportXlsx.mutate(item.id)} data-testid="stock-card-export">
+            {t('export')}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            {t('close')}
+          </Button>
+        </span>
       </div>
+      {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {card.isPending ? (
         <TableSkeleton columns={5} />
       ) : card.error ? (
@@ -289,6 +313,7 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
   // The item whose card is open, taken from its row of the report: the report lists an item that is no longer in use when it has moves, and the item list above does not.
   const [cardOf, setCardOf] = useState<{ id: string; name: string; unit: string } | null>(null);
   const valid = /^20[0-9]{2}-(0[1-9]|1[0-2])$/.test(month);
+  const exportXlsx = useStockExport(month, legalEntityId);
   const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
   // The month is closed when every item the report shows is read from what a close stored.
   const closedAll = report.data !== undefined && report.data.length > 0 && report.data.every((r) => r.closed);
@@ -306,13 +331,19 @@ function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: stri
           </h2>
           <p className="max-w-3xl text-sm text-subtle-foreground">{t('reportHint')}</p>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="stock-month">{t('month')}</Label>
-          <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <div className="flex items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="stock-month">{t('month')}</Label>
+            <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </div>
+          <Button variant="outline" loading={exportXlsx.isPending} disabled={!valid || !report.data || report.data.length === 0} onClick={() => exportXlsx.mutate(undefined)} data-testid="stock-report-export">
+            {t('export')}
+          </Button>
         </div>
       </div>
+      {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {closable && <CloseMonthCard key={`${month}-${legalEntityId ?? 'all'}`} month={month} legalEntityId={legalEntityId} slug={slug} />}
-      {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} onClose={() => setCardOf(null)} />}
+      {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} legalEntityId={legalEntityId} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
         <TableSkeleton columns={12} />
       ) : report.error ? (

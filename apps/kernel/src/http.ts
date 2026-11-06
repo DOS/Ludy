@@ -23,6 +23,8 @@ import {
   accountParents,
   type FixedAsset,
   type MisaGoodsCode,
+  type StockCard,
+  type StockReportRow,
   type UploadPurpose,
 } from '@crove/kernel-contract';
 import {
@@ -55,6 +57,7 @@ import {
   buildStatementsWorkbook,
   buildStatementsHtkkXml,
   buildFixedAssetsWorkbook,
+  buildStockWorkbook,
   buildMisaWorkbook,
   buildVat01Xml,
   buildVatWorkbook,
@@ -1988,6 +1991,33 @@ export function createHttpApp(deps: HttpDeps) {
           headers: {
             'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'so-tai-san', ORG_SLUG], 'xlsx'),
+            'cache-control': 'private, no-store',
+          },
+        });
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+
+    // The stock reports of one month (#2513), ?month=2026-09: Nhập xuất tồn and, with &itemId=<id>, the stock card of that item. The queries check the month and the roles (422 and 403
+    // otherwise), so the file name only holds a valid month.
+    app.get('/api/export/stock.xlsx', async (c) => {
+      try {
+        const user = c.get('user');
+        const orgSlug = c.req.header(ORG_HEADER) ?? null;
+        const orgId = await resolveOrg(runtime, user, orgSlug);
+        const actor = actorOf(user);
+        const month = c.req.query('month') ?? '';
+        const itemId = c.req.query('itemId') || undefined;
+        const report = await runtime.query<StockReportRow[]>('finance.stock.report', { month, ...entityQuery(c) }, { actor, orgId });
+        const card = itemId ? await runtime.query<StockCard>('finance.stock.card', { itemId, month }, { actor, orgId }) : null;
+        const bytes = await buildStockWorkbook(month, report, card, orgSlug ?? '', config.BRAND_NAME);
+        // The export's audit row (the month, the number of items, whether a card is in it). No row, no download.
+        await runtime.execute('finance.stock.export', { month, items: report.length, card: card !== null, ...entityQuery(c) }, { actor, orgId });
+        return new Response(body(bytes), {
+          headers: {
+            'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'content-disposition': attachmentDisposition(orgSlug, [brandSlug(config.BRAND_NAME), 'nhap-xuat-ton', month, ORG_SLUG], 'xlsx'),
             'cache-control': 'private, no-store',
           },
         });
