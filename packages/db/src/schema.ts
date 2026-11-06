@@ -501,6 +501,9 @@ export type StockMoveTable = Refine<
   { source_type: ColumnType<StockMoveSource, StockMoveSource, G.NotGranted>; order_move: ColumnType<StockOrderMove | null, StockOrderMove | null | undefined, G.NotGranted>; legal_entity_id: LegalEntityColumn },
   'legal_entity_id'
 >;
+// The close of a month of stock (#2513): a closed month and what it held of each item, both append-only.
+export type StockPeriodTable = Refine<G.FinanceStockPeriodTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
+export type StockPeriodItemTable = Refine<G.FinanceStockPeriodItemTable, { legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderTable = Refine<G.FinanceChannelOrderTable, { platform: ColumnType<ChannelPlatform, ChannelPlatform, G.NotGranted>; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 export type ChannelOrderLineTable = Refine<G.FinanceChannelOrderLineTable, { stage: ChannelStage; legal_entity_id: LegalEntityColumn }, 'legal_entity_id'>;
 // A connection to an e-invoice provider (#2501): the result of its last test, as a state and never the provider's own text.
@@ -1028,6 +1031,8 @@ type Refined = Tables<{
   'crove_finance.channel_order_line': ChannelOrderLineTable;
   'crove_finance.stock_alias': StockAliasTable;
   'crove_finance.stock_move': StockMoveTable;
+  'crove_finance.stock_period': StockPeriodTable;
+  'crove_finance.stock_period_item': StockPeriodItemTable;
   'crove_finance.categorization_rule': CategorizationRuleTable;
   'crove_finance.chart': ChartTable;
   'crove_finance.legal_entity_books': LegalEntityBooksTable;

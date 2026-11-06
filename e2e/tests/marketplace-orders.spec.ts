@@ -80,4 +80,14 @@ test('an imported report waits for its shipped line to be assigned, then takes t
     await expect(page.getByTestId('stock-item')).not.toContainText('-3');
     await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).not.toContainText('AO01');
   });
+
+  await test.step('the month of the order cannot be closed while an item is below zero: the screen says so and nothing is closed (#2513)', async () => {
+    await page.locator('#stock-month').fill('2026-10');
+    await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
+    await page.getByTestId('stock-close-open').click();
+    await expect(page.getByTestId('stock-close-confirm')).toBeVisible();
+    await page.getByTestId('stock-close-submit').click();
+    await expect(page.getByTestId('stock-close-confirm')).toContainText('âm kho');
+    await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
+  });
 });

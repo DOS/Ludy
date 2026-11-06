@@ -77,6 +77,8 @@ export interface CroveFinanceSchema {
   'crove_finance.stock_alias': FinanceStockAliasTable;
   'crove_finance.stock_item': FinanceStockItemTable;
   'crove_finance.stock_move': FinanceStockMoveTable;
+  'crove_finance.stock_period': FinanceStockPeriodTable;
+  'crove_finance.stock_period_item': FinanceStockPeriodItemTable;
   'crove_finance.vat_return_filed': FinanceVatReturnFiledTable;
   'crove_finance.vendor_account_rule': FinanceVendorAccountRuleTable;
 }
@@ -957,6 +959,7 @@ export interface FinanceJournalVoucherTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   number_period: ColumnType<string, string | undefined, NotGranted>;
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
+  stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */
@@ -1191,6 +1194,36 @@ export interface FinanceStockMoveTable {
   order_line_id: ColumnType<string | null, string | null, NotGranted>;
   order_move: ColumnType<string | null, string | null, NotGranted>;
   order_attempt: ColumnType<number, number | undefined, NotGranted>;
+}
+
+/** crove_finance.stock_period_item */
+export interface FinanceStockPeriodItemTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  period_id: ColumnType<string, string, NotGranted>;
+  item_id: ColumnType<string, string, NotGranted>;
+  opening_quantity: ColumnType<string, string | undefined, NotGranted>;
+  opening_value: ColumnType<string, string | undefined, NotGranted>;
+  in_quantity: ColumnType<string, string | undefined, NotGranted>;
+  in_value: ColumnType<string, string | undefined, NotGranted>;
+  out_quantity: ColumnType<string, string | undefined, NotGranted>;
+  out_value: ColumnType<string, string | undefined, NotGranted>;
+  closing_quantity: ColumnType<string, string | undefined, NotGranted>;
+  closing_value: ColumnType<string, string | undefined, NotGranted>;
+  unit_cost: ColumnType<string | null, string | null, NotGranted>;
+}
+
+/** crove_finance.stock_period */
+export interface FinanceStockPeriodTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  legal_entity_id: ColumnType<string, string, NotGranted>;
+  period_month: ColumnType<string, string, NotGranted>;
+  voucher_id: ColumnType<string | null, string | null, NotGranted>;
+  total_cost: ColumnType<string, string | undefined, NotGranted>;
+  closed_by: ColumnType<string | null, string | null, NotGranted>;
+  closed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */

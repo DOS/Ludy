@@ -52,6 +52,18 @@ async function reversibleEntry(ctx: CommandContext, reversal: JournalReversal) {
   if (entry.reverses_entry_id !== null) {
     throw new DomainError('ENTRY_IS_REVERSAL', 422, 'Đây là bút toán đảo nên không đảo lại được; hãy ghi một bút toán mới');
   }
+  // The entry that posted the cost of a month of stock that was closed (#2513) stays: the month's figures were stored with it and a closed month is not reopened, so a mistake is put
+  // right with a move of a later month.
+  if (entry.source_type === 'finance.journal_voucher') {
+    const closing = await ctx.trx
+      .selectFrom('crove_finance.journal_voucher')
+      .select('id')
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', entry.source_id)
+      .where('stock_closing_month', 'is not', null)
+      .executeTakeFirst();
+    if (closing) throw new DomainError('STOCK_CLOSE_ENTRY', 409, 'Bút toán này ghi giá vốn của một tháng đã đóng sổ kho nên không đảo được; hãy sửa bằng phát sinh kho của tháng sau');
+  }
   const reversed = await ctx.trx
     .selectFrom('crove_finance.journal_entry')
     .select('id')

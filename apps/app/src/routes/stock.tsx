@@ -4,6 +4,7 @@
 // never edited: a correction is a reversing move. Stock only mirrors the books; nothing here changes an entry. The imported marketplace orders (#2515) list below the report, and
 // their shipped lines that named no item wait next to the invoice ones, assigned the same way.
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useTranslations } from 'use-intl';
 import { STOCK_TRADES, vietnamToday, type StockItem, type StockTradeKey, type StockUnassignedLine } from '@crove/kernel-contract';
@@ -17,9 +18,11 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { apiFetch, client, errorMessage, getCurrentOrg, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
+import { exportQuery } from '../lib/legal-entity-choice.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 
@@ -173,19 +176,45 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
   );
 }
 
+// Downloads the stock report of a month as an Excel file, with the card of an item when one is named.
+function useStockExport(month: string, legalEntityId: string | undefined) {
+  const t = useTranslations('stock');
+  return useMutation({
+    mutationFn: async (itemId?: string) => {
+      const response = await apiFetch(`/api/export/stock.xlsx?${exportQuery({ month, ...(itemId ? { itemId } : {}) }, legalEntityId)}`);
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = t('exportFile', { month, org: getCurrentOrg() ?? 'org' });
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+  });
+}
+
 // The stock card of an item for a month: its moves in order with the balance after each.
-function CardPanel({ item, month, onClose }: { item: { id: string; name: string; unit: string }; month: string; onClose: () => void }) {
+function CardPanel({ item, month, legalEntityId, onClose }: { item: { id: string; name: string; unit: string }; month: string; legalEntityId: string | undefined; onClose: () => void }) {
   const t = useTranslations('stock');
   const f = useFormat();
+  const exportXlsx = useStockExport(month, legalEntityId);
   const card = useQuery(orpc.stock.card.queryOptions({ input: { itemId: item.id, month } }));
   return (
     <Card className="mb-6 block p-4" data-testid="stock-card">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-base font-medium text-foreground">{t('cardTitle', { name: item.name, month })}</h3>
-        <Button variant="ghost" size="sm" onClick={onClose}>
-          {t('close')}
-        </Button>
+        <h3 className="text-base font-medium text-foreground">
+          {t('cardTitle', { name: item.name, month })}{' '}
+          {card.data && <Badge variant={card.data.provisional ? 'secondary' : 'success'}>{card.data.provisional ? t('provisional') : t('closedBadge')}</Badge>}
+        </h3>
+        <span className="flex gap-1">
+          <Button variant="ghost" size="sm" loading={exportXlsx.isPending} onClick={() => exportXlsx.mutate(item.id)} data-testid="stock-card-export">
+            {t('export')}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            {t('close')}
+          </Button>
+        </span>
       </div>
+      {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
       {card.isPending ? (
         <TableSkeleton columns={5} />
       ) : card.error ? (
@@ -216,30 +245,141 @@ function CardPanel({ item, month, onClose }: { item: { id: string; name: string;
   );
 }
 
-// Nhập xuất tồn for one month (the weighted average way, provisional): what each item opened, took in, sent out and closed with, in quantity and value.
-function ReportSection({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
+// Closes a month of stock (#2513): the cost of what left is posted as one entry that an owner or an admin approves in the Inbox, and a month with no cost closes at once. A closed month
+// is kept as it is: its report reads what the close stored and the stock takes no more moves dated in it.
+function CloseMonthCard({ month, legalEntityId, slug }: { month: string; legalEntityId: string | undefined; slug: string }) {
+  const t = useTranslations('stock');
+  const [confirming, setConfirming] = useState(false);
+  // A month with no cost has no entry to approve: after asking, the person is told so and confirms the direct close on its own.
+  const [direct, setDirect] = useState(false);
+  // One key per card: a retry of the same request returns the same proposal.
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const close = useMutation({
+    mutationFn: async (now: boolean): Promise<{ kind: 'requested'; proposalId: string } | { kind: 'needs_direct' } | { kind: 'closed' }> => {
+      if (!now) {
+        try {
+          const asked = await client.inbox.request({ command: 'finance.stock.close_period', idempotencyKey, input: { month, legalEntityId } });
+          return { kind: 'requested', proposalId: asked.proposalId };
+        } catch (error) {
+          if ((error as { code?: unknown } | null)?.code !== 'STOCK_CLOSE_NO_COST') throw error;
+          return { kind: 'needs_direct' };
+        }
+      }
+      await client.stock.closeEmpty({ month, legalEntityId });
+      return { kind: 'closed' };
+    },
+    onSuccess: (outcome) => {
+      if (outcome.kind === 'needs_direct') setDirect(true);
+    },
+    onSettled: () => void queryClient.invalidateQueries(),
+  });
+  const outcome = close.data;
+  if (outcome?.kind === 'requested' || outcome?.kind === 'closed') {
+    return (
+      <Alert className="mb-4" data-testid="stock-close-done">
+        <AlertDescription>
+          {outcome.kind === 'requested' ? (
+            <>
+              {t('closeRequested', { month })}{' '}
+              <Link to="/o/$slug/inbox/$id" params={{ slug, id: outcome.proposalId }} className="text-link underline">
+                {t('closeViewProposal')}
+              </Link>
+            </>
+          ) : (
+            t('closedNoCost', { month })
+          )}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+  const error = isStepUpRequired(close.error) ? (
+    // Closing a month with no cost is R3 (a closed month is not reopened): a second factor of the last 5 minutes, then the same request again.
+    <StepUpPrompt action={t('closeStepUp', { month })} onVerified={() => close.mutate(direct)} onCancel={() => close.reset()} />
+  ) : (
+    close.error && <ErrorText>{errorMessage(close.error)}</ErrorText>
+  );
+  return direct ? (
+    <Card className="mb-4 block p-4" data-testid="stock-close-direct">
+      <p className="max-w-3xl text-sm text-foreground">{t('closeDirectWarning', { month })}</p>
+      {error}
+      <div className="mt-3 flex gap-2">
+        <Button loading={close.isPending} onClick={() => close.mutate(true)} data-testid="stock-close-direct-submit">
+          {t('closeDirectSubmit')}
+        </Button>
+        <Button variant="ghost" onClick={() => setDirect(false)} disabled={close.isPending}>
+          {t('cancel')}
+        </Button>
+      </div>
+    </Card>
+  ) : confirming ? (
+    <Card className="mb-4 block p-4" data-testid="stock-close-confirm">
+      <p className="max-w-3xl text-sm text-foreground">{t('closeWarning', { month })}</p>
+      {error}
+      <div className="mt-3 flex gap-2">
+        <Button loading={close.isPending} onClick={() => close.mutate(false)} data-testid="stock-close-submit">
+          {t('closeSubmit')}
+        </Button>
+        <Button variant="ghost" onClick={() => setConfirming(false)} disabled={close.isPending}>
+          {t('cancel')}
+        </Button>
+      </div>
+    </Card>
+  ) : (
+    <div className="mb-4">
+      <Button variant="outline" onClick={() => setConfirming(true)} data-testid="stock-close-open">
+        {t('closeMonth', { month })}
+      </Button>
+    </div>
+  );
+}
+
+// Nhập xuất tồn for one month (the weighted average way, provisional until the month is closed): what each item opened, took in, sent out and closed with, in quantity and value.
+function ReportSection({ legalEntityId, ready, canWrite }: { legalEntityId: string | undefined; ready: boolean; canWrite: boolean }) {
   const t = useTranslations('stock');
   const f = useFormat();
+  const { slug } = useParams({ strict: false }) as { slug: string };
   const [month, setMonth] = useState(() => vietnamToday().slice(0, 7));
   // The item whose card is open, taken from its row of the report: the report lists an item that is no longer in use when it has moves, and the item list above does not.
   const [cardOf, setCardOf] = useState<{ id: string; name: string; unit: string } | null>(null);
   const valid = /^20[0-9]{2}-(0[1-9]|1[0-2])$/.test(month);
+  const exportXlsx = useStockExport(month, legalEntityId);
   const report = useQuery({ ...orpc.stock.report.queryOptions({ input: { month, legalEntityId } }), enabled: ready && valid });
+  // The months a person has closed: a month with no item to show is known closed from here.
+  const periods = useQuery({ ...orpc.stock.periods.queryOptions({ input: { legalEntityId } }), enabled: ready });
+  // The month is closed when every item the report shows is read from what a close stored, or when the entity has a closed period for it.
+  const rowsClosed = report.data !== undefined && report.data.length > 0 && report.data.every((r) => r.closed);
+  // The entity a close is for: the one chosen in the shell, or the only one the report shows. With several on screen and none chosen, none is closed from here.
+  const shown = new Set((report.data ?? []).map((r) => r.legalEntityId));
+  const closeEntity = legalEntityId ?? (shown.size === 1 ? [...shown][0] : undefined);
+  // A month that is over and not closed can be closed by anyone who writes stock.
+  const periodClosed = (periods.data ?? []).some((p) => p.month === month && (closeEntity === undefined || p.legalEntityId === closeEntity));
+  const closedAll = rowsClosed || periodClosed;
+  const closable = canWrite && valid && closeEntity !== undefined && month < vietnamToday().slice(0, 7) && !closedAll && report.data !== undefined;
   return (
     <section className="mt-10" aria-label={t('reportTitle')} data-testid="stock-report">
       <div className="mb-2 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-base font-medium text-foreground">
-            {t('reportTitle')} <Badge variant="secondary">{t('provisional')}</Badge>
+            {t('reportTitle')}{' '}
+            <Badge variant={closedAll ? 'success' : 'secondary'} data-testid="stock-report-state">
+              {closedAll ? t('closedBadge') : t('provisional')}
+            </Badge>
           </h2>
           <p className="max-w-3xl text-sm text-subtle-foreground">{t('reportHint')}</p>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="stock-month">{t('month')}</Label>
-          <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+        <div className="flex items-end gap-2">
+          <div className="space-y-1">
+            <Label htmlFor="stock-month">{t('month')}</Label>
+            <Input id="stock-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </div>
+          <Button variant="outline" loading={exportXlsx.isPending} disabled={!valid || !report.data || report.data.length === 0} onClick={() => exportXlsx.mutate(undefined)} data-testid="stock-report-export">
+            {t('export')}
+          </Button>
         </div>
       </div>
-      {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} onClose={() => setCardOf(null)} />}
+      {exportXlsx.error && <ErrorText>{errorMessage(exportXlsx.error)}</ErrorText>}
+      {closable && <CloseMonthCard key={`${month}-${closeEntity}`} month={month} legalEntityId={closeEntity} slug={slug} />}
+      {cardOf && valid && <CardPanel key={`${cardOf.id}-${month}`} item={cardOf} month={month} legalEntityId={legalEntityId} onClose={() => setCardOf(null)} />}
       {!valid ? null : report.isPending ? (
         <TableSkeleton columns={12} />
       ) : report.error ? (
@@ -470,7 +610,7 @@ export function StockPage() {
       )}
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
       {/* Keyed by the entity: the open card is dropped when the entity on screen changes. */}
-      <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
       <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
     </>
   );

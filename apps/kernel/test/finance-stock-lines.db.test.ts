@@ -345,6 +345,23 @@ suite('stock from document lines (#2512)', () => {
     ).rejects.toMatchObject({ code: '23514', message: expect.stringContaining('STOCK_LINE_VOIDED') });
   });
 
+  it('writes the reversal of a void on today when its date is in a closed month, never back in it', async () => {
+    const o = await org();
+    const item = await makeItem(o);
+    await teach(o, item, LINE_TWO, '3');
+    const posted = await post(o, invoice('7016'), '156');
+    const month = String((await moves(o, item))[0]?.date).slice(0, 7);
+    // The month of the document is closed after the document moved its stock (the rows a close leaves are written by the database owner).
+    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, `${month}-01`]);
+    const request = await execute<{ proposalId: string }>(o, 'kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: `${month}-28`, reason: 'Nhập nhầm' } }, o.admin);
+    await rt.execute('kernel.proposal.approve', { id: request.proposalId, revision: 1 }, { actor: asUser(o.owner), orgId: o.orgId, idempotencyKey: randomUUID() });
+    const [today] = await rows<{ today: string }>("SELECT (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today");
+    const list = await moves(o, item);
+    expect(list.find((m) => m.source === 'reversal')?.date).toBe(today?.today);
+    expect(await onHand(o, item)).toBe('0');
+  });
+
   it('lets a line assigned to the wrong item be reversed and assigned again, keeping the history; and a member who made a move can still be removed', async () => {
     const o = await org();
     const wrong = await makeItem(o, { code: 'A1', name: 'Nhầm', unit: 'Gói' });
