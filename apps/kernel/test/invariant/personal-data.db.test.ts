@@ -1,14 +1,15 @@
 // The personal-data registry against the database (issue #923, PDPL), on a real PostgreSQL 17. Every column of the
 // tenant schemas whose name looks like personal data (an email, a phone, an address, a tax code, a person's name, a
 // recipient) is classified in PERSONAL_DATA_COLUMNS (packages/kernel/src/personal-data.ts), so a new one cannot escape
-// an erasure request unclassified; and every classified column exists, so the list does not rot. Part of the invariant
+// an erasure request unclassified, or sealed under its subject's key and listed in SEALED_COLUMNS (ADR-0017: a column named for what it holds,
+// national_id_sealed, is checked like any other, never renamed to dodge the pattern); and every classified or sealed column exists, so the lists do not rot. Part of the invariant
 // suite: CI runs this file from the base branch on protected-path PRs (AGENTS.md). Set CROVE_TEST_ADMIN_URL to a
 // superuser URL; the run creates and drops its own database.
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { migrate } from '@crove/db/migrate';
-import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_NAME_PATTERN, PERSONAL_DATA_SCHEMAS } from '@crove/kernel';
+import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_NAME_PATTERN, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS } from '@crove/kernel';
 
 const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../../supabase/migrations', import.meta.url));
@@ -67,12 +68,12 @@ suite('personal-data registry (#923)', () => {
       CONTROL_PLANE,
     ]);
     expect(found.length).toBeGreaterThan(15);
-    const unclassified = found.filter((key) => !(key in PERSONAL_DATA_COLUMNS));
-    expect(unclassified, 'classify these in packages/kernel/src/personal-data.ts').toEqual([]);
+    const unclassified = found.filter((key) => !(key in PERSONAL_DATA_COLUMNS) && !(key in SEALED_COLUMNS));
+    expect(unclassified, 'classify these in packages/kernel/src/personal-data.ts (PERSONAL_DATA_COLUMNS, or SEALED_COLUMNS for a column sealed under its subject key)').toEqual([]);
   });
 
   it('lists only columns that exist', async () => {
-    const keys = Object.keys(PERSONAL_DATA_COLUMNS);
+    const keys = [...Object.keys(PERSONAL_DATA_COLUMNS), ...Object.keys(SEALED_COLUMNS)];
     const existing = new Set(await columns(`n.nspname || '.' || c.relname || '.' || a.attname = ANY($1::text[])`, [keys]));
     expect(keys.filter((key) => !existing.has(key))).toEqual([]);
   });
