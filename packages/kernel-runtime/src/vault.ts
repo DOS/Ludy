@@ -85,6 +85,10 @@ function decrypt(key: Buffer, iv: Buffer, tag: Buffer, ciphertext: Buffer, addit
 export interface CredentialBroker {
   readonly id: string;
   seal(secret: string, binding: CredentialBinding): SealedCredential;
+  // A key for another purpose from every key the broker opens, the current one first, each under the id the broker gives that key
+  // (HKDF-SHA256, `info` names the purpose): the root never leaves the broker, and what one purpose derives opens after a rotation
+  // while the old key is kept (the subject vault). Absent when the broker holds no key.
+  deriveKeys?(info: string): { id: string; key: Buffer }[];
   open(sealed: SealedCredential, binding: CredentialBinding): string;
   // A key for another purpose, derived from the broker's current key (HKDF-SHA256, `info` names the purpose), so the
   // root never leaves the broker and one purpose's key is no other's. Absent when the broker holds no key.
@@ -164,6 +168,10 @@ export class CredentialVault implements CredentialBroker {
     } finally {
       dataKey?.fill(0);
     }
+  }
+
+  deriveKeys(info: string): { id: string; key: Buffer }[] {
+    return [...this.keys].map(([id, key]) => ({ id, key: Buffer.from(hkdfSync('sha256', key, Buffer.alloc(0), info, KEY)) }));
   }
 
   // Whether an envelope was sealed with a key other than the current one (rotation: reseal it).
