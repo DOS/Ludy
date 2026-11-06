@@ -7750,6 +7750,7 @@ export const en = {
       NOTE_LINK_NOT_FOUND: 'This link was not found.',
       NOTE_LINK_TARGET_NOT_FOUND: 'The record to link was not found.',
       MEETING_NOT_FOUND: 'Meeting not found.',
+      FILE_TOO_LARGE: 'The uploaded meeting file exceeds the maximum allowed size (300 MB for audio, 2 GB for video).',
       TODO_NOT_FOUND: 'This to-do was not found.',
       TODO_IN_TRASH: 'This to-do is in the trash; restore it first.',
       TODO_REVISION_CONFLICT: 'This to-do was just changed elsewhere; reload it before saving.',

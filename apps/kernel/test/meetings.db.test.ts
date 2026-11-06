@@ -449,7 +449,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const auditCountAfterFull = await admin(async (c) =>
       Number((await c.query<{ count: string }>(
         `SELECT count(*)::text AS count FROM crove_kernel.audit_event
-         WHERE org_id = $1 AND action = 'meetings.meeting.audio_read' AND target_id = $2`,
+         WHERE org_id = $1 AND command = 'meetings.meeting.audio_read' AND target_id = $2`,
         [orgId, meetingId],
       )).rows[0]!.count),
     );
@@ -472,7 +472,7 @@ suite('meetings module database integration tests (#2576)', () => {
     const auditCountAfterMidRange = await admin(async (c) =>
       Number((await c.query<{ count: string }>(
         `SELECT count(*)::text AS count FROM crove_kernel.audit_event
-         WHERE org_id = $1 AND action = 'meetings.meeting.audio_read' AND target_id = $2`,
+         WHERE org_id = $1 AND command = 'meetings.meeting.audio_read' AND target_id = $2`,
         [orgId, meetingId],
       )).rows[0]!.count),
     );

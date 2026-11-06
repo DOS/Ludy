@@ -7747,6 +7747,7 @@ export const vi = {
       NOTE_LINK_NOT_FOUND: 'Không tìm thấy liên kết này',
       NOTE_LINK_TARGET_NOT_FOUND: 'Không tìm thấy bản ghi để gắn ghi chú',
       MEETING_NOT_FOUND: 'Không tìm thấy cuộc họp này',
+      FILE_TOO_LARGE: 'Tệp cuộc họp tải lên vượt quá dung lượng tối đa (300 MB với âm thanh, 2 GB với video)',
       TODO_NOT_FOUND: 'Không tìm thấy việc này',
       TODO_IN_TRASH: 'Việc này đang ở thùng rác; hãy khôi phục trước',
       TODO_REVISION_CONFLICT: 'Việc này vừa được sửa ở nơi khác; hãy tải lại trước khi lưu',
