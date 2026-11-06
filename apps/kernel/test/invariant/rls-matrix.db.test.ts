@@ -73,6 +73,9 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_hr.payroll_dependent',
+  'crove_hr.payroll_employee',
+  'crove_hr.payroll_employment',
   'crove_kernel.extension_auth_code',
   'crove_kernel.extension_token',
   'crove_meetings.action_item',
@@ -97,6 +100,10 @@ const PENDING_TABLES = new Set<string>([
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
+  // Payroll (ADR-0046 point 4, #2530) is read and written by an owner or admin of the org alone, in a user context: the system context sees and changes none of it.
+  ['crove_hr.payroll_dependent', 'false'],
+  ['crove_hr.payroll_employee', 'false'],
+  ['crove_hr.payroll_employment', 'false'],
   // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
   ['crove_meetings.action_item', 'false'],
   // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
@@ -1123,6 +1130,32 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
     },
   },
   // position is an SQL keyword, so the catalog prints the name quoted.
+  // #2530: a person on a payroll (ADR-0046), per legal entity (the org's default, by its trigger). Owners and admins alone read and write payroll, the system context none of it
+  // (AUTHOR_ONLY). Tenant roles update the name, the status and the stamp only, so the update probes assign the name to itself.
+  'crove_hr.payroll_dependent': {
+    update: { set: 'ended_on = ended_on' },
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, display_name: 'RLS matrix', relation: 'child', registered_on: '2026-11-01' },
+      };
+    },
+  },
+  'crove_hr.payroll_employee': {
+    update: { set: 'display_name = display_name' },
+    make: (o) => ({ row: { org_id: o.id, id: randomUUID(), display_name: 'RLS matrix' } }),
+  },
+  // The pay terms of a person from a date, append-only like a contract: a raise is a new row.
+  'crove_hr.payroll_employment': {
+    make: (o) => {
+      const employee = randomUUID();
+      return {
+        setup: [{ table: 'crove_hr.payroll_employee', values: { org_id: o.id, id: employee, display_name: 'RLS matrix' } }],
+        row: { org_id: o.id, id: randomUUID(), employee_id: employee, effective_from: '2026-11-01', contract_type: 'indefinite', region: 'I', base_wage: '10000000' },
+      };
+    },
+  },
   'crove_kernel."position"': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix seat', module: 'finance', role_key: 'finance.chief_accountant' } }),
   },
