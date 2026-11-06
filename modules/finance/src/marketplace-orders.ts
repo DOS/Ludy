@@ -449,6 +449,19 @@ export const marketplaceConfirm = defineCommand({
         touched.push({ id: row.id, stage: line.stage, quantity: line.quantity, shippedAt: line.shippedAt, orderedAt: line.orderedAt, sku: line.sku, attempt: 1 });
       }
       // Stock: the lines that move it and name an item, each once.
+      // The lines are held, in order, and their live attempt read again: a line taken back from its item since the report was read is at its next attempt now (#2633).
+      if (touched.length > 0) {
+        const live = await ctx.trx
+          .selectFrom('crove_finance.channel_order_line')
+          .select(['id', 'attempt'])
+          .where('org_id', '=', ctx.orgId)
+          .where('id', 'in', touched.map((l) => l.id))
+          .orderBy('id')
+          .forUpdate()
+          .execute();
+        const attemptOf = new Map(live.map((l) => [l.id, l.attempt] as const));
+        for (const l of touched) l.attempt = attemptOf.get(l.id) ?? l.attempt;
+      }
       const matches = await matchSkus(ctx, legalEntityId, platform, touched.flatMap((l) => (l.sku ? [l.sku] : [])));
       for (const line of touched) stockMoves += await moveLineStock(ctx, line, matches, today);
     } catch (error) {
@@ -701,7 +714,7 @@ export const marketplaceUnassign = defineCommand({
     let forgot = false;
     if (input.forget && line.sku && normalizeAlias(line.sku) !== '') {
       // Only the name that put the line on this item, at the factor the shipment used: a name taught for another item is a right one for the lines that carry it.
-      const factor = money(String(ship.quantity)).abs().dividedBy(money(String(line.quantity)));
+      const lineQuantity = movableQuantity(String(line.quantity));
       const alias = await ctx.trx
         .selectFrom('crove_finance.stock_alias')
         .select(['id', 'item_id', 'factor'])
@@ -710,7 +723,9 @@ export const marketplaceUnassign = defineCommand({
         .where('source', '=', line.platform)
         .where('alias_key', '=', normalizeAlias(line.sku))
         .executeTakeFirst();
-      if (alias && alias.item_id === ship.item_id && money(String(alias.factor)).equals(factor)) forgot = (await ctx.run<{ removed: boolean }>('finance.stock_alias.forget', { aliasId: alias.id })).removed;
+      // The quantity the name would have taken out for this line, made the way assign makes it: a rounded quantity cannot be divided back into the factor.
+      const would = lineQuantity === null || !alias ? null : moveQuantity('sale', lineQuantity, String(alias.factor));
+      if (alias && would !== null && alias.item_id === ship.item_id && money(would).equals(money(String(ship.quantity)))) forgot = (await ctx.run<{ removed: boolean }>('finance.stock_alias.forget', { aliasId: alias.id })).removed;
     }
     ctx.audit({ lineId: line.id, itemId: ship.item_id, platform: line.platform, moves, forgot });
     return { moves, forgot };

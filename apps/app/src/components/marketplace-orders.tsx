@@ -107,7 +107,11 @@ function UnassignButton({ lineId, hasSku }: { lineId: string; hasSku: boolean })
   const t = useTranslations('stock');
   const [confirming, setConfirming] = useState(false);
   const [forget, setForget] = useState(false);
-  const unassign = useMutation({ mutationFn: () => client.marketplace.unassign({ lineId, forget, idempotencyKey: crypto.randomUUID() }), onSuccess: refresh, onSettled: () => setConfirming(false) });
+  const unassign = useMutation({ mutationFn: () => client.marketplace.unassign({ lineId, forget, idempotencyKey: crypto.randomUUID() }), onSuccess: () => {
+      setConfirming(false);
+      return refresh();
+    },
+  });
   return confirming ? (
     <span className="ml-2 inline-flex flex-wrap items-center gap-2">
       {hasSku && (

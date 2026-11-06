@@ -349,6 +349,18 @@ suite('marketplace order reports (#2515)', () => {
     expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toHaveLength(1);
   });
 
+  it('forgets the name that put a line on its item even when the factor does not divide back from the rounded quantity', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-A');
+    await confirm(o, (await read(o, report(row('R1', 'Đang giao', 'MA-LA', 0.5)))).fileId);
+    const [open] = await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
+    // A third of a unit per unit of the report: half a unit goes out as 0.166667 (rounded), which divided by 0.5 is not 0.333333.
+    await execute(o, 'finance.marketplace.assign', { lineId: open?.lineId, itemId: item, factor: '0.333333', teach: true }, o.member);
+    expect(await onHand(o, item)).toBe('-0.166667');
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: open?.lineId, forget: true }, o.member)).toEqual({ moves: 1, forgot: true });
+    expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toHaveLength(0);
+  });
+
   it('has nothing to take back from a line cancelled after it shipped, whose stock came back by itself', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-A');
