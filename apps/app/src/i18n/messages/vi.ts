@@ -7696,6 +7696,17 @@ export const vi = {
       EVENT_TYPE_MEET_UNAVAILABLE: 'Chỉ người chủ trì đã kết nối Google Calendar và bật ghi lịch hẹn vào lịch mới chọn được Google Meet, cho loại lịch hẹn một người',
       BOOKING_PAGE_NOT_FOUND: 'Không tìm thấy trang đặt lịch này',
       BOOKING_REQUEST_NOT_FOUND: 'Không tìm thấy yêu cầu đặt lịch này',
+      HR_EMPLOYEE_NOT_FOUND: 'Không tìm thấy nhân viên này',
+      HR_EMPLOYEE_ENDED: 'Nhân viên này đã nghỉ việc',
+      HR_EMPLOYEE_NOT_ENDED: 'Chỉ xóa được hồ sơ của nhân viên đã nghỉ việc',
+      HR_EMPLOYEE_ERASED: 'Hồ sơ nhân viên này đã được xóa theo yêu cầu, không sửa được nữa',
+      HR_RETENTION_NOT_PASSED: 'Hồ sơ này chưa hết thời hạn lưu trữ nên chưa xóa được',
+      HR_EMPLOYMENT_NOT_NEWER: 'Ngày hiệu lực phải sau ngày hiệu lực của dòng gần nhất',
+      HR_END_BEFORE_START: 'Ngày nghỉ việc không thể trước ngày hiệu lực của dòng hợp đồng gần nhất',
+      HR_DEPENDENT_NOT_FOUND: 'Không tìm thấy người phụ thuộc này',
+      HR_DEPENDENT_ENDED: 'Người phụ thuộc này đã được kết thúc',
+      HR_DEPENDENT_END_BEFORE_START: 'Ngày kết thúc không thể trước ngày đăng ký',
+      HR_LEGAL_ENTITY_REQUIRED: 'Hãy chọn pháp nhân của nhân viên',
       NOTE_NOT_FOUND: 'Không tìm thấy ghi chú này',
       NOTE_AUTHOR_ONLY: 'Chỉ người viết ghi chú mới làm được việc này; với ghi chú dùng chung, chủ sở hữu và quản trị viên được ghim, lưu trữ hoặc xóa',
       NOTE_IN_TRASH: 'Ghi chú đang ở thùng rác; hãy khôi phục trước',
@@ -8677,6 +8688,25 @@ export const vi = {
         list: 'Xem danh sách chứng từ ghi sổ',
         purchases: 'Xem chứng từ mua vào',
         sales: 'Xem chứng từ bán ra',
+      },
+    },
+    hr: {
+      payroll: {
+        dependent: {
+          add: 'Thêm người phụ thuộc của nhân viên',
+          end: 'Kết thúc người phụ thuộc của nhân viên',
+        },
+        employee: {
+          add: 'Thêm nhân viên cùng dòng hợp đồng và lương đầu tiên',
+          edit: 'Sửa thông tin cá nhân của nhân viên',
+          end: 'Cho nhân viên nghỉ việc',
+          erase: 'Xóa hồ sơ nhân viên đã nghỉ sau thời hạn lưu trữ',
+          get: 'Xem hồ sơ một nhân viên, kể cả số căn cước và số tài khoản',
+          list: 'Xem danh sách nhân viên và lương cơ bản',
+        },
+        employment: {
+          add: 'Thêm dòng hợp đồng và lương có hiệu lực từ một ngày',
+        },
       },
     },
     kernel: {

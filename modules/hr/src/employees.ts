@@ -107,6 +107,7 @@ export const employeeAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   writes: [
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', EMPLOYEE_COLUMNS),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employment', EMPLOYMENT_COLUMNS),
@@ -176,6 +177,7 @@ export const employeeEdit = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'identity_sealed', 'account_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
@@ -211,6 +213,7 @@ export const employmentAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employment', EMPLOYMENT_COLUMNS)],
   handler: async (ctx, input): Promise<HrWritten> => {
@@ -261,6 +264,7 @@ export const employeeEnd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['status', 'ended_on', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
@@ -294,6 +298,7 @@ export const dependentAdd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', DEPENDENT_COLUMNS)],
   handler: async (ctx, input): Promise<HrWritten> => {
@@ -330,6 +335,7 @@ export const dependentEnd = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: MANAGERS,
+  permission: 'hr.payroll.run',
   target: (input: { dependentId: string }) => ({ type: 'hr.payroll_dependent', id: input.dependentId }),
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['ended_on'])],
   handler: async (ctx, input): Promise<HrWritten> => {

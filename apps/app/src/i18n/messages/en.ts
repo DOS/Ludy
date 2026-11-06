@@ -7699,6 +7699,17 @@ export const en = {
       EVENT_TYPE_MEET_UNAVAILABLE: 'Only the host, with Google Calendar connected and write-back on, can pick Google Meet, for a one-host event type.',
       BOOKING_PAGE_NOT_FOUND: 'This booking page was not found.',
       BOOKING_REQUEST_NOT_FOUND: 'This booking request was not found.',
+      HR_EMPLOYEE_NOT_FOUND: 'This employee was not found',
+      HR_EMPLOYEE_ENDED: 'This employee has left',
+      HR_EMPLOYEE_NOT_ENDED: 'Only an employee who has left can be erased',
+      HR_EMPLOYEE_ERASED: 'This record was erased on request and cannot be changed any more',
+      HR_RETENTION_NOT_PASSED: 'The retention period of this record is not over yet, so it cannot be erased',
+      HR_EMPLOYMENT_NOT_NEWER: 'The effective date must be after the effective date of the latest row',
+      HR_END_BEFORE_START: 'The last day of work cannot be before the start of the latest contract row',
+      HR_DEPENDENT_NOT_FOUND: 'This dependent was not found',
+      HR_DEPENDENT_ENDED: 'This dependent has already been ended',
+      HR_DEPENDENT_END_BEFORE_START: 'The end date cannot be before the registration date',
+      HR_LEGAL_ENTITY_REQUIRED: 'Choose the legal entity of the employee',
       NOTE_NOT_FOUND: 'This note was not found.',
       NOTE_AUTHOR_ONLY: 'Only the author can do this; owners and admins may also pin, archive or delete a shared note.',
       NOTE_IN_TRASH: 'This note is in the trash; restore it first.',
@@ -8680,6 +8691,25 @@ export const en = {
         list: 'List posted vouchers',
         purchases: 'List purchase vouchers',
         sales: 'List sales vouchers',
+      },
+    },
+    hr: {
+      payroll: {
+        dependent: {
+          add: "Add an employee's dependent",
+          end: "End an employee's dependent",
+        },
+        employee: {
+          add: 'Add an employee with the first contract and wage row',
+          edit: "Change an employee's personal details",
+          end: 'End an employee',
+          erase: 'Erase the record of an employee who left, after the retention period',
+          get: 'Open one employee, with the identity number and the account number',
+          list: 'List the employees and their base wage',
+        },
+        employment: {
+          add: 'Add a contract and wage row effective from a day',
+        },
       },
     },
     kernel: {

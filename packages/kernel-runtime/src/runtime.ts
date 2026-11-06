@@ -323,7 +323,7 @@ export interface ErasedValue {
   erased: true;
 }
 
-// A subject reference (`employee:<id>`) and the place of a sealed value (`crove_hr.payroll_employee.national_id`). A `contact:` reference is a keyed hash
+// A subject reference (`employee:<id>`) and the place of a sealed value (`<schema>.<table>.<column>`). A `contact:` reference is a keyed hash
 // (64 hex characters), never the email or number itself: the reference is stored in the clear.
 const SUBJECT_REF = /^(?:contact:[0-9a-f]{64}|(?!contact:)[a-z_]+:[A-Za-z0-9._-]{1,128})$/;
 const SEAL_PLACE = /^[a-z][a-z0-9_.:-]{2,120}$/;

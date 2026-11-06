@@ -13,10 +13,8 @@
   },
   "dependencies": {
     "@crove/db": "workspace:*",
-    "@crove/kernel": "workspace:*",
     "@crove/kernel-contract": "workspace:*",
     "@crove/kernel-runtime": "workspace:*",
-    "kysely": "catalog:",
-    "zod": "catalog:"
+    "kysely": "catalog:"
   }
 }
