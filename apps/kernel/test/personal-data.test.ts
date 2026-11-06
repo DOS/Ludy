@@ -1,7 +1,7 @@
 // The personal-data registry's per-row handling (#1312): a legal entity the org keeps books for (a client, a household
 // whose name and 12-digit code are a person's) is kept by law, and only the org's default entity is the org's own.
 import { describe, expect, it } from 'vitest';
-import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@crove/kernel';
+import { PERSONAL_DATA_COLUMNS, PERSONAL_DATA_PENDING, PERSONAL_DATA_SCHEMAS, SEALED_COLUMNS, personalDataProbe, rowHandling, type PersonalDataColumn } from '@crove/kernel';
 import { notesManifest } from '@crove/mod-notes';
 
 const entries = PERSONAL_DATA_COLUMNS as Record<string, PersonalDataColumn>;
@@ -66,5 +66,17 @@ describe('personal-data registry: notes (#1874)', () => {
     const pending = Object.keys(PERSONAL_DATA_PENDING);
     expect(pending.filter((key) => !classified.includes(key))).toEqual([]);
     expect(pending.filter((key) => key in PERSONAL_DATA_COLUMNS)).toEqual([]);
+  });
+});
+
+describe('sealed columns (ADR-0017, #2640)', () => {
+  it('lists each sealed column by its place, with the shred handling and a reason, and in no registry that clears a value in a mutable row', () => {
+    for (const [place, entry] of Object.entries(SEALED_COLUMNS)) {
+      expect(place, place).toMatch(/^[a-z][a-z0-9_]*.[a-z][a-z0-9_]*.[a-z][a-z0-9_]*$/);
+      expect(entry.handling, place).toBe('shred');
+      expect(entry.reason.length, place).toBeGreaterThan(10);
+      expect(place in entries, `${place} is sealed: it is erased by its subject's key, not by the finder's clear`).toBe(false);
+      expect(place in PERSONAL_DATA_PENDING, place).toBe(false);
+    }
   });
 });
