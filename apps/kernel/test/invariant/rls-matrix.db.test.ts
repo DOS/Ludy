@@ -78,7 +78,6 @@ const PENDING_TABLES = new Set<string>([
   'crove_hr.payroll_employment',
   'crove_kernel.extension_auth_code',
   'crove_kernel.extension_token',
-  'crove_kernel.subject_key',
   'crove_meetings.action_item',
   'crove_meetings.audio_segment',
   'crove_meetings.media_key',
