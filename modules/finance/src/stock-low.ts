@@ -6,8 +6,8 @@
 //   and unit; an item's code, name and unit; no amount, party or document number). The API asks the model outside any transaction and checks what it answers.
 // - finance.stock.reorder_source (same roles): the names, units and quantities of a reorder message, the supplier, the business's name and the fixed template. The text itself is the
 //   model's or the template, never stored.
-// The sales pace counts what left through a posted sale or a shipped marketplace order, net of its reversals and returns, dated by the move it undoes; counts, manual moves and
-// purchases are not sales.
+// The sales pace counts what left through a posted sale or a shipped marketplace order, net of its reversals and returns, each dated by the move it undoes (a return by the shipment of
+// its line); counts, manual moves and purchases are not sales.
 import { sql } from 'kysely';
 import { zStockLowInput, zStockReorderAsk, zStockSuggestInput, STOCK_LEAD_DAYS_DEFAULT, STOCK_REORDER_ITEMS_MAX, type StockLowItem } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
@@ -38,8 +38,9 @@ interface PaceRow {
   sold: string;
 }
 
-// One plain address: no space, comma, semicolon or angle bracket, so a supplier's email can never name a second recipient.
-const PLAIN_ADDRESS = /^[^\s,;<>@"()[\]\\]+@[^\s,;<>@"()[\]\\]+\.[^\s,;<>@"()[\]\\]+$/;
+// One plain ASCII address: letters, digits and . _ + - before the @, a dotted domain after it. Nothing a mailto: link reads as more than the address (no ? & = # % or space), so a seller's
+// e-mail on an invoice can never add a recipient or a body.
+const PLAIN_ADDRESS = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 const plainEmail = (email: string | null): string | null => (email !== null && PLAIN_ADDRESS.test(email.trim()) ? email.trim() : null);
 
 interface Supplier {
@@ -81,21 +82,21 @@ export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string 
   const today = await databaseToday(ctx.trx);
   const entity = options.legalEntityId ?? null;
   const { rows } = await sql<PaceRow>`
-    WITH stock AS (
-      SELECT m.item_id, pg_catalog.sum(m.quantity) AS on_hand, pg_catalog.min(m.move_date) AS first_move
-      FROM crove_finance.stock_move m
-      WHERE m.org_id = ${ctx.orgId}::uuid
-      GROUP BY m.item_id
-    ), out_moves AS (
-      -- What left through a sale or a shipped order line, and what undid it, on the date of the move it undoes.
+    WITH out_moves AS (
+      -- What left through a sale or a shipped order line, and what undid it. A return of an order line, and the reversal of one, count on the day the line shipped; any other reversal on the day
+      -- of the move it undoes. A shipment or a sale is read only inside the window, so the rows read are the window's plus the (few) returns and reversals of the org.
       SELECT m.item_id, m.quantity,
-             CASE WHEN m.source_type = 'reversal' THEN o.move_date ELSE m.move_date END AS effective_date
+             CASE WHEN m.source_type = 'reversal' THEN coalesce(osh.move_date, o.move_date)
+                  WHEN m.order_move = 'return' THEN coalesce(sh.move_date, m.move_date)
+                  ELSE m.move_date END AS effective_date
       FROM crove_finance.stock_move m
       LEFT JOIN crove_finance.stock_move o ON o.org_id = m.org_id AND o.id = m.reverses_move_id
+      LEFT JOIN crove_finance.stock_move sh ON sh.org_id = m.org_id AND m.order_move = 'return' AND sh.order_line_id = m.order_line_id AND sh.order_move = 'ship' AND sh.order_attempt = m.order_attempt
+      LEFT JOIN crove_finance.stock_move osh ON osh.org_id = o.org_id AND o.order_move = 'return' AND osh.order_line_id = o.order_line_id AND osh.order_move = 'ship' AND osh.order_attempt = o.order_attempt
       WHERE m.org_id = ${ctx.orgId}::uuid
         AND (
-          (m.source_type = 'document_line' AND m.quantity < 0)
-          OR m.source_type = 'order_line'
+          (m.source_type = 'document_line' AND m.quantity < 0 AND m.move_date > (${today}::date - ${LOW_WINDOW_DAYS}::int))
+          OR (m.source_type = 'order_line' AND (m.order_move = 'return' OR m.move_date > (${today}::date - ${LOW_WINDOW_DAYS}::int)))
           OR (m.source_type = 'reversal' AND (o.source_type = 'order_line' OR (o.source_type = 'document_line' AND o.quantity < 0)))
         )
     ), sold AS (
@@ -103,6 +104,12 @@ export async function lowStockItems(ctx: Ctx, options: { legalEntityId?: string 
       FROM out_moves
       WHERE effective_date > (${today}::date - ${LOW_WINDOW_DAYS}::int) AND effective_date <= ${today}::date
       GROUP BY item_id
+    ), stock AS (
+      -- Only the items that sold in the window need their balance.
+      SELECT m.item_id, pg_catalog.sum(m.quantity) AS on_hand, pg_catalog.min(m.move_date) AS first_move
+      FROM crove_finance.stock_move m
+      WHERE m.org_id = ${ctx.orgId}::uuid AND m.item_id IN (SELECT item_id FROM sold)
+      GROUP BY m.item_id
     )
     SELECT i.id::text AS item_id, i.legal_entity_id::text AS legal_entity_id, i.code, i.name, i.unit,
            coalesce(s.on_hand, 0)::text AS on_hand, s.first_move::text AS first_move, sold.sold::text AS sold

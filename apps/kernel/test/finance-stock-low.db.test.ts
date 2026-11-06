@@ -99,6 +99,16 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
       return { documentId, moveId: move?.id as string };
     });
   }
+  // A move of a marketplace order line (`ship` is negative, `return` positive), written by the database owner with triggers off like `line`.
+  const orderMove = (o: Org, item: string, daysAgo: number, quantity: string, move: 'ship' | 'return', lineId: string) =>
+    admin(async (c) => {
+      await c.query('SET session_replication_role = replica');
+      await c.query(
+        `INSERT INTO crove_finance.stock_move (org_id, legal_entity_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt)
+         VALUES ($1, $2, $3, current_date - $4::int, $5, 'order_line', $6, $7, 1)`,
+        [o.orgId, o.entity, item, daysAgo, quantity, lineId, move],
+      );
+    });
   const low = (o: Org, input: Record<string, unknown> = {}, user = o.owner) => query<Low[]>(o, 'finance.stock.low', input, user);
 
   beforeAll(async () => {
@@ -175,6 +185,35 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
     expect((await low(o)).map((i) => i.itemId)).not.toContain(items.a);
   });
 
+  it('reads the window to the day, counts a marketplace shipment, and dates a return by the shipment it undoes', async () => {
+    const o = await org();
+    const customer = await party(o, 'Khách lẻ');
+    const item = await makeItem(o, 'M1');
+    await rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type) VALUES ($1, $2, current_date - 60, 100, 'manual')", [o.orgId, item]);
+    // The window is today and the 55 days before it: a sale 55 days ago counts and one 56 days ago does not.
+    await line(o, item, customer, 'sale', 55, '-30');
+    await line(o, item, customer, 'sale', 56, '-50');
+    // A shipment of an order five days ago counts; one 70 days ago does not, and neither does the return of it that came back today (it undoes a shipment outside the window).
+    await orderMove(o, item, 5, '-20', 'ship', randomUUID());
+    const old = randomUUID();
+    await orderMove(o, item, 70, '-30', 'ship', old);
+    await orderMove(o, item, 0, '30', 'return', old);
+    // 30 + 20 sold in the window over 56 days; nothing is left (100 - 30 - 50 - 20 - 30 + 30). A return counted on its own date would have read 20 sold, a sale of the 56th day 100.
+    const [found] = await low(o);
+    expect(found).toMatchObject({ code: 'M1', onHand: '0', dailyOut: '0.893', coverDays: 0, suggestedQuantity: '25' });
+  });
+
+  it('gives a supplier address only when it is one plain address, so a seller\'s e-mail cannot add a recipient or a body to the mail link', async () => {
+    const o = await org();
+    const odd = await party(o, 'Nhà cung cấp lạ', 'a@b.co?bcc=x%40evil.com&body=hi');
+    const customer = await party(o, 'Khách lẻ');
+    const item = await makeItem(o, 'Z1');
+    await line(o, item, odd, 'purchase', 20, '30');
+    await line(o, item, customer, 'sale', 10, '-56');
+    const [found] = await low(o);
+    expect(found?.supplier).toEqual({ partyId: odd, name: 'Nhà cung cấp lạ', email: null });
+  });
+
   it('is read by every role, and by one entity only when asked', async () => {
     const { o } = await stocked();
     expect((await low(o, {}, o.viewer)).length).toBe(2);
@@ -185,7 +224,7 @@ suite('the finance coworker on stock: low items, the lines and the reorder facts
   it('gives Home one flag per entity with how many items are low, to the people who can act and not to a viewer', async () => {
     const { o } = await stocked();
     const flags = async (user: string) => (await query<TodayItem[]>(o, 'finance.today', {}, user)).filter((i) => i.title.key === 'financeStockLow');
-    expect(await flags(o.owner)).toEqual([expect.objectContaining({ kind: 'flag', count: 2, href: '/stock', title: { key: 'financeStockLow', params: { count: 2 } } })]);
+    expect(await flags(o.owner)).toEqual([expect.objectContaining({ kind: 'message', count: 2, href: '/stock', title: { key: 'financeStockLow', params: { count: 2 } } })]);
     expect(await flags(o.member)).toHaveLength(1);
     expect(await flags(o.viewer)).toEqual([]);
     const quiet = await org();

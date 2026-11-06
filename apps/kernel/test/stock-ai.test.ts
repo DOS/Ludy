@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiBudgetExhaustedError, type ReorderRequest, type ReorderResult, type StockMatchAnswer, type StockMatchItem, type StockMatchLine } from '@crove/agent';
 import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { DraftBudget } from '../src/ai-draft-limit.ts';
-import { draftReorder, stockAi, suggestItems, STOCK_KEEP_MS, type StockAi } from '../src/stock-ai.ts';
+import { draftReorder, stockAi, suggestItems, STOCK_KEEP_MS, STOCK_KEEP_NONE_MS, type StockAi } from '../src/stock-ai.ts';
 
 const ORG = 'org-1';
 const USER = 'user-1';
@@ -101,6 +101,18 @@ describe('suggestItems', () => {
     clock += STOCK_KEEP_MS + 1;
     await suggestItems(ai, ORG, USER, SOURCE, 'vi', now);
     expect(asked.match).toHaveLength(5);
+  });
+
+  it('keeps "no suggestion" only briefly, so lines whose answers the checks dropped are asked again soon', async () => {
+    const { ai, asked } = setup({ match: async () => [null, null] });
+    let clock = 1_000_000;
+    const now = () => clock;
+    expect(await suggestItems(ai, ORG, USER, SOURCE, 'vi', now)).toEqual({ ai: 'used', suggestions: [] });
+    await suggestItems(ai, ORG, USER, SOURCE, 'vi', now);
+    expect(asked.match).toHaveLength(1);
+    clock += STOCK_KEEP_NONE_MS + 1;
+    await suggestItems(ai, ORG, USER, SOURCE, 'vi', now);
+    expect(asked.match).toHaveLength(2);
   });
 
   it('says busy when the member asks too often, and budget when the org\'s AI budget is spent', async () => {

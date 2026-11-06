@@ -144,8 +144,12 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
   const [copied, setCopied] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const valid = group.items.every((i) => QUANTITY.test(quantityOf(i)));
+  // The items and quantities on screen. A message belongs to the ones it was drafted for: when they change (an edit, or the list refreshing after a line was assigned) it is hidden, so the
+  // text beside the quantities is always the text for them.
+  const signature = group.items.map((i) => `${i.itemId}:${quantityOf(i)}`).join('|');
+  const [draftFor, setDraftFor] = useState<string | null>(null);
   const draft = useMutation({
-    mutationFn: () =>
+    mutationFn: (_signature: string) =>
       client.stock.reorderDraft({
         legalEntityId: group.legalEntityId,
         ...(group.supplier ? { supplierPartyId: group.supplier.partyId } : {}),
@@ -153,9 +157,10 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
         ...(hint.trim() ? { hint: hint.trim() } : {}),
         lang,
       }),
-    onSuccess: (answer) => {
+    onSuccess: (answer, drafted) => {
       setText(answer.text);
       setState(answer.ai);
+      setDraftFor(drafted);
       setCopied(false);
     },
   });
@@ -200,11 +205,7 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
                 // Locked while a draft is being written, so the message that comes back is always the one for the quantities on screen.
                 disabled={!canWrite || draft.isPending}
                 aria-invalid={!QUANTITY.test(quantityOf(i))}
-                onChange={(e) => {
-                  setTyped((was) => ({ ...was, [i.itemId]: e.target.value }));
-                  setText(null);
-                  setState(null);
-                }}
+                onChange={(e) => setTyped((was) => ({ ...was, [i.itemId]: e.target.value }))}
                 data-testid="stock-low-quantity"
               />
               <span className="ml-1 text-xs text-subtle-foreground">{i.unit}</span>
@@ -221,13 +222,13 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
               </Label>
               <Input id={`${id}-hint`} value={hint} maxLength={STOCK_REORDER_HINT_MAX} placeholder={t('hintExample')} disabled={draft.isPending} onChange={(e) => setHint(e.target.value)} />
             </div>
-            <Button loading={draft.isPending} disabled={!valid || draft.isPending} onClick={() => draft.mutate()} data-testid="stock-low-draft">
+            <Button loading={draft.isPending} disabled={!valid || draft.isPending} onClick={() => draft.mutate(signature)} data-testid="stock-low-draft">
               {t('draft')}
             </Button>
           </div>
           {!valid && <p className="text-xs text-destructive">{t('quantityInvalid')}</p>}
           {draft.error && <ErrorText>{errorMessage(draft.error)}</ErrorText>}
-          {text !== null && (
+          {text !== null && draftFor === signature && (
             // What the model wrote is an AI proposal nobody approved (DESIGN.md §3.1): the proposal badge and a dashed outline. The fixed template is the books' own words.
             <div className={asProposal ? 'space-y-2 rounded-lg border border-dashed border-proposal/60 p-3' : 'space-y-2 rounded-lg border border-border p-3'} data-testid="stock-low-message">
               {asProposal && <Badge variant="proposal">{t('badge')}</Badge>}
@@ -246,7 +247,8 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
                     size="sm"
                     variant="outline"
                     onClick={() => {
-                      window.location.href = `mailto:${email}?subject=${encodeURIComponent(t('mailSubject'))}&body=${encodeURIComponent(text)}`;
+                      // The server only sends a plain address; each part is encoded anyway, so nothing in it can read as a header of the link.
+                      window.location.href = `mailto:${email.split('@').map(encodeURIComponent).join('@')}?subject=${encodeURIComponent(t('mailSubject'))}&body=${encodeURIComponent(text)}`;
                     }}
                   >
                     {t('openMail')}

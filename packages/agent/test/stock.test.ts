@@ -10,6 +10,7 @@ import {
   checkReorderText,
   checkStockMatch,
   reorderPrompt,
+  reorderTextMax,
   stockMatchPrompt,
   type ReorderRequest,
   type StockMatchItem,
@@ -148,5 +149,73 @@ describe('the reorder message', () => {
     expect((await reader.reorderText(REQUEST)).kind).toBe('text');
     expect(await reader.reorderText({ ...REQUEST, items: [] })).toEqual({ kind: 'none', code: 'NO_ITEMS' });
     expect(asked).toBe(1);
+  });
+
+  it('is refused when a quantity stands on the line of another item, is repeated differently, or a line that names no item holds a number', () => {
+    const request: ReorderRequest = { ...REQUEST, items: [{ name: 'Áo', quantity: '12', unit: 'cái' }, { name: 'Quần', quantity: '40', unit: 'cái' }] };
+    const head = 'Chào Nhà cung cấp Phương Nam,\n';
+    const ok = `${head}- Áo: 12 cái\n- Quần: 40 cái\nCảm ơn. Công ty Bán lẻ Hoa Mai`;
+    expect(checkReorderText(request, { text: ok }).kind).toBe('text');
+    // The quantities swapped, the quantity of another item added to a line, a second line for an item with a figure it was not given, and a number on a line of no item.
+    for (const text of [`${head}- Áo: 40 cái\n- Quần: 12 cái`, `${head}- Áo: 12 cái, 40 cái\n- Quần: 40 cái`, `${head}- Áo: 12 cái\n- Áo: 13 cái\n- Quần: 40 cái`, `${head}- Áo: 12 cái\n- Quần: 40 cái\nTổng 12 mặt hàng`]) {
+      expect(checkReorderText(request, { text }), text).toEqual({ kind: 'none', code: 'FIGURES' });
+    }
+    // The longest name wins on a line that holds two ("Áo thun" holds "Áo").
+    const nested: ReorderRequest = { ...REQUEST, items: [{ name: 'Áo', quantity: '12', unit: 'cái' }, { name: 'Áo thun', quantity: '7', unit: 'cái' }] };
+    expect(checkReorderText(nested, { text: `${head}- Áo thun: 7 cái\n- Áo: 12 cái` }).kind).toBe('text');
+    expect(checkReorderText(nested, { text: `${head}- Áo thun: 12 cái\n- Áo: 7 cái` }).kind).toBe('none');
+  });
+
+  it('keeps a number word that is part of an item name and refuses the same word on its own', () => {
+    const request: ReorderRequest = {
+      ...REQUEST,
+      items: [
+        { name: 'Thịt ba chỉ', quantity: '12', unit: 'kg' },
+        { name: 'Bánh tráng Tư Bé', quantity: '3', unit: 'bịch' },
+        { name: 'Thịt ngan', quantity: '5', unit: 'kg' },
+      ],
+    };
+    const text = 'Chào Nhà cung cấp Phương Nam,\n- Thịt ba chỉ: 12 kg\n- Bánh tráng Tư Bé: 3 bịch\n- Thịt ngan: 5 kg\nCảm ơn. Công ty Bán lẻ Hoa Mai';
+    expect(checkReorderText(request, { text }).kind).toBe('text');
+    expect(checkReorderText(request, { text: `${text}\nCần thêm ba thùng nữa.` })).toEqual({ kind: 'none', code: 'FIGURES' });
+  });
+
+  it('refuses an address on any domain, not only the few the link check lists', () => {
+    const base = 'Chào Nhà cung cấp Phương Nam,\n- Áo thun cổ tròn trắng size M: 40 cái\n';
+    for (const extra of ['Xác nhận tại supplier-portal.club', 'Thanh toán pay.evil.ru/x', 'Liên hệ evil.cn', 'Gửi về admin (at) evil (dot) club']) {
+      expect(checkReorderText(REQUEST, { text: base + extra }), extra).toEqual({ kind: 'none', code: 'LINK' });
+    }
+    // An address that is part of a name given is that name's own.
+    const shop: ReorderRequest = { ...REQUEST, orgName: 'Cửa hàng shop.vn' };
+    expect(checkReorderText(shop, { text: `${base}Cảm ơn. Cửa hàng shop.vn` }).kind).toBe('text');
+  });
+
+  it('lets a message of twenty items with ordinary names through, and refuses one past its length', () => {
+    const items = Array.from({ length: 20 }, (_, i) => ({ name: `Mặt hàng mẫu số ${i + 1} loại một cỡ vừa`, quantity: String(i + 1), unit: 'cái' }));
+    const request: ReorderRequest = { ...REQUEST, items };
+    const body = items.map((i) => `- ${i.name}: ${i.quantity} cái`).join('\n');
+    const text = `Chào Nhà cung cấp Phương Nam,\n\n${body}\n\nXin anh chị xác nhận số lượng có thể giao. Cảm ơn. Công ty Bán lẻ Hoa Mai`;
+    expect(Array.from(text).length).toBeGreaterThan(900);
+    expect(checkReorderText(request, { text }).kind).toBe('text');
+    expect(reorderTextMax(20)).toBe(2700);
+    expect(checkReorderText(request, { text: `${text}\n${'Cảm ơn nhiều. '.repeat(250)}` })).toEqual({ kind: 'none', code: 'TOO_LONG' });
+  });
+});
+
+describe('the reason of a suggestion', () => {
+  const answer = (line: StockMatchLine, reason: string) => checkStockMatch([line], ITEMS, { answers: [{ line: 1, item: 2, reason }] })[0];
+
+  it('trusts the item and not the line: a link or a number the seller wrote is not made safe by the model repeating it', () => {
+    const line: StockMatchLine = { description: 'Áo thun đen L, xác nhận tại https://evil.example/v hoặc gọi 0901234567', unit: null };
+    expect(answer(line, 'Dòng ghi xác nhận tại https://evil.example/v')).toBeNull();
+    expect(answer(line, 'Dòng ghi gọi 0901234567')).toBeNull();
+    expect(answer(line, 'Dòng ghi evil.club/pay')).toBeNull();
+    expect(answer(line, 'Khớp từ "áo thun" và "đen"')).toEqual({ itemIndex: 1, reason: 'Khớp từ "áo thun" và "đen"' });
+  });
+
+  it('is plain prose: a number word in a reason is allowed, in either language', () => {
+    const line: StockMatchLine = { description: 'Black crew-neck tee L', unit: null };
+    expect(answer(line, 'The words "black" and "L" match, and it is the only one that fits')?.itemIndex).toBe(1);
+    expect(answer(line, 'Khớp màu đen và cỡ L, là mặt hàng duy nhất một cỡ này')?.itemIndex).toBe(1);
   });
 });

@@ -9,12 +9,14 @@
 //
 // What the checks after the call keep out, whatever the model wrote (they do not trust the instructions):
 // - an item number that is not in the list that was offered, a line number that was not asked about, a second answer for the same line, and an empty reason give no suggestion;
-//   a reason that carries a link, an address or a figure that is not in the line or the items' names is no reason, so the suggestion is dropped with it;
-// - a reorder text that is empty, too long, carries a link, an address or an e-mail, or any figure (a digit, a number said in words, an amount) that was not given (the quantities
-//   and the names of the org, the supplier and the items are the only source of figures) is no text: the caller shows the screen's own template or nothing, and nothing is cut or repaired.
+//   a reason that carries a link, an address on any domain or a figure that the chosen item's code, name and unit do not hold is no reason (the line's own text is a seller's and is
+//   not trusted), so the suggestion is dropped with it; the reason's prose is display-only and is not otherwise constrained;
+// - a reorder text that is empty, too long for its items, carries a link, an address on any domain or an e-mail, or says a number in words, or holds a figure that was not given, or
+//   puts a number on a line that does not name the item whose quantity it is, is no text (the quantities and the names of the org, the supplier and the items are the only source of
+//   figures, and each quantity stands only on the line of its own item): the caller shows the screen's own template, and nothing is cut or repaired.
 // A call that fails, is refused by the AI budget or returns nothing usable gives no suggestion: the screens work as they do with AI off.
 import { draftFiguresOutside, draftLinksOutside } from './conversation.ts';
-import { hasNumberWords } from './reminder.ts';
+import { hasAddress, hasNumberWords } from './reminder.ts';
 
 // How much one call reads: lines per call, items offered, and the length of a description. A bound on what one paid call sends.
 export const STOCK_MATCH_LINES_MAX = 10;
@@ -22,9 +24,14 @@ export const STOCK_MATCH_ITEMS_MAX = 60;
 export const STOCK_MATCH_TEXT_CHARS = 200;
 export const STOCK_MATCH_REASON_MAX = 160;
 export const REORDER_ITEMS_MAX = 20;
-export const REORDER_TEXT_MAX = 900;
 export const REORDER_HINT_MAX = 200;
+// A message is at most a greeting and a sign-off and a line per item (a name is at most NAME_CHARS long): the bound scales with the items, so a full message of twenty items still fits.
+const REORDER_TEXT_BASE = 300;
+const REORDER_TEXT_PER_ITEM = 120;
 const NAME_CHARS = 120;
+
+// A decimal string without trailing zeros: '40.000000' is '40', '12.50' is '12.5'.
+const plainDecimal = (value: string): string => (value.includes('.') ? value.replace(/0+$/, '').replace(/\.$/, '') : value);
 
 const cut = (value: string, max: number) => Array.from(value.trim()).slice(0, max).join('');
 // The text cannot close its own fence: a run of > or < is broken up.
@@ -75,20 +82,36 @@ export function stockMatchPrompt(lines: readonly StockMatchLine[], items: readon
   return `Lines (untrusted):\n<<<\n${lineBlock}\n>>>\n\nItems of the business (untrusted names):\n<<<\n${itemBlock}\n>>>\n\nFor each line number answer the number of the item, or none, and the reason.`;
 }
 
-// The text with the names it was given cut out, so a number word a name happens to hold ("Bánh hai lớp") cannot be reused on its own.
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// The text with the names it was given cut out, the longest first ("Áo thun trắng" before "Áo thun"), so what a name happens to hold ("Công ty 3T", "shop.vn") is the name's own and cannot be
+// reused on its own.
 const without = (text: string, names: readonly string[]) =>
-  names.reduce((rest, name) => (name.trim() === '' ? rest : rest.replace(new RegExp(name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu'), ' ')), text);
+  [...names]
+    .filter((name) => name.trim() !== '')
+    .sort((a, b) => b.length - a.length)
+    // Any run of spaces in a name matches any run of spaces in the text (the prompt shows names on one line, single-spaced).
+    .reduce((rest, name) => rest.replace(new RegExp(name.trim().split(/\s+/).map(escapeRegExp).join('\\s+'), 'giu'), ' '), text);
 
-const VI_NUMBER_WORD = /(?<![\p{L}])(?:một|hai|ba|bốn|tư|năm|sáu|bảy|tám|chín|mười|mươi|mốt|lăm|chục)(?![\p{L}])/iu;
-// A text that carries a link, a web address, an e-mail or an account handle that was not given.
-const addressIn = (text: string, given: readonly string[]) => text.includes('@') || draftLinksOutside(text, given).length > 0;
-// A figure that was not given: a digit, an amount, or a number said in words.
-const figureIn = (text: string, given: readonly string[]) => draftFiguresOutside(text, given).length > 0 || hasNumberWords(without(text, given));
+// The words of a text, lower case, letters and digits.
+const wordsOf = (text: string): string[] => text.normalize('NFC').toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
-// A reason is one plain line that says nothing the line and the item do not hold: no link or address, no figure but theirs, no number said in words.
-function reasonProblem(reason: string, trusted: readonly string[]): boolean {
+// The Vietnamese number words. The English ones and the magnitude words are those of the payment reminder's check.
+const VI_NUMBER_WORDS: ReadonlySet<string> = new Set(['một', 'hai', 'ba', 'bốn', 'tư', 'năm', 'sáu', 'bảy', 'tám', 'chín', 'mười', 'mươi', 'mốt', 'lăm', 'chục', 'trăm', 'nghìn', 'ngàn', 'triệu', 'tỷ', 'rưỡi']);
+
+// A number said in words outside the given names: "Thịt ba chỉ" and "Bánh tráng Tư Bé" are names, cut out whole first, so a "ba" that stands on its own is a number.
+function numberWordIn(text: string, names: readonly string[]): boolean {
+  return wordsOf(without(text, names)).some((word) => VI_NUMBER_WORDS.has(word) || hasNumberWords(word));
+}
+
+// A text that carries a link, a web address on any domain, an e-mail or an account handle that was not given.
+const addressIn = (text: string, given: readonly string[]) => hasAddress(without(text, given)) || draftLinksOutside(text, given).length > 0;
+
+// A reason is one plain line that says nothing the item does not hold: no link or address, and no figure (a digit, an amount) but the item's own. Only the item is trusted: the line's text is
+// what a seller wrote, so a link or a number in it is not made safe by the model repeating it. A number said in words is not checked here: the reason is display-only and "the only one" is prose.
+function reasonProblem(reason: string, item: StockMatchItem): boolean {
   if (reason === '' || Array.from(reason).length > STOCK_MATCH_REASON_MAX) return true;
-  return addressIn(reason, trusted) || figureIn(reason, trusted);
+  return addressIn(reason, [item.code, item.name]) || draftFiguresOutside(reason, [item.code, item.name, item.unit]).length > 0;
 }
 
 /** The suggestion for each line, in the order given (null: none). Pure: the model call is the caller's. `lines` and `items` are what the model was shown. */
@@ -102,8 +125,7 @@ export function checkStockMatch(lines: readonly StockMatchLine[], items: readonl
     if (answer.item === null || !Number.isInteger(answer.item) || answer.item < 1 || answer.item > items.length) continue;
     const item = items[answer.item - 1] as StockMatchItem;
     const reason = oneLine(answer.reason, STOCK_MATCH_REASON_MAX * 2).replace(/<<<|>>>/g, '');
-    const line = lines[lineIndex] as StockMatchLine;
-    if (reasonProblem(reason, [line.description, line.unit ?? '', item.code, item.name, item.unit])) continue;
+    if (reasonProblem(reason, item)) continue;
     result[lineIndex] = { itemIndex: answer.item - 1, reason };
   }
   return result;
@@ -156,16 +178,41 @@ export function reorderPrompt(request: ReorderRequest): string {
   return parts.join('\n\n');
 }
 
+// How long a message may be: a greeting and a sign-off, and a line per item.
+export const reorderTextMax = (items: number): number => REORDER_TEXT_BASE + REORDER_TEXT_PER_ITEM * items;
+
+// Every number on a line is the quantity of the item the line names: the line's own item is the longest name it holds, and the names, units and the business's and supplier's names are cut out
+// first. A line that names no item holds no number. So the quantities cannot be swapped between items, repeated for another, or added to with a figure nobody gave.
+function quantitiesTied(text: string, request: ReorderRequest, items: readonly ReorderItem[]): boolean {
+  const names = [request.orgName, request.supplierName];
+  const byLength = [...items].sort((a, b) => b.name.length - a.name.length);
+  const units = items.map((i) => i.unit.trim()).filter((unit) => unit !== '');
+  for (const line of text.split('\n')) {
+    const bare = without(line, names).normalize('NFC');
+    const squeezed = bare.toLowerCase().replace(/\s+/g, ' ');
+    const own = byLength.find((item) => item.name.trim() !== '' && squeezed.includes(item.name.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()));
+    let rest = without(bare, items.map((i) => i.name));
+    // A unit goes only as a whole word ("m2", "kg"), so a short one never eats part of another word.
+    for (const unit of units) rest = rest.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(unit)}(?![\\p{L}\\p{N}])`, 'giu'), ' ');
+    const numbers = (rest.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(',', '.'));
+    if (numbers.some((n) => own === undefined || n !== plainDecimal(own.quantity))) return false;
+  }
+  return true;
+}
+
 /** The message the model wrote, or why there is none. Pure: the model call is the caller's. */
 export function checkReorderText(request: ReorderRequest, output: ReorderOutput | null): ReorderResult {
   if (request.items.length === 0) return { kind: 'none', code: 'NO_ITEMS' };
+  const items = request.items.slice(0, REORDER_ITEMS_MAX);
   const text = (output?.text ?? '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   if (text === '') return { kind: 'none', code: 'EMPTY' };
-  if (Array.from(text).length > REORDER_TEXT_MAX) return { kind: 'none', code: 'TOO_LONG' };
-  // The only source of figures and of addresses is what the model was given: the names, the quantities and the units.
-  const given = [request.orgName, request.supplierName, ...request.items.slice(0, REORDER_ITEMS_MAX).map((i) => `${i.name} ${i.quantity} ${i.unit}`)];
-  if (addressIn(text, given)) return { kind: 'none', code: 'LINK' };
-  // A reorder message has no reason to say a number in words, so the Vietnamese number words are refused wherever they stand outside a given name (a quantity is written in digits).
-  if (figureIn(text, given) || VI_NUMBER_WORD.test(without(text, given))) return { kind: 'none', code: 'FIGURES' };
+  if (Array.from(text).length > reorderTextMax(items.length)) return { kind: 'none', code: 'TOO_LONG' };
+  // The only source of figures, number words and addresses is what the model was given: the names, the quantities and the units. A unit is not cut out as a name (a short one such as "m"
+  // would eat part of every word); it is only trusted as a whole word by the figure checks.
+  const names = [request.orgName, request.supplierName, ...items.map((i) => i.name)];
+  const given = [...names, ...items.map((i) => `${i.name} ${i.quantity} ${i.unit}`)];
+  if (addressIn(text, names)) return { kind: 'none', code: 'LINK' };
+  // A reorder message has no reason to say a number in words (a quantity is written in digits), and each quantity stands on the line of its own item.
+  if (draftFiguresOutside(text, given).length > 0 || numberWordIn(text, names) || !quantitiesTied(text, request, items)) return { kind: 'none', code: 'FIGURES' };
   return { kind: 'text', text };
 }

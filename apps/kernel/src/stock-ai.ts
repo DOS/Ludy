@@ -24,6 +24,8 @@ export interface StockAi {
 }
 
 export const STOCK_KEEP_MS = 30 * 60 * 1000;
+// "No suggestion" is kept only briefly (as the Inbox's is): the lines are asked again soon, in case an answer was only dropped by the checks.
+export const STOCK_KEEP_NONE_MS = 2 * 60 * 1000;
 export const STOCK_KEEP_MAX = 200;
 
 export function stockAi(reader: StockAi['reader'], budget: DraftBudget): StockAi {
@@ -43,7 +45,7 @@ export async function suggestItems(ai: StockAi, orgId: string, userId: string, s
   if (source.lines.length === 0 || source.items.length === 0) return answer('quiet');
   const key = suggestKey(orgId, language, source);
   const hit = ai.kept.get(key);
-  if (hit && now() - hit.at < STOCK_KEEP_MS) return answer('used', hit.suggestions);
+  if (hit && now() - hit.at < (hit.suggestions.length === 0 ? STOCK_KEEP_NONE_MS : STOCK_KEEP_MS)) return answer('used', hit.suggestions);
   const ticket = ai.budget.take(orgId, userId);
   if (!ticket.allowed) return answer('busy');
   try {

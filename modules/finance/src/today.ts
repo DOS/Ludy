@@ -253,7 +253,7 @@ async function lowStockToday(ctx: QueryContext, to: Link): Promise<TodayItem[]> 
   for (const item of low) byEntity.set(item.legalEntityId, (byEntity.get(item.legalEntityId) ?? 0) + 1);
   return [...byEntity]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([entity, count]) => ({ kind: 'flag', app: 'finance', id: `stock-low:${entity}`, title: { key: 'financeStockLow', params: { count } }, count, severity: 'info', href: to('/stock', entity) }) satisfies TodayItem);
+    .map(([entity, count]) => ({ kind: 'message', app: 'finance', id: `stock-low:${entity}`, title: { key: 'financeStockLow', params: { count } }, count, href: to('/stock', entity) }) satisfies TodayItem);
 }
 
 // End of the due day in Vietnam, as the instant a deadline is due.
