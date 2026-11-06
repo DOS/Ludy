@@ -1,6 +1,6 @@
 # Competitor comparison: Ludy against MISA AMIS, Base.vn, HubSpot, Odoo and Pancake
 
-Written on 2026-11-04 at the owner's request (JOY). The Vietnamese summary for the owner is [competitors.vi.md](competitors.vi.md); this English file is the canonical one.
+Written on 2026-11-04 at the owner's request (JOY). The Vietnamese summary for the owner is [competitors.vi.md](competitors.vi.md); this English file is the canonical one. For a deeper, sourced accounting comparison against MISA, Fast and Odoo, see [the feature comparison](../research/competitor-feature-comparison.md).
 
 This page is a market map, not a plan. It builds nothing and commits nothing. [scope.md](scope.md) section 6 names Odoo, MISA AMIS and Base.vn as the main reference products; HubSpot is added here because it is the best-known AI-first CRM suite, and Pancake (pancake.vn, added at the owner's request on 2026-11-04) because it is the best-known Vietnamese tool for selling through chat. Per [AGENTS.md](../../AGENTS.md), no issue is opened and nothing is built for a gap below until the owner agrees (see "Gaps").
 
@@ -41,7 +41,7 @@ Ludy cells give the status first. Competitor cells give yes, partial or no, with
 |---|---|---|---|---|---|---|
 | **Finance and accounting** | | | | | | |
 | Books to Vietnamese standards (TT133) | Shipped: Ludy Kế toán | Yes: AMIS Kế toán, MISA SME | Yes: Accounting, Vietnam module | Yes: Fintab, TT133 books (cash, bank, sales, purchase, stock, fixed assets, payroll, tax, reports, opening balances) | No: Accounting "Coming soon" | No: no ledger |
-| Purchase e-invoice intake and AI reading | Shipped: XML, PDF, photo, tax portal sync | Yes: Hóa đơn điện tử, Kế toán | Partial: vendor bills in Accounting, not confirmed for Vietnamese XML | Partial: Fintab has Mua hàng and Hóa đơn điện tử; AI reading and XML checks not confirmed | No: Invoice "Coming soon" | No |
+| Purchase e-invoice intake and AI reading | Shipped: XML. With limits: PDF and photo reading needs the operator's own AI model and scanned PDFs are refused; the tax portal sync is assisted, off by default, never run on the real portal (#1100 open) | Yes: Hóa đơn điện tử, Kế toán | Partial: vendor bills in Accounting, not confirmed for Vietnamese XML | Partial: Fintab has Mua hàng and Hóa đơn điện tử; AI reading and XML checks not confirmed | No: Invoice "Coming soon" | No |
 | Issue sales e-invoices | In build: drafts and an offline provider shipped; live providers open | Yes: Hóa đơn điện tử (meInvoice) | Partial: Viettel S-Invoice connector | Yes: Fintab has a Hóa đơn điện tử area; providers and depth not confirmed from outside | No: Invoice "Coming soon" | Partial: Invoices, not tax-authority e-invoices |
 | VAT return and financial statements with tax XML | Shipped: 01/GTGT, B01-DNN, B02-DNN, HTKK XML | Yes: Thuế điện tử, AMIS Kế toán | Not confirmed for Vietnam | Yes: Fintab has Thuế and Báo cáo; tax XML export not confirmed | No | No |
 | Bank statements, matching, bank feed | Shipped: statement import and matching; In build: live bank feed | Yes: Ngân hàng điện tử | Partial: statement import and QR codes; Vietnamese bank sync not confirmed | Partial: Fintab has Tiền gửi; statement import and bank feed not confirmed | No: Bankfeed "Coming soon" | No |
