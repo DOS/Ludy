@@ -11,6 +11,7 @@
 //   fails immediately when revoked, expired, member removed, demoted to viewer, user disabled, or scope mismatch;
 // - exchange_extension_auth_code(bytea, text, bytea) returns TABLE (token_id uuid, org_id uuid, user_id uuid, scopes text[], expires_at timestamptz);
 //   neither raw auth code nor raw extension token is passed to SQL statements or query logs;
+// - all 5 definers grant EXECUTE to crove_app only (crove_worker and all other roles refused);
 // - agent_write_guard trigger is installed on both tables.
 // While crove_kernel.extension_token or crove_kernel.extension_auth_code do not exist yet (to_regclass is null), the tests pass cleanly with zero skipped tests.
 // Part of the invariant suite; it imports package code under test, never helpers from outside test/invariant/.
@@ -43,6 +44,17 @@ const ALL_RUNTIME_ROLES = [
   'crove_prober',
   'crove_reporter',
 ];
+
+const EXPECTED_REFUSAL_SQLSTATES = new Set(['42501', 'P0001', '22023', '28000']);
+function isExpectedRefusal(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    typeof (err as { code: unknown }).code === 'string' &&
+    EXPECTED_REFUSAL_SQLSTATES.has((err as { code: string }).code)
+  );
+}
 
 function sha256Buffer(data: string | Buffer): Buffer {
   return createHash('sha256').update(data).digest();
@@ -562,43 +574,40 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       try {
         const dummyTokenHash = randomBytes(32);
 
+        const safeExchange = async (codeHash: Buffer, verifier: string, tokenHash: Buffer) => {
+          try {
+            return await appClient.query<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>(
+              `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
+              [codeHash, verifier, tokenHash],
+            );
+          } catch (e) {
+            if (isExpectedRefusal(e)) return { rows: [] };
+            throw e;
+          }
+        };
+
         // Exchange with wrong verifier fails (raises or returns 0 rows)
-        const wrongVerifierRes = await appClient.query(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, 'wrong-verifier-1234567890', $2)`,
-          [authCodes.activeA1.hash, dummyTokenHash],
-        ).catch(() => ({ rows: [] }));
+        const wrongVerifierRes = await safeExchange(authCodes.activeA1.hash, 'w'.repeat(43), dummyTokenHash);
         expect(wrongVerifierRes.rows.length, 'wrong verifier must fail').toBe(0);
 
         // Exchange with expired code fails
-        const expiredRes = await appClient.query(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
-          [authCodes.expiredA1.hash, authCodes.expiredA1.verifier, dummyTokenHash],
-        ).catch(() => ({ rows: [] }));
+        const expiredRes = await safeExchange(authCodes.expiredA1.hash, authCodes.expiredA1.verifier, dummyTokenHash);
         expect(expiredRes.rows.length, 'expired code must fail').toBe(0);
 
         // Exchange with already consumed code fails
-        const consumedRes = await appClient.query(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
-          [authCodes.consumedA1.hash, authCodes.consumedA1.verifier, dummyTokenHash],
-        ).catch(() => ({ rows: [] }));
+        const consumedRes = await safeExchange(authCodes.consumedA1.hash, authCodes.consumedA1.verifier, dummyTokenHash);
         expect(consumedRes.rows.length, 'already consumed code must fail').toBe(0);
 
         // Valid exchange succeeds with fresh token hash
         const newToken = makeToken();
-        const res = await appClient.query<{ token_id: string; org_id: string; user_id: string; scopes: string[]; expires_at: Date }>(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
-          [authCodes.activeA1.hash, authCodes.activeA1.verifier, newToken.hash],
-        );
+        const res = await safeExchange(authCodes.activeA1.hash, authCodes.activeA1.verifier, newToken.hash);
         expect(res.rows.length).toBe(1);
         expect(res.rows[0]?.user_id).toBe(users.memberA1);
         expect(res.rows[0]?.org_id).toBe(orgAId);
         expect(res.rows[0]?.scopes).toEqual(['meetings']);
 
         // Re-exchange of the now-consumed code fails immediately (single-use enforced!)
-        const replayRes = await appClient.query(
-          `SELECT * FROM crove_kernel.exchange_extension_auth_code($1, $2, $3)`,
-          [authCodes.activeA1.hash, authCodes.activeA1.verifier, randomBytes(32)],
-        ).catch(() => ({ rows: [] }));
+        const replayRes = await safeExchange(authCodes.activeA1.hash, authCodes.activeA1.verifier, randomBytes(32));
         expect(replayRes.rows.length, 'replayed exchange must return 0 rows or throw').toBe(0);
 
         // Newly exchanged token verifies immediately
@@ -608,22 +617,83 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         );
         expect(verifyRes.rows.length).toBe(1);
         expect(verifyRes.rows[0]?.token_id).toBe(res.rows[0]?.token_id);
+
+        // Post-issuance eligibility check on exchange: demoted, disabled, removed member (Round 2 item 4)
+        // (a) Demoted to 'viewer'
+        const demoteCode = makeAuthCode();
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Demote Test', now(), now() + interval '5 minutes')`,
+            [orgAId, demoteCode.id, users.memberA1, demoteCode.hash, demoteCode.challenge],
+          );
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'viewer' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+        });
+        const demoteExchange = await safeExchange(demoteCode.hash, demoteCode.verifier, randomBytes(32));
+        expect(demoteExchange.rows.length, 'exchange for demoted member must return 0 rows').toBe(0);
+        await admin(async (c) => {
+          const tokenRows = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Demote Test'`,
+            [orgAId, users.memberA1],
+          );
+          expect(tokenRows.rows[0]?.cnt).toBe(0);
+          await c.query(`UPDATE crove_kernel.tenant_member SET role = 'member' WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+        });
+
+        // (b) User account disabled
+        const disabledCode = makeAuthCode();
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Disabled Test', now(), now() + interval '5 minutes')`,
+            [orgAId, disabledCode.id, users.memberA1, disabledCode.hash, disabledCode.challenge],
+          );
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = now() WHERE id = $1`, [users.memberA1]);
+        });
+        const disabledExchange = await safeExchange(disabledCode.hash, disabledCode.verifier, randomBytes(32));
+        expect(disabledExchange.rows.length, 'exchange for disabled user must return 0 rows').toBe(0);
+        await admin(async (c) => {
+          const tokenRows = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Disabled Test'`,
+            [orgAId, users.memberA1],
+          );
+          expect(tokenRows.rows[0]?.cnt).toBe(0);
+          await c.query(`UPDATE crove_kernel.user_account SET disabled_at = NULL WHERE id = $1`, [users.memberA1]);
+        });
+
+        // (c) Member removed from tenant_member
+        const removedCode = makeAuthCode();
+        await admin(async (c) => {
+          await c.query(
+            `INSERT INTO crove_kernel.extension_auth_code (org_id, id, user_id, code_hash, code_challenge, code_challenge_method, scopes, device_name, created_at, expires_at)
+             VALUES ($1, $2, $3, $4, $5, 'S256', ARRAY['meetings'], 'Removed Test', now(), now() + interval '5 minutes')`,
+            [orgAId, removedCode.id, users.memberA1, removedCode.hash, removedCode.challenge],
+          );
+          await c.query(`DELETE FROM crove_kernel.tenant_member WHERE org_id = $1 AND user_id = $2`, [orgAId, users.memberA1]);
+        });
+        const removedExchange = await safeExchange(removedCode.hash, removedCode.verifier, randomBytes(32));
+        expect(removedExchange.rows.length, 'exchange for removed member must return 0 rows').toBe(0);
+        await admin(async (c) => {
+          const tokenRows = await c.query<{ cnt: number }>(
+            `SELECT count(*)::int AS cnt FROM crove_kernel.extension_token WHERE org_id = $1 AND user_id = $2 AND device_name = 'Removed Test'`,
+            [orgAId, users.memberA1],
+          );
+          expect(tokenRows.rows[0]?.cnt).toBe(0);
+          await c.query(`INSERT INTO crove_kernel.tenant_member (org_id, user_id, role) VALUES ($1, $2, 'member')`, [orgAId, users.memberA1]);
+        });
       } finally {
         await appClient.end();
       }
     }
 
-    // Verify issue_extension_auth_code definer access control
+    // Verify issue_extension_auth_code definer access control (Round 2 item 3: pinned to_regprocedure)
     const hasIssueProc = await admin(async (c) => {
       const res = await c.query<{ exists: boolean }>(
-        `SELECT EXISTS (
-           SELECT 1 FROM pg_proc p
-           JOIN pg_namespace n ON n.oid = p.pronamespace
-           WHERE n.nspname = 'crove_kernel' AND p.proname = 'issue_extension_auth_code'
-         ) AS exists`,
+        `SELECT to_regprocedure('crove_kernel.issue_extension_auth_code(bytea,text,text,text[],text)') IS NOT NULL AS exists`,
       );
       return res.rows[0]?.exists === true;
     });
+    expect(hasIssueProc, 'crove_kernel.issue_extension_auth_code(bytea, text, text, text[], text) must exist once tables land').toBe(true);
 
     if (hasIssueProc) {
       // Member A1 can issue an auth code
@@ -647,7 +717,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             [viewerCode.hash, viewerCode.challenge],
           );
         }),
-      ).rejects.toThrow();
+      ).rejects.toSatisfy((e) => isExpectedRefusal(e));
 
       // System context and agent context cannot issue auth codes
       await expect(
@@ -657,7 +727,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             [viewerCode.hash, viewerCode.challenge],
           );
         }),
-      ).rejects.toThrow();
+      ).rejects.toSatisfy((e) => isExpectedRefusal(e));
 
       await expect(
         run(agentA, async (c) => {
@@ -666,7 +736,7 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
             [viewerCode.hash, viewerCode.challenge],
           );
         }),
-      ).rejects.toThrow();
+      ).rejects.toSatisfy((e) => isExpectedRefusal(e));
     }
   });
 
@@ -715,9 +785,14 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       expect(b1Tokens.some((t) => t.id === tokens.activeB1.id)).toBe(true);
       expect(b1Tokens.every((t) => t.id !== tokens.activeA1.id)).toBe(true);
 
-      // Viewer A cannot list tokens
+      // Viewer A cannot list tokens (Round 2 item 2: catch isExpectedRefusal only)
       const viewerTokens = await run(viewerA, async (c) => {
-        return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        try {
+          return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        } catch (e) {
+          if (isExpectedRefusal(e)) return [];
+          throw e;
+        }
       });
       expect(viewerTokens).toEqual([]);
 
@@ -733,16 +808,61 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
       });
       expect(ownerBTokens.every((t) => t.id !== tokens.activeA1.id), 'owner B must not see Org A tokens').toBe(true);
 
-      // System context and agent context cannot list member tokens
+      // System context and agent context cannot list member tokens (connects as crove_worker, expected 42501 refusal)
       const sysTokens = await run(systemA, async (c) => {
-        return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        try {
+          return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        } catch (e) {
+          if (isExpectedRefusal(e)) return [];
+          throw e;
+        }
       });
       expect(sysTokens).toEqual([]);
 
       const agentTokens = await run(agentA, async (c) => {
-        return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        try {
+          return (await c.query(`SELECT * FROM crove_kernel.list_extension_tokens()`)).rows;
+        } catch (e) {
+          if (isExpectedRefusal(e)) return [];
+          throw e;
+        }
       });
       expect(agentTokens).toEqual([]);
+
+      // Probe context-requiring definers on crove_app outside any user context (Round 2 item 2)
+      const unenteredClient = new pg.Client({ connectionString: appUrl });
+      await unenteredClient.connect();
+      try {
+        const dummyCode = makeAuthCode();
+        const unenteredIssue = await unenteredClient
+          .query(`SELECT crove_kernel.issue_extension_auth_code($1, $2, 'S256', ARRAY['meetings'], 'Probe')`, [dummyCode.hash, dummyCode.challenge])
+          .then((r) => r.rows)
+          .catch((e) => {
+            if (isExpectedRefusal(e)) return [];
+            throw e;
+          });
+        expect(unenteredIssue).toEqual([]);
+
+        const unenteredList = await unenteredClient
+          .query(`SELECT * FROM crove_kernel.list_extension_tokens()`)
+          .then((r) => r.rows)
+          .catch((e) => {
+            if (isExpectedRefusal(e)) return [];
+            throw e;
+          });
+        expect(unenteredList).toEqual([]);
+
+        const unenteredRevoke = await unenteredClient
+          .query<{ revoked: boolean }>(`SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`, [randomUUID()])
+          .then((r) => r.rows[0]?.revoked ?? false)
+          .catch((e) => {
+            if (isExpectedRefusal(e)) return false;
+            throw e;
+          });
+        expect(unenteredRevoke).toBe(false);
+      } finally {
+        await unenteredClient.end();
+      }
     }
 
     // Test revoke definer function if present
@@ -755,75 +875,41 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
     expect(hasRevokeProc, 'crove_kernel.revoke_extension_token must exist once tables land').toBe(true);
 
     if (hasRevokeProc) {
+      const safeRevoke = async (actor: Actor, tokenId: string) => {
+        return await run(actor, async (c) => {
+          try {
+            const res = await c.query<{ revoked: boolean }>(
+              `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
+              [tokenId],
+            );
+            return res.rows[0]?.revoked ?? false;
+          } catch (e) {
+            if (isExpectedRefusal(e)) return false;
+            throw e;
+          }
+        });
+      };
+
       // Member A2 cannot revoke Member A1's token
-      const crossMemberRevoke = await run(memberA2, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(crossMemberRevoke, 'member A2 revoking member A1 token must fail').toBe(false);
+      expect(await safeRevoke(memberA2, tokens.activeA1.id), 'member A2 revoking member A1 token must fail').toBe(false);
 
       // Member B1 cannot revoke Org A's token
-      const crossOrgRevoke = await run(memberB1, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(crossOrgRevoke, 'member B1 revoking Org A token must fail').toBe(false);
+      expect(await safeRevoke(memberB1, tokens.activeA1.id), 'member B1 revoking Org A token must fail').toBe(false);
 
       // Viewer A cannot revoke Member A1's token
-      const viewerRevoke = await run(viewerA, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(viewerRevoke, 'viewer A revoking member A1 token must fail').toBe(false);
+      expect(await safeRevoke(viewerA, tokens.activeA1.id), 'viewer A revoking member A1 token must fail').toBe(false);
 
       // Owner A cannot revoke Member A1's token (only token owner may revoke)
-      const ownerARevoke = await run(ownerA, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(ownerARevoke, 'owner A revoking member A1 token must fail').toBe(false);
+      expect(await safeRevoke(ownerA, tokens.activeA1.id), 'owner A revoking member A1 token must fail').toBe(false);
 
       // Owner B cannot revoke Org A's token
-      const ownerBRevoke = await run(ownerB, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(ownerBRevoke, 'owner B revoking Org A token must fail').toBe(false);
+      expect(await safeRevoke(ownerB, tokens.activeA1.id), 'owner B revoking Org A token must fail').toBe(false);
 
       // System context cannot revoke member token
-      const sysRevoke = await run(systemA, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(sysRevoke, 'system context revoking member token must fail').toBe(false);
+      expect(await safeRevoke(systemA, tokens.activeA1.id), 'system context revoking member token must fail').toBe(false);
 
       // Agent context cannot revoke member token
-      const agentRevoke = await run(agentA, async (c) => {
-        const res = await c.query<{ revoked: boolean }>(
-          `SELECT crove_kernel.revoke_extension_token($1::uuid) AS revoked`,
-          [tokens.activeA1.id],
-        ).catch(() => ({ rows: [{ revoked: false }] }));
-        return res.rows[0]?.revoked ?? false;
-      });
-      expect(agentRevoke, 'agent context revoking member token must fail').toBe(false);
+      expect(await safeRevoke(agentA, tokens.activeA1.id), 'agent context revoking member token must fail').toBe(false);
 
       // Member A1 can revoke their own token: assert persistence inside transaction (P1-4)
       await run(memberA1, async (c) => {
@@ -1007,11 +1093,8 @@ suite('extension tokens and PKCE authorization codes on PostgreSQL (#2582, ADR-0
         expect(pubAcl.rows[0]?.has_exec, `${d.proname} PUBLIC EXECUTE must be false`).toBe(false);
       }
 
-      // Pre-context definers: verify_extension_token and exchange_extension_auth_code EXECUTE matrix
-      const preContextDefiners = definers.rows.filter(
-        (d) => d.proname === 'verify_extension_token' || d.proname === 'exchange_extension_auth_code',
-      );
-      for (const d of preContextDefiners) {
+      // Enforce EXECUTE matrix on ALL 5 definers: crove_app = true, all other runtime roles = false (Round 2 item 2)
+      for (const d of definers.rows) {
         // crove_app has EXECUTE
         const appExec = await c.query<{ has_exec: boolean }>(
           `SELECT has_function_privilege('crove_app', $1::oid, 'EXECUTE') AS has_exec`,
