@@ -78,8 +78,21 @@ const VI_NUMBER_BEFORE_UNIT = new RegExp(
   'iu',
 );
 const CURRENCY_SIGN = /[$€£]/u;
+
+/** Whether a text says a number in words (either language): "twenty", "hai mươi ngày". The other finance texts that may hold digits (a reorder message holds the quantities it was given) use it
+ * to keep a number the model made up out of them. */
+export function hasNumberWords(text: string): boolean {
+  const read = text.normalize('NFKC').replace(/\p{Cf}/gu, '');
+  return NUMBER_WORD.test(read) || VI_NUMBER_BEFORE_UNIT.test(read);
+}
 // Anything that reads as an address: a dot between letters ("pay.example.cn", "ngân-hàng.vn", "e.g."), an obfuscated dot or at sign, a scheme, "www", "@".
 const ADDRESS = /\p{L}\.\p{L}|\p{L}\s*\[\.\]\s*\p{L}|\p{L}\s*\(dot\)\s*\p{L}|\p{L}\s+dot\s+\p{L}|\(at\)|@|:\/\/|(?<![\p{L}])www(?![\p{L}])/iu;
+
+/** Whether a text reads as an address on any domain, not only the few the link check knows ("evil.club", "pay.example.cn", "name (at) host"). The other finance texts use it with the names they
+ * were given cut out first. */
+export function hasAddress(text: string): boolean {
+  return ADDRESS.test(text.normalize('NFKC').replace(/\p{Cf}/gu, ''));
+}
 
 // What a text may hold: no figure, number word, currency or address, except the org's own name as a whole (a name such as "Công ty 3T" or "shop.vn" is the sender's
 // own). The name is cut out of the text first, so a number the name happens to hold ("Acme 2026") cannot be reused on its own ("pay before 2026").

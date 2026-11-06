@@ -15,6 +15,23 @@ import { chatModel, type AiConfig, type AiUsage } from './index.ts';
 import { metered } from './meter.ts';
 import { checkOverviewSentence, overviewInstructions, overviewPrompt, overviewQuiet, type OverviewFacts, type OverviewSentenceResult } from './overview.ts';
 import { checkReminderWords, reminderInstructions, reminderPrompt, type ReminderWordsRequest, type ReminderWordsResult } from './reminder.ts';
+import {
+  STOCK_MATCH_ITEMS_MAX,
+  STOCK_MATCH_LINES_MAX,
+  checkReorderText,
+  checkStockMatch,
+  reorderInstructions,
+  reorderPrompt,
+  stockMatchInstructions,
+  stockMatchPrompt,
+  type ReorderOutput,
+  type ReorderRequest,
+  type ReorderResult,
+  type StockMatchAnswer,
+  type StockMatchItem,
+  type StockMatchLine,
+  type StockMatchOutput,
+} from './stock.ts';
 
 // The labels a person can apply to a conversation (the same five as the database's check and the contract's list; a test compares the three).
 export const INTENTS = ['question', 'order_or_price', 'complaint', 'invoice_request', 'spam'] as const;
@@ -70,6 +87,19 @@ const zOverviewOut = z.object({
 });
 export type OverviewGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zOverviewOut> | null; usage?: AiUsage }>;
 export type CompanyRankGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zCompanyRankOut> | null; usage?: AiUsage }>;
+// The finance coworker on stock (#2514): the item a line is about, and the wording of a reorder message.
+const zStockMatchOut = z.object({
+  answers: z.array(
+    z.object({
+      line: z.number().int().describe('The number of the line, as listed'),
+      item: z.number().int().nullable().describe('The number of the item of the list that the line is about, or null when none is likely'),
+      reason: z.string().describe('One short plain sentence that says which words made you choose the item, with no link, address or amount'),
+    }),
+  ),
+});
+const zReorderOut = z.object({ text: z.string().describe('The whole message: a greeting, a line per item with its quantity and unit as given, a request to confirm, thanks and the business name') });
+export type StockMatchGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zStockMatchOut> | null; usage?: AiUsage }>;
+export type ReorderGenerator = (args: { system: string; prompt: string }) => Promise<{ output: z.infer<typeof zReorderOut> | null; usage?: AiUsage }>;
 
 const INTENT_SYSTEM = [
   'You sort the incoming messages of customers of a small or medium business in Vietnam by what each customer wants.',
@@ -125,9 +155,11 @@ export class InboxReader {
   private readonly generateCompanyRank: CompanyRankGenerator;
   private readonly generateReminder: ReminderGenerator;
   private readonly generateOverview: OverviewGenerator;
+  private readonly generateStockMatch: StockMatchGenerator;
+  private readonly generateReorder: ReorderGenerator;
 
   // The generators replace the model calls in tests; by default both go to the deployment's OpenAI-compatible endpoint, through the AI meter.
-  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator } = {}) {
+  constructor(config: AiConfig, generators: { intents?: IntentGenerator; rank?: RankGenerator; companyRank?: CompanyRankGenerator; reminder?: ReminderGenerator; overview?: OverviewGenerator; stockMatch?: StockMatchGenerator; reorder?: ReorderGenerator } = {}) {
     const timeoutMs = config.timeoutMs ?? 60_000;
     this.generateIntents =
       generators.intents ??
@@ -166,6 +198,22 @@ export class InboxReader {
       (async ({ system, prompt }) => {
         const { output, usage } = await metered('finance.overview_explain', () =>
           generateText({ model: chatModel(config), output: Output.object({ schema: zOverviewOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateStockMatch =
+      generators.stockMatch ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_match', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zStockMatchOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
+        );
+        return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
+      });
+    this.generateReorder =
+      generators.reorder ??
+      (async ({ system, prompt }) => {
+        const { output, usage } = await metered('finance.stock_reorder', () =>
+          generateText({ model: chatModel(config), output: Output.object({ schema: zReorderOut }), system, prompt, abortSignal: AbortSignal.timeout(timeoutMs), ...(config.maxRetries === undefined ? {} : { maxRetries: config.maxRetries }) }),
         );
         return { output: output ?? null, usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 } };
       });
@@ -238,5 +286,34 @@ export class InboxReader {
     const { output, usage } = await this.generateOverview({ system: overviewInstructions(facts.language), prompt: overviewPrompt(facts) });
     if (usage) onUsage?.(usage);
     return checkOverviewSentence(facts, output);
+  }
+
+  /** The item each line is most likely about (#2514), in the order given: the index of the item in `items` and a one-line reason, or null for no suggestion. At most STOCK_MATCH_LINES_MAX lines
+   * and STOCK_MATCH_ITEMS_MAX items are read; the model is told nothing of the books but the descriptions and the items' codes, names and units, and an answer that names an item that was not
+   * offered, or whose reason holds a link, an address or a figure the line and the item do not hold, is dropped (stock.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async stockMatch(lines: readonly StockMatchLine[], items: readonly StockMatchItem[], language: 'vi' | 'en' = 'vi', onUsage?: (usage: AiUsage) => void): Promise<Array<StockMatchAnswer | null>> {
+    const asked = lines.slice(0, STOCK_MATCH_LINES_MAX);
+    const offered = items.slice(0, STOCK_MATCH_ITEMS_MAX);
+    const none: Array<StockMatchAnswer | null> = lines.map(() => null);
+    // A line with no description has nothing to read, and with no item to offer there is nothing to choose: the model is not asked.
+    const readable = asked.map((line, i) => ({ line, i })).filter(({ line }) => line.description.trim() !== '');
+    if (readable.length === 0 || offered.length === 0) return none;
+    const shown = readable.map(({ line }) => line);
+    const { output, usage } = await this.generateStockMatch({ system: stockMatchInstructions(language), prompt: stockMatchPrompt(shown, offered) });
+    if (usage) onUsage?.(usage);
+    const checked = checkStockMatch(shown, offered, output as StockMatchOutput | null);
+    readable.forEach(({ i }, k) => {
+      none[i] = checked[k] ?? null;
+    });
+    return none;
+  }
+
+  /** The reorder message to a supplier (#2514), or why there is none: the model is told the names, quantities and units and no price, date or address, and its text is refused when it holds a figure,
+   * a link or an address it was not given, or is empty or too long (stock.ts). onUsage gets the tokens the call used, for the org's AI cost limit. */
+  async reorderText(request: ReorderRequest, onUsage?: (usage: AiUsage) => void): Promise<ReorderResult> {
+    if (request.items.length === 0) return { kind: 'none', code: 'NO_ITEMS' };
+    const { output, usage } = await this.generateReorder({ system: reorderInstructions(request), prompt: reorderPrompt(request) });
+    if (usage) onUsage?.(usage);
+    return checkReorderText(request, output as ReorderOutput | null);
   }
 }

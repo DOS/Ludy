@@ -47,6 +47,8 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { draftReorder, stockAi, suggestItems } from './stock-ai.ts';
+import type { ReorderSource, SuggestSource } from '@crove/mod-finance';
 import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
@@ -319,6 +321,17 @@ export function createRpcHandler(
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
+  // The finance coworker on stock (#2514): which item a goods line is about and the wording of a reorder message. The same reader and model, a budget of its own. It reads a line's
+  // description and unit and the item names (no amount, party or document number), and what it answers is a suggestion a person confirms or a draft they edit.
+  const stockCoworker = stockAi(
+    conversationReader && (conversationReader.stockMatch || conversationReader.reorderText)
+      ? {
+          ...(conversationReader.stockMatch ? { stockMatch: conversationReader.stockMatch.bind(conversationReader) } : {}),
+          ...(conversationReader.reorderText ? { reorderText: conversationReader.reorderText.bind(conversationReader) } : {}),
+        }
+      : null,
+    suggestionBudget(),
+  );
 
   const guard = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
@@ -2379,6 +2392,20 @@ export function createRpcHandler(
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
+      // The coworker's reads (#2514): the model is asked outside any transaction, from what the member's own read said it may see.
+      suggest: os.stock.suggest.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<SuggestSource>('finance.stock.suggest_source', input, { actor, orgId });
+          return suggestItems(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi');
+        }),
+      ),
+      low: os.stock.low.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.low', input ?? {}, { actor, orgId }))),
+      reorderDraft: os.stock.reorderDraft.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const source = await runtime.query<ReorderSource>('finance.stock.reorder_source', input, { actor, orgId });
+          return draftReorder(stockCoworker, orgId, actor.userId, source, input.lang ?? 'vi', input.hint);
+        }),
+      ),
       counts: {
         list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
         preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),
