@@ -732,6 +732,7 @@ export interface FinanceChannelOrderLineTable {
   source_row: ColumnType<number | null, number | null, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
+  attempt: Generated<number>;
 }
 
 /** crove_finance.channel_order */
@@ -1189,6 +1190,7 @@ export interface FinanceStockMoveTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   order_line_id: ColumnType<string | null, string | null, NotGranted>;
   order_move: ColumnType<string | null, string | null, NotGranted>;
+  order_attempt: ColumnType<number, number | undefined, NotGranted>;
 }
 
 /** crove_finance.vat_return_filed */

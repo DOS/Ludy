@@ -102,8 +102,37 @@ export function MarketplaceUnassigned({ legalEntityId, ready, items, canWrite }:
   );
 }
 
+// Takes a line back from its item (#2633): asks once, and offers to forget the SKU when it was remembered for the wrong item. The stock comes back and the line is unassigned again.
+function UnassignButton({ lineId, hasSku }: { lineId: string; hasSku: boolean }) {
+  const t = useTranslations('stock');
+  const [confirming, setConfirming] = useState(false);
+  const [forget, setForget] = useState(false);
+  const unassign = useMutation({ mutationFn: () => client.marketplace.unassign({ lineId, forget, idempotencyKey: crypto.randomUUID() }), onSuccess: refresh, onSettled: () => setConfirming(false) });
+  return confirming ? (
+    <span className="ml-2 inline-flex flex-wrap items-center gap-2">
+      {hasSku && (
+        <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+          <input type="checkbox" checked={forget} onChange={(e) => setForget(e.target.checked)} />
+          {t('marketplace.unassignForget')}
+        </label>
+      )}
+      <Button variant="ghost" size="sm" loading={unassign.isPending} onClick={() => unassign.mutate()} data-testid="marketplace-unassign-confirm">
+        {t('marketplace.unassignConfirm')}
+      </Button>
+      <Button variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+        {t('cancel')}
+      </Button>
+      {unassign.error && <ErrorText>{errorMessage(unassign.error)}</ErrorText>}
+    </span>
+  ) : (
+    <Button variant="ghost" size="sm" className="ml-2" title={t('marketplace.unassignHint')} onClick={() => setConfirming(true)} data-testid="marketplace-unassign">
+      {t('marketplace.unassign')}
+    </Button>
+  );
+}
+
 // The confirmed orders, newest first, with the item each shipped line moved. Hidden until a first report has been imported.
-export function MarketplaceOrders({ legalEntityId, ready }: { legalEntityId: string | undefined; ready: boolean }) {
+export function MarketplaceOrders({ legalEntityId, ready, canWrite }: { legalEntityId: string | undefined; ready: boolean; canWrite: boolean }) {
   const t = useTranslations('stock');
   const f = useFormat();
   const [platform, setPlatform] = useState('');
@@ -183,6 +212,7 @@ export function MarketplaceOrders({ legalEntityId, ready }: { legalEntityId: str
                     <li key={l.id}>
                       {l.sku ?? l.itemName ?? t('marketplace.noSku')} × {l.quantity}
                       {l.itemCode ? <span className="text-subtle-foreground"> → {l.itemCode}</span> : null}
+                      {l.itemCode && canWrite ? <UnassignButton lineId={l.id} hasSku={l.sku !== null} /> : null}
                     </li>
                   ))}
                 </ul>

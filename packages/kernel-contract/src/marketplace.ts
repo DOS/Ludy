@@ -112,3 +112,7 @@ export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLin
 // item by itself at that factor. Off unless asked: a wrong item or factor cannot be undone yet (#2633), and a taught one would repeat on every report.
 export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(false) });
 export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;
+
+// Takes a line back from the item it was given (#2633): its stock comes back and it waits to be assigned again. forget: also drop the name taught for its SKU, when that was the wrong one.
+export const zMarketplaceUnassign = z.strictObject({ lineId: zId, forget: z.boolean().default(false) });
+export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;

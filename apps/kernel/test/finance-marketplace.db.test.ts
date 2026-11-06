@@ -269,6 +269,85 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, item)).toBe('0');
   });
 
+  it('takes a line back from the item it was given: the stock comes back, the line waits again, and a new assignment moves it once more', async () => {
+    const o = await org();
+    const wrong = await makeItem(o, 'QC-A');
+    const right = await makeItem(o, 'QC-B');
+    await confirm(o, (await read(o, report(row('X1', 'Đang giao', 'MA-LA', 3)))).fileId);
+    const unassigned = () => query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
+    const [open] = await unassigned();
+    const line = open?.lineId as string;
+    // A wrong item at a wrong factor, remembered for the platform.
+    await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: wrong, factor: '2', teach: true }, o.member);
+    expect(await onHand(o, wrong)).toBe('-6');
+    const aliases = () => rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId]);
+    expect(await aliases()).toHaveLength(1);
+    const itemOf = async () => (await query<Array<{ orderNo: string; lines: Array<{ itemCode: string | null }> }>>(o, 'finance.marketplace.orders', {}, o.viewer)).find((r) => r.orderNo === 'X1')?.lines[0]?.itemCode;
+    expect(await itemOf()).toBe('QC-A');
+    // A viewer cannot, and a line with no item has nothing to take back.
+    await expect(execute(o, 'finance.marketplace.unassign', { lineId: line }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    // Unassigned: the stock is what it was, the history stays (the shipment and its reversal), the line waits again and the remembered name stays unless asked to go.
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 1 });
+    expect(await onHand(o, wrong)).toBe('0');
+    expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, wrong]))[0]?.n).toBe(2);
+    expect((await unassigned()).map((l) => l.lineId)).toEqual([line]);
+    expect(await itemOf()).toBeNull();
+    expect(await aliases()).toHaveLength(1);
+    await expect(execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_NOT_ASSIGNED' });
+    // The right item, once: the stock moves at the new attempt and the line is assigned again.
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).toEqual({ moves: 1 });
+    expect(await onHand(o, right)).toBe('-3');
+    expect(await itemOf()).toBe('QC-B');
+    await expect(execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_ASSIGNED' });
+    // Taken back again, this time forgetting the name remembered for the SKU.
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line, forget: true }, o.member)).toEqual({ moves: 1 });
+    expect(await onHand(o, right)).toBe('0');
+    expect(await aliases()).toHaveLength(0);
+  });
+
+  it('takes back a line that came back too: both of its moves are reversed and a new item takes its shipment and its return', async () => {
+    const o = await org();
+    const wrong = await makeItem(o, 'QC-A');
+    const right = await makeItem(o, 'QC-B');
+    await confirm(o, (await read(o, report(row('Y1', 'Đang giao', 'MA-LA', 2)))).fileId);
+    const [open] = await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
+    const line = open?.lineId as string;
+    await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: wrong }, o.member);
+    expect(await confirm(o, (await read(o, report(row('Y1', 'Đã hoàn trả', 'MA-LA', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
+    expect(await onHand(o, wrong)).toBe('0');
+    // The shipment, its return and their two reversals stay in the book of the wrong item, which ends where it began.
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 2 });
+    expect(await onHand(o, wrong)).toBe('0');
+    expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, wrong]))[0]?.n).toBe(4);
+    // The line is a returned one: the new item takes its shipment and its return together, and the stock is as it should be.
+    expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).toEqual({ moves: 2 });
+    expect((await moves(o, right)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
+    expect(await onHand(o, right)).toBe('0');
+  });
+
+  it('holds the attempt of a line in the table: no reversal of live stock by itself, no jump of the attempt, no raise without the reversals, no move at a stale attempt', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-A');
+    await confirm(o, (await read(o, report(row('Z1', 'Đang giao', 'MA-LA', 3), row('Z2', 'Đang giao', 'MA-KHAC', 1)))).fileId);
+    const lineOf = async (order: string) => (await rows<{ id: string }>('SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = $2', [o.orgId, order]))[0]?.id as string;
+    const assigned = await lineOf('Z1');
+    const waiting = await lineOf('Z2');
+    await execute(o, 'finance.marketplace.assign', { lineId: assigned, itemId: item }, o.member);
+    const [ship] = await rows<{ id: string }>("SELECT id FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'ship'", [o.orgId, assigned]);
+    // A reversal of the live shipment, by the app and by the table.
+    await expect(execute(o, 'finance.stock_move.reverse', { moveId: ship?.id }, o.member)).rejects.toMatchObject({ code: 'STOCK_MOVE_ORDER_LINE' });
+    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-11-01', 3, 'reversal', $3)", [o.orgId, item, ship?.id])).rejects.toThrow(/STOCK_ORDER_REVERSAL/);
+    // The attempt goes up by one, and only while the live attempt has a shipment.
+    await expect(rows('UPDATE crove_finance.channel_order_line SET attempt = 2 WHERE org_id = $1 AND id = $2', [o.orgId, waiting])).rejects.toThrow(/CHANNEL_ORDER_ATTEMPT/);
+    await expect(rows('UPDATE crove_finance.channel_order_line SET attempt = 3 WHERE org_id = $1 AND id = $2', [o.orgId, assigned])).rejects.toThrow(/CHANNEL_ORDER_ATTEMPT/);
+    // Raised alone, without the reversals of the attempt it leaves, it does not commit.
+    await expect(rows('UPDATE crove_finance.channel_order_line SET attempt = 2 WHERE org_id = $1 AND id = $2', [o.orgId, assigned])).rejects.toThrow(/CHANNEL_ORDER_ATTEMPT/);
+    expect((await rows<{ attempt: number }>('SELECT attempt FROM crove_finance.channel_order_line WHERE org_id = $1 AND id = $2', [o.orgId, assigned]))[0]?.attempt).toBe(1);
+    // A move at an attempt the line is not at, and a second shipment at the live one.
+    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, '2026-11-01', -1, 'order_line', $3, 'ship', 2)", [o.orgId, item, waiting])).rejects.toThrow(/STOCK_ORDER_ATTEMPT/);
+    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, '2026-11-01', -3, 'order_line', $3, 'ship', 1)", [o.orgId, item, assigned])).rejects.toThrow(/stock_move_order_attempt_uq/);
+  });
+
   it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');
