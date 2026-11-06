@@ -1,6 +1,7 @@
 // What the AI agents screens decide on their own (ADR-0029, issue #258): the chart as a tree, who may use which
 // control, and how far a budget is spent. The server enforces every rule; these only hide what can never succeed.
 import { z } from 'zod';
+import { todoDueInstant } from '@crove/kernel-contract';
 import type { Role } from './members.ts';
 import { readSearch, type Defined } from './search.ts';
 
@@ -155,4 +156,27 @@ export function socialPostOf(sourceRef: unknown): string | null {
   if (typeof sourceRef !== 'object' || sourceRef === null) return null;
   const { type, id } = sourceRef as { type?: unknown; id?: unknown };
   return type === 'social.post' && typeof id === 'string' && UUID.test(id) ? id : null;
+}
+
+/** The YYYY-MM-DD day of a task's ISO due timestamp in `timeZone`, or '' when there is none (#2588). */
+export function taskDueDay(due: string | null | undefined, timeZone: string): string {
+  if (!due) return '';
+  const ms = Date.parse(due);
+  if (Number.isNaN(ms)) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+  } catch {
+    return new Date(ms).toISOString().slice(0, 10);
+  }
+}
+
+/** End of `dueOn` (23:59) in `timeZone` as an ISO timestamp, or null when `dueOn` is empty (#2588). */
+export function taskDueFromDay(dueOn: string, timeZone: string): string | null {
+  const day = dueOn.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  try {
+    return todoDueInstant(day, '23:59', timeZone).toISOString();
+  } catch {
+    return `${day}T23:59:00.000Z`;
+  }
 }

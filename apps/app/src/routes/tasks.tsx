@@ -12,10 +12,13 @@ import { Input } from '@crove/ui/components/input';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { Tabs, TabsList, TabsTrigger } from '@crove/ui/components/tabs';
-import { DataTable, Empty, ErrorText, ListSkeleton, PageHeader, PageSkeleton } from '../components/ui.tsx';
+import { Textarea } from '@crove/ui/components/textarea';
+import { DateInput } from '../components/date-input.tsx';
+import { DataTable, Empty, ErrorText, FieldError, ListSkeleton, PageHeader, PageSkeleton, fieldControl } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, socialPostOf, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
+import { OPEN_TASK_STATUSES, TASK_LIST_LIMIT, TASK_STATUSES, agentPermissions, fromTodo, socialPostOf, taskDueDay, taskDueFromDay, type TaskFilter, type TaskStatus, type TasksSearch } from '../lib/agents.ts';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { browserTimeZone } from '../lib/my-work.ts';
 
 type Chart = Awaited<ReturnType<typeof orpc.chart.get.call>>;
 
@@ -38,25 +41,34 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [assignee, setAssignee] = useState('');
+  const [dueOn, setDueOn] = useState('');
   const [key, setKey] = useState(() => crypto.randomUUID());
   const create = useMutation(orpc.tasks.create.mutationOptions({ onSuccess: refresh }));
   const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived');
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    const due = taskDueFromDay(dueOn, browserTimeZone());
     create.mutate(
-      { title: title.trim(), ...(description.trim() ? { description: description.trim() } : {}), assigneePositionId: assignee || null, idempotencyKey: key },
+      {
+        title: title.trim(),
+        ...(description.trim() ? { description: description.trim() } : {}),
+        assigneePositionId: assignee || null,
+        ...(due ? { due } : {}),
+        idempotencyKey: key,
+      },
       {
         onSuccess: () => {
           setTitle('');
           setDescription('');
+          setDueOn('');
           setKey(crypto.randomUUID());
         },
       },
     );
   };
   return (
-    <form onSubmit={submit} className="mb-6 grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-4">
-      <p className="text-sm font-medium text-foreground md:col-span-4">{t('newTask')}</p>
+    <form onSubmit={submit} className="mb-6 grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-6">
+      <p className="text-sm font-medium text-foreground md:col-span-6">{t('newTask')}</p>
       <label className="block text-xs md:col-span-2">
         <span className="text-subtle-foreground">{t('newTitle')}</span>
         <Input required maxLength={300} value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
@@ -72,11 +84,15 @@ function NewTask({ chart }: { chart: Chart | undefined }) {
           ))}
         </NativeSelect>
       </label>
-      <label className="block text-xs md:col-span-4">
+      <label className="block text-xs md:col-span-2">
+        <span className="text-subtle-foreground">{t('dueLabel')}</span>
+        <DateInput value={dueOn} onChange={setDueOn} className="mt-1" aria-label={t('dueLabel')} />
+      </label>
+      <label className="block text-xs md:col-span-6">
         <span className="text-subtle-foreground">{t('newDescription')}</span>
         <Input maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
       </label>
-      <div className="flex items-center gap-2 md:col-span-4">
+      <div className="flex items-center gap-2 md:col-span-6">
         <Button loading={create.isPending} type="submit">
           {t('create')}
         </Button>
@@ -148,6 +164,109 @@ export function TasksPage() {
   );
 }
 
+type TaskDetail = Awaited<ReturnType<typeof orpc.tasks.get.call>>['task'];
+
+function EditTaskForm({ task, chart, onDone }: { task: TaskDetail; chart: Chart | undefined; onDone: () => void }) {
+  const t = useTranslations('tasks');
+  const tz = browserTimeZone();
+  const [initial] = useState(task);
+  const [title, setTitle] = useState(task.title);
+  const [titleError, setTitleError] = useState(false);
+  const [description, setDescription] = useState(task.description ?? '');
+  const [assignee, setAssignee] = useState(task.assigneePositionId ?? '');
+  const [dueOn, setDueOn] = useState(() => taskDueDay(task.due, tz));
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  const update = useMutation(orpc.tasks.update.mutationOptions({ onSuccess: refresh }));
+  const positions = (chart?.positions ?? []).filter((p) => p.status !== 'archived' || p.id === task.assigneePositionId);
+  const titleField = fieldControl(`task-${task.id}-title`, { error: titleError });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      setTitleError(true);
+      return;
+    }
+    const nextDescription = description.trim() ? description.trim() : null;
+    const nextAssignee = assignee || null;
+    const initialDueOn = taskDueDay(initial.due, tz);
+    const patch = {
+      ...(nextTitle !== initial.title ? { title: nextTitle } : {}),
+      ...(description !== (initial.description ?? '') ? { description: nextDescription } : {}),
+      ...(nextAssignee !== initial.assigneePositionId ? { assigneePositionId: nextAssignee } : {}),
+      ...(dueOn !== initialDueOn ? { due: taskDueFromDay(dueOn, tz) } : {}),
+    };
+    if (Object.keys(patch).length === 0) {
+      onDone();
+      return;
+    }
+    update.mutate(
+      {
+        id: task.id,
+        ...patch,
+        idempotencyKey: key,
+      },
+      {
+        onSuccess: () => {
+          setKey(crypto.randomUUID());
+          onDone();
+        },
+      },
+    );
+  };
+  return (
+    <form onSubmit={submit} className="grid gap-3 rounded-lg border bg-muted/40 p-3 md:grid-cols-6" data-testid="task-edit-form">
+      <label htmlFor={titleField.id} className="block text-xs md:col-span-2">
+        <span className="text-subtle-foreground">{t('newTitle')}</span>
+        <Input
+          {...titleField}
+          required
+          maxLength={300}
+          value={title}
+          onBlur={(e) => {
+            if (!e.target.value.trim()) setTitleError(true);
+          }}
+          onChange={(e) => {
+            setTitle(e.target.value);
+            if (titleError && e.target.value.trim()) setTitleError(false);
+          }}
+          className="mt-1"
+        />
+        <FieldError id={titleField.id} className="mt-1">
+          {titleError ? t('titleRequired') : null}
+        </FieldError>
+      </label>
+      <label className="block text-xs md:col-span-2">
+        <span className="text-subtle-foreground">{t('assignTo')}</span>
+        <NativeSelect className="mt-1 w-full" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+          <NativeSelectOption value="">{t('rootAssignee')}</NativeSelectOption>
+          {positions.map((p) => (
+            <NativeSelectOption key={p.id} value={p.id}>
+              {p.title}
+            </NativeSelectOption>
+          ))}
+        </NativeSelect>
+      </label>
+      <label className="block text-xs md:col-span-2">
+        <span className="text-subtle-foreground">{t('dueLabel')}</span>
+        <DateInput value={dueOn} onChange={setDueOn} className="mt-1" aria-label={t('dueLabel')} />
+      </label>
+      <label className="block text-xs md:col-span-6">
+        <span className="text-subtle-foreground">{t('description')}</span>
+        <Textarea rows={3} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1" />
+      </label>
+      <div className="flex items-center gap-2 md:col-span-6">
+        <Button loading={update.isPending} type="submit">
+          {t('save')}
+        </Button>
+        <Button type="button" variant="outline" disabled={update.isPending} onClick={onDone}>
+          {t('cancel')}
+        </Button>
+        {update.error && <span className="text-xs text-destructive">{errorMessage(update.error)}</span>}
+      </div>
+    </form>
+  );
+}
+
 export function TaskDetailPage() {
   const { slug, id } = useParams({ strict: false }) as { slug: string; id: string };
   const t = useTranslations('tasks');
@@ -157,6 +276,8 @@ export function TaskDetailPage() {
   const chart = useQuery(orpc.chart.get.queryOptions());
   const detail = useQuery(orpc.tasks.get.queryOptions({ input: { id } }));
   const perms = agentPermissions(org.data?.role);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const editing = editingTaskId === id;
   const [body, setBody] = useState('');
   const [commentKey, setCommentKey] = useState(() => crypto.randomUUID());
   const comment = useMutation(orpc.tasks.comment.mutationOptions({ onSuccess: refresh }));
@@ -196,12 +317,35 @@ export function TaskDetailPage() {
   return (
     <div className="space-y-6">
       <div>{back}</div>
-      <PageHeader title={task.title} subtitle={positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))} />
+      <PageHeader
+        title={task.title}
+        subtitle={positionTitle(chart.data, task.assigneePositionId, t('rootAssignee'), t('unknownPosition'))}
+        actions={
+          perms.tasks && !editing ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={task.checkedOut}
+              title={task.checkedOut ? t('checkedOut') : undefined}
+              onClick={() => setEditingTaskId(task.id)}
+            >
+              {t('edit')}
+            </Button>
+          ) : undefined
+        }
+      />
+      {editing && perms.tasks && <EditTaskForm key={task.id} task={task} chart={chart.data} onDone={() => setEditingTaskId(null)} />}
       <Card className="gap-3 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={statusVariant(task.status)}>{t(`status.${task.status}`)}</Badge>
           {task.tainted && <Badge variant="warning">{t('tainted')}</Badge>}
           {task.checkedOut && <Badge variant="secondary">{t('checkedOut')}</Badge>}
+          {task.due && (
+            <Badge variant="outline">
+              {t('dueLabel')}: {f.date(task.due)}
+            </Badge>
+          )}
           <span className="text-xs text-muted-foreground">{f.dateTime(task.createdAt)}</span>
         </div>
         {task.tainted && <p className="text-sm text-warning">{t('taintedHint')}</p>}

@@ -47,6 +47,8 @@ function useLine() {
         return t('text.file_unreadable', { filename: n.detail.filename ?? '' });
       case 'kernel.conversation_new':
         return t('text.conversation_new');
+      case 'kernel.task_assigned':
+        return t('text.task_assigned', { title: n.detail.title ?? '' });
       case 'kernel.task_rerouted':
         return n.detail.count ? t('text.tasks_rerouted', { count: Number(n.detail.count) }) : t('text.task_rerouted', { title: n.detail.title ?? '' });
       case 'finance.bank_attention':
