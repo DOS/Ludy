@@ -95,7 +95,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
   }
 
   // Every column of the crove schemas that can hold text, bytes or a number, searched for each form of the two numbers: the places they are found.
-  const hits = () =>
+  const hits = (needles: readonly string[] = NEEDLES) =>
     withAdmin(async (c) => {
       const cols = (
         await c.query<{ s: string; t: string; c: string; type: string }>(
@@ -106,7 +106,7 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
       ).rows;
       const found: string[] = [];
       for (const { s, t, c: col, type } of cols) {
-        for (const needle of NEEDLES) {
+        for (const needle of needles) {
           const expr = type === 'bytea' ? `position(convert_to($1, 'UTF8') in "${col}") > 0` : `"${col}"::text LIKE '%' || $1 || '%'`;
           const { rowCount } = await c.query(`SELECT 1 FROM "${s}"."${t}" WHERE ${expr} LIMIT 1`, [needle]);
           if (rowCount) found.push(`${s}.${t}.${col}`);
@@ -199,7 +199,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     }
     expect(await o.query(o.admin, 't2530.peek')).toEqual({ employees: 1, employments: 1, dependents: 0 });
     // The system context (the worker's) reads none.
-    expect(await rt.execute('t2530.system_peek', {}, { actor: { type: 'system', component: 'hr' }, orgId: o.orgId })).toEqual({ employees: 0 });
+    // (the database refuses the system context the schema outright)
+    await expect(rt.execute('t2530.system_peek', {}, { actor: { type: 'system', component: 'hr' }, orgId: o.orgId })).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // A refused read leaves no audit row of a read.
     expect((await o.audits('hr.payroll.employee.list')).length).toBe(0);
   });
@@ -269,8 +270,11 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
 
   it('erases an ended employee only after the retention, and then no one can open the numbers again', async () => {
     const o = await org();
-    const created = await o.add(o.owner);
-    await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: created.employeeId, displayName: DEPENDENT, relation: 'child', registeredOn: '2026-02-01' });
+    // Names of their own: the database holds the other tests' employees too.
+    const tag = randomUUID().slice(0, 8);
+    const [name, address, child] = [`${NAME} ${tag}`, `${ADDRESS} ${tag}`, `${DEPENDENT} ${tag}`];
+    const created = await o.add(o.owner, { displayName: name, address });
+    await o.exec(o.owner, 'hr.payroll.dependent.add', { employeeId: created.employeeId, displayName: child, relation: 'child', registeredOn: '2026-02-01' });
     const erase = () => o.exec<HrEmployeeErased>(o.owner, 'hr.payroll.employee.erase', { employeeId: created.employeeId }, asMfa(o.owner));
     // Not ended: refused. An admin is refused for the role, and an owner without a fresh second factor for the step-up.
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_NOT_ENDED' });
@@ -297,13 +301,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(await withAdmin(async (c) => (await c.query("SELECT 1 FROM crove_kernel.subject_key WHERE org_id = $1 AND ref = $2", [o.orgId, `employee:${created.employeeId}`])).rowCount)).toBe(0);
     // Nothing about the person is found anywhere, and the record cannot be changed again.
     expect(await hits()).toEqual([]);
-    for (const needle of [NAME, ADDRESS, DEPENDENT]) {
-      const found = await withAdmin(async (c) => {
-        const text = (await c.query<{ t: string }>("SELECT string_agg(x::text, ' ') AS t FROM (SELECT p::text AS x FROM crove_hr.payroll_employee p UNION ALL SELECT p::text FROM crove_hr.payroll_dependent p UNION ALL SELECT a::text FROM crove_kernel.audit_event a WHERE a.org_id = $1) s", [o.orgId])).rows[0]?.t ?? '';
-        return text.includes(needle);
-      });
-      expect(found, needle).toBe(false);
-    }
+    // The name, the address and the dependent's name are in no column of any crove table (the audit rows hold markers, the rows hold the placeholder).
+    expect(await hits([name, address, child])).toEqual([]);
     await expect(o.exec(o.owner, 'hr.payroll.employee.edit', { employeeId: created.employeeId, displayName: 'Again' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
     await expect(erase()).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ERASED' });
   });

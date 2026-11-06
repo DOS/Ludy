@@ -12,6 +12,7 @@
 // Audit facts carry ids, counts, the changed field names and a marker for every classified value (auditValue), never a value. Results carry ids only (idempotency rows keep them).
 import { sql } from 'kysely';
 import type { MemberRole } from '@crove/db';
+import { kernelManifest } from '@crove/kernel';
 import {
   HR_ERASED_NAME,
   HR_RETENTION_YEARS,
@@ -376,6 +377,8 @@ export const employeeErase = defineCommand({
   writes: [
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'erased_at', 'updated_at']),
     tableWrite(hrManifest.tables, 'crove_hr', 'payroll_dependent', ['display_name']),
+    // The person's key, deleted by crove_kernel.subject_key_shred.
+    tableWrite(kernelManifest.tables, 'crove_kernel', 'subject_key', ['ref']),
   ],
   handler: async (ctx, input): Promise<HrEmployeeErased> => {
     const employee = await loadEmployee(ctx, input.employeeId);

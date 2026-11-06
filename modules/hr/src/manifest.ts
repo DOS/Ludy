@@ -14,7 +14,7 @@ export const hrManifest = defineModule({
       payroll_dependent: columns(['org_id', 'id', 'legal_entity_id', 'employee_id', 'relation', 'registered_on', 'ended_on', 'created_by', 'created_at'], { display_name: 'pii' }),
       payroll_employee: columns(['org_id', 'id', 'legal_entity_id', 'status', 'ended_on', 'erased_at', 'created_by', 'created_at', 'updated_at'], {
         display_name: 'pii',
-        address: 'pii',
+        address: 'contact',
         national_id_sealed: 'national_id',
         bank_account_sealed: 'payment',
       }),
