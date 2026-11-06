@@ -212,7 +212,7 @@ export function MarketplaceOrders({ legalEntityId, ready, canWrite }: { legalEnt
                     <li key={l.id}>
                       {l.sku ?? l.itemName ?? t('marketplace.noSku')} × {l.quantity}
                       {l.itemCode ? <span className="text-subtle-foreground"> → {l.itemCode}</span> : null}
-                      {l.itemCode && canWrite ? <UnassignButton lineId={l.id} hasSku={l.sku !== null} /> : null}
+                      {l.itemCode && canWrite && l.stage !== 'cancelled' ? <UnassignButton lineId={l.id} hasSku={l.sku !== null} /> : null}
                     </li>
                   ))}
                 </ul>

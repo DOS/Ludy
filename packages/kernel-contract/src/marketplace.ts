@@ -113,6 +113,7 @@ export type MarketplaceUnassignedLine = z.infer<typeof zMarketplaceUnassignedLin
 export const zMarketplaceAssign = z.strictObject({ lineId: zId, itemId: zId, factor: zStockFactor.default('1'), teach: z.boolean().default(false) });
 export type MarketplaceAssign = z.infer<typeof zMarketplaceAssign>;
 
-// Takes a line back from the item it was given (#2633): its stock comes back and it waits to be assigned again. forget: also drop the name taught for its SKU, when that was the wrong one.
+// Takes a line back from the item it was given (#2633): its stock comes back and it waits to be assigned again, by a person (a taught name no longer moves it). forget: also drop the name
+// taught for its SKU when it is the one that put the line on this item, at this factor.
 export const zMarketplaceUnassign = z.strictObject({ lineId: zId, forget: z.boolean().default(false) });
 export type MarketplaceUnassign = z.infer<typeof zMarketplaceUnassign>;

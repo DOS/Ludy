@@ -16,6 +16,7 @@ import { EXTRACT_LIMIT_RETRIES, EXTRACT_LIMITS, zExtractedMarketplaceOrders, typ
 import type { MemberRole } from '@crove/db';
 import { STAGED_STATEMENT_MAX_BYTES, zId, zMarketplaceAssign, zMarketplaceOrdersInput, zMarketplaceSummary, zMarketplaceUnassign, zMarketplaceUnassignedInput, type MarketplaceConfirmResult, type MarketplaceOrder, type MarketplacePreview, type MarketplaceUnassignedLine, type MarketplaceStaged, type MarketplaceSummary } from '@crove/kernel-contract';
 import { DomainError, defineCommand, defineQuery, readVerified, type BlobStore, type CommandContext, type QueryContext, type Runtime } from '@crove/kernel-runtime';
+import { money } from '@crove/l10n-vn';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
 import { moveQuantity, movableQuantity, normalizeAlias, oppositeQuantity, plainQuantity } from './domain/stock.ts';
@@ -359,7 +360,8 @@ async function moveLineStock(
   let moves = 0;
   let shipped = ship ? { itemId: ship.item_id, quantity: String(ship.quantity) } : null;
   if (!shipped) {
-    const match = explicit ?? (line.sku ? matches.get(normalizeAlias(line.sku)) : undefined);
+    // A line taken back from an item (attempt 2 or more) is assigned again by a person only: the name taught for its SKU would put it on the same item at the next report (#2633).
+    const match = explicit ?? (line.attempt === 1 && line.sku ? matches.get(normalizeAlias(line.sku)) : undefined);
     const quantity = movableQuantity(line.quantity);
     const signed = match && quantity !== null ? moveQuantity('sale', quantity, match.factor) : null;
     if (!match || signed === null) return 0;
@@ -620,6 +622,8 @@ export const marketplaceAssign = defineCommand({
   target: (input) => ({ type: 'finance.stock_item', id: input.itemId }),
   handler: async (ctx, input): Promise<{ moves: number }> => {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.lineId}`}, 0))`.execute(ctx.trx);
+    // The line row is held first: a report confirming the same line at the same moment is finished before the line is read.
+    await ctx.trx.selectFrom('crove_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
       .selectFrom('crove_finance.channel_order_line as l')
       .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
@@ -662,16 +666,19 @@ export const marketplaceUnassign = defineCommand({
   risk: 'R1',
   sideEffect: 'internal',
   access: IMPORTERS,
-  handler: async (ctx, input): Promise<{ moves: number }> => {
+  handler: async (ctx, input): Promise<{ moves: number; forgot: boolean }> => {
     await sql`SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(${`finance.marketplace.line:${ctx.orgId}:${input.lineId}`}, 0))`.execute(ctx.trx);
+    // The line row is held first: a report confirming the same line at the same moment is finished before its moves are read, so none is missed.
+    await ctx.trx.selectFrom('crove_finance.channel_order_line').select('id').where('org_id', '=', ctx.orgId).where('id', '=', input.lineId).forUpdate().executeTakeFirst();
     const line = await ctx.trx
       .selectFrom('crove_finance.channel_order_line as l')
       .innerJoin('crove_finance.channel_order as o', (join) => join.onRef('o.org_id', '=', 'l.org_id').onRef('o.id', '=', 'l.order_id'))
-      .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.attempt', 'o.platform'])
+      .select(['l.id', 'l.legal_entity_id', 'l.sku', 'l.quantity', 'l.stage', 'l.attempt', 'o.platform'])
       .where('l.org_id', '=', ctx.orgId)
       .where('l.id', '=', input.lineId)
       .executeTakeFirst();
     if (!line) throw new DomainError('MARKETPLACE_LINE_NOT_FOUND', 404, 'Không tìm thấy dòng đơn hàng này');
+    if (line.stage === 'cancelled') throw new DomainError('MARKETPLACE_LINE_CANCELLED', 409, 'Đơn đã hủy nên kho đã tự hoàn lại; không có gì để bỏ gán');
     const live = await ctx.trx
       .selectFrom('crove_finance.stock_move')
       .select(['id', 'item_id', 'quantity', 'order_move'])
@@ -693,18 +700,20 @@ export const marketplaceUnassign = defineCommand({
     }
     let forgot = false;
     if (input.forget && line.sku && normalizeAlias(line.sku) !== '') {
+      // Only the name that put the line on this item, at the factor the shipment used: a name taught for another item is a right one for the lines that carry it.
+      const factor = money(String(ship.quantity)).abs().dividedBy(money(String(line.quantity)));
       const alias = await ctx.trx
         .selectFrom('crove_finance.stock_alias')
-        .select('id')
+        .select(['id', 'item_id', 'factor'])
         .where('org_id', '=', ctx.orgId)
         .where('legal_entity_id', '=', line.legal_entity_id)
         .where('source', '=', line.platform)
         .where('alias_key', '=', normalizeAlias(line.sku))
         .executeTakeFirst();
-      if (alias) forgot = (await ctx.run<{ removed: boolean }>('finance.stock_alias.forget', { aliasId: alias.id })).removed;
+      if (alias && alias.item_id === ship.item_id && money(String(alias.factor)).equals(factor)) forgot = (await ctx.run<{ removed: boolean }>('finance.stock_alias.forget', { aliasId: alias.id })).removed;
     }
     ctx.audit({ lineId: line.id, itemId: ship.item_id, platform: line.platform, moves, forgot });
-    return { moves };
+    return { moves, forgot };
   },
 });
 

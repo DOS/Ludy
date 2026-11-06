@@ -287,7 +287,7 @@ suite('marketplace order reports (#2515)', () => {
     // A viewer cannot, and a line with no item has nothing to take back.
     await expect(execute(o, 'finance.marketplace.unassign', { lineId: line }, o.viewer)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     // Unassigned: the stock is what it was, the history stays (the shipment and its reversal), the line waits again and the remembered name stays unless asked to go.
-    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 1 });
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 1, forgot: false });
     expect(await onHand(o, wrong)).toBe('0');
     expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, wrong]))[0]?.n).toBe(2);
     expect((await unassigned()).map((l) => l.lineId)).toEqual([line]);
@@ -299,9 +299,13 @@ suite('marketplace order reports (#2515)', () => {
     expect(await onHand(o, right)).toBe('-3');
     expect(await itemOf()).toBe('QC-B');
     await expect(execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_ASSIGNED' });
-    // Taken back again, this time forgetting the name remembered for the SKU.
-    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line, forget: true }, o.member)).toEqual({ moves: 1 });
+    // Taken back again with "forget": the remembered name is A's, not the right item's, so it stays for the lines that carry it.
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line, forget: true }, o.member)).toEqual({ moves: 1, forgot: false });
     expect(await onHand(o, right)).toBe('0');
+    expect(await aliases()).toHaveLength(1);
+    // Given to A at the factor it was taught at and taken back with "forget": that name is the one that put the line there, so it goes.
+    await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: wrong, factor: '2' }, o.member);
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line, forget: true }, o.member)).toEqual({ moves: 1, forgot: true });
     expect(await aliases()).toHaveLength(0);
   });
 
@@ -316,13 +320,43 @@ suite('marketplace order reports (#2515)', () => {
     expect(await confirm(o, (await read(o, report(row('Y1', 'Đã hoàn trả', 'MA-LA', 2)))).fileId)).toMatchObject({ updatedLines: 1, stockMoves: 1 });
     expect(await onHand(o, wrong)).toBe('0');
     // The shipment, its return and their two reversals stay in the book of the wrong item, which ends where it began.
-    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 2 });
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member)).toEqual({ moves: 2, forgot: false });
     expect(await onHand(o, wrong)).toBe('0');
     expect((await rows<{ n: number }>('SELECT count(*)::int AS n FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, wrong]))[0]?.n).toBe(4);
     // The line is a returned one: the new item takes its shipment and its return together, and the stock is as it should be.
     expect(await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: right }, o.member)).toEqual({ moves: 2 });
     expect((await moves(o, right)).map((m) => m.order_move).sort()).toEqual(['return', 'ship']);
     expect(await onHand(o, right)).toBe('0');
+  });
+
+  it('does not put a line taken back on the same item by the next report, and forgets only the name that put it there', async () => {
+    const o = await org();
+    const a = await makeItem(o, 'QC-A');
+    const b = await makeItem(o, 'QC-B');
+    await confirm(o, (await read(o, report(row('W1', 'Đang giao', 'MA-LA', 3)))).fileId);
+    const [open] = await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member);
+    const line = open?.lineId as string;
+    // Assigned to A and remembered; taken back without forgetting. Reports overlap: the next one names the same order, and the remembered name must not move the line again.
+    await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: a, factor: '2', teach: true }, o.member);
+    await execute(o, 'finance.marketplace.unassign', { lineId: line }, o.member);
+    expect(await confirm(o, (await read(o, report(row('W1', 'Đang giao', 'MA-LA', 3), row('W2', 'Đang giao', 'MA-LA', 1)))).fileId)).toMatchObject({ newLines: 1, duplicateLines: 1, stockMoves: 1 });
+    // W2 is new and takes the remembered name (attempt 1); W1 waits for a person.
+    expect(await onHand(o, a)).toBe('-2');
+    expect((await query<Array<{ lineId: string }>>(o, 'finance.marketplace.unassigned', {}, o.member)).map((l) => l.lineId)).toEqual([line]);
+    // Assigned to B by hand without teaching: the remembered name belongs to A, so forgetting it with this unassign is not done.
+    await execute(o, 'finance.marketplace.assign', { lineId: line, itemId: b, factor: '1' }, o.member);
+    expect(await execute(o, 'finance.marketplace.unassign', { lineId: line, forget: true }, o.member)).toEqual({ moves: 1, forgot: false });
+    expect(await rows("SELECT 1 FROM crove_finance.stock_alias WHERE org_id = $1 AND source = 'shopee'", [o.orgId])).toHaveLength(1);
+  });
+
+  it('has nothing to take back from a line cancelled after it shipped, whose stock came back by itself', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-A');
+    await confirm(o, (await read(o, report(row('V1', 'Đang giao', 'QC-A', 2)))).fileId);
+    await confirm(o, (await read(o, report(row('V1', 'Đã hủy', 'QC-A', 2)))).fileId);
+    expect(await onHand(o, item)).toBe('0');
+    const [v1] = await rows<{ id: string }>("SELECT l.id FROM crove_finance.channel_order_line l JOIN crove_finance.channel_order o ON o.org_id = l.org_id AND o.id = l.order_id WHERE l.org_id = $1 AND o.order_no = 'V1'", [o.orgId]);
+    await expect(execute(o, 'finance.marketplace.unassign', { lineId: v1?.id }, o.member)).rejects.toMatchObject({ code: 'MARKETPLACE_LINE_CANCELLED' });
   });
 
   it('holds the attempt of a line in the table: no reversal of live stock by itself, no jump of the attempt, no raise without the reversals, no move at a stale attempt', async () => {
