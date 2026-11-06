@@ -59,7 +59,7 @@ describe('checkStockMatch', () => {
     expect(answer('')).toBeNull();
     expect(answer('x'.repeat(300))).toBeNull();
     expect(answer('Xem thêm ở www.shop.vn')).toBeNull();
-    expect(answer('Liên hệ giaohang@shop.vn')).toBeNull();
+    expect(answer('Liên hệ giaohang@example.com')).toBeNull();
     expect(answer('Mặt hàng này giá 250000 đồng')).toBeNull();
     expect(answer('Khớp size 42')).toBeNull();
     // A figure the line and the item do hold is not an invention.
@@ -128,7 +128,7 @@ describe('the reorder message', () => {
 
   it('is refused when it carries a link, an address or an e-mail it was not given, or is empty or too long', () => {
     const base = 'Chào Nhà cung cấp Phương Nam,\n- Áo thun cổ tròn trắng size M: 40 cái\n';
-    for (const extra of ['Đặt tại www.shop.vn', 'Gửi về giaohang@shop.vn', 'Xem https://pay.example.cn/x']) {
+    for (const extra of ['Đặt tại www.shop.vn', 'Gửi về giaohang@example.com', 'Xem https://pay.example.cn/x']) {
       expect(checkReorderText(REQUEST, { text: base + extra }), extra).toEqual({ kind: 'none', code: 'LINK' });
     }
     expect(checkReorderText(REQUEST, { text: '  ' })).toEqual({ kind: 'none', code: 'EMPTY' });

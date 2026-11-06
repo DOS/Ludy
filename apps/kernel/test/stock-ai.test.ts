@@ -21,7 +21,7 @@ const SOURCE: SuggestSource = {
 };
 const REORDER: ReorderSource = {
   orgName: 'Công ty Hoa Mai',
-  supplier: { partyId: 'party-1', name: 'Phương Nam', email: 'ncc@example.vn' },
+  supplier: { partyId: 'party-1', name: 'Phương Nam', email: 'ncc@example.com' },
   items: [{ itemId: 'item-a', name: 'Áo thun cổ tròn trắng M', unit: 'cái', quantity: '40' }],
   template: 'Chào Phương Nam,\n- Áo thun cổ tròn trắng M: 40 cái',
 };
