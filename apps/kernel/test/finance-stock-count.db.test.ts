@@ -121,8 +121,9 @@ suite('the count of stock (#2513, part b)', () => {
     await seedClosed(o, '2026-08', a);
     await move(o, a, '2026-09-10', '-1');
     // Two of A are counted (two missing, worth 200; a norm of 10 percent allows 0.4 of four, worth 40) and three of B, which the books never held, at a cost typed for it (a surplus of 150).
+    // A cost typed for A, which the books have a cost for, is ignored: the average prices the difference.
     const countId = await count(o, '2026-09-30', [
-      { itemId: a, countedQuantity: '2' },
+      { itemId: a, countedQuantity: '2', unitCost: '1' },
       { itemId: b, countedQuantity: '3', unitCost: '50' },
     ]);
     const [draft] = await counts(o);
@@ -183,6 +184,32 @@ suite('the count of stock (#2513, part b)', () => {
     ).rejects.toThrow(/STOCK_MOVE_COUNT/);
   });
 
+  it('keeps a confirmed count tied to its entry: its entry is not reversed, and an adjustment written later without the voucher behind it fails at commit', async () => {
+    const o = await org();
+    const a = await makeItem(o, 'E');
+    const c = await makeItem(o, 'F');
+    await move(o, a, '2026-08-05', '5');
+    await seedClosed(o, '2026-08', a);
+    await move(o, a, '2026-09-10', '-1');
+    await move(o, c, '2026-09-05', '2');
+    // A is one short of the books (four on them, three counted); F matches them, so its line makes no adjustment.
+    const countId = await count(o, '2026-09-30', [
+      { itemId: a, countedQuantity: '3' },
+      { itemId: c, countedQuantity: '2' },
+    ]);
+    const posted = await approve(o, (await ask(o, countId)).proposalId);
+    // The entry that posted the difference is not reversed, since the adjustments never are.
+    await expect(
+      rt.execute('kernel.proposal.request', { command: 'finance.journal.reverse', input: { entryId: posted.journalEntryId, entryDate: '2026-10-15', reason: 'Ghi nhầm' } }, { actor: asUser(o.member), orgId: o.orgId, idempotencyKey: randomUUID() }),
+    ).rejects.toMatchObject({ code: 'STOCK_COUNT_ENTRY' });
+    // An adjustment of the line that made none, written afterwards by a raw session, is not covered by the voucher: it fails at its own commit.
+    const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.stock_count_line WHERE org_id = $1 AND count_id = $2 AND item_id = $3', [o.orgId, countId, c]);
+    await expect(
+      rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-30', 1000, 'count', $3, 1000000)", [o.orgId, c, line?.id]),
+    ).rejects.toThrow(/STOCK_COUNT_VOUCHER/);
+    expect(await onHand(o, c)).toBe('2');
+  });
+
   it('refuses a count that cannot be made or confirmed: a day not come, a closed month, a duplicate item, no cost, no difference, a proposal the books changed', async () => {
     const o = await org();
     const item = await makeItem(o, 'C');
@@ -217,7 +244,7 @@ suite('the count of stock (#2513, part b)', () => {
     await expect(ask(o, stale)).rejects.toMatchObject({ code: 'STOCK_COUNT_NO_DIFFERENCE' });
   });
 
-  it('keeps the table to its rules: a count is final once confirmed, an adjustment belongs to a confirmed count, a confirmed count has its voucher, a closed month takes no adjustment', async () => {
+  it('keeps the table to its rules: a count is final once confirmed, an adjustment belongs to a confirmed count, an adjustment has its voucher behind it, a closed month takes no adjustment', async () => {
     const o = await org();
     const item = await makeItem(o, 'D');
     await move(o, item, '2026-08-05', '5');
@@ -228,14 +255,16 @@ suite('the count of stock (#2513, part b)', () => {
     await expect(
       rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
     ).rejects.toThrow(/STOCK_COUNT_MOVE/);
-    // A count is confirmed with its voucher or not at all: a confirmation that leaves an adjustment with no voucher fails at commit.
+    // A count confirmed with no voucher takes no adjustment: the guard wants the voucher that posted the difference behind every one.
     const c = new pg.Client({ connectionString: adminUrl });
     await c.connect();
     try {
       await c.query('BEGIN');
       await c.query("UPDATE crove_finance.stock_count SET status = 'confirmed', confirmed_at = now() WHERE org_id = $1 AND id = $2", [o.orgId, countId]);
-      await c.query("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]);
-      await expect(c.query('COMMIT')).rejects.toThrow(/STOCK_COUNT_VOUCHER/);
+      await expect(
+        c.query("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, count_line_id, amount) VALUES ($1, $2, '2026-09-10', -2, 'count', $3, -200)", [o.orgId, item, line?.id]),
+      ).rejects.toThrow(/STOCK_COUNT_MOVE/);
+      await c.query('ROLLBACK');
     } finally {
       await c.end();
     }

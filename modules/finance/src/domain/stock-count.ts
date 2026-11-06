@@ -3,7 +3,7 @@
 // difference, what the difference is worth, and the one entry that posts it. It reads quantities and writes nothing; the commands (stock-count.ts) read the moves, ask for the entry
 // through the proposal path and write the adjustment moves.
 // - The difference of an item is counted minus book quantity (the book quantity is the sum of its moves up to the count date). A shortage is negative and a surplus positive.
-// - A difference is worth its quantity at the unit cost the person typed for the line or, when none was typed, at the month's provisional average up to the count date, in whole dong:
+// - A difference is worth its quantity at the month's provisional average up to the count date or, when the books have none, at the unit cost the person typed for the line, in whole dong:
 //   the entry is a general journal voucher and a voucher holds no fraction of a dong. Money is decimal.js throughout, never a number. An item with a difference and no cost to price it at
 //   is named, so a person can type one: a surplus of goods never bought has no cost of its own.
 // - A shortage goes to 632 within the norm the count names (a percentage of the book quantity) and to 1381 (goods waiting to be resolved) beyond it; both credit the stock account. A
@@ -81,14 +81,19 @@ export function countDifferences(items: readonly CountItem[], normPercent: strin
       lines.push({ ...base, difference: '0', unitCost: null, value: '0', withinNorm: '0' });
       continue;
     }
-    const cost = item.unitCost !== null ? money(item.unitCost) : item.averageCost !== null ? money(item.averageCost) : null;
+    // The books' own average prices a difference when there is one; the cost the person typed is for an item the books have no cost for (it never overrides one).
+    const average = item.averageCost !== null && money(item.averageCost).greaterThan(0) ? money(item.averageCost) : null;
+    const typed = item.unitCost !== null && money(item.unitCost).greaterThan(0) ? money(item.unitCost) : null;
+    const cost = average ?? typed;
     const magnitude = difference.abs();
-    const worth = cost !== null && cost.greaterThan(0) ? magnitude.times(cost).toDecimalPlaces(0) : money(0);
-    if (cost === null || !cost.greaterThan(0) || worth.isZero()) {
+    if (cost === null) {
       unpriced.push({ itemId: item.itemId, code: item.code, name: item.name });
       lines.push({ ...base, difference: plain(difference), unitCost: null, value: '0', withinNorm: '0' });
       continue;
     }
+    // A difference is worth at least one dong, so a trace of an item never holds a count back.
+    const rounded = magnitude.times(cost).toDecimalPlaces(0);
+    const worth = rounded.isZero() ? money(1) : rounded;
     let within = money(0);
     if (difference.lessThan(0)) {
       const allowed = money(item.bookQuantity).greaterThan(0) ? money(item.bookQuantity).times(norm).dividedBy(100) : money(0);

@@ -257,8 +257,8 @@ export const createStockCount = defineCommand({
     for (const id of ids) {
       const item = items.get(id);
       if (!item) throw new DomainError('STOCK_ITEM_NOT_FOUND', 404, 'Không tìm thấy mặt hàng này');
-      if (item.legal_entity_id !== legalEntityId) throw new DomainError('STOCK_ITEM_ENTITY_MISMATCH', 422, 'Mặt hàng và lần kiểm kê thuộc hai pháp nhân khác nhau');
-      if (!item.active) throw new DomainError('STOCK_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng');
+      if (item.legal_entity_id !== legalEntityId) throw new DomainError('STOCK_COUNT_ITEM_ENTITY', 422, 'Mặt hàng và lần kiểm kê thuộc hai pháp nhân khác nhau');
+      if (!item.active) throw new DomainError('STOCK_COUNT_ITEM_INACTIVE', 409, 'Mặt hàng này đã ngừng dùng; hãy bật lại trước khi kiểm kê');
     }
     const head = await ctx.trx
       .insertInto('crove_finance.stock_count')
@@ -307,8 +307,8 @@ export const confirmEmptyStockCount = defineCommand({
   handler: async (ctx, { countId }) => {
     const { head, lines } = await loadCount(ctx, countId, true);
     requireDraft(head);
-    await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
     await lockEntityMoves(ctx, head.legal_entity_id);
+    await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
     const built = await buildCount(ctx, head, lines);
     if (built.worked.lines.some((l) => !money(l.difference).isZero())) {
       throw new DomainError('STOCK_COUNT_HAS_DIFFERENCE', 409, 'Lần kiểm kê này có chênh lệch so với sổ; hãy gửi đề xuất xác nhận để chủ sở hữu hoặc quản trị viên duyệt');
@@ -469,7 +469,8 @@ export const listStockCounts = defineQuery({
             name: item?.name ?? '',
             unit: item?.unit ?? '',
             stockAccount: item?.stock_account ?? '',
-            bookQuantity: counted.minus(difference).toFixed(),
+            // A cancelled count made no adjustment: it shows what was counted and nothing of the books.
+            bookQuantity: head.status === 'cancelled' ? '' : counted.minus(difference).toFixed(),
             countedQuantity: counted.toFixed(),
             difference: difference.toFixed(),
             unitCost: adjustment ? money(adjustment.amount).abs().dividedBy(difference.abs()).toDecimalPlaces(4).toFixed() : null,

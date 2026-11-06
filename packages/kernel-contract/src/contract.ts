@@ -1708,7 +1708,7 @@ export const contract = {
     // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
     closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
     // Counts of stock (#2513 part b), newest first (every role reads). create makes a draft with what was counted (owners, admins, members; STOCK_COUNT_FUTURE (422), STOCK_COUNT_CLOSED,
-    // STOCK_COUNT_DUPLICATE_ITEM (409), STOCK_ITEM_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH, STOCK_ITEM_INACTIVE); cancel drops a draft; confirmEmpty confirms a count that differs from the
+    // STOCK_COUNT_DUPLICATE_ITEM, STOCK_COUNT_ITEM_INACTIVE (409), STOCK_ITEM_NOT_FOUND (404), STOCK_COUNT_ITEM_ENTITY (422)); cancel drops a draft; confirmEmpty confirms a count that differs from the
     // books nowhere, with nothing to post. A count with differences is confirmed through inbox.request (finance.stock.count_confirm).
     counts: {
       list: oc.input(zStockCountListInput.optional()).output(z.array(zStockCount)),

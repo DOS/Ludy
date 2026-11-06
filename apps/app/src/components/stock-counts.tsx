@@ -15,14 +15,15 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { TableCell, TableRow } from '@crove/ui/components/table';
 import { DataTable, ErrorText, TableSkeleton } from './ui.tsx';
-import { useFormat } from '../i18n/provider.tsx';
+import { useFormat, useLocaleSetting } from '../i18n/provider.tsx';
 import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 
 const NUM = 'px-4 py-3 text-right tabular-nums';
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.stock.key() });
 const isZero = (value: string) => /^-?0+(?:\.0+)?$/.test(value);
-// A person may type a comma for the decimal point.
-const decimal = (value: string) => value.trim().replace(',', '.');
+// A number as typed, in the way of the language of the screen: Vietnamese groups thousands with dots and writes decimals with a comma (1.500,5), English the other way round (1,500.5). The server
+// gets plain digits with a dot.
+const decimalOf = (value: string, locale: string) => (locale.startsWith('vi') ? value.trim().replace(/\./g, '').replace(',', '.') : value.trim().replace(/,/g, ''));
 
 const STATUS_VARIANT = { draft: 'secondary', confirmed: 'success', cancelled: 'outline' } as const;
 
@@ -30,6 +31,7 @@ const STATUS_VARIANT = { draft: 'secondary', confirmed: 'success', cancelled: 'o
 function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string | undefined; onDone: () => void; onCancel: () => void }) {
   const t = useTranslations('stock.counts');
   const f = useFormat();
+  const { locale } = useLocaleSetting();
   const [date, setDate] = useState(() => vietnamToday());
   const [norm, setNorm] = useState('0');
   const [note, setNote] = useState('');
@@ -42,13 +44,13 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
     mutationFn: () =>
       client.stock.counts.create({
         countDate: date,
-        lossNormPercent: decimal(norm),
+        lossNormPercent: decimalOf(norm, locale),
         ...(note.trim() ? { note: note.trim() } : {}),
         ...(legalEntityId ? { legalEntityId } : {}),
         lines: lines.map((r) => ({
           itemId: r.itemId,
-          countedQuantity: decimal(counted[r.itemId] ?? ''),
-          ...((costs[r.itemId] ?? '').trim() ? { unitCost: decimal(costs[r.itemId] ?? '') } : {}),
+          countedQuantity: decimalOf(counted[r.itemId] ?? '', locale),
+          ...((costs[r.itemId] ?? '').trim() ? { unitCost: decimalOf(costs[r.itemId] ?? '', locale) } : {}),
         })),
       }),
     onSuccess: async () => {
@@ -105,18 +107,15 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
                   />
                 </TableCell>
                 <TableCell className="px-4 py-3 text-right">
-                  {r.averageCost === null ? (
-                    <Input
-                      aria-label={`${t('unitCost')} ${r.code}`}
-                      title={t('unitCostHint')}
-                      inputMode="decimal"
-                      className="ml-auto w-28 text-right"
-                      value={costs[r.itemId] ?? ''}
-                      onChange={(e) => setCosts({ ...costs, [r.itemId]: e.target.value })}
-                    />
-                  ) : (
-                    <span className="text-subtle-foreground">{f.money(r.averageCost, 'VND')}</span>
-                  )}
+                  <Input
+                    aria-label={`${t('unitCost')} ${r.code}`}
+                    title={t('unitCostHint')}
+                    placeholder={r.averageCost === null ? '' : f.money(r.averageCost, 'VND')}
+                    inputMode="decimal"
+                    className="ml-auto w-28 text-right"
+                    value={costs[r.itemId] ?? ''}
+                    onChange={(e) => setCosts({ ...costs, [r.itemId]: e.target.value })}
+                  />
                 </TableCell>
               </TableRow>
             ))}
@@ -140,7 +139,7 @@ function CountForm({ legalEntityId, onDone, onCancel }: { legalEntityId: string 
 function CountCard({ count, canWrite, slug }: { count: StockCount; canWrite: boolean; slug: string }) {
   const t = useTranslations('stock.counts');
   const f = useFormat();
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const [idempotencyKey, setIdempotencyKey] = useState(() => crypto.randomUUID());
   const differs = count.lines.some((l) => !isZero(l.difference));
   const unpriced = count.lines.filter((l) => !isZero(l.difference) && l.unitCost === null);
   const request = useMutation({
@@ -179,13 +178,24 @@ function CountCard({ count, canWrite, slug }: { count: StockCount; canWrite: boo
           {t('unpricedWarn', { codes: unpriced.map((l) => l.code).join(', ') })}
         </p>
       )}
-      {request.data ? (
+      {request.data && count.status === 'draft' ? (
         <Alert className="mt-3">
           <AlertDescription>
             {t('requested', { date: f.date(count.countDate) })}{' '}
             <Link to="/o/$slug/inbox/$id" params={{ slug, id: request.data.proposalId }} className="text-link underline">
               {t('viewProposal')}
-            </Link>
+            </Link>{' '}
+            {/* A proposal that was rejected leaves the count a draft: it can be sent again, under a new key. */}
+            <button
+              type="button"
+              className="text-link underline"
+              onClick={() => {
+                request.reset();
+                setIdempotencyKey(crypto.randomUUID());
+              }}
+            >
+              {t('requestAgain')}
+            </button>
           </AlertDescription>
         </Alert>
       ) : (

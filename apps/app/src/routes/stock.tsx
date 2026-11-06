@@ -146,6 +146,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                   canWrite &&
                   m.source !== 'reversal' &&
                   m.source !== 'order_line' &&
+                  m.source !== 'count' &&
                   (confirming === m.id ? (
                     <span className="inline-flex items-center gap-2">
                       <Button

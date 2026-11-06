@@ -198,7 +198,7 @@ BEGIN
        SELECT 1 FROM crove_finance.stock_count_line l
        JOIN crove_finance.stock_count c ON c.org_id = l.org_id AND c.id = l.count_id
        WHERE l.org_id = NEW.org_id AND l.id = NEW.count_line_id AND l.item_id = NEW.item_id
-         AND c.status = 'confirmed' AND c.count_date = NEW.move_date AND c.legal_entity_id = NEW.legal_entity_id) THEN
+         AND c.status = 'confirmed' AND c.voucher_id IS NOT NULL AND c.count_date = NEW.move_date AND c.legal_entity_id = NEW.legal_entity_id) THEN
     RAISE EXCEPTION 'STOCK_COUNT_MOVE' USING ERRCODE = '23514';
   END IF;
   IF NEW.source_type = 'reversal' AND EXISTS (
@@ -228,30 +228,43 @@ ALTER TABLE crove_finance.journal_voucher DROP CONSTRAINT IF EXISTS journal_vouc
 ALTER TABLE crove_finance.journal_voucher ADD CONSTRAINT journal_voucher_stock_count_fk FOREIGN KEY (org_id, stock_count_id) REFERENCES crove_finance.stock_count (org_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS journal_voucher_stock_count_uq ON crove_finance.journal_voucher (org_id, stock_count_id) WHERE stock_count_id IS NOT NULL;
 
--- By commit (the voucher and the adjustments are written in the same transaction as the confirmation), a count that was confirmed has the voucher that posted its differences: of the same
--- entity, dated the day of the count, whose debits are what the adjustments are worth; and a count with no voucher has adjustments worth nothing (it had none). A count never exists
--- confirmed without its entry.
-CREATE OR REPLACE FUNCTION crove_finance.stock_count_voucher_check() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+-- Whether a count that was confirmed is tied to its entry. With no voucher, the adjustments of its lines are worth nothing (it had none). With one, the voucher is of the same org and entity, names
+-- the count, is dated the day of the count, its entry is on 632, 1381, 3381 or 156 (goods) and nothing else, and its debits are what the adjustments are worth. Read as the writer: the writer has
+-- the entity in scope to have made the count.
+CREATE OR REPLACE FUNCTION crove_finance.stock_count_tied(p_org uuid, p_count uuid) RETURNS boolean
+LANGUAGE plpgsql STABLE SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
+  v_count crove_finance.stock_count%ROWTYPE;
   v_worth numeric;
 BEGIN
+  SELECT * INTO v_count FROM crove_finance.stock_count c WHERE c.org_id = p_org AND c.id = p_count;
+  IF NOT FOUND OR v_count.status <> 'confirmed' THEN
+    RETURN false;
+  END IF;
   SELECT coalesce(pg_catalog.sum(pg_catalog.abs(m.amount)), 0) INTO v_worth
   FROM crove_finance.stock_move m
   JOIN crove_finance.stock_count_line l ON l.org_id = m.org_id AND l.id = m.count_line_id
-  WHERE l.org_id = NEW.org_id AND l.count_id = NEW.id;
-  IF NEW.voucher_id IS NULL THEN
-    IF v_worth <> 0 THEN
-      RAISE EXCEPTION 'STOCK_COUNT_VOUCHER' USING ERRCODE = '23514';
-    END IF;
-  ELSIF NOT EXISTS (
-       SELECT 1
-       FROM crove_finance.journal_voucher v
-       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL AND e.entry_date = v.voucher_date
-       WHERE v.org_id = NEW.org_id AND v.id = NEW.voucher_id AND v.legal_entity_id = NEW.legal_entity_id AND v.stock_count_id = NEW.id AND v.voucher_date = NEW.count_date
-         -- Every line on 632, 1381, 3381 or 156 or a sub-account of it (goods): the entry that posts a count and nothing else.
-         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id AND l.account_code NOT IN ('632', '1381', '3381') AND l.account_code NOT LIKE '156%')
-         AND (SELECT coalesce(pg_catalog.sum(l.debit), 0) FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) = v_worth) THEN
+  WHERE l.org_id = p_org AND l.count_id = p_count;
+  IF v_count.voucher_id IS NULL THEN
+    RETURN v_worth = 0;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1
+    FROM crove_finance.journal_voucher v
+    JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL AND e.entry_date = v.voucher_date
+    WHERE v.org_id = p_org AND v.id = v_count.voucher_id AND v.legal_entity_id = v_count.legal_entity_id AND v.stock_count_id = v_count.id AND v.voucher_date = v_count.count_date
+      AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id AND l.account_code NOT IN ('632', '1381', '3381') AND l.account_code NOT LIKE '156%')
+      AND (SELECT coalesce(pg_catalog.sum(l.debit), 0) FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) = v_worth);
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.stock_count_tied(uuid, uuid) FROM PUBLIC, crove_app, crove_worker;
+GRANT EXECUTE ON FUNCTION crove_finance.stock_count_tied(uuid, uuid) TO crove_tenant, crove_definer_tenant;
+
+-- By commit (the voucher and the adjustments are written in the same transaction as the confirmation), a count that was confirmed is tied to its entry: it is never confirmed without the
+-- voucher that posted its differences, and an adjustment written later, in another transaction, fails at its own commit because the voucher no longer covers it.
+CREATE OR REPLACE FUNCTION crove_finance.stock_count_voucher_check() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NOT crove_finance.stock_count_tied(NEW.org_id, NEW.id) THEN
     RAISE EXCEPTION 'STOCK_COUNT_VOUCHER' USING ERRCODE = '23514';
   END IF;
   RETURN NULL;
@@ -260,6 +273,19 @@ REVOKE ALL ON FUNCTION crove_finance.stock_count_voucher_check() FROM PUBLIC, cr
 DROP TRIGGER IF EXISTS stock_count_voucher_trg ON crove_finance.stock_count;
 CREATE CONSTRAINT TRIGGER stock_count_voucher_trg AFTER UPDATE ON crove_finance.stock_count
   DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.status = 'confirmed' AND OLD.status = 'draft') EXECUTE FUNCTION crove_finance.stock_count_voucher_check();
+
+CREATE OR REPLACE FUNCTION crove_finance.stock_move_count_check() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NOT crove_finance.stock_count_tied(NEW.org_id, (SELECT l.count_id FROM crove_finance.stock_count_line l WHERE l.org_id = NEW.org_id AND l.id = NEW.count_line_id)) THEN
+    RAISE EXCEPTION 'STOCK_COUNT_VOUCHER' USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.stock_move_count_check() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS stock_move_count_trg ON crove_finance.stock_move;
+CREATE CONSTRAINT TRIGGER stock_move_count_trg AFTER INSERT ON crove_finance.stock_move
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (NEW.source_type = 'count') EXECUTE FUNCTION crove_finance.stock_move_count_check();
 
 -- ---------------------------------------------------------------------------
 -- 5. The confirmation is a ledger command (finance.stock.count_confirm, approval policy 7)

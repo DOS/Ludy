@@ -42,9 +42,13 @@ describe('the difference of a count', () => {
     expect(result.total).toBe('150');
   });
 
-  it('prefers the cost typed to the average, and names an item that differs with no cost at all', () => {
-    const typed = countDifferences([item('T', '4', '3', { unitCost: '70' })], '0');
-    expect(typed.lines[0]).toMatchObject({ unitCost: '70', value: '-70' });
+  it('uses the cost typed only when the books have none, and names an item that differs with no cost at all', () => {
+    // The books' average wins over a cost typed for an item that has one; a typed cost serves an item whose average is missing or zero.
+    const kept = countDifferences([item('T', '4', '3', { unitCost: '70' })], '0');
+    expect(kept.lines[0]).toMatchObject({ unitCost: '100', value: '-100' });
+    const served = countDifferences([item('Z', '4', '3', { averageCost: '0', unitCost: '70' })], '0');
+    expect(served.lines[0]).toMatchObject({ unitCost: '70', value: '-70' });
+    expect(served.unpriced).toEqual([]);
     const none = countDifferences([item('C', '0', '4', { averageCost: null }), item('D', '5', '5', { averageCost: null })], '0');
     expect(none.unpriced).toEqual([{ itemId: 'id-C', code: 'C', name: 'Hàng C' }]);
     expect(none.entry).toEqual([]);
@@ -61,6 +65,12 @@ describe('the difference of a count', () => {
     const credits = result.entry.reduce((sum, l) => sum.plus(money(l.credit)), money(0));
     expect(debits.toFixed()).toBe(credits.toFixed());
     expect(result.total).toBe(debits.toFixed());
+  });
+
+  it('values a trace of a difference at one dong, so it never holds a count back', () => {
+    const result = countDifferences([item('S', '1', '0.996')], '0');
+    expect(result.lines[0]).toMatchObject({ difference: '-0.004', value: '-1' });
+    expect(result.unpriced).toEqual([]);
   });
 
   it('never lets the norm allow more than the shortage, and allows nothing on a book quantity that is not above zero', () => {
