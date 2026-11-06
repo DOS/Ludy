@@ -76,6 +76,8 @@ export function describeError(error: Error, depth = 0): string {
   const record = error as unknown as Record<string, unknown>;
   const fields = ERROR_FIELDS.flatMap((key) => {
     const value = record[key];
+    // pg names the column as a string; Bun puts the source column, a number, on every Error, which is no place in the data.
+    if (key === 'column') return typeof value === 'string' ? [`${key}: ${value}`] : [];
     return typeof value === 'string' || typeof value === 'number' ? [`${key}: ${String(value)}`] : [];
   });
   const head = typeof error.stack === 'string' && error.stack !== '' ? error.stack : `${error.name}: ${error.message}`;

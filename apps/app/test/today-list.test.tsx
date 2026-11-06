@@ -9,7 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TodayItem } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { catalog } from '../src/i18n/runtime.ts';
+import { I18nProvider } from '../src/i18n/provider.tsx';
+import { catalog, setActiveLocale } from '../src/i18n/runtime.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
 
@@ -58,12 +59,17 @@ function render(opts: { data?: unknown; error?: boolean; locale?: 'en' | 'vi'; b
     ads: { pace: locale === 'en' ? 'Ad spend is running ahead' : 'Chi quảng cáo đang vượt tiến độ' },
     tax: { vat: locale === 'en' ? 'VAT return due' : 'Hạn tờ khai GTGT' },
   };
+  // useFormat() follows the app's active locale: pinned, so the amount reads in the rendered language on every runtime
+  // (navigator.languages is the machine's on Node and empty on Bun).
+  setActiveLocale(locale);
   return renderToStaticMarkup(
-    <QueryClientProvider client={qc}>
-      <IntlProvider locale={locale} messages={messages as never}>
-        <TodayList slug="acme" />
-      </IntlProvider>
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={qc}>
+        <IntlProvider locale={locale} messages={messages as never}>
+          <TodayList slug="acme" />
+        </IntlProvider>
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 

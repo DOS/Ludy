@@ -11,7 +11,8 @@ const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const EVENTS = ['crm.booking.requested', 'crm.booking.manage_requested'];
 
 function files(dir: string, keep: (name: string) => boolean): string[] {
-  return readdirSync(join(ROOT, dir)).flatMap((name) => {
+  // Sorted: readdir's order is the file system's and the runtime's, and the migrations are read in version order.
+  return readdirSync(join(ROOT, dir)).sort().flatMap((name) => {
     if (name === 'node_modules' || name === 'dist') return [];
     const path = join(dir, name);
     return statSync(join(ROOT, path)).isDirectory() ? files(path, keep) : keep(name) ? [path] : [];
