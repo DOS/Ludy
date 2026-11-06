@@ -370,6 +370,10 @@ export const zAdAccountView = z.object({
   // token could also change campaigns (`spend_scopes`: it was closed and dropped, and the owner reconnects it for reading).
   pausedSince: z.string().nullable(),
   pausedReason: z.enum(['token_expired', 'owner_left', 'disconnected', 'platform_deletion', 'spend_scopes', 'other']).nullable(),
+  // When an active connection's refresh token has a known expiry (a Google Cloud consent screen still in Testing mode issues
+  // refresh tokens that expire after 7 days; #2220): the screen warns before the connection stops. Null when the token does not
+  // report a refresh expiry or the connection is not active.
+  connectionExpiresAt: z.string().nullable(),
   // An owner enabled this account for running ads (ADR-0043). It does not yet mean ads can run: the org switch and a token that
   // can change campaigns (the write connection below) are needed too.
   writeEnabled: z.boolean(),
@@ -438,3 +442,49 @@ export const zAdsSyncRunView = z.object({
   startedAt: z.string(),
 });
 export type AdsSyncRunView = z.infer<typeof zAdsSyncRunView>;
+
+// The deterministic weekly comparison note on the Ads screen (#2220, plan section 9): for each currency the org's synced ad
+// accounts report in (currencies are never added or compared across each other), the last 7 completed days vs the 7 days before,
+// broken down by platform and naming the campaign whose spend moved the most. Read only; no model is called.
+export const zAdsWeeklyPlatformNote = z.object({
+  provider: z.string(),
+  accountCount: z.number().int(),
+  recentSpend: zMoney,
+  priorSpend: zMoney,
+  spendDelta: z.string(),
+  resultKind: z.string().nullable(),
+  recentResults: z.string().nullable(),
+  priorResults: z.string().nullable(),
+  recentCostPerResult: z.string().nullable(),
+  priorCostPerResult: z.string().nullable(),
+  cprDelta: z.string().nullable(),
+});
+export type AdsWeeklyPlatformNote = z.infer<typeof zAdsWeeklyPlatformNote>;
+
+export const zAdsWeeklyCampaignMove = z.object({
+  adAccountId: zId,
+  accountName: z.string(),
+  provider: z.string(),
+  externalObjectId: z.string(),
+  campaignName: z.string(),
+  recentSpend: zMoney,
+  priorSpend: zMoney,
+  spendDelta: z.string(),
+});
+export type AdsWeeklyCampaignMove = z.infer<typeof zAdsWeeklyCampaignMove>;
+
+export const zAdsWeeklyNote = z.object({
+  currency: zCurrency,
+  recentFrom: zLocalDate,
+  recentTo: zLocalDate,
+  priorFrom: zLocalDate,
+  priorTo: zLocalDate,
+  recentSpend: zMoney,
+  priorSpend: zMoney,
+  spendDelta: z.string(),
+  platforms: z.array(zAdsWeeklyPlatformNote),
+  topMover: zAdsWeeklyCampaignMove.nullable(),
+  skippedAccounts: z.number().int(),
+});
+export type AdsWeeklyNote = z.infer<typeof zAdsWeeklyNote>;
+

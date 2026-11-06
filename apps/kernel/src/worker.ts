@@ -13,7 +13,7 @@ import { postMessage, type WebhookTarget } from './alert.ts';
 import { REFRESH_SWEEP_MS, refreshChannels } from './channel-refresh.ts';
 import { RESEAL_SWEEP_MS, resealCredentials, unopenableKeysLog } from './credential-reseal.ts';
 import type { ExtractClient } from '@crove/extract-contract';
-import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
+import { EINVOICE_DUE_PAGE, FINANCE_NOTIFYING_EVENTS, PERIOD_CLOSING_SWEEP_MS, einvoiceDue, extractAndPropose, readMarketplaceFile, importPortalList, readStatementFile, recordExtractionFailure, recordStatementReadFailure, recordPortalListFailure, sweepPeriodClosing } from '@crove/mod-finance';
 import { ACCOUNT_SWEEP_MS, CHAT_ALERT_TEST_EVENT, CHAT_ALERTING_EVENTS, DIGEST_SWEEP_MS, EVERGREEN_SWEEP_MS, EXTERNAL_SWEEP_MS, FEED_SWEEP_MS, LATE_ID_SWEEP_MS, METRICS_SWEEP_MS, NOTIFYING_EVENTS, PUBLISH_STALE_SECONDS, QUEUE_LOW_SWEEP_MS, RECURRING_SWEEP_MS, REMINDER_SWEEP_MS, REPORT_SCHEDULE_SWEEP_MS, runChannelOptionJob, runCommentJob, runPublishJob, runEditJob, runRemoveJob, runThreadJob, sweepAccounts, sweepDigests, sweepEvergreen, sweepExternalPosts, sweepLateIds, sweepMetrics, sweepQueueLow, sweepRecurring, sweepReminders, sweepAssignmentReminders, sweepReportSchedules, REMOVE_READY, REMOVE_SWEEP_MS, REMOVE_WATCH_AFTER_MS, isProvider, runRemoveWatch, sweepRemovals } from '@crove/mod-social';
 import { sweepFeeds } from './feeds.ts';
 import { SECURITY_SWEEP_MS, sweepSecuritySignals, type SecurityThresholds } from './security-signals.ts';
@@ -55,6 +55,7 @@ import { opsAlert } from './ops-alert.ts';
 import { BANK_FEEDS_DUE_PAGE, bankFeedsDue, runBankFeedSync, type BankFeedSyncJob } from './bank-feed-sync.ts';
 import { runEInvoiceIssue, type EInvoiceIssueJob } from './einvoice-issue-job.ts';
 import { runAdsLaunch, type AdsLaunchJob } from './ads-launch.ts';
+import { runAdsActivate, type AdsActivateJob } from './ads-activate.ts';
 import { runAdsPause, type AdsPauseJob } from './ads-pause.ts';
 import { runAdsRevoke } from './ads-revoke.ts';
 import { ADS_DUE_PAGE, adsDue, pruneAdsRuns, runAdsSync, type AdsSyncJob } from './ads-sync.ts';
@@ -66,7 +67,7 @@ import { BANK_FEED_NOTICE_CLAIM, claimBankFeedNotices } from './bank-feed-webhoo
 import { runAdsDeletions } from './ads-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
 import type { EInvoiceProvider } from '@crove/einvoice';
-import type { AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
+import type { AdActivator, AdPauser, AdPlatform, AdRevoker, LaunchWriter } from '@crove/ad-platform';
 
 const SOCIAL_PUBLISH_RETRY_LIMIT = 2;
 // The worker looks for due variants this often; a post goes out within this long of its time.
@@ -351,6 +352,8 @@ const ADS_REVOKE_CRON = '* * * * *';
 const ADS_LAUNCH_SWEEP_CRON = '*/10 * * * *';
 // The safety net of the pause of stopped launches (#2296, W2-4a): every five minutes, a stopped launch whose objects are not paused yet and whose job was lost or is due again.
 const ADS_PAUSE_SWEEP_CRON = '*/5 * * * *';
+// The activation's sweep: a launch whose flight has begun and whose event or job was lost, or that waited for its first day, is queued again (#2296, W2-4b).
+const ADS_ACTIVATE_SWEEP_CRON = '*/10 * * * *';
 const ADS_SYNC_RETRY_LIMIT = 3;
 // A booking's event handed to a calendar write-back job: it fails only when the org's connections cannot be listed (a
 // database error), which pg-boss retries a few times, then dead-letters. A failing provider call is left to the 15 minute sweep.
@@ -398,9 +401,9 @@ export interface WorkerDeps {
   // them, with the credentials it opens.
   channels?: {
     broker: CredentialBroker;
-    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY): off until the live check has settled the
-    // shapes of the platform's history answers (docs/runbooks/zalo-conversations-live-check.md).
+    // Read each account's recent history to fill what the webhook missed (CHANNEL_ZALO_HISTORY, CHANNEL_FACEBOOK_HISTORY).
     conversationHistory?: boolean;
+    facebookHistory?: boolean;
     // The media hosts a customer's image may be fetched from, by provider (CHANNEL_ZALO_MEDIA_HOSTS): unset, the provider's own list.
     conversationMediaHosts?: readonly string[];
     publishers: Readonly<Record<string, Publisher>>;
@@ -421,6 +424,9 @@ export interface WorkerDeps {
     // The one call of an ad platform's writer that pauses what a stopped launch made (#2296, W2-4a), by the provider id of the write connection: a frozen view that finds the
     // objects carrying the launch's tag and sets them PAUSED, never the writer. The pause job alone uses it, with the credential it opens.
     adPausers?: Readonly<Record<string, AdPauser>>;
+    // The calls of an ad platform that switch on what an approved launch made (#2296, W2-4b), by the provider id of the write connection: a frozen view with `activate` and
+    // `readStatus`, never the writer. The activation job alone uses it, with the credential it opens.
+    adActivators?: Readonly<Record<string, AdActivator>>;
     // The outside calendar adapters this deployment offers (#2123), by OAuth provider id.
     calendars?: Readonly<Partial<Record<string, CalendarAdapter>>>;
   };
@@ -711,6 +717,13 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // A bank statement (#2142), an .xlsx (which arrives as a ZIP) or a CSV, is stored as the bank lines of its mapped
       // account; a file the sandbox does not read as one goes on as before. A re-read someone asked for (a statement that
       // named an account no one had mapped yet) comes with its version and is read the same way.
+      // A marketplace order report (#2515) is tried first: its headers are told apart by words only the platforms use, and a bank statement reader would take any sheet with a date and an
+      // amount. A file that is no order report goes on to the bank statement reader as before.
+      const report = await readMarketplaceFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
+      if (report.handled) {
+        console.log(`[extract] file ${fileId}: marketplace order report`);
+        return;
+      }
       const statement = await readStatementFile({ runtime: deps.runtime, store: deps.store, extract: deps.extract }, orgId, fileId, job.retryCount, version);
       if (statement.handled) {
         console.log(`[extract] file ${fileId}: bank statement`);
@@ -1251,6 +1264,27 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
     await boss.schedule(QUEUES.adsPause, ADS_PAUSE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
   } else {
     await dropCron(QUEUES.adsPause);
+  }
+
+  // The activation of an approved launch at the ad platform (#2296, W2-4b): ids only in the job (the org and the launch), queued by the relay below when the launch job left a
+  // launch's objects created and paused (ads.activate.queued), and again by a sweep every ten minutes for a launch whose flight has begun and whose event or job was lost
+  // (crove_ads.activate_requeue writes the same event for the providers this worker has an activator for; the job's begin decides what is due, and re-checks the stop
+  // conditions, the plan and the caps before every call). The job switches the launch's own objects on with the credential of the write connection, and nothing else.
+  const adActivators = deps.channels?.adActivators;
+  if (ads && adActivators && adsBroker && Object.keys(adActivators).length > 0) {
+    await boss.work<AdsActivateJob | { sweep: true }>(QUEUES.adsActivate, { batchSize: 1 }, async ([job]) => {
+      if (!job) return;
+      if ('sweep' in job.data) {
+        const { rows } = await sql<{ n: number }>`SELECT crove_ads.activate_requeue(${Object.keys(adActivators)}::text[], 200) AS n`.execute(deps.workerDb);
+        if ((rows[0]?.n ?? 0) > 0) console.log(`[ads-activate] ${rows[0]?.n} waiting launch(es) queued again`);
+        return;
+      }
+      const done = await runAdsActivate({ runtime: deps.runtime, broker: adsBroker, activators: adActivators }, job.data);
+      console.log(`[ads-activate] ${job.data.launchId}: ${done.steps} call(s), ${done.ended}`);
+    });
+    await boss.schedule(QUEUES.adsActivate, ADS_ACTIVATE_SWEEP_CRON, { sweep: true }, { tz: RETENTION_TZ, missed: 'once', retryLimit: 0 });
+  } else {
+    await dropCron(QUEUES.adsActivate);
   }
 
   // Conversations (#2303): a reply or a hide of the conversation core, queued by the relay below. The channel adapters are the
@@ -2175,6 +2209,17 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
                   retryBackoff: true,
                 });
               }
+              // An approved launch whose objects are created and paused (#2296, W2-4b): the job switches them on and records each answer; ids only in the job. A deployment with
+              // no activator leaves the launch paused, untouched.
+              if (ads && deps.channels?.adActivators && Object.keys(deps.channels.adActivators).length > 0 && row.type === 'ads.activate.queued') {
+                const launchId = String(row.payload.launchId);
+                await boss.send(QUEUES.adsActivate, { orgId: row.org_id, launchId } satisfies AdsActivateJob, {
+                  singletonKey: jobKey(row.org_id, QUEUES.adsActivate, launchId),
+                  retryLimit: 2,
+                  retryDelay: 30,
+                  retryBackoff: true,
+                });
+              }
               // A reply or a hide of the conversation core (#2303): the job begins the call (committed as started), makes it
               // with the connection's credential and records the answer. A reply is never repeated by a job after an unclear
               // answer, and a retry only covers a failure before the call began; a hide is idempotent.
@@ -2448,8 +2493,18 @@ export async function startWorker(deps: WorkerDeps): Promise<() => Promise<void>
       // reconnected one, then hourly) and the name of a customer who has none yet, for the providers whose adapters can read them. The
       // history read only runs where the deployment has turned it on, once its live check has settled the platform's shapes.
       if (conversationPublishers && conversationBroker) {
-        const withMethod = (method: 'history' | 'profile') => Object.entries(conversationPublishers).filter(([, p]) => typeof p.conversations?.[method] === 'function').map(([id]) => id);
-        const due = await dueConversationSync(deps.workerDb, { history: deps.channels?.conversationHistory ? withMethod('history') : [], profile: withMethod('profile') });
+        const withMethod = (method: 'history' | 'profile') =>
+          Object.entries(conversationPublishers)
+            .filter(([id, p]) => {
+              if (typeof p.conversations?.[method] !== 'function') return false;
+              if (method !== 'history') return true;
+              if (id === 'facebook_page' || id === 'instagram') {
+                return Boolean(deps.channels?.facebookHistory ?? deps.channels?.conversationHistory);
+              }
+              return Boolean(deps.channels?.conversationHistory);
+            })
+            .map(([id]) => id);
+        const due = await dueConversationSync(deps.workerDb, { history: withMethod('history'), profile: withMethod('profile') });
         await requestConversationSync(deps.runtime, due);
         // The images customers sent that wait to be fetched (CV5c, #2357); images that will never be fetched are dropped in the same call.
         await requestConversationAttachments(deps.runtime, await dueConversationAttachments(deps.workerDb));

@@ -85,7 +85,7 @@ function withTotals(lines: ReportLine[], defs: readonly ReportLineDef[]): Statem
   return lines.map((line) => ({ ...line, total: totals.has(line.code) }));
 }
 
-interface BalanceRow {
+export interface BalanceRow {
   account_code: string;
   party_id: string | null;
   reversal: boolean;
@@ -94,7 +94,7 @@ interface BalanceRow {
 }
 
 // Each summed row as one entry of the legal entity dated `date` (inside the range the builder reads).
-function asEntries(rows: BalanceRow[], date: string, legalEntityId: string): ReportEntry[] {
+export function asEntries(rows: BalanceRow[], date: string, legalEntityId: string): ReportEntry[] {
   return rows.map((r) => ({
     legalEntityId,
     entryDate: date,
@@ -106,7 +106,7 @@ function asEntries(rows: BalanceRow[], date: string, legalEntityId: string): Rep
 
 // The debits and credits of the legal entity's entries in [from, to] (from null: since the first entry), per account,
 // party and reversal. `withoutClosing` leaves out every entry that has a line on the year-end closing account.
-function balances(ctx: QueryContext, legalEntityId: string, from: string | null, to: string, withoutClosing: boolean) {
+export function balances(ctx: QueryContext, legalEntityId: string, from: string | null, to: string, withoutClosing: boolean) {
   let query = ctx.trx
     .selectFrom('crove_finance.journal_line as l')
     .innerJoin('crove_finance.journal_entry as j', (join) => join.onRef('j.org_id', '=', 'l.org_id').onRef('j.id', '=', 'l.entry_id'))

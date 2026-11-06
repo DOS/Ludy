@@ -40,6 +40,8 @@ const KERNEL_SCREENS = {
 
 const FINANCE_SCREENS = {
   routes: [
+    // The Tổng quan of the Kế toán app (#2631): the cash, the profit, what customers owe and what is owed, first in its menu and where opening the app lands.
+    { path: 'accounting' },
     { path: 'documents' },
     { path: 'journal' },
     // Opening balances from Excel (#320), reached from the journal.
@@ -63,6 +65,7 @@ const FINANCE_SCREENS = {
     { path: 'guide', app: 'accounting' },
   ],
   nav: [
+    { app: 'accounting', group: 'books', path: 'accounting', label: 'accountingOverview' },
     { app: 'accounting', group: 'books', path: 'documents', label: 'documents' },
     { app: 'accounting', group: 'books', path: 'journal', label: 'journal' },
     { app: 'accounting', group: 'books', path: 'vouchers', label: 'vouchers' },

@@ -43,6 +43,8 @@ export const KEPT: Readonly<Record<string, string>> = {
   'crove_finance.period_lock': 'the rest of the books',
   'crove_finance.period_balance_delta': 'the rest of the books',
   'crove_finance.vat_return_filed': 'the rest of the books (#1400)',
+  'crove_finance.channel_order': 'the marketplace orders the stock moves of shipments and returns name, kept with the stock book (#2515)',
+  'crove_finance.channel_order_line': 'the lines of those orders, which the stock moves reference, kept with the stock book (#2515)',
   'crove_finance.stock_move': 'the stock book: goods in and out, kept with the ledger (Accounting Law 88/2015, Art. 41) (#2512)',
   'crove_finance.stock_period': 'the months of the stock book that were closed, and the voucher that posted their cost: part of the books (#2513)',
   'crove_finance.stock_period_item': 'what a closed month held of each item, the figures the cost of goods sold was posted from (#2513)',

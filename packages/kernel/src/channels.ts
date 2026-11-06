@@ -11,7 +11,7 @@
 //   crove_worker alone), and only while the member who connected the account is still in the org.
 import { sql } from 'kysely';
 import { z } from 'zod';
-import { isAdWriteProviderId, zId } from '@crove/kernel-contract';
+import { isAdProviderId, isAdWriteProviderId, zId } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 
@@ -53,6 +53,8 @@ export const zChannelConnect = z.strictObject({
   scopes: z.array(z.string().min(1).max(200)).max(100),
   expiresAt: z.iso.datetime({ offset: true }).nullable(),
   credential: z.strictObject({ keyId: zKeyId, envelope: zEnvelope }),
+  // Keyed hash of the platform user who granted the connection (CV6 #2305, CV2 #2307: Meta's data-deletion callback).
+  grantedByHash: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(),
 });
 export type ChannelConnectInput = z.infer<typeof zChannelConnect>;
 
@@ -72,8 +74,9 @@ export const channelConnect = defineCommand({
       status_reason: null,
       connected_by: userId,
       // A reconnect is a takeover: the Meta user who granted the connection before no longer holds it, so Meta's data deletion callback
-      // (CV6, #2305) does not reach this connection's conversations through them. The connector that knows the new grantor sets it again.
-      granted_by_hash: null,
+      // (CV6, #2305) does not reach this connection's conversations through them. The connector that knows the new grantor sets it again
+      // (Ads connections keep their hash on the ad account table instead).
+      granted_by_hash: isAdProviderId(input.provider) ? null : (input.grantedByHash ?? null),
       // A reconnect is read again at once for what the webhook missed (CV5b, #2329).
       history_synced_at: null,
       updated_at: ctx.now,

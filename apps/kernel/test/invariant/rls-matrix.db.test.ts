@@ -44,11 +44,19 @@ const MACHINERY = new Set([
   'crove_kernel.auth_session_org',
   'crove_kernel.calendar_credential',
   'crove_kernel.credential',
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, no login role grant.
+  'crove_kernel.extension_auth_code',
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, no login role grant.
+  'crove_kernel.extension_token',
   'crove_kernel.oauth_state',
   'crove_kernel.inbound_drop',
   'crove_kernel.outbox_archive',
   'crove_kernel.outbox_pending',
   'crove_kernel.refusal_tally',
+  // The wrapped data key of one person as an org knows them (ADR-0017, #2640): definer-only, like crove_kernel.credential.
+  'crove_kernel.subject_key',
+  // The wrapped data key of a meeting's media (ADR-0047 point 4): definer-only, no login role grant.
+  'crove_meetings.media_key',
   'crove_social.chat_alert_target',
 ]);
 // Tables whose row factory (and MACHINERY entry, for definer-only tables) lands on main before the table itself. CI
@@ -65,6 +73,16 @@ const PENDING_TABLES = new Set<string>([
   'crove_finance.stock_move',
   'crove_finance.stock_period',
   'crove_finance.stock_period_item',
+  'crove_kernel.extension_auth_code',
+  'crove_kernel.extension_token',
+  'crove_meetings.action_item',
+  'crove_meetings.audio_segment',
+  'crove_meetings.media_key',
+  'crove_meetings.meeting',
+  'crove_meetings.meeting_reader',
+  'crove_meetings.meeting_result',
+  'crove_meetings.meeting_video',
+  'crove_meetings.transcript_segment',
   'crove_notes.link',
   'crove_notes.note',
 ]);
@@ -79,6 +97,20 @@ const PENDING_TABLES = new Set<string>([
 // private-row behavior (other members, owners, viewers, agents) is tested in notes-private.db.test.ts (N2), not
 // here. Sorted, one table per line.
 const AUTHOR_ONLY = new Map<string, string>([
+  // Meeting action items (ADR-0047 point 2): worker system context reads and writes nothing; only named definers touch it.
+  ['crove_meetings.action_item', 'false'],
+  // Meeting audio segments (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.audio_segment', 'false'],
+  // Meeting records (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting', 'false'],
+  // Meeting readers (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_reader', 'false'],
+  // Meeting results (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_result', 'false'],
+  // Meeting videos (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.meeting_video', 'false'],
+  // Meeting transcript segments (ADR-0047 point 2): worker system context reads and writes nothing.
+  ['crove_meetings.transcript_segment', 'false'],
   // A link reads through its parent: the system context sees the links of shared notes (the factory's parent).
   [
     'crove_notes.link',
@@ -324,6 +356,25 @@ const fixedAssetRow = (o: { id: string; owner: string }) => ({
   start_month: '2026-10-01',
   months: 36,
   created_by: o.owner,
+});
+// AI meeting notes (ADR-0047, meetings plan section 15 step M1): reader-gated meetings tables and media keys.
+const meetingsMeetingRow = (o: { id: string; owner: string }, visibility: 'attendees' | 'org' = 'attendees') => ({
+  org_id: o.id,
+  id: randomUUID(),
+  recorder_user_id: o.owner,
+  visibility,
+  title: 'RLS matrix meeting',
+  language: 'vi',
+  status: 'ready',
+  started_at: '2026-11-04T10:00:00Z',
+  ended_at: '2026-11-04T10:30:00Z',
+  length_seconds: 1800,
+  consent_method: 'told_at_start',
+  consent_confirmed_by: o.owner,
+  consent_confirmed_at: '2026-11-04T10:00:00Z',
+  consent_notice_version: '1.0',
+  audio_retention_date: '2026-12-04',
+  text_retention_date: '2027-11-04',
 });
 // A note of the org's owner (ADR-0037), shared ('org') or private, and a link from a note to the org's party.
 const notesNoteRow = (o: { id: string; owner: string }, visibility: 'org' | 'private') => ({ org_id: o.id, id: randomUUID(), author_user_id: o.owner, visibility, title: 'RLS matrix note' });
@@ -1321,6 +1372,39 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
       };
     },
   },
+  // #2582: one-time PKCE authorization codes for the Ludy extension. Definer-only, in MACHINERY.
+  'crove_kernel.extension_auth_code': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        code_hash: `\\x${hex64()}`,
+        code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM',
+        code_challenge_method: 'S256',
+        user_id: o.owner,
+        scopes: '{meetings}',
+        device_name: 'Chrome on macOS',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-01T00:05:00Z',
+      },
+    }),
+  },
+  // #2582: scoped extension tokens (one org, one member, 90 days, hashed). Definer-only, in MACHINERY.
+  'crove_kernel.extension_token': {
+    make: (o) => ({
+      row: {
+        org_id: o.id,
+        id: randomUUID(),
+        user_id: o.owner,
+        token_hash: `\\x${hex64()}`,
+        device_name: 'Chrome on macOS',
+        scopes: '{meetings}',
+        created_at: '2026-10-01T00:00:00Z',
+        expires_at: '2026-10-31T00:00:00Z',
+        created_by: o.owner,
+      },
+    }),
+  },
   // The ledger of visible calls to outside services (Social plan §3.4, S4): one row per call key. Tenant roles read,
   // insert and update its outcome columns, never delete; the guard trigger refuses any change once a call has its
   // outcome, so the update probes assign a column of a started call to itself.
@@ -1518,6 +1602,10 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   'crove_kernel.saved_view': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), user_id: o.owner, scope: 'crm.deal', name: `rls-${tag()}`, filters: '{"v":1,"all":[]}' } }),
   },
+  // #2640: the wrapped data key of a subject (ADR-0017 section 2), the first of which is a payroll employee's. Written and read by definers alone, so no role may touch it.
+  'crove_kernel.subject_key': {
+    make: (o) => ({ setup: [], row: { org_id: o.id, id: randomUUID(), ref: `employee:${randomUUID()}`, key_id: 'rls-matrix', wrapped_key: `\\x${'00'.repeat(60)}` } }),
+  },
   'crove_kernel.task': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), title: 'RLS matrix task', source: 'human', created_by_type: 'user' } }),
   },
@@ -1553,6 +1641,142 @@ const ROW_FACTORIES: Record<string, RowFactory> = {
   },
   'crove_kernel.usage_deferral': {
     make: (o) => ({ row: { org_id: o.id, id: randomUUID(), metric: 'extraction_pages', subject_type: 'file', subject_id: randomUUID(), retry_at: '2099-01-01T00:00:00Z' } }),
+  },
+  // #2575: an action item suggested from a meeting (ADR-0047 point 1, 8), a draft until published.
+  'crove_meetings.action_item': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          title: 'RLS matrix action item',
+          who_drafted: 'Nguyễn Văn A',
+          who_parsed: o.owner,
+          when_drafted: 'Thứ sáu',
+          when_parsed: '2026-11-13',
+          transcript_seconds: 120,
+          stage: 'draft',
+          status: 'suggested',
+          flags: '[]',
+          tainted: 'true',
+        },
+      };
+    },
+  },
+  // #2575: normalized 10-minute audio segment of a meeting (ADR-0047 point 1, 5).
+  'crove_meetings.audio_segment': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          file_id: o.file,
+          segment_order: 0,
+          start_offset_seconds: 0,
+          length_seconds: 600,
+        },
+      };
+    },
+  },
+  // #2575: wrapped data key for audio or video of a meeting (ADR-0047 point 1, 4). Definer-only, in MACHINERY.
+  'crove_meetings.media_key': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          key_id: 'rls-matrix',
+          kind: 'audio',
+          wrapped_key: `\\x${'00'.repeat(60)}`,
+        },
+      };
+    },
+  },
+  // #2575: a meeting with its recorder, attendees-only by default (ADR-0047 point 1, 2).
+  'crove_meetings.meeting': {
+    make: (o) => ({
+      setup: [{ table: 'crove_meetings.meeting', values: meetingsMeetingRow(o, 'org') }],
+      row: meetingsMeetingRow(o, 'attendees'),
+    }),
+  },
+  // #2575: member attendee reader of a meeting (ADR-0047 point 1, 2).
+  'crove_meetings.meeting_reader': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          user_id: o.owner,
+        },
+      };
+    },
+  },
+  // #2575: AI summary and decisions on a meeting (ADR-0047 point 1, 3).
+  'crove_meetings.meeting_result': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          summary: 'RLS matrix meeting summary',
+          decisions: '["Quyết định 1"]',
+          feature: 'meetings.summary',
+          stage: 'draft',
+          tainted: 'true',
+        },
+      };
+    },
+  },
+  // #2575: optional kept video of a meeting (ADR-0047 point 1, 4, 7).
+  'crove_meetings.meeting_video': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          file_id: o.file,
+          length_seconds: 1800,
+          video_retention_date: '2026-11-11',
+        },
+      };
+    },
+  },
+  // #2575: timestamped transcript segment of a meeting (ADR-0047 point 1, 3).
+  'crove_meetings.transcript_segment': {
+    make: (o) => {
+      const meeting = meetingsMeetingRow(o);
+      return {
+        setup: [{ table: 'crove_meetings.meeting', values: meeting }],
+        row: {
+          org_id: o.id,
+          id: randomUUID(),
+          meeting_id: meeting.id,
+          start_seconds: 0,
+          end_seconds: 10,
+          speaker_label: 'Người nói 1',
+          text: 'Xin chào',
+          stage: 'draft',
+        },
+      };
+    },
   },
   // Notes and personal to-dos (ADR-0037, notes plan §3.4), in AUTHOR_ONLY. The matrix seeds as the superuser with no
   // context, so each factory names its author or owner: the org's owner, the user every member-context actor enters

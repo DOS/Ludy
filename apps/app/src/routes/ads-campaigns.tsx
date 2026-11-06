@@ -19,7 +19,7 @@ import { PostPicker } from '../components/ads-post-picker.tsx';
 import { CardSkeleton, Empty, ErrorText, Field, PageHeader } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
 import { errorMessage, orpc, queryClient } from '../lib/api.ts';
-import { formFromPost, objectiveText, type CampaignsSearch, type PostStart } from '../lib/ads-campaigns.ts';
+import { formFromPost, launchStateBadge, objectiveText, type CampaignsSearch, type PostStart } from '../lib/ads-campaigns.ts';
 import { getConfig } from '../lib/auth.ts';
 
 // While the AI coworker has a request open, the requests and the drafts are asked for again every few seconds; the worker answers within a minute or so,
@@ -163,6 +163,11 @@ export function AdsCampaignsPage() {
                       <Badge variant={d.status === 'approved' ? 'success' : d.pendingProposalId !== null ? 'warning' : 'outline'}>
                         {d.status === 'approved' ? t('campaigns.status.approved') : d.pendingProposalId !== null ? t('campaigns.status.waiting') : t('campaigns.status.draft')}
                       </Badge>
+                      {d.launch && (
+                        <Badge variant={launchStateBadge(d.launch, root).variant} data-testid="campaign-launch-state">
+                          {launchStateBadge(d.launch, root).label}
+                        </Badge>
+                      )}
                       <Button type="button" size="sm" variant="outline" aria-label={`${t('campaigns.open')}: ${d.plan.name}`} onClick={() => openThe(d.id)}>
                         {t('campaigns.open')}
                       </Button>

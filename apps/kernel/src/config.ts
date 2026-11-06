@@ -346,6 +346,13 @@ const schema = z.object({
   // The app's valid OAuth redirect URI is APP_URL/channels/oauth/facebook_page/callback.
   CHANNEL_META_APP_ID: optional,
   CHANNEL_META_APP_SECRET: optional,
+  // The secret CHANNEL_META_APP_SECRET replaces while Meta may still sign webhook notices with it during a rotation (conversation core CV2, #2307).
+  CHANNEL_META_APP_SECRET_PREVIOUS: optional,
+  // The verify token Meta sends on GET /api/channels/facebook/webhook when subscribing the app's Page webhook (conversation core CV2, #2307).
+  // Set alongside CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, the route /api/channels/facebook/webhook exists and Page comment notices are taken in.
+  CHANNEL_META_WEBHOOK_VERIFY_TOKEN: optional,
+  // Reconcile recent comments on connected Facebook Pages that granted pages_read_user_content (conversation core CV2, #2307).
+  CHANNEL_FACEBOOK_HISTORY: z.enum(['true', 'false']).default('true'),
   CHANNEL_META_GRAPH_VERSION: z.string().regex(/^v\d{1,3}\.\d{1,2}$/).default('v24.0'),
   // The Meta app for ad accounts, read only (ADR-0040, #2218): set both to offer "Connect a Meta ad account" on the Ads
   // screen; neither hides it. It may be the same app as the Pages one above (a classic app holds Facebook Login and the
@@ -366,6 +373,11 @@ const schema = z.object({
   // The Graph version is CHANNEL_META_GRAPH_VERSION.
   CHANNEL_META_ADS_WRITE_APP_ID: optional,
   CHANNEL_META_ADS_WRITE_APP_SECRET: optional,
+  // The Google Cloud OAuth web client for Google Ads, read only (ADR-0040, #2220): set both to offer "Connect a Google Ads
+  // account" on the Ads screen; neither hides it. Each deployment brings its own Google Cloud project and OAuth client (no
+  // developer token: Google sunset them in 2026-09), and the callback URI is APP_URL/channels/oauth/google_ads/callback.
+  CHANNEL_GOOGLE_ADS_CLIENT_ID: optional,
+  CHANNEL_GOOGLE_ADS_CLIENT_SECRET: optional,
   // The deployment's Zalo app, linked to the OAs it posts for (Social plan S6.4). Set both to offer Zalo OA. The app's
   // callback URL is APP_URL/channels/oauth/zalo_oa/callback.
   CHANNEL_ZALO_APP_ID: optional,
@@ -669,6 +681,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error('set both CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET, or neither');
   }
   if (config.CHANNEL_META_APP_ID && !/^\d{1,32}$/.test(config.CHANNEL_META_APP_ID)) throw new Error('CHANNEL_META_APP_ID is the numeric id of the Meta app');
+  if (config.CHANNEL_META_APP_SECRET_PREVIOUS !== undefined) {
+    if (config.CHANNEL_META_APP_SECRET === undefined) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is set without CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_APP_SECRET_PREVIOUS)) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is a Meta app secret: 8 to 200 characters, no whitespace');
+    if (config.CHANNEL_META_APP_SECRET_PREVIOUS === config.CHANNEL_META_APP_SECRET) throw new Error('CHANNEL_META_APP_SECRET_PREVIOUS is the same as CHANNEL_META_APP_SECRET: remove it');
+  }
+  if (config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN !== undefined) {
+    if (!config.CHANNEL_META_APP_ID) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN needs CHANNEL_META_APP_ID and CHANNEL_META_APP_SECRET');
+    if (!/^\S{8,200}$/.test(config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN)) throw new Error('CHANNEL_META_WEBHOOK_VERIFY_TOKEN is the verify token for the Meta Page webhook: 8 to 200 characters, no spaces');
+  }
   if (Boolean(config.CHANNEL_META_ADS_APP_ID) !== Boolean(config.CHANNEL_META_ADS_APP_SECRET)) {
     throw new Error('set both CHANNEL_META_ADS_APP_ID and CHANNEL_META_ADS_APP_SECRET, or neither');
   }
@@ -702,6 +723,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (Boolean(config.CHANNEL_TIKTOK_CLIENT_KEY) !== Boolean(config.CHANNEL_TIKTOK_CLIENT_SECRET)) throw new Error('set both CHANNEL_TIKTOK_CLIENT_KEY and CHANNEL_TIKTOK_CLIENT_SECRET, or neither');
   if (config.CHANNEL_TIKTOK_CLIENT_KEY && !/^[A-Za-z0-9]{8,64}$/.test(config.CHANNEL_TIKTOK_CLIENT_KEY)) throw new Error('CHANNEL_TIKTOK_CLIENT_KEY is the client key of the TikTok app');
   if (Boolean(config.CHANNEL_GOOGLE_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET, or neither');
+  if (Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_ID) !== Boolean(config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET)) throw new Error('set both CHANNEL_GOOGLE_ADS_CLIENT_ID and CHANNEL_GOOGLE_ADS_CLIENT_SECRET, or neither');
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CHANNEL_GOOGLE_ADS_CLIENT_ID)) throw new Error('CHANNEL_GOOGLE_ADS_CLIENT_ID is the client id of a Google OAuth web client');
   if (Boolean(config.CALENDAR_GOOGLE_CLIENT_ID) !== Boolean(config.CALENDAR_GOOGLE_CLIENT_SECRET)) throw new Error('set both CALENDAR_GOOGLE_CLIENT_ID and CALENDAR_GOOGLE_CLIENT_SECRET, or neither');
   if (config.CALENDAR_GOOGLE_CLIENT_ID && !/^[0-9]{6,32}-[A-Za-z0-9_-]{8,64}\.apps\.googleusercontent\.com$/.test(config.CALENDAR_GOOGLE_CLIENT_ID)) throw new Error('CALENDAR_GOOGLE_CLIENT_ID is the client id of a Google OAuth web client');
   if (config.CHANNEL_GOOGLE_BUSINESS === 'true' && !config.CHANNEL_GOOGLE_CLIENT_ID) throw new Error('CHANNEL_GOOGLE_BUSINESS needs CHANNEL_GOOGLE_CLIENT_ID and CHANNEL_GOOGLE_CLIENT_SECRET');
@@ -804,7 +827,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // ADR-0043 (#2296, W2-3): creating the objects of a campaign at Meta is for the owner's own live check, not for a deployment others reach, until the activation,
     // the pause on switch-off (W2-4) and the live-check runbook (W2-5) are built. Turning it on in production is a step the owner approves.
     if (config.ADS_LIVE_LAUNCH === 'true') {
-      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta; it is for the owner\'s own live check only and a public deployment refuses it until the activation, the pause on switch-off and the live-check runbook are built: set ADS_LIVE_LAUNCH=false');
+      throw new Error('ADS_LIVE_LAUNCH=true lets the worker create campaign objects at Meta and switch them on, which spends real money; it is for the owner\'s own live check only and a public deployment refuses it until the live-check runbook is done and the owner has approved the production step list: set ADS_LIVE_LAUNCH=false');
     }
     // ADR-0043 point 4 (#2366): with the read ads app or the Pages app as the write app, once the owner connects to run ads, that person's
     // reading tokens can change campaigns too, in every org of the deployment while the switch-off closes them one org at a time. A
@@ -826,7 +849,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     }
     // A provider sends the authorization code to APP_URL (else PUBLIC_URL)/channels/oauth/<provider>/callback (#375), a
     // page of the web app.
-    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
+    const oauthApps = [config.CHANNEL_META_APP_ID, config.CHANNEL_META_ADS_APP_ID, config.CHANNEL_META_ADS_WRITE_APP_ID, config.CHANNEL_GOOGLE_ADS_CLIENT_ID, config.CHANNEL_ZALO_APP_ID, config.CHANNEL_THREADS_APP_ID, config.CHANNEL_LINKEDIN_CLIENT_ID, config.CHANNEL_LINKEDIN_PAGE_CLIENT_ID, config.CHANNEL_GOOGLE_CLIENT_ID, config.CHANNEL_TIKTOK_CLIENT_KEY, config.CHANNEL_X_CLIENT_ID, config.CHANNEL_PINTEREST_APP_ID, config.CALENDAR_GOOGLE_CLIENT_ID];
     if (oauthApps.some(Boolean) && !appUrl(config).startsWith('https://')) {
       throw new Error('channel OAuth sends authorization codes back to the web app (APP_URL, else PUBLIC_URL); on a public deployment it must be https when a CHANNEL_* or CALENDAR_* app is set');
     }

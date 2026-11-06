@@ -59,7 +59,7 @@ describe('the Meta write connection', () => {
   });
 
   it('is not an ad platform of the readers\' registry', () => {
-    expect(AD_PLATFORM_PROVIDERS).toEqual(['sandbox_ads', 'meta_ads']);
+    expect(AD_PLATFORM_PROVIDERS).toEqual(['sandbox_ads', 'meta_ads', 'google_ads']);
     expect(isAdPlatformProvider('metawrite_ads')).toBe(false);
     expect(Object.keys(adPlatforms({ sandbox: true, meta: { appSecret: 'x' } }))).toEqual(['sandbox_ads', 'meta_ads']);
   });

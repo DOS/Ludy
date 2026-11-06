@@ -5,7 +5,7 @@ import { CALENDAR_OAUTH_PROVIDERS, COWORKER_ROSTER as COWORKERS, OAUTH_MAX_ACCOU
 import { sandboxBankFeed } from '@crove/bank-feed';
 import { sandboxAdPlatform, sandboxWriteLogin, type AdPlatform } from '@crove/ad-platform';
 import { EInvoiceProviderError, SANDBOX_EINVOICE_SECRET, type ConnectionState, type EInvoiceProvider } from '@crove/einvoice';
-import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
+import type { AdAccountView, AdsChangeRequest, ConversationEvent, EInvoiceConnection, EInvoiceSeriesTemplate, FinanceOverview, PaymentReminderDraft, TodayList } from '@crove/kernel-contract';
 import { briefAnswer } from './today-brief.ts';
 import { type CalendarAdapter, BlueskyError, ConnectorError, blueskyLogin, connectBluesky, connectDiscord, connectMastodon, connectTelegram, connectWordPress, discordLogin, mastodonLogin, telegramLogin, wordpressLogin, newOAuthAttempt, oauthStateHash, sandbox, sandboxNoticeBody, type OAuthConnector } from '@crove/channel';
 import {
@@ -47,6 +47,7 @@ import { AiBudgetExhaustedError, withAiScope, type AiMeter, type BriefFacts, typ
 import { IntentCache, matchContacts, suggestIntents, type ConversationAi, type ConversationReader } from './conversations-ai.ts';
 import { suggestCompanies, type CompanyAi } from './contact-company-ai.ts';
 import { wordReminder, type ReminderAi } from './payment-reminder-ai.ts';
+import { explainOverview, overviewAi } from './finance-overview-ai.ts';
 import { DomainError, egressFetch, type CredentialBroker, type Runtime, type UserActor } from '@crove/kernel-runtime';
 import { DraftBudget } from './ai-draft-limit.ts';
 import { BlueskyLoginBudget } from './bluesky-login-limit.ts';
@@ -271,6 +272,12 @@ function connectorFailure(error: unknown): DomainError {
     if (error.kind === 'denied' && error.code === 'WRITE_PERMISSION_GRANTED') {
       return new DomainError('OAUTH_WRITE_PERMISSION', 422, 'Ứng dụng Meta này đang giữ quyền sửa quảng cáo (ads_management hoặc business_management) do bạn từng cấp. Hãy gỡ ứng dụng Meta này trong Cài đặt Facebook (Tích hợp doanh nghiệp) rồi kết nối lại, hoặc dùng một ứng dụng Meta riêng chỉ có quyền ads_read');
     }
+    if (error.kind === 'denied' && error.code === 'MANAGER_ACCOUNT_UNSUPPORTED') {
+      return new DomainError('OAUTH_GOOGLE_MANAGER_ONLY', 422, 'Tài khoản Google này chỉ truy cập được tài khoản quản lý (MCC), không có tài khoản quảng cáo trực tiếp; hãy đăng nhập bằng tài khoản Google truy cập trực tiếp tài khoản quảng cáo');
+    }
+    if (error.kind === 'denied' && error.code === 'CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION') {
+      return new DomainError('OAUTH_GOOGLE_PROJECT_TEST_ONLY', 422, 'Dự án Google Cloud này đang ở mức Test nên chỉ đọc được tài khoản thử nghiệm; hãy xin cấp mức Explorer trong Google Cloud Console cho tài khoản thực');
+    }
     if (error.kind === 'denied') return new DomainError('OAUTH_PERMISSION_MISSING', 422, 'Bạn chưa cấp đủ quyền cần thiết trong hộp thoại của nền tảng, hãy kết nối lại và chấp nhận mọi quyền');
     return new DomainError('OAUTH_PROVIDER_FAILED', 503, 'Nền tảng không phản hồi đúng, hãy thử lại sau');
   }
@@ -307,6 +314,8 @@ export function createRpcHandler(
   const conversationAi: ConversationAi = { reader: conversationReader ?? null, intentBudget: suggestionBudget(), contactBudget: suggestionBudget(), cache: new IntentCache() };
   // The sales coworker's guess at the company a person works at (#2438) has a budget of its own, and the same reader and model.
   const companyAi: CompanyAi = { reader: conversationReader ?? null, budget: suggestionBudget() };
+  // The finance coworker's sentence on the Kế toán overview (#2631): the same reader and model, a budget of its own, and it is told only aggregated figures.
+  const financeOverviewAi = overviewAi(conversationReader?.overviewSentence ? { overviewSentence: conversationReader.overviewSentence.bind(conversationReader) } : null, suggestionBudget());
   // The finance coworker's wording of a payment reminder (#2488): the same reader and model, a budget of its own. It reads no customer text (the model is told the
   // notice level, the language and the sender's name), so the org's switch for AI on its customers' messages does not apply.
   const reminderAi: ReminderAi = { reader: conversationReader?.reminderWords ? { reminderWords: conversationReader.reminderWords.bind(conversationReader) } : null, budget: suggestionBudget() };
@@ -758,6 +767,7 @@ export function createRpcHandler(
         list: os.crm.deals.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.list', input, { actor, orgId }))),
         get: os.crm.deals.get.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.get', input, { actor, orgId }))),
         byParty: os.crm.deals.byParty.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.deals', input, { actor, orgId }))),
+        conversations: os.crm.deals.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.deal.conversations', input, { actor, orgId }))),
         create: os.crm.deals.create.handler(crmCommand('crm.deal.create')),
         update: os.crm.deals.update.handler(crmCommand('crm.deal.update')),
         move: os.crm.deals.move.handler(crmCommand('crm.deal.move')),
@@ -781,6 +791,7 @@ export function createRpcHandler(
       },
       contacts: {
         list: os.crm.contacts.list.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.contact.list', input, { actor, orgId }))),
+        conversations: os.crm.contacts.conversations.handler(({ context, input }) => inCrm(context, (orgId, actor) => runtime.query('crm.party.conversations', input, { actor, orgId }))),
         // The company a person may work at (#2438): the three rules read in the member's own transaction, then the model orders the names outside it, through the
         // AI meter. Nothing is stored or linked. The org's switch for AI on its customers' messages covers it too (the names of its contacts reach the model):
         // with it off the companies come in their own order and the answer says `off`.
@@ -1641,7 +1652,12 @@ export function createRpcHandler(
             { provider: input.provider, stateHash: attempt.stateHash, codeVerifier: attempt.codeVerifier },
             { actor, orgId },
           );
-          const authorizeUrl = connector.authorizeUrl({ state: attempt.state, redirectUri: oauthRedirectUri(input.provider), codeChallenge: attempt.codeChallenge });
+          const authorizeUrl = connector.authorizeUrl({
+            state: attempt.state,
+            redirectUri: oauthRedirectUri(input.provider),
+            codeChallenge: attempt.codeChallenge,
+            ...(input.comments ? { comments: true } : {}),
+          });
           return { authorizeUrl, state: attempt.state, expiresAt: begun.expiresAt };
         }),
       ),
@@ -1710,6 +1726,7 @@ export function createRpcHandler(
               scopes: account.scopes,
               expiresAt: account.expiresAt?.toISOString() ?? null,
               credential: { keyId: sealed.keyId, envelope: sealed.envelope.toString('base64') },
+              ...(account.grantedByHash ? { grantedByHash: account.grantedByHash } : {}),
             };
             try {
               const done = await runtime.execute<{ connectionId: string; reconnected: boolean }>('kernel.channel.connect', command, { actor, orgId });
@@ -1994,6 +2011,9 @@ export function createRpcHandler(
       counts: os.conversations.counts.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.counts', input, { actor, orgId }))),
       get: os.conversations.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.conversation.get', input, { actor, orgId }))),
       reply: os.conversations.reply.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply', input, { actor, orgId }))),
+      replyPrivately: os.conversations.replyPrivately.handler(({ context, input }) =>
+        inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_privately', input, { actor, orgId })),
+      ),
       settle: os.conversations.settle.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.reply_settle', input, { actor, orgId }))),
       hide: os.conversations.hide.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.hide', input, { actor, orgId }))),
       assign: os.conversations.assign.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.execute('kernel.conversation.assign', input, { actor, orgId }))),
@@ -2137,6 +2157,17 @@ export function createRpcHandler(
         inFinance(context, (orgId, actor) => runtime.execute('finance.bank_party_rule.remove', input, { actor, orgId })),
       ),
     },
+    financeOverview: {
+      get: os.financeOverview.get.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query<FinanceOverview>('finance.overview', input, { actor, orgId }))),
+      // The sentence is asked of the model outside any transaction, from the figures the overview read in the member's own one (their legal entities only).
+      explain: os.financeOverview.explain.handler(({ context, input }) =>
+        inFinance(context, async (orgId, actor) => {
+          const { lang, ...ask } = input;
+          const overview = await runtime.query<FinanceOverview>('finance.overview', ask, { actor, orgId });
+          return explainOverview(financeOverviewAi, orgId, actor.userId, overview, lang ?? 'vi');
+        }),
+      ),
+    },
     paymentReminders: {
       list: os.paymentReminders.list.handler(({ context, input }) =>
         inFinance(context, (orgId, actor) => runtime.query('finance.payment_reminders.list', input ?? {}, { actor, orgId })),
@@ -2264,6 +2295,30 @@ export function createRpcHandler(
         delete: os.einvoice.drafts.delete.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.einvoice_draft.delete', input, { actor, orgId }))),
         issueRequest: os.einvoice.drafts.issueRequest.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.einvoice.issue_request', input, { actor, orgId }))),
       },
+    },
+    marketplace: {
+      staged: os.marketplace.staged.handler(({ context }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.staged', {}, { actor, orgId }))),
+      preview: os.marketplace.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.preview', input, { actor, orgId }))),
+      confirm: os.marketplace.confirm.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.confirm', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      reject: os.marketplace.reject.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.reject', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      orders: os.marketplace.orders.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.orders', input ?? {}, { actor, orgId }))),
+      unassigned: os.marketplace.unassigned.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.marketplace.unassigned', input ?? {}, { actor, orgId }))),
+      assign: os.marketplace.assign.handler(({ context, input }) =>
+        inFinance(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('finance.marketplace.assign', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
     },
     stock: {
       items: {
@@ -2598,6 +2653,8 @@ export function createRpcHandler(
       // Running ads (ADR-0043, #2294, W0a-1): the state of the switches and the caps, and the stops.
       // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins.
       flags: os.ads.flags.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flags', {}, { actor, orgId }))),
+      // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads.
+      weeklyNote: os.ads.weeklyNote.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.weekly_note', {}, { actor, orgId }))),
       // The thresholds of those flags (#2378): owners and admins read and set them.
       flagSettings: os.ads.flagSettings.handler(({ context }) => inAds(context, (orgId, actor) => runtime.query('ads.flag_settings', {}, { actor, orgId }))),
       setFlagSettings: os.ads.setFlagSettings.handler(({ context, input }) =>
@@ -2634,6 +2691,13 @@ export function createRpcHandler(
         inAds(context, (orgId, actor) => {
           const { idempotencyKey, ...rest } = input;
           return runtime.execute('ads.launch.stop', rest, { actor, orgId, idempotencyKey });
+        }),
+      ),
+      // Running a launch that needs attention again (W2-4b): owners and admins; the request is stamped here and the launch job takes it (never a platform call in this request).
+      retryLaunch: os.ads.retryLaunch.handler(({ context, input }) =>
+        inAds(context, (orgId, actor) => {
+          const { idempotencyKey, ...rest } = input;
+          return runtime.execute('ads.launch.retry', rest, { actor, orgId, idempotencyKey });
         }),
       ),
       // Asking the AI coworker for a draft (W1b): rationed by the same per-member and per-org budget as the other AI drafts (ai-draft-limit.ts, #386), since
@@ -2716,6 +2780,7 @@ export function createRpcHandler(
       ),
       get: os.tasks.get.handler(({ context, input }) => inOrg(context, (orgId, actor) => runtime.query('kernel.task.get', input, { actor, orgId }))),
       create: os.tasks.create.handler(({ context, input }) => keyed(context, 'kernel.task.create', input)),
+      update: os.tasks.update.handler(({ context, input }) => keyed(context, 'kernel.task.update', input)),
       comment: os.tasks.comment.handler(({ context, input }) => keyed(context, 'kernel.task.comment', input)),
       setStatus: os.tasks.setStatus.handler(({ context, input }) => keyed(context, 'kernel.task.set_status', input)),
     },

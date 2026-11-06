@@ -31,6 +31,8 @@ interface Setup {
   // Milliseconds one pause takes at the platform, on the test's own clock.
   pauseTakes?: number;
   // A command that fails, and how.
+  // The reason `ads.pause.begin` gives for leaving a launch alone (no pause is made).
+  leftAlone?: string;
   failing?: 'ads.pause.begin' | 'ads.pause.record';
   failOn?: string;
 }
@@ -43,6 +45,7 @@ function setup(s: Setup) {
     if (name === s.failing && (!s.failOn || s.failOn === input.launchId)) throw new Error('database says: secret-ish detail');
     if (name === 'ads.pause.begin') {
       begins.push(input.launchId);
+      if (s.leftAlone) return { action: 'none', reason: s.leftAlone } satisfies PauseBegin;
       return begun(input.launchId);
     }
     records.push(input.launchId);
@@ -83,6 +86,17 @@ describe('the pause before a revoke: one try has a time budget', () => {
     expect(await setup({ launches: [], blocked: true, lastChance: true }).run()).toBe(false);
     // The last try revokes although the budget kept a pause from beginning.
     expect(await setup({ launches: launchIds(4), pauseTakes: PAUSE_BUDGET_MS, lastChance: true }).run()).toBe(false);
+  });
+});
+
+describe('the pause before a revoke: a launch left alone', () => {
+  it('holds the revoke while another run or an activation call that may still land holds the launch, and not when there is nothing to pause', async () => {
+    for (const reason of ['in_flight', 'activation_in_flight']) {
+      const held = setup({ launches: launchIds(1), leftAlone: reason });
+      expect(await held.run(), reason).toBe(true);
+    }
+    const settled = setup({ launches: launchIds(1), leftAlone: 'wound_down' });
+    expect(await settled.run()).toBe(false);
   });
 });
 

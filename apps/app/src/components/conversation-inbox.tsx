@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useTranslations } from 'use-intl';
-import { CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
+import { CONVERSATION_FACEBOOK_DIRECT_MAX, CONVERSATION_INSTAGRAM_COMMENT_MAX, CONVERSATION_INSTAGRAM_DIRECT_MAX, CONVERSATION_NOTE_MAX, CONVERSATION_RETENTION_MONTHS, CONVERSATION_REPLY_MAX, type ConversationAttachmentView, type ConversationDetail, type ConversationIntent, type ConversationKind, type ConversationMessage, type ConversationStatus, type ConversationSummary } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { NativeSelect } from '@crove/ui/components/native-select';
@@ -47,7 +47,7 @@ function UnverifiedMark() {
   );
 }
 
-const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
+const SEND_ERRORS = ['ZALO_TOKEN', 'ZALO_NO_TOKEN', 'ZALO_QUOTA', 'ZALO_RATE_LIMIT', 'ZALO_NOT_FOLLOWER', 'ZALO_BLOCKED', 'ZALO_OA_ACCESS', 'ZALO_BAD_PARAM', 'ZALO_TEXT_LENGTH', 'ZALO_DIRECT_ONLY', 'ZALO_UNREACHABLE', 'ZALO_5XX', 'ZALO_NO_MESSAGE_ID', 'ZALO_BAD_ANSWER', 'FB_WINDOW_CLOSED', 'FB_PRIVATE_REPLIED', 'FB_RECIPIENT_UNAVAILABLE', 'FB_NOT_FOUND', 'FB_TEXT_LENGTH', 'FB_NO_MESSAGE_ID', 'IG_TEXT_LENGTH', 'IG_COMMENT_LENGTH', 'NO_PAGE_TOKEN', 'BAD_PAGE_ID', 'BAD_IG_ID', 'BAD_COMMENT_ID', 'BAD_RECIPIENT_ID', 'CHANNEL_NOT_ACTIVE', 'CHANNEL_OWNER_LEFT', 'CREDENTIAL_ERROR', 'WORKER_LOST', 'SUPPRESSED', 'BOUNCED', 'COMPLAINED', 'MAIL_OFF', 'NO_ADDRESS', 'TEMPLATE_DATA', 'TEMPLATE_UNKNOWN', 'SEND_TIMEOUT', 'SEND_FAILED', 'OUTCOME_UNKNOWN'] as const;
 const isKnownSendError = (code: string): code is (typeof SEND_ERRORS)[number] => (SEND_ERRORS as readonly string[]).includes(code);
 
 const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
@@ -119,7 +119,7 @@ export function ConversationInbox({ kind, posts, empty }: { kind: ConversationKi
         {list.data?.more && <p className="text-xs text-muted-foreground">{t('more')}</p>}
       </section>
       <section aria-label={t('threadLabel')} className="min-w-0">
-        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} /> : <Empty title={t('pick')} />}
+        {openId ? <ConversationThread key={openId} conversationId={openId} onGone={() => setSelected(null)} onOpenConversation={(id) => setSelected(id)} /> : <Empty title={t('pick')} />}
       </section>
     </div>
   );
@@ -188,7 +188,7 @@ function ComposingNote({ userIds, members }: { userIds: readonly string[]; membe
   );
 }
 
-export function ConversationThread({ conversationId, onGone }: { conversationId: string; onGone: () => void }) {
+export function ConversationThread({ conversationId, onGone, onOpenConversation }: { conversationId: string; onGone: () => void; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const contactName = useContactName();
@@ -248,6 +248,16 @@ export function ConversationThread({ conversationId, onGone }: { conversationId:
         </div>
       </header>
       {canWrite ? <IntentBar conversation={c} /> : c.intent ? <IntentBadge intent={c.intent} applied /> : null}
+      {data.parentId && (
+        <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground" data-testid="conversation-parent-link">
+          <span>{t('fromComment')}</span>
+          {onOpenConversation && (
+            <Button type="button" size="sm" variant="ghost" onClick={() => onOpenConversation(data.parentId as string)}>
+              {t('openParentComment')}
+            </Button>
+          )}
+        </div>
+      )}
       {data.gap && (
         <p role="note" className="rounded-md border border-border bg-muted px-3 py-2 text-sm text-muted-foreground" data-testid="conversation-gap">
           {t('gap', { from: f.dateTime(data.gap.from), to: f.dateTime(data.gap.to) })}
@@ -263,7 +273,7 @@ export function ConversationThread({ conversationId, onGone }: { conversationId:
       )}
       <ol className="space-y-2" aria-label={t('messages')}>
         {data.messages.map((m) => (
-          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} />
+          <MessageRow key={m.id} message={m} detail={data} members={members} userId={userId} canWrite={canWrite} isAdmin={isAdmin} contact={contactName(c.contact)} onOpenConversation={onOpenConversation} />
         ))}
       </ol>
       {c.composing.length > 0 && <ComposingNote userIds={c.composing} members={members} />}
@@ -453,7 +463,7 @@ function MessageImage({ attachment }: { attachment: ConversationAttachmentView }
   );
 }
 
-function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string }) {
+function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, contact, onOpenConversation }: { message: ConversationMessage; detail: ConversationDetail; members: readonly Member[]; userId: string | null; canWrite: boolean; isAdmin: boolean; contact: string; onOpenConversation?: ((id: string) => void) | undefined }) {
   const t = useTranslations('conversations');
   const f = useFormat();
   const mine = m.direction === 'out';
@@ -462,7 +472,26 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
   const author = mine ? (m.authorKind === 'member' ? (m.authorUserId === userId ? t('you') : (members.find((x) => x.userId === m.authorUserId)?.displayName ?? t('member'))) : t('platformSide')) : customer;
   const settle = useMutation({ mutationFn: (action: 'retry' | 'mark_sent') => client.conversations.settle({ messageId: m.id, action }), onSuccess: refresh });
   const hide = useMutation({ mutationFn: (hidden: boolean) => client.conversations.hide({ messageId: m.id, hidden }), onSuccess: refresh });
+  const [privateOpen, setPrivateOpen] = useState(false);
+  const [privateText, setPrivateText] = useState('');
+  const privateReply = useMutation({
+    mutationFn: () => client.conversations.replyPrivately({ messageId: m.id, body: privateText.trim() }),
+    onSuccess: (done) => {
+      setPrivateText('');
+      setPrivateOpen(false);
+      refresh();
+      if (onOpenConversation) onOpenConversation(done.conversationId);
+    },
+  });
   const canHide = canWrite && detail.conversation.kind === 'comment_thread' && !mine && !m.removed;
+  const supportsPrivateReply =
+    detail.conversation.kind === 'comment_thread' &&
+    !mine &&
+    !m.removed &&
+    (detail.conversation.channel.provider === 'facebook_page' ||
+      detail.conversation.channel.provider === 'instagram' ||
+      detail.conversation.channel.provider === 'sandbox');
+  const withinPrivateWindow = Date.now() - Date.parse(m.sentAt) <= 7 * 24 * 3_600_000;
   // An email from the customer: what they wrote this time, and the history and signature behind "show quoted text" (a display rule; the whole text is stored).
   const [showQuoted, setShowQuoted] = useState(false);
   const email = detail.conversation.kind === 'email' && !mine && !m.removed ? splitQuoted(m.body) : null;
@@ -518,7 +547,57 @@ function MessageRow({ message: m, detail, members, userId, canWrite, isAdmin, co
               {m.hidden ? t('unhide') : t('hide')}
             </Button>
           )}
+          {supportsPrivateReply && m.privateReplyConversationId && (
+            onOpenConversation ? (
+              <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-open" onClick={() => onOpenConversation(m.privateReplyConversationId as string)}>
+                {t('privateReplyView')}
+              </Button>
+            ) : (
+              <Badge variant="outline" data-testid="conversation-private-reply-badge">{t('privateReplySent')}</Badge>
+            )
+          )}
+          {supportsPrivateReply && !m.privateReplyConversationId && canWrite && withinPrivateWindow && (
+            <Button type="button" size="sm" variant="ghost" data-testid="conversation-private-reply-button" onClick={() => setPrivateOpen((v) => !v)}>
+              {t('privateReplyOpen')}
+            </Button>
+          )}
         </div>
+        {privateOpen && (
+          <form
+            className="space-y-2 border-t border-border pt-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (privateText.trim()) privateReply.mutate();
+            }}
+          >
+            <Textarea
+              aria-label={t('privateReplyLabel')}
+              rows={2}
+              maxLength={detail.conversation.channel.provider === 'instagram' ? CONVERSATION_INSTAGRAM_DIRECT_MAX : CONVERSATION_FACEBOOK_DIRECT_MAX}
+              value={privateText}
+              placeholder={t('privateReplyPlaceholder')}
+              onChange={(e) => setPrivateText(e.target.value)}
+              data-testid="conversation-private-reply-text"
+            />
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" loading={privateReply.isPending} disabled={privateText.trim() === ''} data-testid="conversation-private-reply-send">
+                {t('privateReplySend')}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setPrivateOpen(false);
+                  privateReply.reset();
+                }}
+              >
+                {t('cancel')}
+              </Button>
+            </div>
+            {privateReply.error && <ErrorText>{errorMessage(privateReply.error)}</ErrorText>}
+          </form>
+        )}
         {/* A customer who only replied in this comment thread has no thread of their own to erase from: their message names them. */}
         {isAdmin && !mine && m.authorTail !== null && detail.conversation.kind === 'comment_thread' && <EraseContactButton conversation={detail.conversation} messageId={m.id} who={customer} onErased={refresh} label="eraseAuthor" />}
         {(settle.error || hide.error) && <ErrorText>{errorMessage(settle.error ?? hide.error)}</ErrorText>}
@@ -585,7 +664,15 @@ function ReplyBox({ detail, seen, onMoved }: { detail: ConversationDetail; seen:
       <Textarea
         aria-label={t('replyLabel')}
         rows={3}
-        maxLength={CONVERSATION_REPLY_MAX}
+        maxLength={
+          detail.conversation.channel.provider === 'instagram'
+            ? detail.conversation.kind === 'direct'
+              ? CONVERSATION_INSTAGRAM_DIRECT_MAX
+              : CONVERSATION_INSTAGRAM_COMMENT_MAX
+            : detail.conversation.channel.provider === 'facebook_page' && detail.conversation.kind === 'direct'
+              ? CONVERSATION_FACEBOOK_DIRECT_MAX
+              : CONVERSATION_REPLY_MAX
+        }
         value={text}
         placeholder={t('replyPlaceholder')}
         onChange={(e) => {

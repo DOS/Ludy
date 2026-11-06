@@ -103,8 +103,9 @@ import { exportAad, exportSealer } from './export-seal.ts';
 import { MAX_EMAIL_BYTES, acceptInboundEmail, secretMatches } from './inbound.ts';
 import { MAX_MAIL_WEBHOOK_BYTES, acceptMailWebhook } from './mail-events.ts';
 import { MAX_BANK_FEED_WEBHOOK_BYTES, acceptBankFeedWebhook } from './bank-feed-webhook.ts';
-import { ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
+import { FACEBOOK_MAX_NOTICE_BYTES, ZALO_MAX_NOTICE_BYTES } from '@crove/channel';
 import { ZALO_SIGNATURE_HEADER, ZALO_WEBHOOK_PATH, ZaloReplayCache, acceptZaloWebhook, type ZaloWebhookConfig } from './zalo-webhook.ts';
+import { FACEBOOK_SIGNATURE_HEADER, FACEBOOK_WEBHOOK_PATH, FacebookReplayCache, acceptFacebookWebhook, verifyFacebookWebhookChallenge, type FacebookWebhookConfig } from './facebook-webhook.ts';
 import { ADS_DELETION_PATH, MAX_ADS_DELETION_BYTES } from './ads-deletion.ts';
 import { acceptMetaDeletion, metaDeletionStatus, renderMetaDeletionStatus } from './meta-deletion.ts';
 import type { BankFeedProvider } from '@crove/bank-feed';
@@ -185,6 +186,12 @@ export interface HttpDeps {
   zaloWebhookLimit?: RateLimiter;
   // The events that route has parked lately (replay guard); unset: its own, one per process.
   zaloReplays?: ZaloReplayCache;
+  // Meta Page webhook for the conversation core (CV2, #2307): the app secret and verify token that guard it. Unset: the route does not exist.
+  facebookWebhook?: FacebookWebhookConfig;
+  // Refused requests per minute per client address for that route.
+  facebookWebhookLimit?: RateLimiter;
+  // The comment events that route has parked lately (replay guard); unset: its own, one per process.
+  facebookReplays?: FacebookReplayCache;
   // Meta's data deletion callback for the Ads connection (plan section 9, #2219): the app secret that signs the request. Unset
   // (no Meta ads app configured): the route does not exist. With ads installed only.
   adsDeletion?: { appSecret: string };
@@ -393,6 +400,7 @@ const STATUS_CACHE_MS = 5_000;
 const BANK_FEED_WEBHOOKS_PER_MINUTE = 120;
 // Refused requests (a bad signature, a body that is no notice) one address may send a minute; verified notices are not counted.
 const ZALO_WEBHOOKS_PER_MINUTE = 120;
+const FACEBOOK_WEBHOOKS_PER_MINUTE = 120;
 // Meta posts one request per person who removes the app: a few a minute is plenty, and a status page is read by one person.
 const ADS_DELETION_PER_MINUTE = 60;
 const MAX_FILES_PER_UPLOAD = 5;
@@ -758,6 +766,43 @@ export function createHttpApp(deps: HttpDeps) {
             c.header('retry-after', String(decision.retryAfterSeconds));
             return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
           }
+        }
+        return c.json({ code: outcome.code }, outcome.status);
+      } catch (error) {
+        return problem(c, error);
+      }
+    });
+  }
+
+  const facebookWebhook = deps.facebookWebhook;
+  if (facebookWebhook) {
+    const facebookLimit = deps.facebookWebhookLimit ?? new RateLimiter({ perMinute: FACEBOOK_WEBHOOKS_PER_MINUTE });
+    const facebookReplays = deps.facebookReplays ?? new FacebookReplayCache();
+    const chargeRefusal = (c: Context): Response | null => {
+      const decision = facebookLimit.take(clientBucket(clientIp(c, config.TRUSTED_PROXY_HOPS)));
+      if (decision.allowed) return null;
+      warnIfUntrustedProxy(c, config.TRUSTED_PROXY_HOPS);
+      c.header('retry-after', String(decision.retryAfterSeconds));
+      return c.json({ code: 'RATE_LIMITED', retryAfterSeconds: decision.retryAfterSeconds }, 429);
+    };
+    app.get(FACEBOOK_WEBHOOK_PATH, (c) => {
+      const outcome = verifyFacebookWebhookChallenge(facebookWebhook, {
+        mode: c.req.query('hub.mode'),
+        verifyToken: c.req.query('hub.verify_token'),
+        challenge: c.req.query('hub.challenge'),
+      });
+      if (outcome.status === 200) return c.text(outcome.challenge, 200);
+      const limited = chargeRefusal(c);
+      if (limited) return limited;
+      return c.json({ code: outcome.code }, outcome.status);
+    });
+    app.post(FACEBOOK_WEBHOOK_PATH, bodyLimit({ maxSize: FACEBOOK_MAX_NOTICE_BYTES }), async (c) => {
+      try {
+        const outcome = await acceptFacebookWebhook(runtime, facebookWebhook, { signature: c.req.header(FACEBOOK_SIGNATURE_HEADER), body: new Uint8Array(await c.req.arrayBuffer()) }, facebookReplays);
+        if (outcome.status === 200) return c.json({ ok: true }, 200);
+        if (outcome.status === 401 || outcome.status === 400) {
+          const limited = chargeRefusal(c);
+          if (limited) return limited;
         }
         return c.json({ code: outcome.code }, outcome.status);
       } catch (error) {

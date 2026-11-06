@@ -15,7 +15,11 @@ import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
 import { useDebounced } from '../lib/use-debounced.ts';
 import { POLL_MS, useContactName, useMe } from './conversation-inbox.tsx';
 
-const refresh = () => void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
+const refresh = () => {
+  void queryClient.invalidateQueries({ queryKey: orpc.conversations.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.contacts.conversations.key() });
+  void queryClient.invalidateQueries({ queryKey: orpc.crm.deals.conversations.key() });
+};
 const SEARCH_PAUSE_MS = 300;
 const MATCHES_STALE_MS = 5 * 60_000;
 

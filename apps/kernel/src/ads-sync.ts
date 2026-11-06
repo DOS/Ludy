@@ -105,7 +105,7 @@ export async function runAdsSync(deps: AdsSyncDeps, job: AdsSyncJob): Promise<{ 
   );
   let window: { from: string; to: string } | undefined;
   try {
-    const account = (await platform.accounts(secret)).find((a) => a.externalAccountId === sealed.externalAccountId);
+    const account = (await platform.accounts(secret, sealed.externalAccountId)).find((a) => a.externalAccountId === sealed.externalAccountId);
     if (!account) throw new AdPlatformError('permission', 'ACCOUNT_NOT_REACHED');
     const details = { currency: account.currency, timeZone: account.timeZone };
     const today = todayIn(account.timeZone, now());

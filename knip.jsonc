@@ -18,6 +18,12 @@
       // child.ts is spawned by path from the sandbox (src/sandbox.ts); the container scripts run inside the image in CI.
       "entry": ["src/child.ts", "test/container/*.mjs"]
     },
+    "apps/media": {
+      // The container scripts run inside the image in CI (.github/workflows/ci.yml).
+      "entry": ["test/container/*.mjs"],
+      // smoke.mjs generates test audio with ffmpeg inside the container.
+      "ignoreBinaries": ["ffmpeg"]
+    },
     "apps/kernel": {
       // The image check runs inside the kernel image in CI (.github/workflows/ci.yml). src/kernel.ts is the composition
       // root a Crove Cloud entrypoint imports (ADR-0030): its exports are its API.

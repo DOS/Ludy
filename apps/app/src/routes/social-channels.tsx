@@ -476,8 +476,11 @@ export function SocialChannelsPage() {
     },
   });
   // The provider's dialog runs in this tab; it comes back to the callback screen, which finishes the attempt.
+  const [fbComments, setFbComments] = useState(false);
+  const [igComments, setIgComments] = useState(false);
   const start = useMutation({
-    mutationFn: (provider: OAuthProvider) => client.channels.oauthStart({ provider }),
+    mutationFn: ({ provider, comments }: { provider: OAuthProvider; comments?: boolean }) =>
+      client.channels.oauthStart({ provider, ...(comments ? { comments: true } : {}) }),
     onSuccess: (attempt) => {
       rememberOAuthAttempt(attempt.state, slug);
       window.location.assign(attempt.authorizeUrl);
@@ -517,7 +520,12 @@ export function SocialChannelsPage() {
       wordpressForm.current?.focus();
       return;
     }
-    if (oauth.includes(c.provider as OAuthProvider)) start.mutate(c.provider as OAuthProvider);
+    if (oauth.includes(c.provider as OAuthProvider)) {
+      const comments =
+        (c.provider === 'facebook_page' && (c.scopes.includes('pages_read_user_content') || c.scopes.includes('pages_messaging')) && c.scopes.includes('pages_manage_metadata')) ||
+        (c.provider === 'instagram' && (c.scopes.includes('instagram_manage_comments') || c.scopes.includes('instagram_manage_messages')) && c.scopes.includes('pages_manage_metadata'));
+      start.mutate({ provider: c.provider as OAuthProvider, ...(comments ? { comments: true } : {}) });
+    }
   };
   const canReconnect = (c: Channel) => isAdmin && c.status !== 'revoked' && (c.provider === 'bluesky' ? blueskyOn : c.provider === 'telegram' ? telegramOn : c.provider === 'mastodon' ? mastodonOn : c.provider === 'discord' ? discordOn : c.provider === 'wordpress' ? wordpressOn : oauth.includes(c.provider as OAuthProvider));
   const disconnect = useMutation({
@@ -618,6 +626,24 @@ export function SocialChannelsPage() {
                         {t('reconnect')}
                       </Button>
                     )}
+                    {c.provider === 'facebook_page' && c.status === 'active' && (
+                      c.scopes.includes('pages_read_user_content') && c.scopes.includes('pages_manage_metadata') && c.scopes.includes('pages_messaging') ? (
+                        <p className="mt-1 text-xs text-subtle-foreground">{t('facebookCommentsEnabled')}</p>
+                      ) : canReconnect(c) ? (
+                        <Button variant="outline" size="sm" className="mt-2" disabled={start.isPending} onClick={() => start.mutate({ provider: 'facebook_page', comments: true })}>
+                          {t('enableFacebookComments')}
+                        </Button>
+                      ) : null
+                    )}
+                    {c.provider === 'instagram' && c.status === 'active' && (
+                      c.scopes.includes('instagram_manage_comments') && c.scopes.includes('pages_manage_metadata') && c.scopes.includes('instagram_manage_messages') ? (
+                        <p className="mt-1 text-xs text-subtle-foreground">{t('instagramCommentsEnabled')}</p>
+                      ) : canReconnect(c) ? (
+                        <Button variant="outline" size="sm" className="mt-2" disabled={start.isPending} onClick={() => start.mutate({ provider: 'instagram', comments: true })}>
+                          {t('enableInstagramComments')}
+                        </Button>
+                      ) : null
+                    )}
                   </div>
                   {isAdmin &&
                     (confirming === c.id ? (
@@ -678,16 +704,35 @@ export function SocialChannelsPage() {
           )}
           <div className="space-y-2 border-t pt-3">
             {connectPlatforms(oauth).map((p) => (
-              <div key={p} className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
-                {providerName(p)}
-                {oauth.includes(p) ? (
-                  isAdmin ? (
-                    <Button variant="outline" size="sm" disabled={start.isPending} onClick={() => start.mutate(p as OAuthProvider)}>
-                      {t('connectWith', { provider: providerName(p) })}
-                    </Button>
-                  ) : null
-                ) : (
-                  <Badge variant="secondary">{OAUTH_PROVIDERS.includes(p) ? t('notConfigured') : t('comingSoon')}</Badge>
+              <div key={p} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
+                  {providerName(p)}
+                  {oauth.includes(p) ? (
+                    isAdmin ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={start.isPending}
+                        onClick={() => start.mutate({ provider: p as OAuthProvider, ...((p === 'facebook_page' && fbComments) || (p === 'instagram' && igComments) ? { comments: true } : {}) })}
+                      >
+                        {t('connectWith', { provider: providerName(p) })}
+                      </Button>
+                    ) : null
+                  ) : (
+                    <Badge variant="secondary">{OAUTH_PROVIDERS.includes(p) ? t('notConfigured') : t('comingSoon')}</Badge>
+                  )}
+                </div>
+                {p === 'facebook_page' && oauth.includes(p) && isAdmin && (
+                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                    <Checkbox checked={fbComments} onCheckedChange={(v) => setFbComments(v === true)} />
+                    <span>{t('facebookCommentsOptIn')}</span>
+                  </label>
+                )}
+                {p === 'instagram' && oauth.includes(p) && isAdmin && (
+                  <label className="flex items-center gap-2 text-xs text-subtle-foreground">
+                    <Checkbox checked={igComments} onCheckedChange={(v) => setIgComments(v === true)} />
+                    <span>{t('instagramCommentsOptIn')}</span>
+                  </label>
                 )}
               </div>
             ))}

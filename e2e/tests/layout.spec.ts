@@ -254,7 +254,7 @@ test.describe('at phone width', () => {
     const drawer = page.getByRole('dialog', { name: 'Menu chính' });
     await expect(drawer.getByRole('region', { name: 'Trang chủ' }).getByRole('link', { name: 'Chứng từ chờ duyệt' })).toBeVisible();
     await drawer.getByRole('link', { name: 'Kế toán', exact: true }).click();
-    await expect(page).toHaveURL(/\/documents$/);
+    await expect(page).toHaveURL(/\/accounting$/);
     await expect(drawer.getByRole('region', { name: 'Kế toán' }).getByRole('link', { name: 'Sổ sách' })).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Đăng xuất', exact: true })).toBeVisible();
     await drawer.getByRole('link', { name: 'Sổ sách' }).click();

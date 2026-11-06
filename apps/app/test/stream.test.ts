@@ -36,6 +36,7 @@ function seeded() {
     detail1: orpc.inbox.get.queryKey({ input: { id: P1 } }),
     detail2: orpc.inbox.get.queryKey({ input: { id: P2 } }),
     files: orpc.files.recent.queryKey(),
+    marketplaceStaged: orpc.marketplace.staged.queryKey({ input: {} }),
     batch: orpc.files.batch.queryKey({ input: { ids: [FILE] } }),
     journal: orpc.journal.list.queryKey({ input: {} }),
     entry: orpc.journal.get.queryKey({ input: { id: ENTRY } }),
@@ -45,6 +46,8 @@ function seeded() {
     customers: orpc.parties.customers.infiniteKey({ input: () => ({}), initialPageParam: undefined }),
     ledger: orpc.ledger.period.queryKey({ input: { period: '2026-09' } }),
     ledgerAccount: orpc.ledger.account.queryKey({ input: { period: '2026-09', accountCode: '331' } }),
+    overview: orpc.financeOverview.get.queryKey({ input: { range: 'last_30_days' } }),
+    overviewExplain: orpc.financeOverview.explain.queryKey({ input: { range: 'last_30_days' } }),
     me: orpc.me.get.queryKey(),
     org: orpc.org.get.queryKey(),
     socialList: orpc.social.posts.list.queryKey({ input: {} }),
@@ -79,14 +82,15 @@ describe('invalidateHint', () => {
     for (const type of ['file', 'extraction'] as const) {
       const { qc, stale } = seeded();
       await invalidateHint(qc, { type, id: FILE });
-      expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending']);
+      // marketplaceStaged: an order report read in the sandbox shows up as its card without a reload (#2515).
+      expect(stale()).toEqual(['batch', 'detail1', 'files', 'inboxDone', 'inboxPending', 'marketplaceStaged']);
     }
   });
 
-  it('journal_entry: the journal, that entry, the documents, the ledger reports, the customers and the proposal that posted it', async () => {
+  it('journal_entry: the journal, that entry, the documents, the ledger reports, the overview, the customers and the proposal that posted it', async () => {
     const { qc, stale } = seeded();
     await invalidateHint(qc, { type: 'journal_entry', id: ENTRY });
-    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount']);
+    expect(stale()).toEqual(['customers', 'detail1', 'documents', 'entry', 'journal', 'ledger', 'ledgerAccount', 'overview', 'overviewExplain']);
   });
 
   it('document: the documents, the vendors, the customers, the sales number gaps and the proposal that recorded it', async () => {

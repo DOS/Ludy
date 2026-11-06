@@ -10,7 +10,7 @@
 // only for an approved plan, its commitment only shortens, and a state moves only along its graph.
 import { sql } from 'kysely';
 import { DomainError, type CommandContext } from '@crove/kernel-runtime';
-import type { AdsLaunchView } from '@crove/kernel-contract';
+import type { AdsLaunchObjectView, AdsLaunchView } from '@crove/kernel-contract';
 import { addDays } from './domain.ts';
 import { committedProblems, type Commitment, type CommittedCap, type CommittedPlan } from './launch-caps.ts';
 
@@ -126,7 +126,7 @@ export interface StoppedLaunch {
 // is cancelled instead (cancelQueuedLaunches).
 export async function stopStartedLaunches(
   ctx: Db,
-  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected',
+  reason: 'stopped' | 'switch_off' | 'account_off' | 'launches_blocked' | 'disconnected' | 'connection_closed' | 'plan_changed' | 'flight_over' | 'cap_lowered' | 'zone_unknown' | 'reconcile_unclear' | 'activation_unconfirmed',
   filter: { adAccountId?: string; launchId?: string } = {},
 ): Promise<StoppedLaunch[]> {
   const account = filter.adAccountId ?? null;
@@ -140,6 +140,10 @@ export async function stopStartedLaunches(
     RETURNING l.id, l.ad_account_id`.execute(ctx.trx);
   return rows.map((r) => ({ id: r.id, adAccountId: r.ad_account_id }));
 }
+
+// Stops one started launch for the launch job and the activation job (W2-4b), with the rule of any stop (the commitment kept to at least today, never cleared). The caller writes
+// the event of the pause at its own call, as a literal, after it commits.
+export const stopRunningLaunch = (ctx: Db, reason: Parameters<typeof stopStartedLaunches>[1], launchId: string): Promise<StoppedLaunch[]> => stopStartedLaunches(ctx, reason, { launchId });
 
 // Whether an account has a launch that is not wound down: one that has started and is still going (launching, needs attention, live), or one that was stopped and whose
 // objects are not yet paused at the platform (and Ludy has not given up on). Its history may not be deleted until it is.
@@ -184,6 +188,7 @@ const launchSelect = (db: Db['trx']) =>
     'l.currency',
     'l.tag',
     'l.stop_reason',
+    'l.retry_requested_at',
     'l.created_at',
     'l.finished_at',
     'l.wound_down_at',
@@ -196,7 +201,7 @@ const launchSelect = (db: Db['trx']) =>
   ]);
 type LaunchRow = Awaited<ReturnType<ReturnType<typeof launchSelect>['execute']>>[number];
 
-export function launchView(row: LaunchRow): AdsLaunchView {
+export function launchView(row: LaunchRow, objects: AdsLaunchObjectView[] = []): AdsLaunchView {
   return {
     id: row.id,
     draftId: row.draft_id,
@@ -212,11 +217,13 @@ export function launchView(row: LaunchRow): AdsLaunchView {
     endOn: row.end_on,
     commitUntil: row.commit_until,
     stopReason: row.stop_reason,
+    retryRequested: row.retry_requested_at !== null,
     createdAt: row.created_at.toISOString(),
     finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
     // What became of the objects of a stopped launch at the platform: being paused, paused (or there was nothing to pause), or Ludy gave up and the person is to pause
     // them by hand there. null for a launch that is not stopped.
     windDown: row.state === 'stopped' ? { state: row.wound_down_at ? 'done' : row.wind_down_code ? 'gave_up' : 'pending', code: row.wind_down_code } : null,
+    objects,
   };
 }
 
@@ -224,7 +231,29 @@ export async function launchesOfDrafts(ctx: Db, draftIds: readonly string[]): Pr
   const out = new Map<string, AdsLaunchView>();
   if (draftIds.length === 0) return out;
   const rows = await launchSelect(ctx.trx).where('l.org_id', '=', ctx.orgId).where('l.draft_id', 'in', [...draftIds]).execute();
-  for (const row of rows) out.set(row.draft_id, launchView(row));
+  if (rows.length === 0) return out;
+  const objectsByLaunch = new Map<string, AdsLaunchObjectView[]>();
+  const objectRows = await ctx.trx
+    .selectFrom('crove_ads.ad_object')
+    .select(['launch_id', 'slot', 'level', 'external_id', 'name', 'effective_status', 'review_reason'])
+    .where('org_id', '=', ctx.orgId)
+    .where('launch_id', 'in', rows.map((r) => r.id))
+    .orderBy('created_at', 'asc')
+    .orderBy('id', 'asc')
+    .execute();
+  for (const o of objectRows) {
+    const list = objectsByLaunch.get(o.launch_id) ?? [];
+    list.push({
+      slot: o.slot,
+      level: o.level as AdsLaunchObjectView['level'],
+      externalId: o.external_id,
+      name: o.name,
+      effectiveStatus: o.effective_status,
+      reviewReason: o.review_reason,
+    });
+    objectsByLaunch.set(o.launch_id, list);
+  }
+  for (const row of rows) out.set(row.draft_id, launchView(row, objectsByLaunch.get(row.id) ?? []));
   return out;
 }
 

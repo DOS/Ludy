@@ -189,11 +189,13 @@ import {
   zSocialSavedView,
   zSocialSavedViewSave,
 } from './schemas.ts';
+import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
 import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
 import { zCompanySuggest, zCompanySuggested } from './contact-company.ts';
+import { zFinanceOverview, zFinanceOverviewExplainAsk, zFinanceOverviewInput, zOverviewExplanation } from './finance-overview.ts';
 import { zImportBatch, zImportCommit, zImportCommitted, zImportPreview, zImportPreviewQuery, zImportRef, zImportStage } from './contact-import.ts';
 import { zSavedView, zSavedViewDelete, zSavedViewList, zSavedViewRename, zSavedViewSaveShape, zSavedViewSetShared } from './saved-view.ts';
 import {
@@ -220,6 +222,8 @@ import {
   zAvailabilityEntry,
   zAvailabilitySet,
   zConversationNoteAdd,
+  zConversationPrivateReplied,
+  zConversationPrivateReply,
   zConversationReplied,
   zConversationReply,
   zConversationRetention,
@@ -233,6 +237,7 @@ import {
   zConversationAutoDraftSet,
   zConversationDraftDiscard,
   zConversationDraftRequest,
+  zConversationOther,
   zSavedReplyId,
   zSavedReplyInput,
   zSavedReplyList,
@@ -285,8 +290,8 @@ import {
 import { zOpeningBalanceImport, zOpeningBalancePreview } from './opening-balance.ts';
 import { MISSING_INVOICE_REMINDER_DAY_MAX, PORTAL_LIST_DIRECTIONS, zMissingInvoiceStatus, zPortalReconciliation } from './portal-list.ts';
 import { zPortalCaptcha, zPortalListResult, zPortalLoginInput, zPortalSession, zPortalXmlResult } from './portal-sync.ts';
-import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWriteState } from './ads.ts';
-import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchStopCall } from './ads-campaign.ts';
+import { ADS_SANDBOX_CURRENCIES, zAdAccountView, zAdsFlag, zAdsAccountConfigure, zAdsAccountDeleteHistory, zAdsCapLowerCall, zAdsChangeRequest, zAdsFlagSettingCall, zAdsFlagSettings, zAdsProposalView, zAdsSummary, zAdsSummaryInput, zAdsSyncRunView, zAdsWeeklyNote, zAdsWriteState } from './ads.ts';
+import { zAdsCampaignDraftDiscardCall, zAdsCampaignDraftSaveCall, zAdsCampaignDraftView, zAdsCampaignRequestAsked, zAdsCampaignRequestCall, zAdsCampaignRequestView, zAdsLaunchCancelCall, zAdsLaunchRetryCall, zAdsLaunchStopCall } from './ads-campaign.ts';
 import { zBankAccountNumberSet, zBankAccountNumberView, zBankFeedAccountView, zBankFeedConnectionView, zBankFeedMap, zBankImportPreview, zBankImportResult, zBankLineVoucher, zBankLines, zBankMatchGroups, zBankMatched, zBankOpenLines, zBankStatementImport, zStatementLines } from './bank-statement.ts';
 import { zTimeline } from './timeline.ts';
 import { zMisaCode, zMisaGoodsCode } from './misa-goods.ts';
@@ -497,7 +502,7 @@ export const contract = {
     // provider sends it back to /channels/oauth/:provider/callback, and that screen finishes the attempt with the code
     // and state. Finish connects every account the grant covers (for Facebook, the Pages picked in Meta's dialog).
     oauthStart: oc
-      .input(z.object({ provider: zOAuthProvider }))
+      .input(z.object({ provider: zOAuthProvider, comments: z.boolean().optional() }))
       .output(z.object({ authorizeUrl: z.url({ protocol: /^https$/ }), state: zOAuthState, expiresAt: z.iso.datetime({ offset: true }) })),
     oauthFinish: oc
       .input(z.object({ provider: zOAuthProvider, state: zOAuthState, code: z.string().min(1).max(2048) }))
@@ -535,6 +540,8 @@ export const contract = {
       list: oc.input(zContactList).output(zContactPage),
       // The companies a person may work at (#2438): the sales coworker's suggestion, read only; a person links one with a click.
       companySuggestions: oc.input(zCompanySuggest).output(zCompanySuggested),
+      // The conversations linked to the contact (#2333; for a company, its people's too), newest activity first, with no message body.
+      conversations: oc.input(zPartyDealsQuery).output(z.array(zConversationOther)),
     },
     // Contact import (K5, #2229): rows read from a CSV in the browser are staged and classified without writing a party; the
     // person reads the preview, then commits (creating the new parties) or cancels. Owners, admins and members; every
@@ -562,6 +569,8 @@ export const contract = {
       list: oc.input(zDealListQuery).output(zDealPage),
       get: oc.input(zDealRef).output(zDeal),
       byParty: oc.input(zPartyDealsQuery).output(z.array(zDeal)),
+      // The conversations of the deal's contact since the deal opened (#2333), newest activity first, with no message body.
+      conversations: oc.input(zDealRef).output(z.array(zConversationOther)),
       create: oc.input(zDealCreate).output(zDeal),
       update: oc.input(zDealUpdate).output(zDeal),
       move: oc.input(zDealMove).output(zDeal),
@@ -1475,6 +1484,7 @@ export const contract = {
     counts: oc.input(zConversationCounts).output(zConversationCounted),
     get: oc.input(zConversationGet).output(zConversationDetail),
     reply: oc.input(zConversationReply).output(zConversationReplied),
+    replyPrivately: oc.input(zConversationPrivateReply).output(zConversationPrivateReplied),
     // A refused or unclear reply: send it again as a new attempt, or record that it did go out.
     settle: oc.input(zConversationSettle).output(z.object({ messageId: zId, state: z.string() })),
     hide: oc.input(zConversationHide).output(z.object({ messageId: zId })),
@@ -1641,6 +1651,20 @@ export const contract = {
       issueRequest: oc.input(z.object({ proposalId: zId })).output(zEInvoiceIssueView),
     },
   },
+  // Marketplace order reports (#2515, ADR-0045): a Shopee, TikTok Shop or Lazada report read from a file waits, staged, for a member; nothing is stored as an order until the member confirms.
+  // staged lists the reports waiting; preview says how one stands against the org's orders and stock items now; confirm stores the orders once and moves stock for the lines that name an
+  // item (MARKETPLACE_NOT_STAGED, 409, when it was already decided or read again); reject skips it, storing nothing. orders lists the confirmed orders. No buyer data of any kind.
+  marketplace: {
+    staged: oc.input(z.object({}).optional()).output(z.array(zMarketplaceStaged)),
+    preview: oc.input(z.object({ fileId: zId })).output(zMarketplacePreview),
+    confirm: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(zMarketplaceConfirmResult),
+    reject: oc.input(z.object({ fileId: zId, idempotencyKey: zId })).output(z.object({ fileId: zId })),
+    orders: oc.input(zMarketplaceOrdersInput.optional()).output(z.array(zMarketplaceOrder)),
+    // The order lines that move stock and name no item yet, newest first, and the assignment of one: the shipment (and the return) move stock through the item, once.
+    // MARKETPLACE_LINE_ASSIGNED, MARKETPLACE_LINE_NOT_SHIPPED (409), MARKETPLACE_LINE_NOT_FOUND (404), STOCK_ITEM_ENTITY_MISMATCH (422), STOCK_ITEM_INACTIVE (409).
+    unassigned: oc.input(zMarketplaceUnassignedInput.optional()).output(z.array(zMarketplaceUnassignedLine)),
+    assign: oc.input(zMarketplaceAssign.extend({ idempotencyKey: zId })).output(z.object({ moves: z.number().int() })),
+  },
   // Stock (#2512, ADR-0045): the items of goods, the names a source uses for them, the append-only moves and the goods lines of posted documents not yet assigned to an item.
   // Every role reads; owners, admins and members write. A move is never edited or removed: a correction is a reversing move.
   stock: {
@@ -1743,6 +1767,14 @@ export const contract = {
     setReminder: oc
       .input(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() }))
       .output(z.object({ day: z.number().int().min(1).max(MISSING_INVOICE_REMINDER_DAY_MAX).nullable() })),
+  },
+  // The Tổng quan of the Kế toán app (#2631), every role: get answers the four cards (cash 111 + 112, profit before tax, receivables 131, payables 331) for a
+  // period against the period before, the six months' results and the expense mix, all read from the books; explain is the finance coworker's sentence on the
+  // biggest change, asked of the model outside any transaction from the aggregated figures only, and its text is dropped when it states a number the figures
+  // do not hold (ai says why there is none).
+  financeOverview: {
+    get: oc.input(zFinanceOverviewInput).output(zFinanceOverview),
+    explain: oc.input(zFinanceOverviewExplainAsk).output(zOverviewExplanation),
   },
   // Ledger reports of a month, quarter or year (issue #321): the trial balance and the receivables and payables per
   // party, and the general ledger of one account. The Excel workbook is GET /api/export/ledger.xlsx?period=<period>.
@@ -1874,6 +1906,8 @@ export const contract = {
     writeState: oc.output(zAdsWriteState),
     // The deterministic spend-pace and cost-per-result flags (#2378): owners and admins, read only.
     flags: oc.output(z.array(zAdsFlag)),
+    // The deterministic 7-day side-by-side comparison note across connected platforms (#2220): every member who reads Ads, read only.
+    weeklyNote: oc.output(z.array(zAdsWeeklyNote)),
     // The thresholds of those flags: owners and admins read them and set them (nothing spends or changes by it).
     flagSettings: oc.output(zAdsFlagSettings),
     setFlagSettings: oc.input(zAdsFlagSettingCall).output(zAdsFlagSettings),
@@ -1890,6 +1924,9 @@ export const contract = {
     // Stops a launch that has started (W2-4a): owners and admins. It keeps the launch's commitment against the caps to at least today in the account's time zone (a person's
     // stop never releases spend that ran or is in flight), and the objects it made at the platform are paused from the queue after the commit.
     stopLaunch: oc.input(zAdsLaunchStopCall).output(z.object({ launchId: zId, state: z.literal('stopped'), commitUntil: z.string().nullable() })),
+    // Runs a launch that needs attention again (W2-4b): owners and admins. The request is stamped and the launch job takes it, with the next attempt: it first looks at what the
+    // earlier attempts left unsettled at the platform, then creates what is missing, then switches the objects on if the approved launch is still in force.
+    retryLaunch: oc.input(zAdsLaunchRetryCall).output(z.object({ launchId: zId, requested: z.boolean() })),
     // Asking the AI coworker for a draft (W1b, #2295): a request the worker answers with a draft or a visible reason why there is none; the model call
     // is rationed by the member's draft budget (RATE_LIMITED over it) and the org's AI budget (the job records AI_BUDGET), and the core works with AI off.
     campaignRequests: oc.input(z.strictObject({ adAccountId: zId.optional() })).output(z.array(zAdsCampaignRequestView)),
@@ -2015,6 +2052,18 @@ export const contract = {
           description: z.string().max(10000).optional(),
           assigneePositionId: zId.nullable(),
           due: z.iso.datetime().optional(),
+          idempotencyKey: zId,
+        }),
+      )
+      .output(z.object({ taskId: zId })),
+    update: oc
+      .input(
+        z.object({
+          id: zId,
+          title: z.string().trim().min(1).max(300).optional(),
+          description: z.string().max(10000).nullable().optional(),
+          assigneePositionId: zId.nullable().optional(),
+          due: z.iso.datetime().nullable().optional(),
           idempotencyKey: zId,
         }),
       )

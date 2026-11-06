@@ -12,6 +12,7 @@ export * from './oauth.ts';
 export * from './calendar-google.ts';
 export * from './text.ts';
 export * from './meta.ts';
+export * from './meta-conversation.ts';
 export * from './instagram.ts';
 export * from './zalo.ts';
 export * from './zalo-conversation.ts';

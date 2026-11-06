@@ -56,6 +56,8 @@ import {
   LocalDiskStore,
   egressFetch,
   Runtime,
+  SUBJECT_WRAP_INFO,
+  SubjectVault,
   type BlobStore,
   readVerified,
   type CommandDef,
@@ -70,7 +72,7 @@ import { socialAgentPrograms, socialCommands, socialManifest, socialOverviewCont
 import { crmAgentPrograms, crmCommands, crmManifest, crmQueries } from '@crove/mod-crm';
 import { notesCommands, notesManifest, notesQueries } from '@crove/mod-notes';
 import { adsCommands, adsManifest, adsQueries } from '@crove/mod-ads';
-import { MetaAdsConnector, MetaWriteConnector, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
+import { GoogleAdsConnector, MetaAdsConnector, MetaWriteConnector, adActivators, adLaunchWriters, adPausers, adPlatforms, adRevokers, type AdActivator, type AdPauser, type AdPlatform, type AdRevoker, type LaunchWriter } from '@crove/ad-platform';
 import { createSandboxEInvoiceProvider, type EInvoiceProvider } from '@crove/einvoice';
 import { createAuthenticator, type Authenticate } from './auth.ts';
 import { AVAILABLE_MODULES, appUrl, assertExportKey, assertSplitRoles, extractConcurrency, usageLimits, zaloMediaHostsOf, type Config, type ModuleId } from './config.ts';
@@ -146,7 +148,7 @@ export interface KernelAdapters {
   // The AI coworker's campaign drafts for running ads (W1b, #2295) through the same endpoint; null: no draft is made and a request says so (AI_OFF).
   adsCampaignWriter?: Pick<AdsCampaignWriter, 'draft'> | null;
   // The Inbox's suggested intent and likely contacts (CV3, #2306) through the same endpoint; null: no suggestion, the inbox as it is.
-  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords'>>) | null;
+  inboxReader?: (Pick<InboxReader, 'intents' | 'rank' | 'rankCompanies'> & Partial<Pick<InboxReader, 'reminderWords' | 'overviewSentence'>>) | null;
   storage: BlobStore;
   // Outbound mail (member invites, issue #129); the default logs that nothing was sent.
   mail?: MailProvider;
@@ -255,13 +257,27 @@ export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleMa
 // queries, registered on a runtime given their manifests, so every declared write, and any command registered on it
 // later (the org purge), is checked against them (P04, #1710). apps/kernel/test/invariant/command-writes.test.ts holds
 // the server to both.
+// The vault of the per-subject keys: HKDF-derived from the credential key and from CREDENTIAL_KEY_PREVIOUS the same way, so values sealed before a rotation still open.
+function subjectVaultOf(config: Config): SubjectVault | null {
+  const keys = createCredentialBroker(config).deriveKeys?.(SUBJECT_WRAP_INFO) ?? [];
+  if (keys.length === 0) return null;
+  const vault = new SubjectVault(keys);
+  // The vault keeps its own copies: the derived buffers are wiped.
+  for (const k of keys) k.key.fill(0);
+  return vault;
+}
+
 export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'>): Runtime {
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
   const runtime = new Runtime(cells, {
+    // The key of the sensitive-read audit hash: derived from the credential key (environment or key file, never the database), none without one.
+    readAuditKey: createCredentialBroker(config).derive?.('crove.audit.read.v1') ?? null,
     ...options,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
+    // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
+    subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).
     manifests: moduleManifests(config).map((manifest) => manifest.tables),
   }).register(moduleDefinitions(config));
@@ -274,7 +290,7 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
 // OAuth connectors of the providers this deployment has app credentials for (Social plan S6); a provider without
 // them is not offered.
 type ChannelConfig = Pick<Config, 'CHANNEL_SANDBOX' | 'CHANNEL_BLUESKY' | 'CHANNEL_TELEGRAM' | 'CHANNEL_MASTODON' | 'CHANNEL_DISCORD' | 'CHANNEL_WORDPRESS' | 'CHANNEL_THREADS_APP_ID' | 'CHANNEL_THREADS_APP_SECRET' | 'CHANNEL_LINKEDIN_CLIENT_ID' | 'CHANNEL_LINKEDIN_CLIENT_SECRET' | 'CHANNEL_GOOGLE_CLIENT_ID' | 'CHANNEL_GOOGLE_CLIENT_SECRET' | 'CHANNEL_GOOGLE_BUSINESS' | 'CHANNEL_TIKTOK_CLIENT_KEY' | 'CHANNEL_TIKTOK_CLIENT_SECRET' | 'CHANNEL_TIKTOK_VIDEO_LIST' | 'CHANNEL_TIKTOK_INBOX' | 'CHANNEL_X_CLIENT_ID' | 'CHANNEL_X_CLIENT_SECRET' | 'CHANNEL_PINTEREST_APP_ID' | 'CHANNEL_PINTEREST_APP_SECRET' | 'CHANNEL_META_APP_ID' | 'CHANNEL_META_APP_SECRET' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_ADS_WRITE_APP_ID' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION' | 'CHANNEL_ZALO_APP_ID' | 'CHANNEL_ZALO_APP_SECRET'> &
-  Partial<Pick<Config, 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
+  Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET' | 'CHANNEL_X_METRICS' | 'CHANNEL_LINKEDIN_ANALYTICS' | 'CHANNEL_LINKEDIN_ORGANIZATIONS' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_ID' | 'CHANNEL_LINKEDIN_PAGE_CLIENT_SECRET' | 'BRAND_NAME'>>;
 // The LinkedIn app, for Company Pages too once it has the Community Management API (#1077).
 // The Company Pages app: its own when set (LinkedIn grants the Community Management API only to an app with no other
 // product), the member app otherwise.
@@ -312,10 +328,14 @@ export function einvoiceProvidersOf(config: Pick<Config, 'EINVOICE_SANDBOX'>): R
   return config.EINVOICE_SANDBOX === 'true' ? { sandbox: createSandboxEInvoiceProvider().provider } : {};
 }
 
-export function adPlatformsOf(config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdPlatform>> {
+export function adPlatformsOf(
+  config: Pick<Config, 'ADS_SANDBOX' | 'CHANNEL_META_ADS_APP_ID' | 'CHANNEL_META_ADS_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'> &
+    Partial<Pick<Config, 'CHANNEL_GOOGLE_ADS_CLIENT_ID' | 'CHANNEL_GOOGLE_ADS_CLIENT_SECRET'>>,
+): Readonly<Record<string, AdPlatform>> {
   return adPlatforms({
     sandbox: config.ADS_SANDBOX === 'true',
     ...(config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET ? { meta: { appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION } } : {}),
+    ...(config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET ? { google: { clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET } } : {}),
   });
 }
 
@@ -357,6 +377,17 @@ export function adPausersOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNC
   });
 }
 
+// The activators the worker is given (W2-4b), by provider: the frozen view of `activate` and `readStatus`, apart from the writers. The same providers and the same switch
+// as the launch writers (the offline sandbox's when ADS_SANDBOX is on; Meta's only where ADS_LIVE_LAUNCH is on, which a public deployment refuses).
+export function adActivatorsOf(config: Pick<Config, 'ADS_SANDBOX' | 'ADS_LIVE_LAUNCH' | 'CHANNEL_META_ADS_WRITE_APP_SECRET' | 'CHANNEL_META_GRAPH_VERSION'>): Readonly<Record<string, AdActivator>> {
+  return adActivators({
+    sandbox: config.ADS_SANDBOX === 'true',
+    ...(config.ADS_LIVE_LAUNCH === 'true' && config.CHANNEL_META_ADS_WRITE_APP_SECRET
+      ? { meta: { writeAppSecret: config.CHANNEL_META_ADS_WRITE_APP_SECRET, ...(config.CHANNEL_META_GRAPH_VERSION ? { graphVersion: config.CHANNEL_META_GRAPH_VERSION } : {}) } }
+      : {}),
+  });
+}
+
 export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>): Partial<Record<string, OAuthConnector>> {
   const connectors: Partial<Record<string, OAuthConnector>> = {};
   if (config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET) {
@@ -368,6 +399,10 @@ export function channelConnectors(config: Omit<ChannelConfig, 'CHANNEL_SANDBOX'>
   // Meta ad accounts, read only (ADR-0040, #2218): its own app credentials, which may be the same app as the Pages one.
   if (config.CHANNEL_META_ADS_APP_ID && config.CHANNEL_META_ADS_APP_SECRET) {
     connectors.meta_ads = new MetaAdsConnector({ appId: config.CHANNEL_META_ADS_APP_ID, appSecret: config.CHANNEL_META_ADS_APP_SECRET, graphVersion: config.CHANNEL_META_GRAPH_VERSION });
+  }
+  // Google Ads accounts, read only (ADR-0040, #2220): OAuth web client in the deployment's Google Cloud project.
+  if (config.CHANNEL_GOOGLE_ADS_CLIENT_ID && config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET) {
+    connectors.google_ads = new GoogleAdsConnector({ clientId: config.CHANNEL_GOOGLE_ADS_CLIENT_ID, clientSecret: config.CHANNEL_GOOGLE_ADS_CLIENT_SECRET });
   }
   // Meta ad accounts, the connection that can run ads (ADR-0043, #2294, W0b): its own app credentials, which may be the same app as the
   // read one or the Pages one. It only logs in and lists accounts; no job or queue reaches it, and the readers' registry
@@ -581,6 +616,8 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
           ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET ? { conversationsDeletion: { appSecret: config.CHANNEL_META_APP_SECRET } } : {}),
           // Zalo OA's webhook for customers' messages (conversation core, #2304): with the Zalo app and its OA secret key configured.
           ...(config.CHANNEL_ZALO_APP_ID && config.CHANNEL_ZALO_OA_SECRET_KEY ? { zaloWebhook: { appId: config.CHANNEL_ZALO_APP_ID, oaSecretKey: config.CHANNEL_ZALO_OA_SECRET_KEY, oaSecretKeyPrevious: config.CHANNEL_ZALO_OA_SECRET_KEY_PREVIOUS } } : {}),
+          // Meta Page webhook for Page comments (conversation core CV2, #2307): with the Meta app and its webhook verify token configured.
+          ...(config.CHANNEL_META_APP_ID && config.CHANNEL_META_APP_SECRET && config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN ? { facebookWebhook: { appSecret: config.CHANNEL_META_APP_SECRET, appSecretPrevious: config.CHANNEL_META_APP_SECRET_PREVIOUS, verifyToken: config.CHANNEL_META_WEBHOOK_VERIFY_TOKEN } } : {}),
           // The bank feed adapters that take signed notices (ADR-0039): the route exists only for these.
           bankFeedWebhooks: Object.fromEntries(
             Object.entries(bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET })).filter(([, p]) => p.verifyWebhook),
@@ -634,7 +671,7 @@ export function createKernel(config: Config, adapters: KernelAdapters): Kernel {
             exportSealer: exportSealer(config),
             exportRetentionDays: config.EXPORT_RETENTION_DAYS,
             evidenceLockDays: config.EVIDENCE_LOCK_DAYS,
-            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config) },
+            channels: { broker: resolved.broker, einvoiceProviders: einvoiceProvidersOf(config), conversationHistory: config.CHANNEL_ZALO_HISTORY === 'true', facebookHistory: config.CHANNEL_FACEBOOK_HISTORY === 'true', conversationMediaHosts: zaloMediaHostsOf(config.CHANNEL_ZALO_MEDIA_HOSTS), publishers: channelPublishers(config), refreshers: channelRefreshers(config), calendars: calendarAdapters(config), bankFeeds: bankFeedProviders({ sandbox: config.BANK_FEED_SANDBOX === 'true', sandboxWebhookSecret: config.BANK_FEED_SANDBOX_WEBHOOK_SECRET }), adPlatforms: adPlatformsOf(config), adRevokers: adRevokersOf(config), adWriters: adWritersOf(config), adPausers: adPausersOf(config), adActivators: adActivatorsOf(config) },
             publicUrl: config.PUBLIC_URL,
             appUrl: appUrl(config),
             brand: config.BRAND_NAME,

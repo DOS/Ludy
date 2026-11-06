@@ -9,6 +9,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useState, type FormEvent } from 'react';
 import { useTranslations } from 'use-intl';
 import { normalizeTaxCode, type Contact, type FilterAst, type SavedViewSort } from '@crove/kernel-contract';
+import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
@@ -48,7 +49,46 @@ const SORT_LABELS: Record<string, 'sort.name_asc' | 'sort.name_desc' | 'sort.cre
   'updated:desc': 'sort.updated_desc',
 };
 
-// A contact's own timeline: what happened to it, oldest first, in fixed words.
+// The conversations linked to this contact (#2333): the channel, kind, status and last message time, with a link to the
+// Inbox thread. Message bodies stay in the Inbox and are never read or copied here.
+function ContactConversations({ partyId }: { partyId: string }) {
+  const t = useTranslations('contacts');
+  const tc = useTranslations('conversations');
+  const f = useFormat();
+  const { slug } = useParams({ strict: false }) as { slug: string };
+  const conversations = useQuery(orpc.crm.contacts.conversations.queryOptions({ input: { partyId } }));
+  return (
+    <div data-testid="contact-conversations" className="mt-3">
+      <p className="mb-2 text-sm font-medium text-muted-foreground">{t('conversations.title')}</p>
+      {conversations.isLoading ? (
+        <p className="text-sm text-subtle-foreground">{t('loading')}</p>
+      ) : conversations.error ? (
+        <ErrorText>{errorMessage(conversations.error)}</ErrorText>
+      ) : (conversations.data?.length ?? 0) === 0 ? (
+        <p className="text-sm text-subtle-foreground">{t('conversations.empty')}</p>
+      ) : (
+        <ul className="space-y-1 text-sm">
+          {conversations.data?.map((c) => (
+            <li key={c.id} className="flex flex-wrap items-center gap-x-2">
+              <Link to="/o/$slug/social/inbox" params={{ slug }} search={{ c: c.id }} className="font-medium text-link underline">
+                {c.channel.displayName}
+              </Link>
+              <span className="text-xs text-muted-foreground">{tc(`kind.${c.kind}`)}</span>
+              <Badge variant="outline">{tc(`status.${c.status}`)}</Badge>
+              {c.lastMessageAt && (
+                <time dateTime={c.lastMessageAt} className="text-xs text-subtle-foreground">
+                  {f.dateTime(c.lastMessageAt)}
+                </time>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// A contact's own timeline: what happened to it, oldest first, in fixed words, plus the conversations linked to it (#2333).
 function ContactTimeline({ partyId }: { partyId: string }) {
   const t = useTranslations('contacts');
   const f = useFormat();
@@ -75,6 +115,7 @@ function ContactTimeline({ partyId }: { partyId: string }) {
           ))}
         </ol>
       )}
+      <ContactConversations partyId={partyId} />
     </div>
   );
 }

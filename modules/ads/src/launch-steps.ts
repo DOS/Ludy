@@ -175,3 +175,13 @@ export function targetingNames(plan: AdsCampaignPlan): TargetingNames {
   }
   return { countries: [...countries], regions, interests: [...plan.targeting.interests], ageMin: plan.targeting.ageMin, ageMax: plan.targeting.ageMax, gender: plan.targeting.gender };
 }
+
+// The rows of the same step that EARLIER attempts of the launch left unsettled (a call that was begun and never settled, or one whose answer was unclear): a retry looks at
+// them before it creates anything, since the object may exist at the platform. `rows` are the ledger rows of the launch's calls, of every attempt. A row that succeeded, or
+// that the platform refused, is settled and is not one of these.
+export function unsettledEarlier<T extends { key: string; state: string }>(rows: readonly T[], launchId: string, attempt: number, step: string): T[] {
+  return rows.filter((row) => {
+    const parsed = parseLaunchCallKey(row.key);
+    return parsed !== null && parsed.launchId === launchId && parsed.step === step && parsed.attempt < attempt && (row.state === 'started' || row.state === 'ambiguous');
+  });
+}

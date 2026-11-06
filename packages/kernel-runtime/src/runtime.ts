@@ -3,6 +3,7 @@
 import { PostgresQueryCompiler, sql, type KyselyPlugin, type RawBuilder, type Transaction } from 'kysely';
 import { createHmac, randomUUID } from 'node:crypto';
 import { v7 as uuidv7 } from 'uuid';
+import { SubjectKeyError, SubjectVault, parseSealed } from './subject-vault.ts';
 import type { z } from 'zod';
 import { contextTaint, singleCell, type CellResolver, type Database, type Db, type MemberRole } from '@crove/db';
 import { DomainError, toDomainError } from './errors.ts';
@@ -263,6 +264,14 @@ export interface QueryDef<I = unknown, O = unknown> {
   // its batches and opens one REPEATABLE READ, READ ONLY transaction, so every batch comes from the same snapshot.
   // Runtime.query() and ctx.query refuse it (STREAM_ONLY) after the usual context and access checks.
   stream?: true;
+  // A read of data the org keeps narrow (a salary, an identity number): the kernel commits an audit row of the read in its
+  // own transaction BEFORE the handler runs, and a failed audit write stops the read (plan section 4.4, "Query"). The
+  // row names the actor, the query and the hash of its input, never a value. It runs only through Runtime.query() and
+  // Runtime.stream(): ctx.query refuses it (SENSITIVE_ONLY), because a nested read could not be audited first.
+  sensitive?: true;
+  // The record a sensitive read is about, named from its parsed input like a command's target (a person's salary is the
+  // read of that person's id): the audit row's target. Absent: the row names no record. Ignored without `sensitive`.
+  target?: (input: I) => { type: string; id: string } | null;
   // sink is set exactly when the query runs through Runtime.stream().
   handler: (ctx: QueryContext, input: I, sink?: QuerySink) => Promise<O>;
 }
@@ -294,7 +303,24 @@ export interface QueryContext {
   installed(module: string): boolean;
   // A registered command's risk, access and agent approvers, or null when none is registered under that name.
   command(name: string): CommandInfo | null;
+  // Opens a personal value sealed under its subject's key (ctx.seal, ADR-0017): the value, or { erased: true } when the subject's key was
+  // shredded. Only a user's query opens one (an agent, the system and the worker never do), and the deployment needs its credential key
+  // (BROKER_NOT_CONFIGURED otherwise). `place` is where the value is stored (`<schema>.<table>.<column>`): a value read from another place does not open. `ref` is the subject the row
+  // belongs to (`employee:<id>`): a value sealed under another subject fails, so a sealed text moved to another person's row never reads as theirs.
+  open(sealed: string, place: string, ref: string): Promise<string | ErasedValue>;
+  // open() for many values at once: one key lookup for all of them, in the order given.
+  openMany(items: readonly { sealed: string; place: string; ref: string }[]): Promise<(string | ErasedValue)[]>;
 }
+
+// What a sealed value reads as once its subject's key is gone.
+export interface ErasedValue {
+  erased: true;
+}
+
+// A subject reference (`employee:<id>`) and the place of a sealed value (`crove_hr.payroll_employee.national_id`). A `contact:` reference is a keyed hash
+// (64 hex characters), never the email or number itself: the reference is stored in the clear.
+const SUBJECT_REF = /^(?:contact:[0-9a-f]{64}|(?!contact:)[a-z_]+:[A-Za-z0-9._-]{1,128})$/;
+const SEAL_PLACE = /^[a-z][a-z0-9_.:-]{2,120}$/;
 
 export interface CommandContext extends QueryContext {
   commandId: string;
@@ -317,6 +343,10 @@ export interface CommandContext extends QueryContext {
   // user let in by role or by an org-wide permission passes for any. Such a command run by an entity holder that names
   // no entity fails once its handler returns. A no-op for every other command.
   permissionEntity(legalEntityId: string): void;
+  // Seals a personal value under the key of the subject `ref` (`employee:<id>`, `member:<user_id>`, `contact:<hmac>`), creating the key when the subject has
+  // none, and answers the text to store in the column at `place` (ADR-0017). Only a user's command seals (never an agent, the system or the worker); the
+  // value is 1 byte to 4 KiB. Sealing is the command's own step, before its insert: no other path writes a sealed column.
+  seal(ref: string, place: string, value: string): Promise<string>;
   // Runs another registered command in the same transaction (audited on its own row).
   run<O>(name: string, input: unknown, options?: { proposalId?: string }): Promise<O>;
   // Runs another registered command as run() does, inside a savepoint, for a command that goes on when that one is
@@ -483,6 +513,14 @@ export interface RuntimeOptions {
   // CROVE_CONTEXT_TOKEN_KEY from the environment; null, or neither: today's crove_kernel.enter_context, until step 2
   // of #1822 requires the key.
   contextTokenKey?: string | null;
+  // The key that hashes the input of a sensitive read into its audit row (QueryDef.sensitive): 32 bytes derived from a
+  // deployment secret that lives in the environment, never in the database (the server derives it from CREDENTIAL_KEY, apps/kernel
+  // serverRuntime). The hash is HMAC-SHA256 under it ('h1:<hex>'), so whoever reads the database or an archive cannot confirm a
+  // guessed input (an employee id and a month). Without a key the row stores no hash ('none'), never a plain one.
+  readAuditKey?: Buffer | null;
+  // Seals personal values under per-subject keys (ctx.seal, ctx.open; ADR-0017, #2640): the wrap keys derive from the credential key
+  // (apps/kernel serverRuntime). Absent, null: both answer 503 BROKER_NOT_CONFIGURED.
+  subjectVault?: SubjectVault | null;
   // The tables of the module manifests (ModuleManifest['tables'] of each module, #1710). register() checks each
   // declared write (CommandDef.writes) against them: the table is a manifest's and the classes it carries are exactly
   // that manifest's, so P04 rests on the manifests rather than on classes a declaration builds by hand. Required
@@ -714,6 +752,14 @@ export const STREAM_IDLE_MINUTES = 10;
 // A streamed query answers only through Runtime.stream(), which gives it a sink and a single snapshot.
 function refuseStreamed(def: QueryDef<unknown, unknown>): void {
   if (def.stream) throw new DomainError('STREAM_ONLY', 400, `Truy vấn ${def.name} chỉ đọc theo luồng`);
+}
+
+// The type a sensitive read's audit row names its record by (QueryDef.target): a name, never free text.
+const TARGET_TYPE = /^[a-z][a-z0-9_.]{0,63}$/;
+
+// A sensitive query is audited before it reads, which only Runtime.query() and Runtime.stream() do.
+function refuseSensitiveLookup(def: QueryDef<unknown, unknown>): void {
+  if (def.sensitive) throw new DomainError('SENSITIVE_ONLY', 400, `Truy vấn ${def.name} chỉ đọc qua cổng có ghi nhật ký`);
 }
 
 function isCellResolver(value: CellResolver | Db): value is CellResolver {
@@ -1131,6 +1177,10 @@ export class Runtime {
   readonly #manifestTables: ReadonlyMap<string, Readonly<Record<string, string>>>;
   // The context token key (RuntimeOptions.contextTokenKey), or null: never logged, never in an error.
   readonly #contextTokenKey: Buffer | null;
+  // The key of the sensitive-read audit hash (RuntimeOptions.readAuditKey), or null: never logged, never in an error.
+  readonly #readAuditKey: Buffer | null;
+  // The subject vault (RuntimeOptions.subjectVault), or null.
+  readonly #subjectVault: SubjectVault | null;
   // Where each transaction opens (Decision 14): tenant work on the org's cell, org-less work on the control plane.
   readonly #cells: CellResolver;
   readonly #sessions: SessionStatusSource | null;
@@ -1168,6 +1218,8 @@ export class Runtime {
     this.#manifestTables = manifestTableClasses(manifests as readonly ManifestTables[]);
     const contextTokenKey = options.contextTokenKey === undefined ? process.env.CROVE_CONTEXT_TOKEN_KEY : options.contextTokenKey;
     this.#contextTokenKey = contextTokenKey?.trim() ? contextTokenKeyBytes(contextTokenKey) : null;
+    this.#readAuditKey = options.readAuditKey ? Buffer.from(options.readAuditKey) : null;
+    this.#subjectVault = options.subjectVault ?? null;
     Object.freeze(this);
   }
 
@@ -1299,7 +1351,9 @@ export class Runtime {
 
   // A query context for a handler: the transaction, the entered org and role (or agent grant), ctx.query for lookups
   // and the reviser registry.
-  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered): QueryContext {
+  // `canOpen`: ctx.open and ctx.openMany work only in a sensitive query, whose read is audited before it starts; in a command, in a nested ctx.query and in
+  // any other query they refuse, so a sealed value never reaches an answer or an audit detail without that audit.
+  private queryContext(trx: Transaction<Database>, orgId: string, actor: Actor, entered: Entered, canOpen = false): QueryContext {
     return {
       trx,
       orgId,
@@ -1310,6 +1364,8 @@ export class Runtime {
       reviserOf: (command) => this.reviserOf(command),
       installed: (module) => this.installed(module),
       command: (name) => this.commandInfo(name),
+      open: async (sealed, place, ref) => (await this.openSealed(trx, orgId, actor, [{ sealed, place, ref }], canOpen))[0] as string | ErasedValue,
+      openMany: (items) => this.openSealed(trx, orgId, actor, items, canOpen),
     };
   }
 
@@ -1332,6 +1388,7 @@ export class Runtime {
     const input = parseInput(def.input, rawInput);
     this.authorizeQuery(def, actor, entered);
     refuseStreamed(def);
+    refuseSensitiveLookup(def);
     const value = (await def.handler(this.queryContext(trx, orgId, actor, entered), input)) as O;
     return { status: 'ok', value };
   }
@@ -1581,6 +1638,8 @@ export class Runtime {
       target: { type: string; id: string } | null;
       proposalId: string | null;
       detail?: Record<string, unknown>;
+      // The hash to store instead of the command input hash: a sensitive read's (sensitiveReadHash).
+      inputHash?: string;
     },
   ): Promise<void> {
     // Only the ok row of the proposal's own command (access 'proposal', which requireProposalState admitted for this
@@ -1604,11 +1663,18 @@ export class Runtime {
         outcome: row.outcome,
         target_type: row.target?.type ?? null,
         target_id: row.target?.id ?? null,
-        input_sha256: this.inputHashOf(row.actor, row.command, row.input),
+        input_sha256: row.inputHash ?? this.inputHashOf(row.actor, row.command, row.input),
         proposal_id: ownsProposal ? proposalId : null,
         detail: JSON.stringify(detail),
       })
       .execute();
+  }
+
+  // The hash a sensitive read's audit row stores for its input: HMAC-SHA256 under the environment's key over the org, the actor
+  // key, the query and the canonical input; 'none' when no key is configured. Never a hash anyone can compute without a secret.
+  private sensitiveReadHash(orgId: string, actor: Actor, query: string, canonical: string): string {
+    if (this.#readAuditKey === null) return 'none';
+    return `h1:${createHmac('sha256', this.#readAuditKey).update(['crove.audit.read.v1', orgId, actorKey(actor), query, canonical].join(' ')).digest('hex')}`;
   }
 
   // The input hash of a command's audit or idempotency row (RuntimeOptions.inputHash): in 'keyed' mode an expression
@@ -1844,6 +1910,11 @@ export class Runtime {
               })
               .execute(),
           );
+        }),
+      seal: (ref, place, value) =>
+        pending(async () => {
+          refuseClosed('ctx.seal');
+          return aside(() => this.sealSubject(trx, base.orgId, base.actor, ref, place, value));
         }),
       permissionEntity: (legalEntityId) => {
         refuseClosed('ctx.permissionEntity');
@@ -2345,13 +2416,135 @@ export class Runtime {
     }
   }
 
+  // The audit row of a sensitive read (QueryDef.sensitive), committed in its own transaction before the read starts. The
+  // transaction checks the session, enters the context and the access of the query first, so a caller who may not read
+  // leaves no row and gets the refusal; then it writes one row (the query's name, the actor, the hash of its input, no
+  // value) and commits. Any failure propagates: the handler never runs without its row.
+  // `onEntered` runs once the context is entered, so a refusal after it is not counted as a pre-membership one (as in query()).
+  private async auditSensitiveRead(def: QueryDef<unknown, unknown>, input: unknown, options: { actor: Actor; orgId: string }, onEntered: () => void): Promise<void> {
+    // Only a signed-in person reads sensitive data: an agent or the system never does (the Vy of an org reads no payroll). The
+    // refusal is noted as a security event (system actors are not), and writes no audit row.
+    if (options.actor.type !== 'user') {
+      onEntered();
+      await this.noteSecurityEvent(def.name, options.actor, options.orgId, 'FORBIDDEN');
+      throw new DomainError('FORBIDDEN', 403, 'Truy vấn này chỉ dành cho người dùng', { rule: 'sensitive_user_only' });
+    }
+    // The record the read is about, named by a type of a fixed shape: a query's declaration cannot carry free text into the audit row.
+    const target = def.target?.(input) ?? null;
+    if (target !== null && !TARGET_TYPE.test(target.type)) throw new Error(`query ${def.name}: ${target.type} is not a target type`);
+    const db = await this.#cells.resolveTenant(options.orgId);
+    const refused: { by: DomainError | null } = { by: null };
+    try {
+      await db.transaction().execute(async (trx) => {
+        const entered = await this.enter(trx, options.actor, options.orgId);
+        onEntered();
+        try {
+          this.authorizeQuery(def, options.actor, entered);
+        } catch (error) {
+          // Kept to be noted once the transaction is rolled back (below): noting needs a second connection, and a single-cell deployment
+          // shares one pool between the cell and the control plane, so a refused caller would hold one while waiting for another.
+          refused.by = toDomainError(error);
+          throw error;
+        }
+        await this.writeAudit(trx, {
+          orgId: options.orgId,
+          actor: options.actor,
+          command: def.name,
+          commandId: uuidv7(),
+          outcome: 'ok',
+          input: stableStringify(input),
+          target,
+          proposalId: null,
+          // The row says a read was started: the handler may still fail after it.
+          detail: { ...actorDetail(options.actor), read: 'sensitive', stage: 'before_read' },
+          inputHash: this.sensitiveReadHash(options.orgId, options.actor, def.name, stableStringify(input)),
+        });
+      });
+    } catch (error) {
+      // A refusal of an established member is a security event (per caller, sampled), never an audit row; no input value goes with it.
+      if (refused.by !== null) await this.noteSecurityEvent(def.name, options.actor, options.orgId, refused.by.code);
+      throw error;
+    }
+  }
+
+  // The vault of the subject keys for an actor that may use it: a signed-in user, in a deployment with its credential key.
+  private subjectVaultFor(actor: Actor): SubjectVault {
+    if (actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng được niêm phong hoặc mở dữ liệu cá nhân', { rule: 'subject_user_only' });
+    if (!this.#subjectVault) throw new DomainError('BROKER_NOT_CONFIGURED', 503, 'Chưa cấu hình khóa mã hóa (CREDENTIAL_KEY)');
+    return this.#subjectVault;
+  }
+
+  // ctx.seal: the subject's key (created from a fresh data key when the org has none under the ref; two concurrent seals converge on the stored one), then the value.
+  // Messages never carry the ref or the value: a ref can name a person.
+  private async sealSubject(trx: Transaction<Database>, orgId: string, actor: Actor, ref: string, place: string, value: string): Promise<string> {
+    const vault = this.subjectVaultFor(actor);
+    if (!SUBJECT_REF.test(ref)) throw new Error('ctx.seal: the subject reference is malformed');
+    if (!SEAL_PLACE.test(place)) throw new Error(`ctx.seal: ${place} is not a place`);
+    const subjectId = uuidv7();
+    const fresh = vault.newDataKey(orgId, subjectId);
+    let dataKey = fresh.dataKey;
+    try {
+      const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer }>`
+        SELECT id, key_id, wrapped_key FROM crove_kernel.subject_key_ensure(${subjectId}::uuid, ${ref}, ${fresh.keyId}, ${fresh.wrapped})`.execute(trx);
+      const stored = rows[0];
+      if (!stored) throw new DomainError('INTERNAL', 500, 'Lỗi hệ thống');
+      if (stored.id !== subjectId) {
+        dataKey.fill(0);
+        dataKey = vault.unwrap(orgId, stored.id, stored.key_id, stored.wrapped_key);
+      }
+      return vault.seal(dataKey, orgId, stored.id, place, value);
+    } finally {
+      dataKey.fill(0);
+    }
+  }
+
+  // ctx.open and ctx.openMany: one lookup of the wrapped keys of the subjects named, then the values opened here. A subject with no key row reads as erased.
+  // A value whose subject is not the one the caller says the row belongs to does not open.
+  private async openSealed(trx: Transaction<Database>, orgId: string, actor: Actor, items: readonly { sealed: string; place: string; ref: string }[], canOpen: boolean): Promise<(string | ErasedValue)[]> {
+    if (!canOpen) throw new DomainError('FORBIDDEN', 403, 'Chỉ truy vấn nhạy cảm (có ghi nhật ký) được mở dữ liệu cá nhân', { rule: 'open_sensitive_only' });
+    const vault = this.subjectVaultFor(actor);
+    const parsed = items.map((item) => {
+      const p = parseSealed(item.sealed);
+      if (!p) throw new Error('ctx.open: not a sealed value');
+      if (!SEAL_PLACE.test(item.place)) throw new Error(`ctx.open: ${item.place} is not a place`);
+      if (!SUBJECT_REF.test(item.ref)) throw new Error('ctx.open: the subject reference is malformed');
+      return { ...p, place: item.place, ref: item.ref };
+    });
+    const ids = [...new Set(parsed.map((p) => p.subjectId))];
+    const keys = new Map<string, { dataKey: Buffer; ref: string }>();
+    try {
+      if (ids.length > 0) {
+        const { rows } = await sql<{ id: string; key_id: string; wrapped_key: Buffer; ref: string }>`SELECT id, key_id, wrapped_key, ref FROM crove_kernel.subject_key_wrapped(${ids}::uuid[])`.execute(trx);
+        for (const row of rows) keys.set(row.id, { dataKey: vault.unwrap(orgId, row.id, row.key_id, row.wrapped_key), ref: row.ref });
+      }
+      return parsed.map((p) => {
+        const key = keys.get(p.subjectId);
+        if (!key) return { erased: true as const };
+        if (key.ref !== p.ref) throw new SubjectKeyError('sealed value belongs to another subject');
+        return vault.open(key.dataKey, orgId, p.subjectId, p.place, p.packed);
+      });
+    } finally {
+      for (const key of keys.values()) key.dataKey.fill(0);
+    }
+  }
+
   async query<O = unknown>(name: string, rawInput: unknown, options: { actor: Actor; orgId: string }): Promise<O> {
     const def = this.#queries.get(name);
     if (!def) throw new DomainError('QUERY_NOT_FOUND', 404, `Không có truy vấn ${name}`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    // Whether the audit row of a sensitive read committed: a refusal the read itself then meets is noted too.
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        refuseStreamed(def);
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db.transaction().execute(async (trx) => {
         // The session check may record a first-seen session, so it runs before the transaction turns read-only.
         await this.checkSession(trx, options.actor, options.orgId);
@@ -2360,11 +2553,12 @@ export class Runtime {
         reached = true;
         this.authorizeQuery(def, options.actor, entered);
         refuseStreamed(def);
-        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input)) as O;
+        return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input)) as O;
       });
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`query ${name}`, error, options);
       throw domain;
     }
@@ -2382,8 +2576,16 @@ export class Runtime {
     if (!def.stream) throw new DomainError('NOT_STREAMED', 400, `Truy vấn ${name} không đọc theo luồng`);
     const input = parseInput(def.input, rawInput);
     let reached = false;
+    let audited = false;
     try {
       const db = await this.#cells.resolveTenant(options.orgId);
+      if (def.sensitive) {
+        await this.auditSensitiveRead(def, input, options, () => {
+          reached = true;
+        });
+        audited = true;
+        reached = false;
+      }
       return await db
         .transaction()
         .setIsolationLevel('repeatable read')
@@ -2396,11 +2598,12 @@ export class Runtime {
           const entered = await this.enterContext(trx, options.actor, options.orgId);
           reached = true;
           this.authorizeQuery(def, options.actor, entered);
-          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered), input, sink)) as O;
+          return (await def.handler(this.queryContext(trx.withPlugin(refuseTransactionControl(name)), options.orgId, options.actor, entered, def.sensitive === true), input, sink)) as O;
         });
     } catch (error) {
       const domain = toDomainError(error);
       if (!reached && isPreMembershipRefusal(domain)) await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
+      else if (audited && domain.code === 'FORBIDDEN') await this.noteSecurityEvent(name, options.actor, options.orgId, domain.code);
       if (domain.code === 'INTERNAL') logInternal(`stream ${name}`, error, options);
       throw domain;
     }

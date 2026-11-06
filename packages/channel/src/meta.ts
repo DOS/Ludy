@@ -30,6 +30,8 @@ import type {
   RetrySafety,
 } from './index.ts';
 import { commentResult, EDIT_NOT_SUPPORTED, editResult, removeResult } from './comment.ts';
+import type { ConversationAdapter } from './conversation.ts';
+import { FacebookPageConversations, platformUserHash } from './meta-conversation.ts';
 import { graphTime, pagingCursor, platformLink, RECENT_PAGES_MAX, RECENT_POSTS_MAX, recentSince } from './recent.ts';
 import { coverImageType, videoCoverOf } from './cover.ts';
 import { postTypeOf } from './post-type.ts';
@@ -48,6 +50,9 @@ export const FACEBOOK_PAGE_SCOPES = ['pages_show_list', 'pages_manage_posts', 'p
 // Asked for, not required: first comments (#609) need it, and a Page connects without it (its comments then fail with
 // permission, shown on the post). Meta may hold it back until App Review approves it.
 export const FACEBOOK_PAGE_COMMENT_SCOPES = ['pages_manage_engagement'] as const;
+// Asked for only when the member ticks "also read and answer comments and messages" on the Channels screen (CV2 #2307, CV4 #2308), so
+// connecting a Page for publishing alone never asks for comment-reading, Messenger or webhook-subscription permissions.
+export const FACEBOOK_PAGE_INBOX_SCOPES = ['pages_read_user_content', 'pages_manage_metadata', 'pages_messaging'] as const;
 
 export interface MetaAppConfig {
   appId: string;
@@ -100,7 +105,7 @@ export class Graph {
   }
 
   // video: the call goes to Graph's video host; timeoutMs: longer than the default for an upload.
-  async call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, options: { token?: string; params?: Record<string, string>; form?: Record<string, string>; multipart?: FormData; video?: boolean; timeoutMs?: number } = {}): Promise<T> {
+  async call<T>(method: 'GET' | 'POST' | 'DELETE', path: string, options: { token?: string; params?: Record<string, string>; form?: Record<string, string>; json?: Record<string, unknown>; multipart?: FormData; video?: boolean; timeoutMs?: number } = {}): Promise<T> {
     const params = { ...options.params };
     const headers: Record<string, string> = { accept: 'application/json' };
     if (options.token) {
@@ -111,6 +116,9 @@ export class Graph {
     if (options.form) {
       headers['content-type'] = 'application/x-www-form-urlencoded';
       body = new URLSearchParams(options.form).toString();
+    } else if (options.json) {
+      headers['content-type'] = 'application/json';
+      body = JSON.stringify(options.json);
     } else if (options.multipart) {
       // fetch sets the multipart content type with its boundary.
       body = options.multipart;
@@ -194,13 +202,13 @@ export class MetaLogin {
     this.graph = new Graph(app.appSecret, app.graphVersion, fetchImpl);
   }
 
-  authorizeUrl(input: AuthorizeInput): string {
+  authorizeUrl(input: AuthorizeInput, extraScopes: readonly string[] = []): string {
     const url = new URL(`https://www.facebook.com/${this.graph.version}/dialog/oauth`);
     url.searchParams.set('client_id', this.app.appId);
     url.searchParams.set('redirect_uri', input.redirectUri);
     url.searchParams.set('state', input.state);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('scope', [...this.scopes, ...this.optional].join(','));
+    url.searchParams.set('scope', [...new Set([...this.scopes, ...this.optional, ...extraScopes])].join(','));
     // Asks again for a permission the user declined last time; without it Meta skips declined permissions for good.
     url.searchParams.set('auth_type', 'rerequest');
     return url.toString();
@@ -210,7 +218,7 @@ export class MetaLogin {
   // whichever optional ones Meta granted).
   // `granted` is every permission the token holds, the ones this app was given before included: a Meta user token carries
   // all that the person ever granted the app, not only the scopes this dialog asked for.
-  async userToken(input: ExchangeInput): Promise<{ token: string; scopes: string[]; granted: string[] }> {
+  async userToken(input: ExchangeInput, extraOptional: readonly string[] = []): Promise<{ token: string; scopes: string[]; granted: string[] }> {
     const short = await this.graph
       .call<TokenAnswer>('POST', 'oauth/access_token', {
         form: { client_id: this.app.appId, client_secret: this.app.appSecret, redirect_uri: input.redirectUri, code: input.code },
@@ -232,7 +240,8 @@ export class MetaLogin {
     const granted = new Set((permissions.data ?? []).filter((p) => p.status === 'granted' && typeof p.permission === 'string').map((p) => p.permission as string));
     const missing = this.scopes.filter((s) => !granted.has(s));
     if (missing.length > 0) throw new ConnectorError('denied', `Meta did not grant ${missing.join(', ')}`, 'MISSING_PERMISSION');
-    return { token, scopes: [...this.scopes, ...this.optional].filter((s) => granted.has(s)), granted: [...granted].sort() };
+    const allOptional = [...new Set([...this.optional, ...extraOptional])];
+    return { token, scopes: [...this.scopes, ...allOptional].filter((s) => granted.has(s)), granted: [...granted].sort() };
   }
 
   // Every Page the user token manages, by cursor (never Meta's `next` URL, which carries the token).
@@ -261,26 +270,48 @@ export const FACEBOOK_ALT_TEXT_MAX = 1000;
 export class FacebookPageConnector implements OAuthConnector {
   readonly provider = 'facebook_page' as const;
   readonly pkce = false;
+  private readonly app: MetaAppConfig;
   private readonly login: MetaLogin;
 
   constructor(app: MetaAppConfig, fetchImpl?: Fetch) {
+    this.app = app;
     this.login = new MetaLogin(app, FACEBOOK_PAGE_SCOPES, fetchImpl, FACEBOOK_PAGE_COMMENT_SCOPES);
   }
 
   authorizeUrl(input: AuthorizeInput): string {
-    return this.login.authorizeUrl(input);
+    return this.login.authorizeUrl(input, input.comments ? FACEBOOK_PAGE_INBOX_SCOPES : []);
   }
 
   async exchange(input: ExchangeInput): Promise<ConnectedAccount[]> {
-    const { token, scopes } = await this.login.userToken(input);
+    const { token, scopes } = await this.login.userToken(input, FACEBOOK_PAGE_INBOX_SCOPES);
+    const me = await this.login.graph.call<{ id?: unknown }>('GET', 'me', { token, params: { fields: 'id' } }).catch(() => ({ id: undefined }));
+    const grantedByHash = typeof me.id === 'string' && NUMERIC_ID.test(me.id) ? platformUserHash(this.app.appSecret, me.id) : undefined;
+    const subscribedFields = [
+      ...(scopes.includes('pages_read_user_content') ? ['feed'] : []),
+      ...(scopes.includes('pages_messaging') ? ['messages', 'message_echoes'] : []),
+    ].join(',');
+    const canSubscribe = scopes.includes('pages_manage_metadata') && subscribedFields !== '';
     const accounts: ConnectedAccount[] = [];
     for (const row of await this.login.pages(token, 'id,name,access_token,tasks')) {
       // Posting needs the CREATE_CONTENT task on the Page; a Page the user only moderates cannot be connected.
       const tasks = Array.isArray(row.tasks) ? row.tasks : [];
       if (typeof row.id !== 'string' || !NUMERIC_ID.test(row.id) || typeof row.access_token !== 'string' || !row.access_token) continue;
       if (!tasks.includes('CREATE_CONTENT')) continue;
+      if (canSubscribe) {
+        await this.login.graph
+          .call('POST', `${row.id}/subscribed_apps`, { token: row.access_token, form: { subscribed_fields: subscribedFields } })
+          .catch(() => undefined);
+      }
       const name = typeof row.name === 'string' && row.name.trim() ? row.name.trim().slice(0, 200) : `Facebook Page ${row.id}`;
-      accounts.push({ provider: 'facebook_page', externalAccountId: row.id, displayName: name, scopes: [...scopes], expiresAt: null, secret: JSON.stringify({ accessToken: row.access_token }) });
+      accounts.push({
+        provider: 'facebook_page',
+        externalAccountId: row.id,
+        displayName: name,
+        scopes: [...scopes],
+        expiresAt: null,
+        secret: JSON.stringify({ accessToken: row.access_token }),
+        ...(grantedByHash ? { grantedByHash } : {}),
+      });
     }
     return accounts;
   }
@@ -379,11 +410,13 @@ export class FacebookPagePublisher implements Publisher {
   readonly publishSafety: RetrySafety = 'reconcile_only';
   // A video upload takes minutes; within the job's stale limit (600 s).
   readonly callTimeoutMs = 420_000;
+  readonly conversations: ConversationAdapter;
   private readonly graph: Graph;
 
   constructor(app: Pick<MetaAppConfig, 'appSecret' | 'graphVersion'>, fetchImpl?: Fetch) {
     if (!app.appSecret) throw new Error('missing Meta app secret');
     this.graph = new Graph(app.appSecret, app.graphVersion, fetchImpl);
+    this.conversations = new FacebookPageConversations(this.graph);
   }
 
   async publish(input: PublishInput): Promise<PublishResult> {

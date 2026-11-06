@@ -6,7 +6,7 @@
 // never what the platform or the host declared, and never SVG or anything that could be rendered as a page).
 //
 // Nothing here logs or returns the address or any byte of the image except as the result's own bytes: a failure is a short code.
-import { ZALO_MEDIA_HOSTS, mediaHostAllowed } from '@crove/channel';
+import { FACEBOOK_MEDIA_HOSTS, INSTAGRAM_MEDIA_HOSTS, ZALO_MEDIA_HOSTS, mediaHostAllowed } from '@crove/channel';
 import { CONVERSATION_IMAGE_MAX_BYTES, type ConversationImageType } from '@crove/kernel-contract';
 import { EgressError, guardedFetch, type EgressOptions } from '@crove/kernel-runtime';
 import { imageSize } from './media-probe.ts';
@@ -42,6 +42,8 @@ function gifSize(bytes: Uint8Array): { width: number; height: number } | null {
 // The hosts a provider's images may come from: its own list, or the deployment's. A provider with no list has no allowed host.
 export function mediaHostsOf(provider: string, configured: readonly string[] | undefined): readonly string[] {
   if (provider === 'zalo_oa') return configured && configured.length > 0 ? configured : ZALO_MEDIA_HOSTS;
+  if (provider === 'facebook_page') return FACEBOOK_MEDIA_HOSTS;
+  if (provider === 'instagram') return INSTAGRAM_MEDIA_HOSTS;
   return [];
 }
 

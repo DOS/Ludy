@@ -23,7 +23,7 @@ RUN pnpm install --frozen-lockfile --filter "@crove/app..." \
 # any XML reader is left (apps/kernel/test/container/image-check.mjs, #1719).
 FROM base AS kernel
 RUN pnpm install --frozen-lockfile --prod --filter-prod "@crove/kernel-server..." \
- && rm -rf apps/extract apps/app apps/web packages/ui \
+ && rm -rf apps/extract apps/media apps/app apps/web packages/ui \
  && rm -rf node_modules/.pnpm/saxes@* node_modules/.pnpm/xmlchars@* \
       node_modules/.pnpm/node_modules/saxes node_modules/.pnpm/node_modules/xmlchars \
       node_modules/.pnpm/exceljs@*/node_modules/saxes node_modules/.pnpm/exceljs@*/node_modules/exceljs/dist
