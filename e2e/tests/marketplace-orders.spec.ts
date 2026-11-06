@@ -72,4 +72,12 @@ test('an imported report waits for its shipped line to be assigned, then takes t
     await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).toContainText('AO01');
     for (const value of Object.values(BUYER)) await expect(page.getByText(value, { exact: false })).toHaveCount(0);
   });
+
+  await test.step('taking the line back from its item puts the stock back and the line in the waiting list again', async () => {
+    await page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' }).getByTestId('marketplace-unassign').click();
+    await page.getByTestId('marketplace-unassign-confirm').click();
+    await expect(page.getByTestId('marketplace-unassigned-line')).toHaveCount(1);
+    await expect(page.getByTestId('stock-item')).not.toContainText('-3');
+    await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).not.toContainText('AO01');
+  });
 });

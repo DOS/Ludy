@@ -471,7 +471,7 @@ export function StockPage() {
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
       {/* Keyed by the entity: the open card is dropped when the entity on screen changes. */}
       <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} />
-      <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} />
+      <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
     </>
   );
 }
