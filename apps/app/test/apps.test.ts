@@ -29,7 +29,7 @@ describe('apps of the shell (#1528)', () => {
     const all = installedApps(['kernel', 'finance', 'social', 'crm']);
     // No CRM app on the rail: its screens are in the Engage app (#2435), which opens on its first group, the conversations; with only crm, on the contacts.
     expect(all.map((a) => a.id)).toEqual(['home', 'accounting', 'social']);
-    expect(all.find((a) => a.id === 'accounting')?.home).toBe('/o/$slug/documents');
+    expect(all.find((a) => a.id === 'accounting')?.home).toBe('/o/$slug/accounting');
     expect(all.find((a) => a.id === 'home')?.home).toBe('/o/$slug/overview');
     expect(all.find((a) => a.id === 'social')?.home).toBe('/o/$slug/social/inbox');
     expect(installedApps(['kernel', 'crm']).find((a) => a.id === 'social')?.home).toBe('/o/$slug/contacts');

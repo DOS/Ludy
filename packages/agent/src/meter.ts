@@ -37,6 +37,8 @@ export const AI_FEATURES = {
   'conversation.contact_rank': 'conversation',
   // The finance coworker's wording of a payment reminder (#2488): the lead-in and the closing only, never a fact of the books.
   'finance.payment_reminder': 'finance',
+  // The finance coworker's sentence on the Kế toán overview (#2631): written from the aggregated figures only, and dropped when it states a number they do not hold.
+  'finance.overview_explain': 'finance',
   // The sales coworker's guess at the company a contact works at (#2438): only ranks the companies whose name matches the address a contact writes from.
   'crm.company_rank': 'crm',
 } as const satisfies Record<string, string>;

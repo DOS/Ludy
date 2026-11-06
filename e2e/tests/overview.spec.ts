@@ -25,7 +25,7 @@ test('the overview counts what waits and opens the screen that clears it', async
     const apps = page.getByRole('region', { name: 'Ứng dụng' });
     await expect(apps.getByText('Chưa chọn kỳ khai GTGT')).toBeVisible();
     await apps.getByRole('link', { name: 'Mở Ludy Kế toán' }).click();
-    await expect(page).toHaveURL(/\/vat$/);
+    await expect(page).toHaveURL(/\/accounting$/);
     // Home opens on the overview.
     await page.getByRole('navigation').getByRole('link', { name: 'Trang chủ', exact: true }).click();
     await expect(page).toHaveURL(/\/overview$/);
