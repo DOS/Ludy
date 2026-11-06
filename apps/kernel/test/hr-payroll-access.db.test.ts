@@ -268,6 +268,14 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     expect(await o.query<HrEmployeeSummary[]>(o.admin, 'hr.payroll.employee.list', { status: 'all' })).toHaveLength(1);
     const detail = await o.query<HrEmployee>(o.admin, 'hr.payroll.employee.get', { employeeId: created.employeeId });
     expect(detail.dependents).toEqual([expect.objectContaining({ displayName: DEPENDENT, endedOn: '2026-06-30' })]);
+    // A former employee's record is kept for the retention: no edit at all, so neither an admin nor an owner can clear the numbers, the name or the address.
+    for (const who of [o.admin, o.owner]) {
+      for (const change of [{ identityNumber: null }, { accountNumber: null }, { address: null }, { displayName: 'Changed' }]) {
+        await expect(o.exec(who, 'hr.payroll.employee.edit', { employeeId: created.employeeId, ...change }), JSON.stringify(change)).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED' });
+      }
+    }
+    const kept = await o.query<HrEmployee>(o.owner, 'hr.payroll.employee.get', { employeeId: created.employeeId });
+    expect(kept).toMatchObject({ displayName: NAME, address: ADDRESS, identityNumber: IDENTITY, accountNumber: ACCOUNT });
   });
 
   it('erases an ended employee only after the retention, and then no one can open the numbers again', async () => {

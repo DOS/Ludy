@@ -703,6 +703,8 @@ export const en = {
     edit: 'Edit details',
     editHint: 'Fill in only what needs to change.',
     clearStored: 'Remove the stored value',
+    showNumbers: 'Show numbers',
+    hideNumbers: 'Hide numbers',
     name: 'Full name',
     address: 'Address',
     identityNumber: 'Identity or passport number',

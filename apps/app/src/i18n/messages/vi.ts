@@ -701,6 +701,8 @@ export const vi = {
     edit: 'Sửa thông tin',
     editHint: 'Chỉ điền ô nào cần đổi.',
     clearStored: 'Xóa giá trị đã lưu',
+    showNumbers: 'Hiện số',
+    hideNumbers: 'Ẩn số',
     name: 'Họ và tên',
     address: 'Địa chỉ',
     identityNumber: 'Số căn cước / hộ chiếu',

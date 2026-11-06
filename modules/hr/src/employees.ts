@@ -182,7 +182,8 @@ export const employeeEdit = defineCommand({
   target: targetOf,
   writes: [tableWrite(hrManifest.tables, 'crove_hr', 'payroll_employee', ['display_name', 'address', 'national_id_sealed', 'bank_account_sealed', 'updated_at'])],
   handler: async (ctx, input): Promise<HrWritten> => {
-    await loadEmployee(ctx, input.employeeId);
+    // A former employee's record is kept as it is for the retention: no change, and no clearing of the numbers, the name or the address. The owner's erasure is the way out.
+    requireActive(await loadEmployee(ctx, input.employeeId));
     const subject = subjectOf(input.employeeId);
     const changed: string[] = [];
     const set: { display_name?: string; address?: string | null; national_id_sealed?: string | null; bank_account_sealed?: string | null; updated_at: Date } = { updated_at: ctx.now };

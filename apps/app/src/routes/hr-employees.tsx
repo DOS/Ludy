@@ -131,7 +131,9 @@ function AddForm({ onClose }: { onClose: () => void }) {
 function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boolean; onClose: () => void }) {
   const t = useTranslations('hrEmployees');
   const f = useFormat();
-  const q = useQuery({ ...orpc.hr.payroll.employees.get.queryOptions({ input: { employeeId } }), ...ONCE });
+  // The opened numbers are not kept in the cache once the card closes (gcTime 0).
+  const q = useQuery({ ...orpc.hr.payroll.employees.get.queryOptions({ input: { employeeId } }), ...ONCE, gcTime: 0 });
+  const [shown, setShown] = useState(false);
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
@@ -193,11 +195,16 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
           </div>
           <div>
             <dt className="text-subtle-foreground">{t('identityNumber')}</dt>
-            <dd data-testid="hr-employee-identity">{e.identityNumber ?? none}</dd>
+            <dd data-testid="hr-employee-identity">{e.identityNumber === null ? none : shown ? e.identityNumber : '••••••••'}</dd>
           </div>
           <div>
             <dt className="text-subtle-foreground">{t('accountNumber')}</dt>
-            <dd data-testid="hr-employee-account">{e.accountNumber ?? none}</dd>
+            <dd data-testid="hr-employee-account">{e.accountNumber === null ? none : shown ? e.accountNumber : '••••••••'}</dd>
+            {(e.identityNumber !== null || e.accountNumber !== null) && (
+              <Button variant="ghost" size="sm" className="mt-1" onClick={() => setShown((v) => !v)} data-testid="hr-employee-reveal">
+                {shown ? t('hideNumbers') : t('showNumbers')}
+              </Button>
+            )}
           </div>
           {e.endedOn && (
             <div>
