@@ -13,7 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdAccountView, AdsChange, AdsSummary, AdsWriteState, LegalEntity } from '@crove/kernel-contract';
 import { en } from '../src/i18n/messages/en.ts';
 import { vi as viMessages } from '../src/i18n/messages/vi.ts';
-import { catalog, translatorFor } from '../src/i18n/runtime.ts';
+import { I18nProvider } from '../src/i18n/provider.tsx';
+import { catalog, setActiveLocale, translatorFor } from '../src/i18n/runtime.ts';
 import { adsChangeLine, adsChangeText } from '../src/lib/ads-change.ts';
 
 const client = vi.hoisted(() => ({ current: null as unknown as import('@tanstack/react-query').QueryClient }));
@@ -57,13 +58,19 @@ const { AdsWeeklyNoteCard } = await import('../src/components/ads-weekly-note.ts
 const { AdsWriteCard, CapForm, isCapAmount } = await import('../src/components/ads-write.tsx');
 const { AdsProposalCard } = await import('../src/components/ads-proposal-card.tsx');
 
+// useFormat() follows the app's active locale, not the IntlProvider below. Pinning it (and providing it through the app's
+// own provider) makes the money and dates in the markup the rendered language's on every runtime: left alone, it is read
+// from navigator.languages, which Node fills from the machine's locale and Bun leaves empty (so Vietnamese).
 function render(node: ReactNode, locale: 'en' | 'vi' = 'en'): string {
+  setActiveLocale(locale);
   return renderToStaticMarkup(
-    <QueryClientProvider client={client.current}>
-      <IntlProvider locale={locale} messages={catalog(locale)}>
-        {node}
-      </IntlProvider>
-    </QueryClientProvider>,
+    <I18nProvider>
+      <QueryClientProvider client={client.current}>
+        <IntlProvider locale={locale} messages={catalog(locale)}>
+          {node}
+        </IntlProvider>
+      </QueryClientProvider>
+    </I18nProvider>,
   );
 }
 

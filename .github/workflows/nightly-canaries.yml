@@ -39,8 +39,9 @@ jobs:
       - name: Install pnpm
         run: npm install -g pnpm@10.34.7 --no-fund --no-audit
 
+      # The unit project also holds the web and media suites, so their dependencies are installed as ci.yml's unit job does.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "crove-monorepo"
+        run: pnpm install --frozen-lockfile --filter "@crove/kernel-server..." --filter "@crove/app..." --filter "@crove/web" --filter "@crove/media..." --filter "crove-monorepo"
 
       - name: Bun version
         run: bun --version
