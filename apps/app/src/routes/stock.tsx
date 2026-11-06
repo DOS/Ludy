@@ -19,6 +19,7 @@ import { TableCell, TableRow } from '@crove/ui/components/table';
 import { useChosenEntity } from '../components/entity-switcher.tsx';
 import { MarketplaceOrders, MarketplaceUnassigned } from '../components/marketplace-orders.tsx';
 import { LowStock, SuggestBar, SuggestionChip, lineKey, useLineSuggestions, type Suggestion } from '../components/stock-ai.tsx';
+import { StockCounts } from '../components/stock-counts.tsx';
 import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
@@ -146,6 +147,7 @@ function MovesPanel({ item, canWrite, onClose }: { item: StockItem; canWrite: bo
                   canWrite &&
                   m.source !== 'reversal' &&
                   m.source !== 'order_line' &&
+                  m.source !== 'count' &&
                   (confirming === m.id ? (
                     <span className="inline-flex items-center gap-2">
                       <Button
@@ -618,6 +620,7 @@ export function StockPage() {
       {setActive.error && <ErrorText>{errorMessage(setActive.error)}</ErrorText>}
       {/* Keyed by the entity: the open card is dropped when the entity on screen changes. */}
       <ReportSection key={entity.legalEntityId ?? 'all'} legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
+      <StockCounts key={`counts-${entity.legalEntityId ?? 'all'}`} legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
       <MarketplaceOrders legalEntityId={entity.legalEntityId} ready={entity.ready} canWrite={canWrite} />
     </>
   );

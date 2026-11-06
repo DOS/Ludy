@@ -286,19 +286,15 @@ suite('approval policy presets on PostgreSQL (#1402)', () => {
     await expect(o.approve(asMfa(o.admin), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.owner), before)).rejects.toMatchObject({ code: 'NOT_ELIGIBLE', status: 403 });
     await expect(o.approve(asMfa(o.chief), after)).resolves.toMatchObject({ journalEntryId: expect.any(String) });
-    const approvedAudit = await o.audit('kernel.proposal.approve', after);
-    expect(approvedAudit).toMatchObject({
+    expect(await o.audit('kernel.proposal.approve', after)).toMatchObject({
       policy: { P12: 'pass', P10: 'pass' },
+      // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
+      // 7: the confirmation of a count of stock was given its approval policy (#2513, part b; the allowance of 6 or 7 that step one gave is gone).
+      policy_version: 7,
       org_policy: { preset: 'accountant', version: 2 },
       build: 'dev',
       eligible_approvers: 1,
     });
-    // Pinned as a literal on purpose: every change to who approves what raises it and goes through the two-step route.
-    // 6: the close of a month of stock was given its approval policy (#2513, part a). This is a dated allowance for part (b), the count of stock: 6, as before, or 7, which the
-    // confirmation of a count raises it to with the approval policy of finance.stock.count_confirm. The step-two change of #2513 pins 7 and removes this allowance; it expires with
-    // that PR and, failing that, fails on 2026-12-24.
-    expect(Date.now(), 'the allowance of #2513 for policy_version 6 or 7 has expired: pin the number').toBeLessThan(Date.parse('2026-12-24T00:00:00Z'));
-    expect([6, 7]).toContain((approvedAudit as { policy_version?: unknown }).policy_version);
 
     // Back on founder, the owner approves the earlier proposal again (it is in its snapshot), flagged with the version.
     await o.setPreset(asMfa(o.owner), 'founder');
