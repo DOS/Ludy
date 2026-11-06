@@ -97,6 +97,8 @@ export const kernelManifest = defineModule({
       saved_view: columns(['org_id', 'id', 'user_id', 'scope', 'name', 'sort', 'shared', 'created_at', 'updated_at'], { filters: 'pii' }),
       security_event: columns(['id', 'window_start', 'caller', 'command', 'code', 'target_org', 'overflow', 'refusals', 'first_at', 'last_at']),
       security_signal_seen: columns(['signal', 'subject', 'alerted_at']),
+      // The wrapped data key of one subject (ADR-0017, #2640): definer-only, no login role reads it. The ref names an id or a keyed hash, never a value.
+      subject_key: columns(['org_id', 'id', 'ref', 'key_id', 'created_at'], { wrapped_key: 'sensitive' }),
       task: columns(['org_id', 'id', 'kind', 'assignee_position_id', 'parent_task_id', 'source', 'source_ref', 'source_event_id', 'created_by_type', 'created_by_id', 'created_by_run', 'status', 'due', 'request_depth', 'tainted', 'checkout_run_id', 'lock_expires_at', 'fence', 'created_at', 'updated_at', 'legal_entity_id'], { title: 'pii', description: 'pii', pending_draft: 'pii' }),
       task_comment: columns(['org_id', 'id', 'task_id', 'author_type', 'author_id', 'run_id', 'tainted', 'created_at'], { body: 'pii' }),
       tax_obligation_done: columns(['org_id', 'id', 'obligation', 'period', 'done_by', 'done_at', 'legal_entity_id']),

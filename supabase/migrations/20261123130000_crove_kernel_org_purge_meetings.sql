@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
 -- Crove kernel (issue #2576, ADR-0047, plan docs/plan/meetings.md section 15 step M2): org purge cleans up meeting
 -- records, attendee readers, audio segments, meeting videos, and media keys in reverse dependency order.
+-- Restates 20261123130000_crove_kernel_org_purge_subject_key.sql with the five crove_meetings tables added.
 -- Idempotent; applied files stay untouched.
 SET LOCAL lock_timeout = '2s';
 
@@ -41,7 +42,7 @@ DECLARE
     'crove_kernel.idempotency_key', 'crove_kernel.oauth_state', 'crove_kernel.outbox_pending',
     'crove_kernel.proposal_policy', 'crove_kernel.refusal_tally', 'crove_kernel.tax_obligation_done',
     'crove_kernel.tax_profile', 'crove_kernel.usage_deferral', 'crove_kernel.file_upload', 'crove_kernel.record_le',
-    'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.calendar_credential',
+    'crove_kernel.budget_policy', 'crove_kernel.kill_switch', 'crove_kernel.credential', 'crove_kernel.subject_key', 'crove_kernel.calendar_credential',
     'crove_finance.vendor_account_rule', 'crove_finance.categorization_rule', 'crove_finance.stock_alias', 'crove_finance.einvoice_connection', 'crove_finance.einvoice_series', 'crove_finance.bank_party_rule', 'crove_finance.customer_collection', 'crove_finance.collection_setting', 'crove_finance.bank_account_number', 'crove_finance.bank_feed_account', 'crove_finance.bank_feed_listed_account', 'crove_crm.booking_feed', 'crove_crm.booking', 'crove_kernel.availability_rule',
     'crove_kernel.calendar_event_link', 'crove_kernel.calendar_event', 'crove_kernel.calendar_connection', 'crove_crm.deal_next_step', 'crove_crm.deal_setting', 'crove_crm.deal', 'crove_crm.pipeline_stage', 'crove_crm.import_row', 'crove_crm.import_batch', 'crove_crm.event_type'];
   v_social text[] := ARRAY[

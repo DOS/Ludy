@@ -266,6 +266,12 @@ export type PersonalDataColumnKey = keyof typeof PERSONAL_DATA_COLUMNS;
 // one list or the other.
 export const PERSONAL_DATA_PENDING: Readonly<Record<string, string>> = {};
 
+// Columns that hold a value sealed under its subject's key (ADR-0017, #2640; `<schema>.<table>.<column>`, the place ctx.seal takes). An erasure
+// deletes the subject's key (crove_kernel.subject_key_shred), so the value stays in its row, byte for byte, and can no longer be opened: handling
+// `shred`, never the clear the finder's erase makes in a mutable row. Empty until the first product use (#2530) seals a column; a column listed
+// here is in no other registry above (apps/kernel/test/personal-data.test.ts).
+export const SEALED_COLUMNS: Readonly<Record<string, { handling: 'shred'; reason: string }>> = {};
+
 // The column names the invariant test treats as personal data. A column of crove_kernel, crove_finance, crove_social,
 // crove_crm or crove_notes whose name matches must be in PERSONAL_DATA_COLUMNS. Control-plane tables (the user's own
 // sign-in account and the deployment's own records) are not tenant data and are left out: the identity provider

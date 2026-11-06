@@ -72,4 +72,35 @@ test('an imported report waits for its shipped line to be assigned, then takes t
     await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).toContainText('AO01');
     for (const value of Object.values(BUYER)) await expect(page.getByText(value, { exact: false })).toHaveCount(0);
   });
+
+  await test.step('taking the line back from its item puts the stock back and the line in the waiting list again', async () => {
+    await page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' }).getByTestId('marketplace-unassign').click();
+    await page.getByTestId('marketplace-unassign-confirm').click();
+    await expect(page.getByTestId('marketplace-unassigned-line')).toHaveCount(1);
+    await expect(page.getByTestId('stock-item')).not.toContainText('-3');
+    await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).not.toContainText('AO01');
+  });
+
+  await test.step('the month of the order cannot be closed while an item is below zero: the screen says so and nothing is closed (#2513)', async () => {
+    await page.locator('#stock-month').fill('2026-10');
+    await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
+    await page.getByTestId('stock-close-open').click();
+    await expect(page.getByTestId('stock-close-confirm')).toBeVisible();
+    await page.getByTestId('stock-close-submit').click();
+    await expect(page.getByTestId('stock-close-confirm')).toContainText('âm kho');
+    await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
+  });
+
+  await test.step('a count of the item: the draft shows the difference from the books, priced at the cost typed, and is sent for approval (#2513)', async () => {
+    await page.getByTestId('stock-count-new').click();
+    const form = page.getByTestId('stock-count-form');
+    await form.getByLabel('Thực đếm AO01').fill('5');
+    await form.getByLabel('Đơn giá vốn AO01').fill('100000');
+    await page.getByTestId('stock-count-save').click();
+    const card = page.getByTestId('stock-count');
+    await expect(card.getByTestId('stock-count-status')).toContainText('Nháp');
+    await expect(card.getByTestId('stock-count-line')).toContainText('500.000');
+    await card.getByTestId('stock-count-request').click();
+    await expect(page.getByText('Đã gửi đề xuất điều chỉnh kho')).toBeVisible();
+  });
 });

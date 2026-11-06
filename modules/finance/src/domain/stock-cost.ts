@@ -43,10 +43,29 @@ export function nextMonth(month: string): string {
   return m === 12 ? `${year + 1}-01` : `${year}-${String(m + 1).padStart(2, '0')}`;
 }
 
+// The month before `month` (YYYY-MM).
+export function previousMonth(month: string): string {
+  const [year, m] = month.split('-').map(Number) as [number, number];
+  return m === 1 ? `${year - 1}-12` : `${year}-${String(m - 1).padStart(2, '0')}`;
+}
+
 type Balance = { quantity: ReturnType<typeof money>; value: ReturnType<typeof money> };
 
+// What a closed month left to the months after it: the quantity and the value on hand at its end.
+export interface OpeningBalance {
+  quantity: string;
+  value: string;
+}
+
+// How a month is folded. `scale` is the decimal places what leaves is valued to: four for the provisional figures, none for a close, which posts whole dong. `opening` is the
+// balance a month starts from when the moves before it are a closed month's, which is no longer folded.
+export interface FoldOptions {
+  scale?: number;
+  opening?: OpeningBalance;
+}
+
 // One month on top of the balance it opens with: its figures and the balance it closes with.
-function foldMonth(opening: Balance, month: string, moves: readonly CostMove[]): { figures: MonthFigures; closing: Balance } {
+function foldMonth(opening: Balance, month: string, moves: readonly CostMove[], scale = 4): { figures: MonthFigures; closing: Balance } {
   let valuedQuantity = money(0);
   let valuedValue = money(0);
   let unvaluedQuantity = money(0);
@@ -65,7 +84,7 @@ function foldMonth(opening: Balance, month: string, moves: readonly CostMove[]):
   // The average is exact here and rounded only for display; what leaves is valued at the exact average, to four decimals like every amount.
   const average = pool.greaterThan(0) ? opening.value.plus(valuedValue).dividedBy(pool) : null;
   const outQuantity = unvaluedQuantity.negated();
-  const outValue = average === null ? money(0) : outQuantity.times(average).toDecimalPlaces(4);
+  const outValue = average === null ? money(0) : outQuantity.times(average).toDecimalPlaces(scale);
   const closing = { quantity: opening.quantity.plus(total), value: opening.value.plus(valuedValue).minus(outValue) };
   return {
     closing,
@@ -84,9 +103,12 @@ function foldMonth(opening: Balance, month: string, moves: readonly CostMove[]):
   };
 }
 
-// The figures of `month` (YYYY-MM), carried from the first move's month: a month with no move carries the closing of the one before, so only the months that have moves are
-// folded and the cost is that of the moves, never of the months in between. Null when there is no move on or before `month`.
-export function monthFigures(moves: readonly CostMove[], month: string): MonthFigures | null {
+// The figures of `month` (YYYY-MM), carried from the first move's month (or from `options.opening`, the balance of a closed month, when the moves given are the ones after it): a
+// month with no move carries the closing of the one before, so only the months that have moves are folded and the cost is that of the moves, never of the months in between. Null
+// when there is no move on or before `month` and no balance carried in.
+export function monthFigures(moves: readonly CostMove[], month: string, options: FoldOptions = {}): MonthFigures | null {
+  const scale = options.scale ?? 4;
+  const carried = options.opening ?? null;
   const byMonth = new Map<string, CostMove[]>();
   for (const move of moves) {
     const key = monthOf(move.date);
@@ -95,13 +117,13 @@ export function monthFigures(moves: readonly CostMove[], month: string): MonthFi
     if (bucket) bucket.push(move);
     else byMonth.set(key, [move]);
   }
-  if (byMonth.size === 0) return null;
-  let balance: Balance = { quantity: money(0), value: money(0) };
+  if (byMonth.size === 0 && carried === null) return null;
+  let balance: Balance = carried ? { quantity: money(carried.quantity), value: money(carried.value) } : { quantity: money(0), value: money(0) };
   let last: MonthFigures | null = null;
   for (const key of [...byMonth.keys()].sort()) {
-    const step = foldMonth(balance, key, byMonth.get(key) as CostMove[]);
+    const step = foldMonth(balance, key, byMonth.get(key) as CostMove[], scale);
     balance = step.closing;
     last = step.figures;
   }
-  return last !== null && last.month === month ? last : foldMonth(balance, month, []).figures;
+  return last !== null && last.month === month ? last : foldMonth(balance, month, [], scale).figures;
 }

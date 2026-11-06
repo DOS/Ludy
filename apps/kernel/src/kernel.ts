@@ -56,6 +56,8 @@ import {
   LocalDiskStore,
   egressFetch,
   Runtime,
+  SUBJECT_WRAP_INFO,
+  SubjectVault,
   type BlobStore,
   readVerified,
   type CommandDef,
@@ -258,6 +260,16 @@ export function moduleManifests(config: Pick<Config, 'CROVE_MODULES'>): ModuleMa
 // queries, registered on a runtime given their manifests, so every declared write, and any command registered on it
 // later (the org purge), is checked against them (P04, #1710). apps/kernel/test/invariant/command-writes.test.ts holds
 // the server to both.
+// The vault of the per-subject keys: HKDF-derived from the credential key and from CREDENTIAL_KEY_PREVIOUS the same way, so values sealed before a rotation still open.
+function subjectVaultOf(config: Config): SubjectVault | null {
+  const keys = createCredentialBroker(config).deriveKeys?.(SUBJECT_WRAP_INFO) ?? [];
+  if (keys.length === 0) return null;
+  const vault = new SubjectVault(keys);
+  // The vault keeps its own copies: the derived buffers are wiped.
+  for (const k of keys) k.key.fill(0);
+  return vault;
+}
+
 export function serverRuntime(cells: CellResolver, config: Config, options: Omit<RuntimeOptions, 'absentModules' | 'manifests'>): Runtime {
   // Modules this build ships that CROVE_MODULES leaves out (ADR-0031).
   const absentModules = AVAILABLE_MODULES.filter((module) => !config.CROVE_MODULES.includes(module));
@@ -267,6 +279,8 @@ export function serverRuntime(cells: CellResolver, config: Config, options: Omit
     ...options,
     // ctx.query into one of them answers not_installed; any other unknown query is QUERY_NOT_FOUND.
     absentModules,
+    // The subject keys (ADR-0017): wrap keys derived from every credential key this deployment opens, none without one.
+    subjectVault: subjectVaultOf(config),
     // Every declared write must name a manifest table with that manifest's column classes (P04, #1710).
     manifests: moduleManifests(config).map((manifest) => manifest.tables),
   }).register(moduleDefinitions(config));
