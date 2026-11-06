@@ -2,12 +2,12 @@
 // Items of stock, the names a source uses for them, and the moves of stock (#2512, ADR-0045 point 1): the shapes the finance commands and the "Hàng hóa" screen
 // share. Quantities and amounts are decimal strings, never numbers. A move is append-only: a correction is a reversing move.
 import { z } from 'zod';
-import { zId, zJournalVoucherProposal } from './schemas.ts';
+import { zId, zJournalVoucherProposal, zLocalDate } from './schemas.ts';
 
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
 export type StockTradeKey = (typeof STOCK_TRADES)[number];
-export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line'] as const;
+export const STOCK_MOVE_SOURCES = ['document_line', 'manual', 'reversal', 'order_line', 'count'] as const;
 export type StockMoveSourceKey = (typeof STOCK_MOVE_SOURCES)[number];
 
 // A signed decimal quantity with at most six decimals, not zero.
@@ -177,3 +177,68 @@ export type StockCloseProposal = z.infer<typeof zStockCloseProposal>;
 // A month with no cost to post closes at once, with no entry: the number of items whose figures it stored.
 export const zStockCloseEmptyResult = z.object({ periodId: zId, items: z.number().int().min(0) });
 export type StockCloseEmptyResult = z.infer<typeof zStockCloseEmptyResult>;
+
+// The count of stock (kiểm kê, #2513 part b): a person names the day the stock was counted and what was counted of each item; the server works out the difference from the books and, when
+// confirmed, posts it as adjustment moves and one entry that an owner or an admin approves like any posting (R3, four-eyes, fresh MFA).
+export const STOCK_COUNT_STATUSES = ['draft', 'confirmed', 'cancelled'] as const;
+// What was counted: a decimal with at most six decimals, zero allowed (nothing of the item is left).
+export const zStockCountQuantity = z.string().regex(/^(?:0|[1-9][0-9]{0,13})(?:\.[0-9]{1,6})?$/);
+// A unit cost typed for an item the books have no cost for: a decimal with at most four decimals, above zero.
+export const zStockUnitCost = z
+  .string()
+  .regex(/^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,4})?$/)
+  .refine((v) => !/^0(?:\.0+)?$/.test(v), 'not zero');
+export const zStockCountLineInput = z.strictObject({ itemId: zId, countedQuantity: zStockCountQuantity, unitCost: zStockUnitCost.nullable().optional() });
+// The norm for a shortage is a percentage of the book quantity, 0 to 100 with two decimals at most.
+export const zStockCountCreate = z.strictObject({
+  legalEntityId: zId.optional(),
+  countDate: zLocalDate,
+  note: z.string().trim().max(300).optional(),
+  lossNormPercent: z.string().regex(/^(?:100(?:\.0{1,2})?|[0-9]{1,2}(?:\.[0-9]{1,2})?)$/),
+  lines: z.array(zStockCountLineInput).min(1).max(2000),
+});
+export type StockCountCreate = z.infer<typeof zStockCountCreate>;
+export const zStockCountIdInput = z.strictObject({ countId: zId });
+export const zStockCountListInput = z.strictObject({ legalEntityId: zId.optional(), limit: z.number().int().min(1).max(100).optional() });
+// The items of an entity with what the books hold of each on the day, to count against.
+export const zStockCountPreviewInput = z.strictObject({ countDate: zLocalDate, legalEntityId: zId.optional() });
+export const zStockCountPreviewRow = z.object({ itemId: zId, code: z.string(), name: z.string(), unit: z.string(), bookQuantity: z.string(), averageCost: z.string().nullable() });
+export type StockCountPreviewRow = z.infer<typeof zStockCountPreviewRow>;
+export const zStockCountLine = z.object({
+  itemId: zId,
+  code: z.string(),
+  name: z.string(),
+  unit: z.string(),
+  countedQuantity: z.string(),
+  // What the books held on the day of the count, and counted minus that (negative for a shortage).
+  bookQuantity: z.string(),
+  difference: z.string(),
+  // The unit cost the difference is priced at, and what it is worth in whole dong, signed like the difference.
+  unitCost: z.string().nullable(),
+  value: z.string(),
+  // For a shortage: the part of its value within the norm.
+  withinNorm: z.string(),
+});
+export const zStockCount = z.object({
+  id: zId,
+  legalEntityId: zId,
+  countDate: zLocalDate,
+  status: z.enum(STOCK_COUNT_STATUSES),
+  note: z.string().nullable(),
+  lossNormPercent: z.string(),
+  createdAt: z.string(),
+  confirmedAt: z.string().nullable(),
+  voucherId: zId.nullable(),
+  // A draft is worked out from the books as they read now; a confirmed count shows what its adjustments made.
+  lines: z.array(zStockCountLine),
+});
+export type StockCount = z.infer<typeof zStockCount>;
+export const STOCK_COUNT_COMMAND = 'finance.stock.count_confirm';
+// The proposal (kind finance.journal_voucher, shown as one) with the count it posts. The lines of the count are not in it: approving builds them again from the books, and lineCount and
+// figuresHash (SHA-256 of the canonical figures) are what make a proposal stale when a figure changed since it was asked for.
+export const zStockCountProposal = zJournalVoucherProposal.extend({
+  countId: zId,
+  lineCount: z.number().int().min(1).max(2000),
+  figuresHash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export type StockCountProposal = z.infer<typeof zStockCountProposal>;

@@ -22,7 +22,7 @@ interface MoveRow {
   item_id: string;
   move_date: string;
   quantity: string;
-  source_type: 'document_line' | 'manual' | 'reversal' | 'order_line';
+  source_type: 'document_line' | 'manual' | 'reversal' | 'order_line' | 'count';
   document_id: string | null;
   line_no: number | null;
   // The value a purchase line brought in, negative for the reversal of such a move; null for any other move.
@@ -39,6 +39,7 @@ export async function movesUpTo(ctx: Pick<QueryContext, 'trx' | 'orgId'>, month:
              WHEN m.source_type = 'document_line' THEN (
                SELECT l.amount::text FROM crove_finance.purchase_line l JOIN crove_finance.purchase_document d ON d.org_id = l.org_id AND d.id = l.document_id
                WHERE l.org_id = m.org_id AND l.document_id = m.document_id AND l.line_no = m.line_no AND d.direction = 'purchase')
+             WHEN m.source_type = 'count' THEN m.amount::text
              WHEN m.source_type = 'reversal' THEN (
                SELECT (-l.amount)::text FROM crove_finance.stock_move o
                JOIN crove_finance.purchase_line l ON l.org_id = o.org_id AND l.document_id = o.document_id AND l.line_no = o.line_no

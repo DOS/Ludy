@@ -2346,6 +2346,13 @@ export function createRpcHandler(
       card: os.stock.card.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.card', input, { actor, orgId }))),
       periods: os.stock.periods.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock.periods', input, { actor, orgId }))),
       closeEmpty: os.stock.closeEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock.close_empty', input, { actor, orgId }))),
+      counts: {
+        list: os.stock.counts.list.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.list', input ?? {}, { actor, orgId }))),
+        preview: os.stock.counts.preview.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.query('finance.stock_count.preview', input, { actor, orgId }))),
+        create: os.stock.counts.create.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.create', input, { actor, orgId }))),
+        cancel: os.stock.counts.cancel.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.cancel', input, { actor, orgId }))),
+        confirmEmpty: os.stock.counts.confirmEmpty.handler(({ context, input }) => inFinance(context, (orgId, actor) => runtime.execute('finance.stock_count.confirm_empty', input, { actor, orgId }))),
+      },
     },
     accountRules: {
       list: os.accountRules.list.handler(({ context, input }) =>
