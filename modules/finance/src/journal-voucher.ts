@@ -114,10 +114,10 @@ export const prepareJournalVoucher = defineCommand({
 });
 
 // Inserts the voucher (the database numbers it) and posts its entry, in the command's transaction: the approval of a
-// general journal voucher, and of a year-end closing (year-closing.ts, closingYear set). The payload has been checked.
+// general journal voucher, of a year-end closing (year-closing.ts, closingYear set) and of the close of a month of stock (stock-close.ts, stockClosingMonth set). The payload has been checked.
 // The voucher is numbered and posted in the payload's legal entity (#1280), resolved again for the approver (absent on
 // a proposal made before #1280: the entity resolved for the approver).
-export async function postJournalVoucher(ctx: CommandContext, payload: JournalVoucherProposal, closingYear: number | null = null) {
+export async function postJournalVoucher(ctx: CommandContext, payload: JournalVoucherProposal, closingYear: number | null = null, stockClosingMonth: string | null = null) {
   if (!ctx.proposalId) throw new DomainError('FORBIDDEN', 403, 'Lệnh này chỉ chạy qua đề xuất đã duyệt');
   const legalEntityId = await resolveLegalEntity(ctx, payload.legalEntityId);
   const total = journalVoucherTotal(payload.lines);
@@ -132,6 +132,7 @@ export async function postJournalVoucher(ctx: CommandContext, payload: JournalVo
       description: payload.description,
       proposal_id: ctx.proposalId,
       closing_year: closingYear,
+      stock_closing_month: stockClosingMonth === null ? null : `${stockClosingMonth}-01`,
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
@@ -153,7 +154,7 @@ export async function postJournalVoucher(ctx: CommandContext, payload: JournalVo
       memo: j.memo,
     })),
   });
-  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}) });
+  ctx.audit({ number: voucher.number, total, lines: payload.lines.length, legal_entity_id: legalEntityId, ...(closingYear ? { closingYear } : {}), ...(stockClosingMonth ? { stockClosingMonth } : {}) });
   await ctx.activity('finance.journal_voucher', voucher.id, 'journal_voucher.recorded', `Ghi sổ ${JOURNAL_VOUCHER_LABEL.toLowerCase()} ${code}`);
   await ctx.emit('finance.journal_voucher.recorded', { voucherId: voucher.id, journalEntryId, number: voucher.number });
   return { voucherId: voucher.id, journalEntryId, code };

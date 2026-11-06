@@ -14,6 +14,7 @@ import { zId, zStockAliasTeach, zStockItemInput, type StockItem, type StockMove 
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
+import { stockMoveLockKey } from './domain/stock-close.ts';
 import { normalizeAlias, oppositeQuantity, plainQuantity, sameUnit } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -39,8 +40,25 @@ export interface StockMoveWrite {
     | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return' };
 }
 
+// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261123140000), so a move whose own date falls in one is written on the first
+// day after the last closed month, and the reversal of such a move on today: a correction is a move of the open month, never back-dated. The entity's lock is taken shared first,
+// so this read cannot miss a close that is running: it waits for it and then sees the month closed.
+async function openMoveDate(ctx: CommandContext, itemId: string, date: string, reversal: boolean): Promise<string> {
+  const item = await ctx.trx.selectFrom('crove_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
+  // An item that is not there is refused by the insert, with the foreign key's own error.
+  if (!item) return date;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, item.legal_entity_id)}, 0))`.execute(ctx.trx);
+  const { rows } = await sql<{ first_open: string | null }>`
+    SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text AS first_open FROM crove_finance.stock_period p
+    WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid`.execute(ctx.trx);
+  const firstOpen = rows[0]?.first_open ?? null;
+  if (firstOpen === null || date >= firstOpen) return date;
+  return reversal ? databaseToday(ctx.trx) : firstOpen;
+}
+
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
   const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+  const date = await openMoveDate(ctx, move.itemId, move.date, move.source.type === 'reversal');
   // The try of a line: one more than the moves it already made (the database accepts it only when the one before was reversed, and keeps two writers from taking the same).
   const attempt =
     move.source.type === 'document_line'
@@ -62,7 +80,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
     .values({
       org_id: ctx.orgId,
       item_id: move.itemId,
-      move_date: move.date,
+      move_date: date,
       quantity: move.quantity,
       source_type: move.source.type,
       document_id: move.source.type === 'document_line' ? move.source.documentId : null,

@@ -22,7 +22,7 @@ interface MoveRow {
   item_id: string;
   move_date: string;
   quantity: string;
-  source_type: 'document_line' | 'manual' | 'reversal';
+  source_type: 'document_line' | 'manual' | 'reversal' | 'order_line';
   document_id: string | null;
   line_no: number | null;
   // The value a purchase line brought in, negative for the reversal of such a move; null for any other move.

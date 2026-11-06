@@ -8,6 +8,8 @@
 -- stock_period_item  what that month held of one item: opening, in, out and closing quantity and value, and the unit cost the month's average gave (empty when there was no quantity to
 --                    spread the value over). Append-only too. A report of a closed month reads these rows, and the month after opens with their closing.
 -- stock_move_closed_guard  no move is dated in a month that is closed, or before one: a correction is a move of the open month (the command that writes the move dates it there).
+-- journal_voucher.stock_closing_month  the voucher that posts a month's cost names the month it closes, one per entity and month; a deferred guard on stock_period keeps a month from
+--                    existing without that voucher (posted, dated the month's last day, for the month's cost), or with a cost and none. The ledger effect and proposal checks learn the command.
 --
 -- Quantities are crove_finance.quantity, values numeric(20, 4), the unit cost numeric(28, 10); never floating point. Both tables have org_id, PRIMARY KEY (org_id, id), RLS with a
 -- RESTRICTIVE `le_scope` per legal entity, and an item row has its period's entity.
@@ -56,19 +58,27 @@ CREATE POLICY stock_period_insert ON crove_finance.stock_period AS RESTRICTIVE F
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = stock_period.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 SELECT crove_kernel.make_append_only('crove_finance.stock_period');
 
--- A month is closed once it is over, and in order: the month before has to be closed unless the entity has no move before this one.
+-- A month is closed once it is over, and in order: not at or before a month that is closed, and with no move left in the months between the last closed month and this one (a month
+-- with no move at all needs no close of its own).
 CREATE OR REPLACE FUNCTION crove_finance.stock_period_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_from date;
 BEGIN
   IF NEW.period_month + interval '1 month' > current_date THEN
     RAISE EXCEPTION 'STOCK_PERIOD_NOT_ENDED' USING ERRCODE = '23514';
   END IF;
   IF EXISTS (
-       SELECT 1 FROM crove_finance.stock_move m
-       WHERE m.org_id = NEW.org_id AND m.legal_entity_id = NEW.legal_entity_id AND m.move_date < NEW.period_month)
-     AND NOT EXISTS (
        SELECT 1 FROM crove_finance.stock_period p
-       WHERE p.org_id = NEW.org_id AND p.legal_entity_id = NEW.legal_entity_id AND p.period_month = (NEW.period_month - interval '1 month')::date) THEN
+       WHERE p.org_id = NEW.org_id AND p.legal_entity_id = NEW.legal_entity_id AND p.period_month > NEW.period_month) THEN
+    RAISE EXCEPTION 'STOCK_PERIOD_ORDER' USING ERRCODE = '23514';
+  END IF;
+  SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date INTO v_from
+  FROM crove_finance.stock_period p
+  WHERE p.org_id = NEW.org_id AND p.legal_entity_id = NEW.legal_entity_id AND p.period_month < NEW.period_month;
+  IF EXISTS (
+       SELECT 1 FROM crove_finance.stock_move m
+       WHERE m.org_id = NEW.org_id AND m.legal_entity_id = NEW.legal_entity_id AND m.move_date < NEW.period_month AND (v_from IS NULL OR m.move_date >= v_from)) THEN
     RAISE EXCEPTION 'STOCK_PERIOD_ORDER' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
@@ -136,3 +146,95 @@ END $$;
 REVOKE ALL ON FUNCTION crove_finance.stock_move_closed_guard() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 DROP TRIGGER IF EXISTS stock_move_closed_guard ON crove_finance.stock_move;
 CREATE TRIGGER stock_move_closed_guard BEFORE INSERT ON crove_finance.stock_move FOR EACH ROW EXECUTE FUNCTION crove_finance.stock_move_closed_guard();
+
+-- ---------------------------------------------------------------------------
+-- 4. A month's cost is posted by its own voucher
+-- ---------------------------------------------------------------------------
+-- The voucher of the close names the month it closes, as the closing of a year names its year, one per entity and month. It is dated in that month, is no year closing and names the proposal
+-- that approved it (the effect check below ties that proposal to the command).
+ALTER TABLE crove_finance.journal_voucher ADD COLUMN IF NOT EXISTS stock_closing_month date;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'journal_voucher_stock_closing_month' AND conrelid = 'crove_finance.journal_voucher'::regclass) THEN
+    ALTER TABLE crove_finance.journal_voucher
+      ADD CONSTRAINT journal_voucher_stock_closing_month CHECK (
+        stock_closing_month IS NULL
+        OR (stock_closing_month = pg_catalog.date_trunc('month', voucher_date)::date AND closing_year IS NULL AND proposal_id IS NOT NULL));
+  END IF;
+END
+$$;
+CREATE UNIQUE INDEX IF NOT EXISTS journal_voucher_stock_closing_uq ON crove_finance.journal_voucher (org_id, legal_entity_id, stock_closing_month) WHERE stock_closing_month IS NOT NULL;
+
+-- By commit (the items of the month are inserted after it), a closed month has the voucher that posted its cost: of the same entity and month, posted as an entry of its date whose debits
+-- are the month's cost; and a month with no voucher has no cost, in its total and in what its items say went out. A month never exists without its Dr 632 / Cr stock voucher.
+CREATE OR REPLACE FUNCTION crove_finance.stock_period_voucher_check() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+BEGIN
+  IF NEW.voucher_id IS NULL THEN
+    IF NEW.total_cost <> 0
+       OR (SELECT coalesce(pg_catalog.sum(i.out_value), 0) FROM crove_finance.stock_period_item i WHERE i.org_id = NEW.org_id AND i.period_id = NEW.id) <> 0 THEN
+      RAISE EXCEPTION 'STOCK_PERIOD_VOUCHER' USING ERRCODE = '23514';
+    END IF;
+  ELSIF NOT EXISTS (
+       SELECT 1
+       FROM crove_finance.journal_voucher v
+       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL AND e.entry_date = v.voucher_date
+       WHERE v.org_id = NEW.org_id AND v.id = NEW.voucher_id AND v.legal_entity_id = NEW.legal_entity_id AND v.stock_closing_month = NEW.period_month
+         AND (SELECT coalesce(pg_catalog.sum(l.debit), 0) FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) = NEW.total_cost) THEN
+    RAISE EXCEPTION 'STOCK_PERIOD_VOUCHER' USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.stock_period_voucher_check() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DROP TRIGGER IF EXISTS stock_period_voucher_trg ON crove_finance.stock_period;
+CREATE CONSTRAINT TRIGGER stock_period_voucher_trg AFTER INSERT ON crove_finance.stock_period
+  DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION crove_finance.stock_period_voucher_check();
+
+-- ---------------------------------------------------------------------------
+-- 5. The close is a ledger command (finance.stock.close_period, approval policy 6)
+-- ---------------------------------------------------------------------------
+-- A journal voucher that names a proposal names one being executed by its own command: the close joins the three that post through postJournalVoucher (20261105120000).
+DROP TRIGGER IF EXISTS a_effect_proposal ON crove_finance.journal_voucher;
+CREATE TRIGGER a_effect_proposal BEFORE INSERT ON crove_finance.journal_voucher
+  FOR EACH ROW EXECUTE FUNCTION crove_finance.effect_proposal_check('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period');
+
+-- And a ledger proposal moves to 'executed' only when its effect was posted in this transaction (20261105020000): the close's effect is an entry of a journal voucher that names the
+-- proposal, like the other three. Redefined as it was, with the command added.
+CREATE OR REPLACE FUNCTION crove_finance.ledger_effect_recorded(p_org uuid, p_proposal uuid, p_command text) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_xact xid8;
+BEGIN
+  IF p_org IS NULL OR p_org IS DISTINCT FROM crove_kernel.ctx_org_id() THEN
+    RETURN false;
+  END IF;
+  IF NOT coalesce((crove_kernel.approval_command_policy(p_command)).ledger, false) THEN
+    RETURN true;
+  END IF;
+  -- Assigned already: the update this answers for has written.
+  v_xact := pg_catalog.pg_current_xact_id_if_assigned();
+  IF v_xact IS NULL THEN
+    RETURN false;
+  END IF;
+  RETURN CASE
+    WHEN p_command = 'finance.journal.reverse' THEN EXISTS (
+      SELECT 1 FROM crove_finance.journal_entry e
+      WHERE e.org_id = p_org AND e.source_type = 'kernel.proposal' AND e.source_id = p_proposal AND e.reverses_entry_id IS NOT NULL
+        AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command = 'finance.purchase.record' THEN EXISTS (
+      SELECT 1 FROM crove_finance.purchase_document d
+      JOIN crove_finance.journal_entry e ON e.org_id = d.org_id AND e.source_type = 'finance.purchase_document' AND e.source_id = d.id
+      WHERE d.org_id = p_org AND d.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command = 'finance.voucher.record' THEN EXISTS (
+      SELECT 1 FROM crove_finance.cash_voucher v
+      JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period') THEN EXISTS (
+      SELECT 1 FROM crove_finance.journal_voucher v
+      JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    ELSE false
+  END;
+END $$;
+REVOKE ALL ON FUNCTION crove_finance.ledger_effect_recorded(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_finance.ledger_effect_recorded(uuid, uuid, text) TO crove_tenant;

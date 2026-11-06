@@ -958,6 +958,7 @@ export interface FinanceJournalVoucherTable {
   legal_entity_id: ColumnType<string, string, NotGranted>;
   number_period: ColumnType<string, string | undefined, NotGranted>;
   number_allocation_id: ColumnType<string | null, string | null, NotGranted>;
+  stock_closing_month: ColumnType<string | null, string | null, NotGranted>;
 }
 
 /** crove_finance.legal_entity_books */

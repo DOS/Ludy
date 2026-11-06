@@ -9,6 +9,9 @@
 import { money } from '@crove/l10n-vn';
 import { monthFigures, type CostMove, type MonthFigures, type OpeningBalance } from './stock-cost.ts';
 
+// The advisory lock every writer of a move of an entity takes shared and a close takes alone, so a close reads every move that committed before it and none is written meanwhile.
+export const stockMoveLockKey = (orgId: string, legalEntityId: string): string => `crove_finance.stock_move:${orgId}:${legalEntityId}`;
+
 // The account the cost of goods sold is posted to.
 export const COGS_ACCOUNT = '632';
 

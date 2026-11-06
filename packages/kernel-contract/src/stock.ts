@@ -2,7 +2,7 @@
 // Items of stock, the names a source uses for them, and the moves of stock (#2512, ADR-0045 point 1): the shapes the finance commands and the "Hàng hóa" screen
 // share. Quantities and amounts are decimal strings, never numbers. A move is append-only: a correction is a reversing move.
 import { z } from 'zod';
-import { zId } from './schemas.ts';
+import { zId, zJournalVoucherProposal } from './schemas.ts';
 
 export const STOCK_ITEM_KINDS = ['goods'] as const;
 export const STOCK_TRADES = ['goods', 'services', 'catering', 'other'] as const;
@@ -160,3 +160,20 @@ export const zStockCard = z.object({
   ),
 });
 export type StockCard = z.infer<typeof zStockCard>;
+
+// The close of a month of stock (#2513): the cost of goods sold of the month, Dr 632 / Cr the stock accounts, as a general journal voucher that an owner or an admin approves like any
+// posting (R3, four-eyes, fresh MFA). The server builds every line from the moves; a person names the month (and the legal entity).
+export const STOCK_CLOSE_COMMAND = 'finance.stock.close_period';
+export const zStockCloseRequest = z.strictObject({ month: zStockMonth, legalEntityId: zId.optional() });
+export type StockCloseRequest = z.infer<typeof zStockCloseRequest>;
+// The proposal (kind finance.journal_voucher, shown as one) with the month it closes. The figures stored per item are not in it: approving builds them again from the moves, and
+// itemCount and figuresHash (SHA-256 of the canonical figures) are what make a proposal stale when an item's figures changed since it was asked for.
+export const zStockCloseProposal = zJournalVoucherProposal.extend({
+  closingMonth: zStockMonth,
+  itemCount: z.number().int().min(1).max(100000),
+  figuresHash: z.string().regex(/^[0-9a-f]{64}$/),
+});
+export type StockCloseProposal = z.infer<typeof zStockCloseProposal>;
+// A month with no cost to post closes at once, with no entry: the number of items whose figures it stored.
+export const zStockCloseEmptyResult = z.object({ periodId: zId, items: z.number().int().min(0) });
+export type StockCloseEmptyResult = z.infer<typeof zStockCloseEmptyResult>;

@@ -119,6 +119,7 @@ describe('declared risk and side effects (#1563)', () => {
       'finance.journal_voucher.record',
       'finance.opening_balance.post',
       'finance.purchase.record',
+      'finance.stock.close_period',
       'finance.voucher.record',
     ]) {
       expect(byName.get(name), name).toMatchObject({ risk: 'R3', sideEffect: 'financial' });

@@ -43,6 +43,12 @@ export function nextMonth(month: string): string {
   return m === 12 ? `${year + 1}-01` : `${year}-${String(m + 1).padStart(2, '0')}`;
 }
 
+// The month before `month` (YYYY-MM).
+export function previousMonth(month: string): string {
+  const [year, m] = month.split('-').map(Number) as [number, number];
+  return m === 1 ? `${year - 1}-12` : `${year}-${String(m - 1).padStart(2, '0')}`;
+}
+
 type Balance = { quantity: ReturnType<typeof money>; value: ReturnType<typeof money> };
 
 // What a closed month left to the months after it: the quantity and the value on hand at its end.
