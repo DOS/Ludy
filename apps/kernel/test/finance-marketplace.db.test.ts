@@ -441,6 +441,22 @@ suite('marketplace order reports (#2515)', () => {
     expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, line?.id]))[0]?.n).toBe('0');
   });
 
+  it('writes the shipment of a line whose day is in a closed month on today, in the open month', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-CL');
+    await confirm(o, (await read(o, report(row('K1', 'Đang giao', 'MA-CL', 3)))).fileId);
+    // October, the month of the order, is closed before the line is assigned (the rows a close leaves are written by the database owner).
+    const [entity] = await rows<{ id: string }>('SELECT id FROM crove_kernel.legal_entity WHERE org_id = $1 AND is_default', [o.orgId]);
+    await rows('INSERT INTO crove_finance.stock_period (org_id, legal_entity_id, period_month, total_cost) VALUES ($1, $2, $3, 0)', [o.orgId, entity?.id, '2026-10-01']);
+    const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.channel_order_line WHERE org_id = $1', [o.orgId]);
+    await execute(o, 'finance.marketplace.assign', { lineId: line?.id, itemId: item }, o.member);
+    const [ship] = await rows<{ move_date: string; today: string }>(
+      "SELECT move_date::text AS move_date, (pg_catalog.now() AT TIME ZONE 'Asia/Ho_Chi_Minh')::date::text AS today FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'ship'",
+      [o.orgId, line?.id],
+    );
+    expect(ship?.move_date).toBe(ship?.today);
+  });
+
   it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
     const o = await org();
     const item = await makeItem(o, 'QC-1');

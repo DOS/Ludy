@@ -22,6 +22,10 @@ export const PROPOSAL_PREPARERS = {
   'finance.journal_voucher.record': 'finance.journal_voucher.prepare',
   'finance.closing.record': 'finance.closing.prepare',
   'finance.depreciation.record': 'finance.depreciation.prepare',
+  // The close of a month of stock (#2513), built from the stock moves for the month named.
+  'finance.stock.close_period': 'finance.stock.prepare_close',
+  // The confirmation of a count of stock (#2513), built from the books for the count named.
+  'finance.stock.count_confirm': 'finance.stock.prepare_count',
   // What opens the way to spend on an ad platform (ADR-0043 point 1, #2294): the org switch, an account's flag, a cap set or
   // raised, and launches opened again after a block. Owners and admins ask, owners and admins approve.
   'ads.write.enable': 'ads.write.prepare_enable',

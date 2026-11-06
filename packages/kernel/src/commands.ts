@@ -87,6 +87,10 @@ const PROPOSAL_COMMANDS = new Set([
   'finance.journal_voucher.record',
   'finance.closing.record',
   'finance.depreciation.record',
+  // The close of a month of stock (#2513): posts the month's cost of goods sold as a general journal voucher.
+  'finance.stock.close_period',
+  // The confirmation of a count of stock (#2513): writes the adjustment moves and posts their difference as a general journal voucher.
+  'finance.stock.count_confirm',
   // Running ads (ADR-0043 point 1, #2294): the commands that open the way to spend, none of which posts to the ledger.
   'ads.write.enable',
   'ads.account.enable_write',

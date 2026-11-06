@@ -25,7 +25,7 @@ const ADMIN = process.env.CROVE_TEST_ADMIN_URL;
 const MIGRATIONS = fileURLToPath(new URL('../../../supabase/migrations', import.meta.url));
 const SECRET = 'test-only-jwt-secret-for-export-audit-0123456789';
 const ISSUER = 'crove-auth';
-const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export'];
+const EXPORT_COMMANDS = ['finance.journal.export', 'finance.vat.export', 'finance.ledger.export', 'finance.statements.export', 'finance.fixed_asset.export', 'finance.stock.export'];
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 class MemoryStore implements BlobStore {
@@ -144,6 +144,7 @@ suite('finance exports: no audit row, no download (#365)', () => {
     ['the financial statements', '/api/export/statements.xlsx?period=2026-09', 'finance.statements.export'],
     ['the financial statements as HTKK XML', '/api/export/statements-htkk.xml?year=2026', 'finance.statements.export'],
     ['the register of fixed assets', '/api/export/fixed-assets.xlsx', 'finance.fixed_asset.export'],
+    ['the stock report', '/api/export/stock.xlsx?month=2026-09', 'finance.stock.export'],
   ])('answers an error, not a file, for %s', async (_name, path, command) => {
     reached.length = 0;
     const response = await app.request(path, { headers: { authorization: `Bearer ${await token()}`, 'x-crove-org': slug } });

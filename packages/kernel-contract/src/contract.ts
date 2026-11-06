@@ -190,7 +190,7 @@ import {
   zSocialSavedViewSave,
 } from './schemas.ts';
 import { zMarketplaceAssign, zMarketplaceConfirmResult, zMarketplaceOrder, zMarketplaceOrdersInput, zMarketplacePreview, zMarketplaceStaged, zMarketplaceUnassign, zMarketplaceUnassignedInput, zMarketplaceUnassignedLine } from './marketplace.ts';
-import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockItem, zStockItemInput, zStockMove, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
+import { zStockAliasTeach, zStockAssign, zStockCard, zStockCardInput, zStockCloseEmptyResult, zStockCloseRequest, zStockCount, zStockCountCreate, zStockCountIdInput, zStockCountListInput, zStockCountPreviewInput, zStockCountPreviewRow, zStockItem, zStockItemInput, zStockMove, zStockPeriod, zStockPeriodsInput, zStockReportInput, zStockReportRow, zStockUnassignedInput, zStockUnassignedLine } from './stock.ts';
 import { zEInvoiceConnect, zEInvoiceConnection, zEInvoiceConnectionTested, zEInvoiceDraft, zEInvoiceDraftCheck, zEInvoiceDraftCheckInput, zEInvoiceDraftSave, zEInvoiceDraftSummary, zEInvoiceIssueView, zEInvoiceProviderInfo, zEInvoiceSeries, zEInvoiceSeriesSetDefault, zEInvoiceSeriesSync, zEInvoiceSeriesSynced, zEInvoiceStatus } from './einvoice.ts';
 import { zCollectionSetting, zCustomerCollection, zCustomerCollectionSet, zPaymentReminderDraft, zPaymentReminderList, zPaymentReminderSend, zPaymentReminderSent, zPaymentReminderWording, zPaymentReminderWordingAsk } from './payment-reminder.ts';
 import { zContactList, zContactPage, zPartyCreate, zPartyKind } from './contacts.ts';
@@ -1416,6 +1416,12 @@ export const contract = {
           // A sales e-invoice draft asked to be issued (#2502, ADR-0044 point 3): the server checks the draft and hashes what it is issued from; an owner or an admin approves.
           // EINVOICE_DRAFT_INVALID, EINVOICE_DRAFT_MISMATCH, EINVOICE_NOT_DRAFT (409/422), EINVOICE_ISSUE_PENDING (409) while a request for the same content is open.
           z.object({ command: z.literal('finance.einvoice.issue'), input: z.strictObject({ draftId: zId }), idempotencyKey: zId }),
+          // The close of a month of stock (#2513): the server builds the cost of goods sold of the month from the stock moves; an owner or an admin approves.
+          // STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED, STOCK_CLOSE_NO_COST (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, PERIOD_LOCKED (409).
+          z.object({ command: z.literal('finance.stock.close_period'), input: zStockCloseRequest, idempotencyKey: zId }),
+          // The confirmation of a count of stock (#2513): the server works out the differences from the books and builds the entry; an owner or an admin approves, and approving writes
+          // the adjustment moves. STOCK_COUNT_NOT_DRAFT, STOCK_COUNT_CLOSED, PERIOD_LOCKED, STOCK_COUNT_STALE (409), STOCK_COUNT_UNPRICED, STOCK_COUNT_NO_DIFFERENCE (422).
+          z.object({ command: z.literal('finance.stock.count_confirm'), input: zStockCountIdInput, idempotencyKey: zId }),
         ]),
       )
       .output(z.object({ proposalId: zId })),
@@ -1727,6 +1733,21 @@ export const contract = {
     // Nhập xuất tồn of one month and the stock card of an item (#2513): read-only and provisional (the weighted average of the month); every role reads.
     report: oc.input(zStockReportInput).output(z.array(zStockReportRow)),
     card: oc.input(zStockCardInput).output(zStockCard),
+    // The months a person has closed, newest first, with the cost posted for each (#2513).
+    periods: oc.input(zStockPeriodsInput).output(z.array(zStockPeriod)),
+    // Closes a month that has no cost to post, with no entry and so with no approval (owners and admins; R3, a closed month is not reopened). A month with cost goes through inbox.request
+    // (finance.stock.close_period). STOCK_CLOSE_NOT_ENDED, STOCK_CLOSE_NEGATIVE, STOCK_CLOSE_UNPRICED (422), STOCK_CLOSE_DONE, STOCK_CLOSE_ORDER, STOCK_CLOSE_HAS_COST (409).
+    closeEmpty: oc.input(zStockCloseRequest).output(zStockCloseEmptyResult),
+    // Counts of stock (#2513 part b), newest first (every role reads). create makes a draft with what was counted (owners, admins, members; STOCK_COUNT_FUTURE (422), STOCK_COUNT_CLOSED,
+    // STOCK_COUNT_DUPLICATE_ITEM, STOCK_COUNT_ITEM_INACTIVE (409), STOCK_ITEM_NOT_FOUND (404), STOCK_COUNT_ITEM_ENTITY (422)); cancel drops a draft; confirmEmpty confirms a count that differs from the
+    // books nowhere, with nothing to post. A count with differences is confirmed through inbox.request (finance.stock.count_confirm).
+    counts: {
+      list: oc.input(zStockCountListInput.optional()).output(z.array(zStockCount)),
+      preview: oc.input(zStockCountPreviewInput).output(z.array(zStockCountPreviewRow)),
+      create: oc.input(zStockCountCreate).output(z.object({ id: zId })),
+      cancel: oc.input(zStockCountIdInput).output(z.object({ id: zId })),
+      confirmEmpty: oc.input(zStockCountIdInput).output(z.object({ id: zId })),
+    },
   },
   accountRules: {
     list: oc.input(zLegalEntityChoice.optional()).output(z.array(zCategorizationRule)),

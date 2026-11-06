@@ -14,6 +14,7 @@ import { zId, zStockAliasTeach, zStockItemInput, type StockItem, type StockMove 
 import type { MemberRole } from '@crove/db';
 import { DomainError, defineCommand, defineQuery, type CommandContext, type QueryContext } from '@crove/kernel-runtime';
 import { chartAccounts } from './accounts.ts';
+import { stockMoveLockKey } from './domain/stock-close.ts';
 import { normalizeAlias, oppositeQuantity, plainQuantity, sameUnit } from './domain/stock.ts';
 import { resolveLegalEntity } from './legal-entity.ts';
 import { databaseToday } from './period-lock.ts';
@@ -37,11 +38,30 @@ export interface StockMoveWrite {
     | { type: 'reversal'; reversesMoveId: string }
     // A shipment (out) or a return (in) of a marketplace order line (#2515), each once per line.
     // `attempt` is the line's live attempt (#2633): unassigning a line moves it to the next one.
-    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number };
+    | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number }
+    // The adjustment of a count of stock (#2513), one per count line, with its value (whole dong, signed like the quantity).
+    | { type: 'count'; countLineId: string; amount: string };
+}
+
+// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
+// open month, whatever its source: a correction is a move of the open month, never back-dated, and the two halves of a replacement (the reversal of the old document's moves and the moves of
+// the new one) land on the same day. The entity's lock is taken shared first, so this read cannot miss a close that is running: it waits for it and then sees the month closed.
+async function openMoveDate(ctx: CommandContext, itemId: string, date: string): Promise<string> {
+  const item = await ctx.trx.selectFrom('crove_finance.stock_item').select('legal_entity_id').where('org_id', '=', ctx.orgId).where('id', '=', itemId).executeTakeFirst();
+  // An item that is not there is refused by the insert, with the foreign key's own error.
+  if (!item) return date;
+  await sql`SELECT pg_catalog.pg_advisory_xact_lock_shared(pg_catalog.hashtextextended(${stockMoveLockKey(ctx.orgId, item.legal_entity_id)}, 0))`.execute(ctx.trx);
+  const { rows } = await sql<{ first_open: string | null }>`
+    SELECT (pg_catalog.max(p.period_month) + interval '1 month')::date::text AS first_open FROM crove_finance.stock_period p
+    WHERE p.org_id = ${ctx.orgId}::uuid AND p.legal_entity_id = ${item.legal_entity_id}::uuid`.execute(ctx.trx);
+  const firstOpen = rows[0]?.first_open ?? null;
+  if (firstOpen === null || date >= firstOpen) return date;
+  return databaseToday(ctx.trx);
 }
 
 export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite): Promise<string> {
   const userId = ctx.actor.type === 'user' ? ctx.actor.userId : null;
+  const date = await openMoveDate(ctx, move.itemId, move.date);
   // The try of a line: one more than the moves it already made (the database accepts it only when the one before was reversed, and keeps two writers from taking the same).
   const attempt =
     move.source.type === 'document_line'
@@ -63,7 +83,7 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
     .values({
       org_id: ctx.orgId,
       item_id: move.itemId,
-      move_date: move.date,
+      move_date: date,
       quantity: move.quantity,
       source_type: move.source.type,
       document_id: move.source.type === 'document_line' ? move.source.documentId : null,
@@ -72,6 +92,8 @@ export async function writeStockMove(ctx: CommandContext, move: StockMoveWrite):
       order_line_id: move.source.type === 'order_line' ? move.source.orderLineId : null,
       order_move: move.source.type === 'order_line' ? move.source.move : null,
       order_attempt: move.source.type === 'order_line' ? move.source.attempt : 1,
+      count_line_id: move.source.type === 'count' ? move.source.countLineId : null,
+      amount: move.source.type === 'count' ? move.source.amount : null,
       reverses_move_id: move.source.type === 'reversal' ? move.source.reversesMoveId : null,
       created_by: userId,
     })
@@ -240,6 +262,7 @@ export const stockMoveReverse = defineCommand({
     if (!move) throw new DomainError('STOCK_MOVE_NOT_FOUND', 404, 'Không tìm thấy phát sinh kho này');
     if (move.source_type === 'reversal') throw new DomainError('STOCK_MOVE_IS_REVERSAL', 409, 'Đây đã là một phát sinh đảo, không đảo thêm được');
     // The stock an order line moved follows the line's own stage (a return brings it back); reversing it alone would leave the line shipped with nothing to move again.
+    if (move.source_type === 'count') throw new DomainError('STOCK_MOVE_COUNT', 409, 'Phát sinh này là điều chỉnh của một lần kiểm kê nên không đảo được; hãy kiểm kê lại');
     if (move.source_type === 'order_line') throw new DomainError('STOCK_MOVE_ORDER_LINE', 409, 'Phát sinh này đến từ đơn hàng sàn nên không đảo riêng được; hãy bỏ gán dòng đơn hàng đó, hoặc kho tự hoàn lại khi đơn được báo hoàn trả hoặc hủy sau khi giao');
     const done = await ctx.trx.selectFrom('crove_finance.stock_move').select('id').where('org_id', '=', ctx.orgId).where('reverses_move_id', '=', move.id).executeTakeFirst();
     if (done) throw new DomainError('STOCK_MOVE_REVERSED', 409, 'Phát sinh kho này đã được đảo');
