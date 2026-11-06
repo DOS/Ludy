@@ -381,7 +381,7 @@ export function beginUploadCommand(limits: UploadBeginLimits = DEFAULT_UPLOAD_BE
       }
       const row = await ctx.trx
         .insertInto('crove_kernel.file_upload')
-        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes) })
+        .values({ org_id: ctx.orgId, staging_key: newStagingKey(), created_by: userId, max_bytes: String(maxBytes), purpose: input.purpose })
         .returning(['id', 'staging_key', 'max_bytes', 'expires_at'])
         .executeTakeFirstOrThrow();
       ctx.audit({ upload_id: row.id });
@@ -405,7 +405,7 @@ export const claimUpload = defineCommand({
     if (ctx.actor.type !== 'user') throw new DomainError('FORBIDDEN', 403, 'Chỉ người dùng mới tải tệp lên được');
     const row = await ctx.trx
       .selectFrom('crove_kernel.file_upload')
-      .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+      .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .forUpdate()
@@ -420,7 +420,7 @@ export const claimUpload = defineCommand({
       .where('org_id', '=', ctx.orgId)
       .where('id', '=', input.uploadId)
       .execute();
-    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes) };
+    return { stagingKey: row.staging_key, maxBytes: Number(row.max_bytes), purpose: row.purpose };
   },
 });
 

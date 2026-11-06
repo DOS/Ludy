@@ -25,7 +25,7 @@ export interface BlobStore {
   // is not a whole number of bytes (assertReadCap) is refused with a RangeError before anything is read (#1189).
   get(key: string, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Reads a byte slice [start, end] (inclusive) of the blob.
-  getRange?(key: string, start: number, end: number, generation?: string | null): Promise<Uint8Array>;
+  getRange?(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array>;
   // Removes the blob; a missing key is not an error.
   delete(key: string): Promise<void>;
   // Present when browsers transfer bytes to and from the store directly (S3 presigned URLs); absent for local
@@ -491,12 +491,17 @@ export class LocalDiskStore implements BlobStore {
     }
   }
 
-  async getRange(key: string, start: number, end: number, _generation?: string | null): Promise<Uint8Array> {
+  async getRange(key: string, start: number, end: number, _generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
+    assertStorageKey(key);
+    assertReadCap(maxBytes);
+    const length = end - start + 1;
+    if (maxBytes !== undefined && length > maxBytes) {
+      throw new BlobTooLargeError(key, maxBytes);
+    }
     const target = this.path(key);
     try {
       const handle = await open(target, 'r');
       try {
-        const length = end - start + 1;
         const buf = Buffer.alloc(length);
         const { bytesRead } = await handle.read(buf, 0, length, start);
         return new Uint8Array(buf.subarray(0, bytesRead));
@@ -504,6 +509,7 @@ export class LocalDiskStore implements BlobStore {
         await handle.close();
       }
     } catch (error) {
+      if (error instanceof BlobTooLargeError) throw error;
       if (errorCode(error) === 'ENOENT') throw new BlobNotFoundError(key);
       throw error;
     }

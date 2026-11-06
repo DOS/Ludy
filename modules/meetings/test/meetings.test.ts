@@ -16,6 +16,8 @@ import {
   meetingAudioRead,
   meetingGet,
   meetingList,
+  meetingMediaMeta,
+  meetingMediaRecord,
   meetingVideoRead,
 } from '../src/meetings.ts';
 
@@ -67,12 +69,14 @@ describe('meetings commands and queries construction', () => {
     expect(names).toEqual([
       'meetings.meeting.create',
       'meetings.media.claim',
+      'meetings.media.record',
       'meetings.meeting.delete',
       'meetings.meeting.owner_delete',
       'meetings.reader.add',
       'meetings.reader.remove',
     ]);
 
+    expect(meetingMediaRecord.name).toBe('meetings.media.record');
     for (const cmd of commands) {
       expect(cmd.handler).toBeTypeOf('function');
     }
@@ -86,11 +90,13 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.get',
       'meetings.meeting.audio_read',
       'meetings.meeting.video_read',
+      'meetings.meeting.media_meta',
     ]);
 
     expect(meetingList.name).toBe('meetings.meeting.list');
     expect(meetingGet.name).toBe('meetings.meeting.get');
     expect(meetingAudioRead.name).toBe('meetings.meeting.audio_read');
     expect(meetingVideoRead.name).toBe('meetings.meeting.video_read');
+    expect(meetingMediaMeta.name).toBe('meetings.meeting.media_meta');
   });
 });

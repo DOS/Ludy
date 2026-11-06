@@ -445,6 +445,37 @@ export class S3BlobStore implements BlobStore {
     return (await this.fetch(key, this.pinned(generation), maxBytes)).bytes;
   }
 
+  // Reads a byte slice [start, end] (inclusive) via S3 GetObject with Range header.
+  async getRange(key: string, start: number, end: number, generation?: string | null, maxBytes?: number): Promise<Uint8Array> {
+    assertStorageKey(key);
+    assertReadCap(maxBytes);
+    const versionId = this.pinned(generation);
+    const length = end - start + 1;
+    if (maxBytes !== undefined && length > maxBytes) {
+      throw new BlobTooLargeError(key, maxBytes);
+    }
+    try {
+      const out = await this.client.send(
+        new GetObjectCommand({
+          Bucket: this.bucket,
+          Key: key,
+          Range: `bytes=${start}-${end}`,
+          ...(versionId ? { VersionId: versionId } : {}),
+        }),
+      );
+      if (!out.Body) throw new BlobNotFoundError(key);
+      const bytes = maxBytes === undefined
+        ? await out.Body.transformToByteArray()
+        : await cappedBytes(out.Body.transformToWebStream(), out.ContentLength, key, maxBytes);
+      return bytes;
+    } catch (error) {
+      if (error instanceof BlobNotFoundError || error instanceof BlobTooLargeError) throw error;
+      if (isMissingObject(error)) throw new BlobNotFoundError(key);
+      if (httpStatus(error) === 403) throw new BlobStoreAccessError(this.bucket, key, error);
+      throw error;
+    }
+  }
+
   async delete(key: string): Promise<void> {
     assertStorageKey(key);
     try {

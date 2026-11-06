@@ -10,12 +10,6 @@
 -- crove_meetings.media_key       wrapped AES-256-GCM data keys for meeting audio and video. Definer-only (MACHINERY), zero grants to login roles.
 SET LOCAL lock_timeout = '2s';
 
-ALTER TABLE crove_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
-ALTER TABLE crove_kernel.file ADD CONSTRAINT file_source_check CHECK (source IN ('upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'));
-
-ALTER TABLE crove_kernel.file_upload DROP CONSTRAINT IF EXISTS file_upload_max_bytes;
-ALTER TABLE crove_kernel.file_upload ADD CONSTRAINT file_upload_max_bytes CHECK (max_bytes BETWEEN 1 AND 2147483648);
-
 CREATE SCHEMA IF NOT EXISTS crove_meetings;
 GRANT USAGE ON SCHEMA crove_meetings TO crove_tenant;
 
@@ -137,7 +131,6 @@ CREATE TABLE IF NOT EXISTS crove_meetings.media_key (
 CREATE INDEX IF NOT EXISTS media_key_meeting_idx ON crove_meetings.media_key (org_id, meeting_id);
 
 ALTER TABLE crove_meetings.media_key ENABLE ROW LEVEL SECURITY;
-ALTER TABLE crove_meetings.media_key FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS tenant_isolation ON crove_meetings.media_key;
 DROP POLICY IF EXISTS media_key_machinery ON crove_meetings.media_key;
 REVOKE ALL ON crove_meetings.media_key FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
@@ -183,7 +176,7 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.is_meeting_recorder(uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.is_meeting_recorder(uuid, uuid) TO crove_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.is_meeting_recorder(uuid, uuid) TO crove_tenant, crove_app;
 
 CREATE OR REPLACE FUNCTION crove_meetings.is_meeting_reader(
   p_org_id uuid,
@@ -456,8 +449,9 @@ BEGIN
   IF NOT (
     (
       v_actor = 'user' AND v_user IS NOT NULL
+      AND pg_catalog.pg_has_role(SESSION_USER, 'crove_app', 'MEMBER')
       AND (
-        EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = v_org AND m.id = p_meeting_id AND m.recorder_user_id = v_user)
+        crove_meetings.is_meeting_recorder(v_org, p_meeting_id)
         OR (
           '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
           AND EXISTS (
@@ -482,7 +476,7 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
-GRANT EXECUTE ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) TO crove_tenant, crove_worker;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) TO crove_app, crove_worker;
 
 -- Reseal pass: scan media keys under older key id (worker only)
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_reseal_due(

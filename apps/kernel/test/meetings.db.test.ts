@@ -250,6 +250,17 @@ suite('meetings module database integration tests (#2576)', () => {
   });
 
   it('1. meeting creation with consent confirmation and reader assignment', async () => {
+    // Assert crove_meetings.media_key has RLS enabled (relrowsecurity = true) and NEVER forced (relforcerowsecurity = false)
+    const mediaKeyRls = await admin(async (c) =>
+      (await c.query<{ relrowsecurity: boolean; relforcerowsecurity: boolean }>(
+        `SELECT relrowsecurity, relforcerowsecurity FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'crove_meetings' AND c.relname = 'media_key'`,
+      )).rows[0],
+    );
+    expect(mediaKeyRls?.relrowsecurity).toBe(true);
+    expect(mediaKeyRls?.relforcerowsecurity).toBe(false);
+
     const attendeeId = userIds.get('attendee')!;
     const viewerId = userIds.get('viewer')!;
 
@@ -314,8 +325,8 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + interval '5 minutes')`,
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, audioUploadId, stagingKeyAudio, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
@@ -326,8 +337,8 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKeyInvalid, Buffer.alloc(100, 0x41));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + interval '5 minutes')`,
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, invalidUploadId, stagingKeyInvalid, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
@@ -371,8 +382,8 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + interval '5 minutes')`,
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_video', now(), now() + interval '5 minutes')`,
         [orgId, videoUploadId, stagingKeyVideo, userIds.get('recorder'), 2 * 1024 * 1024 * 1024],
       );
     });
@@ -407,8 +418,8 @@ suite('meetings module database integration tests (#2576)', () => {
 
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + interval '5 minutes')`,
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, audioUploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
@@ -564,8 +575,8 @@ suite('meetings module database integration tests (#2576)', () => {
     store.staged.set(stagingKey, Buffer.concat([Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), Buffer.alloc(50)]));
     await admin(async (c) => {
       await c.query(
-        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now(), now() + interval '5 minutes')`,
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
         [orgId, uploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
       );
     });
@@ -606,5 +617,98 @@ suite('meetings module database integration tests (#2576)', () => {
       },
     });
     expect(disabledRes.status).toBe(404);
+  });
+
+  it('8. purpose binding prevents meeting upload bypass on /complete', async () => {
+    // Staged upload created with meeting_audio purpose
+    const meetingUploadId = randomUUID();
+    const stagingKey = `staging/${randomBytes(32).toString('hex')}`;
+    store.staged.set(stagingKey, Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02, 0x00]));
+
+    await admin(async (c) => {
+      await c.query(
+        `INSERT INTO crove_kernel.file_upload (org_id, id, staging_key, created_by, max_bytes, purpose, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, 'meeting_audio', now(), now() + interval '5 minutes')`,
+        [orgId, meetingUploadId, stagingKey, userIds.get('recorder'), 300 * 1024 * 1024],
+      );
+    });
+
+    // 1. Calling /complete with purpose 'meeting_audio' is rejected
+    const rejectDirectMeeting = await app.request(`/api/files/uploads/${meetingUploadId}/complete`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await token('recorder')}`,
+        'x-crove-org': slug,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ purpose: 'meeting_audio', filename: 'audio.ogg' }),
+    });
+    expect(rejectDirectMeeting.status).toBe(400);
+
+    // 2. Calling /complete with purpose 'document' to bypass encryption is rejected due to purpose mismatch
+    const bypassAttempt = await app.request(`/api/files/uploads/${meetingUploadId}/complete`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await token('recorder')}`,
+        'x-crove-org': slug,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ purpose: 'document', filename: 'sneaky.ogg' }),
+    });
+    expect(bypassAttempt.status).toBe(400);
+  });
+
+  it('9. POST /api/meetings/:id/media handles direct upload (STORAGE=local) and Range continuation chunks', async () => {
+    const createRes = await rpc('meetings/create', 'recorder', {
+      title: 'Direct Media Upload Meeting',
+      visibility: 'attendees',
+      keepVideo: true,
+      consentMethod: 'told_at_start',
+    });
+    const meetingId = String(createRes.body.meetingId);
+
+    // Direct multipart/form-data upload for STORAGE=local
+    const audioContent = Buffer.concat([
+      Buffer.from([0x4f, 0x67, 0x67, 0x53, 0x00, 0x02]), // OggS
+      Buffer.from('0123456789'.repeat(30)),
+    ]);
+    const formData = new FormData();
+    formData.append('kind', 'audio');
+    formData.append('file', new Blob([audioContent], { type: 'audio/ogg' }), 'recording.ogg');
+
+    const directUploadRes = await app.request(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${await token('recorder')}`,
+        'x-crove-org': slug,
+      },
+      body: formData,
+    });
+    expect(directUploadRes.status).toBe(200);
+    const body = (await directUploadRes.json()) as { fileId: string };
+    expect(body.fileId).toBeDefined();
+
+    // Range playback with start > 0 (continuation scrub chunk)
+    const rangeRes = await app.request(`/api/meetings/${meetingId}/audio`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${await token('recorder')}`,
+        'x-crove-org': slug,
+        range: 'bytes=10-40',
+      },
+    });
+    expect(rangeRes.status).toBe(206);
+    expect(rangeRes.headers.get('content-range')).toContain('bytes 10-40/');
+    const rangeSlice = Buffer.from(await rangeRes.arrayBuffer());
+    expect(rangeSlice.equals(audioContent.subarray(10, 41))).toBe(true);
+
+    // Compliance owner delete shreds media key and removes meeting (R3 requires fresh MFA: true)
+    const ownerDeleteRes = await rpc('meetings/ownerDelete', 'owner', { meetingId }, slug, true);
+    expect(ownerDeleteRes.status).toBe(200);
+
+    const keysLeft = await admin(async (c) =>
+      (await c.query('SELECT * FROM crove_meetings.media_key WHERE meeting_id = $1', [meetingId])).rows,
+    );
+    expect(keysLeft.length).toBe(0);
   });
 });

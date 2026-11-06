@@ -175,6 +175,41 @@ export async function stageMediaUpload(file: File, purpose: 'meeting_audio' | 'm
   return grant.uploadId;
 }
 
+// Encrypted media upload for meeting audio or video (#2576). Works on both STORAGE=s3 (staged upload) and STORAGE=local (direct multipart).
+export async function uploadMeetingMedia(
+  meetingId: string,
+  kind: 'audio' | 'video',
+  file: File,
+  lengthSeconds?: number,
+): Promise<{ fileId: string }> {
+  const purpose = kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+  if (file.size > maxBytesFor(purpose)) throw tooLarge(file, purpose);
+
+  if (getConfig().uploads === 'presigned') {
+    const uploadId = await stageMediaUpload(file, purpose);
+    const response = await retryWhileBusy(() =>
+      apiFetch(`/api/meetings/${meetingId}/media`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ uploadId, kind, ...(lengthSeconds !== undefined ? { lengthSeconds } : {}) }),
+      }),
+    );
+    return (await response.json()) as { fileId: string };
+  }
+
+  const form = new FormData();
+  form.append('kind', kind);
+  form.append('file', file);
+  if (lengthSeconds !== undefined) form.append('lengthSeconds', String(lengthSeconds));
+  const response = await retryWhileBusy(() =>
+    apiFetch(`/api/meetings/${meetingId}/media`, {
+      method: 'POST',
+      body: form,
+    }),
+  );
+  return (await response.json()) as { fileId: string };
+}
+
 // One file through a presigned staging upload (plan §7.6): a single-use form from the kernel, the bytes straight to
 // the bucket, then the kernel reads them back, hashes them and records the file.
 async function uploadStaged(file: File, purpose: UploadPurpose, legalEntityId?: string): Promise<Uploaded> {

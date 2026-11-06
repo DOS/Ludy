@@ -165,7 +165,7 @@ export function unopenableKeysLog(keys: readonly UnopenableKey[]): Array<{ level
       line:
         `[credential-reseal] ERROR sealed under a key this worker cannot open: ${parts.join('; ')}. The key was lost, or CREDENTIAL_KEY_PREVIOUS ` +
         'removed before they were resealed: set that key again as CREDENTIAL_KEY_PREVIOUS on the API and the worker, or reconnect those ' +
-        'channels, save those team chats again, or meetings audio and video will be unplayable (docs/runbooks/credential-key.md)',
+        'channels and save those team chats again (docs/runbooks/credential-key.md)',
     });
   }
   const waiting = keys.filter((k) => k.active === 0);
@@ -287,7 +287,9 @@ async function resealOneMediaKey(
   const binding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: row.key_id };
   const oldSubkey = deps.broker.deriveKey
     ? deps.broker.deriveKey(row.key_id, 'crove.meetings.v1|wrap')
-    : deps.broker.derive?.('crove.meetings.v1|wrap');
+    : deps.broker.derive && deps.broker.keyId === row.key_id
+      ? deps.broker.derive('crove.meetings.v1|wrap')
+      : null;
   if (!oldSubkey) return false;
 
   let dataKey: Buffer | null = null;
@@ -298,7 +300,7 @@ async function resealOneMediaKey(
     const newBinding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: current };
     newSubkey = deps.broker.deriveKey
       ? deps.broker.deriveKey(current, 'crove.meetings.v1|wrap')
-      : deps.broker.derive
+      : deps.broker.derive && deps.broker.keyId === current
         ? deps.broker.derive('crove.meetings.v1|wrap')
         : null;
     if (!newSubkey) return false;

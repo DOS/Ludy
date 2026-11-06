@@ -8969,6 +8969,7 @@ export const en = {
     meetings: {
       media: {
         claim: 'Claim meeting audio or video file',
+        record: 'Record meeting encrypted media',
       },
       meeting: {
         audio_read: 'Listen to meeting audio',
@@ -8976,6 +8977,7 @@ export const en = {
         delete: 'Delete meeting',
         get: 'Get meeting details',
         list: 'List meetings',
+        media_meta: 'Read meeting media metadata',
         owner_delete: 'Compliance delete meeting',
         video_read: 'Watch meeting video',
       },

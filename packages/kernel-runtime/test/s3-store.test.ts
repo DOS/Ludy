@@ -482,6 +482,18 @@ describe('generations (ADR-0013)', () => {
     expect(sent.map((c) => (c.input as { VersionId?: string }).VersionId)).toEqual(['v1', undefined, undefined, undefined]);
   });
 
+  it('reads a byte slice with getRange, passing Range header and version', async () => {
+    const { store, sent } = fakeStore(() => ({ Body: body(bytes.subarray(10, 21)) }));
+    const slice = await store.getRange(key, 10, 20, 's3:v1');
+    expect(slice).toEqual(bytes.subarray(10, 21));
+    expect(sent[0]?.input).toMatchObject({
+      Bucket: 'crove-files',
+      Key: key,
+      VersionId: 'v1',
+      Range: 'bytes=10-20',
+    });
+  });
+
   it('treats a missing version as a missing blob, never as the current object', async () => {
     const { store, sent } = fakeStore(() => {
       throw s3Error('NoSuchVersion', 404);

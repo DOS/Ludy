@@ -8966,6 +8966,7 @@ export const vi = {
     meetings: {
       media: {
         claim: 'Gắn tệp ghi âm hoặc ghi hình vào cuộc họp',
+        record: 'Ghi nhận tệp phương tiện mã hóa cuộc họp',
       },
       meeting: {
         audio_read: 'Nghe ghi âm cuộc họp',
@@ -8973,6 +8974,7 @@ export const vi = {
         delete: 'Xóa cuộc họp',
         get: 'Xem thông tin cuộc họp',
         list: 'Xem danh sách cuộc họp',
+        media_meta: 'Đọc siêu dữ liệu phương tiện cuộc họp',
         owner_delete: 'Xóa cuộc họp theo yêu cầu tuân thủ',
         video_read: 'Xem video cuộc họp',
       },

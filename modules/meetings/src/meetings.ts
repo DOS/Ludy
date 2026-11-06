@@ -10,6 +10,8 @@ import {
   zMeetingClaimMedia,
   zMeetingCreate,
   zMeetingListInput,
+  zMeetingMediaMeta,
+  zMeetingMediaRecord,
   zMeetingReaderAdd,
   zMeetingReaderRemove,
   zMeetingRef,
@@ -51,39 +53,43 @@ export interface MeetingsDeps {
   broker?: CredentialBroker;
 }
 
-export function isValidMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): boolean {
-  if (bytes.length < 12) return false;
+export function detectMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): string | null {
+  if (bytes.length < 12) return null;
   // WebM / Matroska (EBML ID 0x1A45DFA3)
   if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {
-    return true;
+    return kind === 'video' ? 'video/webm' : 'audio/webm';
   }
   // MP4 / M4A (ftyp box at offset 4)
   if (bytes[4] === 0x66 && bytes[5] === 0x74 && bytes[6] === 0x79 && bytes[7] === 0x70) {
-    return true;
+    return kind === 'video' ? 'video/mp4' : 'audio/mp4';
   }
   if (kind === 'audio') {
     // Ogg container (OggS)
     if (bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
-      return true;
+      return 'audio/ogg';
     }
     // WAV (RIFF....WAVE)
     if (
       bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
       bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45
     ) {
-      return true;
+      return 'audio/wav';
     }
     // MP3 with ID3 header
     if (bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) {
-      return true;
+      return 'audio/mpeg';
     }
     // MP3 raw frame sync
     const b1 = bytes[1];
     if (bytes[0] === 0xff && b1 !== undefined && (b1 & 0xe0) === 0xe0) {
-      return true;
+      return 'audio/mpeg';
     }
   }
-  return false;
+  return null;
+}
+
+export function isValidMediaContainer(bytes: Uint8Array, kind: 'audio' | 'video'): boolean {
+  return detectMediaContainer(bytes, kind) !== null;
 }
 
 interface MeetingRow {
@@ -234,7 +240,7 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
 
       const upload = await ctx.trx
         .selectFrom('crove_kernel.file_upload')
-        .select(['staging_key', 'created_by', 'max_bytes', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
+        .select(['staging_key', 'created_by', 'max_bytes', 'purpose', 'used_at', sql<boolean>`expires_at <= pg_catalog.now()`.as('expired')])
         .where('org_id', '=', ctx.orgId)
         .where('id', '=', input.uploadId)
         .forUpdate()
@@ -247,6 +253,11 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
       }
       if (upload.expired) {
         throw new DomainError('UPLOAD_EXPIRED', 409, 'Upload grant expired');
+      }
+
+      const expectedPurpose = input.kind === 'audio' ? 'meeting_audio' : 'meeting_video';
+      if (upload.purpose !== expectedPurpose) {
+        throw new DomainError('INVALID_PURPOSE', 400, 'Upload grant purpose does not match media kind');
       }
 
       const expectedMaxBytes = input.kind === 'video' ? MAX_MEETING_VIDEO_BYTES : MAX_MEETING_AUDIO_BYTES;
@@ -279,7 +290,8 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
         throw new DomainError('UPLOAD_MISSING', 400, 'Uploaded media is empty');
       }
 
-      if (!isValidMediaContainer(plaintext, input.kind)) {
+      const contentType = detectMediaContainer(plaintext, input.kind);
+      if (!contentType) {
         throw new DomainError('INVALID_MEDIA_CONTAINER', 400, 'Uploaded media is not a supported audio/video container');
       }
 
@@ -295,10 +307,8 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
         const ciphertext = encryptBlobBuffer(plaintext, dataKey, binding);
         const sha256 = createHash('sha256').update(ciphertext).digest('hex');
         const storageKey = fileKey(ctx.orgId, sha256);
-        const contentType = input.kind === 'audio' ? 'audio/ogg' : 'video/mp4';
 
         const generation = await deps.store.put(storageKey, ciphertext, contentType);
-        await deps.store.delete(upload.staging_key).catch((err) => console.error('[meetings] staging deletion', err));
 
         const keyId = deps.broker?.keyId;
         if (!keyId || (!deps.broker?.derive && !deps.broker?.deriveKey)) {
@@ -306,7 +316,12 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
         }
         wrapSubkey = deps.broker.deriveKey
           ? deps.broker.deriveKey(keyId, 'crove.meetings.v1|wrap')
-          : deps.broker.derive!('crove.meetings.v1|wrap');
+          : deps.broker.derive && deps.broker.keyId === keyId
+            ? deps.broker.derive('crove.meetings.v1|wrap')
+            : null;
+        if (!wrapSubkey) {
+          throw new DomainError('MEDIA_KEY_UNAVAILABLE', 503, 'Media encryption key unavailable');
+        }
         const keyBinding: MediaKeyBinding = { ...binding, keyId };
         const wrappedKey = wrapMediaKeyWithSubkey(dataKey, keyBinding, wrapSubkey);
 
@@ -364,6 +379,8 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
             .execute();
         }
 
+        await deps.store.delete(upload.staging_key).catch((err) => console.error('[meetings] staging deletion', err));
+
         ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId });
         return { fileId };
       } finally {
@@ -379,6 +396,94 @@ export function buildMeetingClaimMedia(deps?: MeetingsDeps) {
     },
   });
 }
+
+export const meetingMediaRecord = defineCommand({
+  name: 'meetings.media.record',
+  input: zMeetingMediaRecord,
+  risk: 'R1',
+  sideEffect: 'internal',
+  access: WRITERS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id', 'recorder_user_id', 'keep_video'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+    if (meeting.recorder_user_id !== userId) {
+      throw new DomainError('FORBIDDEN', 403, 'Only the meeting recorder may record media');
+    }
+    if (input.kind === 'video' && !meeting.keep_video) {
+      throw new DomainError('VIDEO_NOT_ENABLED', 400, 'Video retention is disabled for this meeting');
+    }
+    if (input.storageKey !== fileKey(ctx.orgId, input.sha256)) {
+      throw new DomainError('INVALID_STORAGE_KEY', 400, 'Storage key must match org and sha256');
+    }
+
+    const wrappedKey = Buffer.from(input.wrappedKeyHex, 'hex');
+    await sql`SELECT crove_meetings.media_key_seal(
+      ${ctx.orgId}::uuid,
+      ${input.meetingId}::uuid,
+      ${input.keyId}::text,
+      ${input.kind}::text,
+      ${wrappedKey}::bytea
+    )`.execute(ctx.trx);
+
+    const fileId = randomUUID();
+    const filename = `meeting-${input.meetingId}.${input.kind === 'audio' ? 'opus' : 'mp4'}`;
+    await ctx.trx
+      .insertInto('crove_kernel.file')
+      .values({
+        org_id: ctx.orgId,
+        id: fileId,
+        filename,
+        content_type: input.contentType,
+        size_bytes: String(input.sizeBytes),
+        sha256: input.sha256,
+        storage_key: input.storageKey,
+        generation: input.generation ?? null,
+        source: input.kind === 'audio' ? 'meeting_audio' : 'meeting_video',
+        created_by: userId,
+      })
+      .execute();
+
+    if (input.kind === 'audio') {
+      await ctx.trx
+        .insertInto('crove_meetings.audio_segment')
+        .values({
+          org_id: ctx.orgId,
+          id: randomUUID(),
+          meeting_id: input.meetingId,
+          file_id: fileId,
+          segment_order: 0,
+          start_offset_seconds: 0,
+          length_seconds: input.lengthSeconds ?? 1800,
+        })
+        .execute();
+    } else {
+      const videoRetentionDate = new Date(ctx.now.getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+      await ctx.trx
+        .insertInto('crove_meetings.meeting_video')
+        .values({
+          org_id: ctx.orgId,
+          id: randomUUID(),
+          meeting_id: input.meetingId,
+          file_id: fileId,
+          length_seconds: input.lengthSeconds ?? 1800,
+          video_retention_date: videoRetentionDate,
+        })
+        .execute();
+    }
+
+    ctx.audit({ meetingId: input.meetingId, kind: input.kind, fileId });
+    return { fileId };
+  },
+});
 
 export const meetingDelete = defineCommand({
   name: 'meetings.meeting.delete',
@@ -425,6 +530,8 @@ export const meetingOwnerDelete = defineCommand({
   target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
   handler: async (ctx, input) => {
     userOf(ctx.actor);
+    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
+
     const { rows } = await sql<{ deleted: boolean }>`
       SELECT crove_meetings.meeting_owner_delete(${ctx.orgId}::uuid, ${input.meetingId}::uuid) AS deleted
     `.execute(ctx.trx);
@@ -433,7 +540,6 @@ export const meetingOwnerDelete = defineCommand({
       throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
     }
 
-    await sql`SELECT crove_meetings.media_key_shred(${ctx.orgId}::uuid, ${input.meetingId}::uuid)`.execute(ctx.trx);
     ctx.audit({ meetingId: input.meetingId, shredded: true, complianceOwnerDelete: true });
     return { meetingId: input.meetingId, shredded: true };
   },
@@ -748,10 +854,94 @@ export const meetingVideoRead = defineQuery({
   },
 });
 
+export const meetingMediaMeta = defineQuery({
+  name: 'meetings.meeting.media_meta',
+  input: zMeetingMediaMeta,
+  access: READERS,
+  target: (input) => ({ type: 'meetings.meeting', id: input.meetingId }),
+  handler: async (ctx, input) => {
+    const userId = userOf(ctx.actor);
+    const meeting = await ctx.trx
+      .selectFrom('crove_meetings.meeting')
+      .select(['id'])
+      .where('org_id', '=', ctx.orgId)
+      .where('id', '=', input.meetingId)
+      .executeTakeFirst();
+    if (!meeting) {
+      throw new DomainError('MEETING_NOT_FOUND', 404, 'Meeting not found');
+    }
+
+    const { rows: readerRows } = await sql<{ ok: boolean }>`
+      SELECT crove_meetings.is_meeting_reader(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${userId}::uuid) AS ok
+    `.execute(ctx.trx);
+    if (!readerRows[0]?.ok) {
+      throw new DomainError('FORBIDDEN', 403, 'You do not have permission to play meeting media');
+    }
+
+    const { rows: keyRows } = await sql<{ key_id: string; wrapped_key: Buffer }>`
+      SELECT key_id, wrapped_key FROM crove_meetings.media_key_read(${ctx.orgId}::uuid, ${input.meetingId}::uuid, ${input.kind})
+    `.execute(ctx.trx);
+    if (keyRows.length === 0 || !keyRows[0]) {
+      throw new DomainError('MEDIA_KEY_SHREDDED', 404, 'Meeting media key has been shredded');
+    }
+
+    if (input.kind === 'audio') {
+      const segment = await ctx.trx
+        .selectFrom('crove_meetings.audio_segment as s')
+        .innerJoin('crove_kernel.file as f', (join) =>
+          join.onRef('f.org_id', '=', 's.org_id').onRef('f.id', '=', 's.file_id'),
+        )
+        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+        .where('s.org_id', '=', ctx.orgId)
+        .where('s.meeting_id', '=', input.meetingId)
+        .executeTakeFirst();
+      if (!segment) {
+        throw new DomainError('AUDIO_NOT_FOUND', 404, 'Meeting audio segment not found');
+      }
+      return {
+        meetingId: input.meetingId,
+        fileId: segment.fileId,
+        storageKey: segment.storageKey,
+        generation: segment.generation,
+        sizeBytes: Number(segment.sizeBytes),
+        sha256: segment.sha256,
+        contentType: segment.contentType,
+        keyId: keyRows[0].key_id,
+        wrappedKey: keyRows[0].wrapped_key,
+      };
+    } else {
+      const video = await ctx.trx
+        .selectFrom('crove_meetings.meeting_video as v')
+        .innerJoin('crove_kernel.file as f', (join) =>
+          join.onRef('f.org_id', '=', 'v.org_id').onRef('f.id', '=', 'v.file_id'),
+        )
+        .select(['f.id as fileId', 'f.storage_key as storageKey', 'f.generation as generation', 'f.size_bytes as sizeBytes', 'f.sha256', 'f.content_type as contentType'])
+        .where('v.org_id', '=', ctx.orgId)
+        .where('v.meeting_id', '=', input.meetingId)
+        .executeTakeFirst();
+      if (!video) {
+        throw new DomainError('VIDEO_NOT_FOUND', 404, 'Meeting video not found');
+      }
+      return {
+        meetingId: input.meetingId,
+        fileId: video.fileId,
+        storageKey: video.storageKey,
+        generation: video.generation,
+        sizeBytes: Number(video.sizeBytes),
+        sha256: video.sha256,
+        contentType: video.contentType,
+        keyId: keyRows[0].key_id,
+        wrappedKey: keyRows[0].wrapped_key,
+      };
+    }
+  },
+});
+
 export function buildMeetingsCommands(deps?: MeetingsDeps) {
   return [
     buildMeetingCreate(deps),
     buildMeetingClaimMedia(deps),
+    meetingMediaRecord,
     meetingDelete,
     meetingOwnerDelete,
     meetingReaderAdd,
@@ -765,6 +955,7 @@ export function buildMeetingsQueries() {
     meetingGet,
     meetingAudioRead,
     meetingVideoRead,
+    meetingMediaMeta,
   ];
 }
 

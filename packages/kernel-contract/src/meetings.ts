@@ -113,3 +113,21 @@ export const zMeetingReaderResult = z.strictObject({
   userId: zId,
 });
 export type MeetingReaderResult = z.infer<typeof zMeetingReaderResult>;
+
+export const zMeetingMediaMeta = zMeetingRef.extend({
+  kind: z.enum(['audio', 'video']),
+});
+export type MeetingMediaMeta = z.infer<typeof zMeetingMediaMeta>;
+
+export const zMeetingMediaRecord = zMeetingRef.extend({
+  kind: z.enum(['audio', 'video']),
+  keyId: z.string().min(1).max(64),
+  wrappedKeyHex: z.string().regex(/^[0-9a-fA-F]+$/),
+  storageKey: z.string().min(1).max(255),
+  generation: z.string().nullable().optional(),
+  sizeBytes: z.number().int().positive(),
+  sha256: z.string().regex(/^[0-9a-fA-F]{64}$/),
+  contentType: z.string().min(1).max(64),
+  lengthSeconds: z.number().int().positive().optional(),
+});
+export type MeetingMediaRecord = z.infer<typeof zMeetingMediaRecord>;

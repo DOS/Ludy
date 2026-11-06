@@ -14,7 +14,7 @@ import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-se
 import { Empty, ErrorText, ListSkeleton, PageHeader } from '../components/ui.tsx';
 import { NotesSubnav } from '../components/notes-subnav.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { errorMessage, orpc, queryClient, stageMediaUpload } from '../lib/api.ts';
+import { errorMessage, orpc, queryClient, uploadMeetingMedia } from '../lib/api.ts';
 import { toast } from '../lib/toast.ts';
 
 const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'outline' | 'destructive'> = {
@@ -93,21 +93,11 @@ export function MeetingsPage() {
       });
 
       if (audioFile) {
-        const audioUploadId = await stageMediaUpload(audioFile, 'meeting_audio');
-        await orpc.meetings.claimMedia.call({
-          meetingId: created.meetingId,
-          kind: 'audio',
-          uploadId: audioUploadId,
-        });
+        await uploadMeetingMedia(created.meetingId, 'audio', audioFile);
       }
 
       if (keepVideo && videoFile) {
-        const videoUploadId = await stageMediaUpload(videoFile, 'meeting_video');
-        await orpc.meetings.claimMedia.call({
-          meetingId: created.meetingId,
-          kind: 'video',
-          uploadId: videoUploadId,
-        });
+        await uploadMeetingMedia(created.meetingId, 'video', videoFile);
       }
 
       await queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });

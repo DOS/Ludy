@@ -1670,6 +1670,7 @@ export interface KernelFileUploadTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   expires_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   used_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
+  purpose: ColumnType<string, string | undefined, NotGranted>;
 }
 
 /** crove_kernel.idempotency_key */
