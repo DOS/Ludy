@@ -78,6 +78,13 @@ const VI_NUMBER_BEFORE_UNIT = new RegExp(
   'iu',
 );
 const CURRENCY_SIGN = /[$€£]/u;
+
+/** Whether a text says a number in words (either language): "twenty", "hai mươi ngày". The other finance texts that may hold digits (a reorder message holds the quantities it was given) use it
+ * to keep a number the model made up out of them. */
+export function hasNumberWords(text: string): boolean {
+  const read = text.normalize('NFKC').replace(/\p{Cf}/gu, '');
+  return NUMBER_WORD.test(read) || VI_NUMBER_BEFORE_UNIT.test(read);
+}
 // Anything that reads as an address: a dot between letters ("pay.example.cn", "ngân-hàng.vn", "e.g."), an obfuscated dot or at sign, a scheme, "www", "@".
 const ADDRESS = /\p{L}\.\p{L}|\p{L}\s*\[\.\]\s*\p{L}|\p{L}\s*\(dot\)\s*\p{L}|\p{L}\s+dot\s+\p{L}|\(at\)|@|:\/\/|(?<![\p{L}])www(?![\p{L}])/iu;
 
