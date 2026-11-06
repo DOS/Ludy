@@ -4,6 +4,8 @@ Written on 2026-11-04 at the owner's request (JOY). The Vietnamese summary for t
 
 This page is a market map, not a plan. It builds nothing and commits nothing. [scope.md](scope.md) section 6 names Odoo, MISA AMIS and Base.vn as the main reference products; HubSpot is added here because it is the best-known AI-first CRM suite, and Pancake (pancake.vn, added at the owner's request on 2026-11-04) because it is the best-known Vietnamese tool for selling through chat. Per [AGENTS.md](../../AGENTS.md), no issue is opened and nothing is built for a gap below until the owner agrees (see "Gaps").
 
+For Ludy Engage alone (social publishing, inbox and ads) against Hootsuite, Publer, Buffer, Sprout Social, Meta Business Suite, HubSpot, Pancake and Intercom / Crisp, see [competitors-engage.md](competitors-engage.md).
+
 ## How to read it
 
 Status of a Ludy capability, checked against the repository on 2026-11-04:

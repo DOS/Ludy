@@ -2,6 +2,8 @@
 
 Xong (bản nháp để anh xem). Viết ngày 2026-11-04, đã thêm Pancake theo yêu cầu của anh. Bản đầy đủ bằng tiếng Anh, có bảng chi tiết và nguồn, là bản chính: [competitors.md](competitors.md). So sánh kế toán sâu hơn, có nguồn, với MISA, Fast và Odoo: [competitor-feature-comparison.vi.md](../research/competitor-feature-comparison.vi.md). Trang này chỉ là bản đồ thị trường, chưa quyết định hay xây gì. Theo AGENTS.md, không mở issue và không xây gì cho các chỗ thiếu bên dưới cho đến khi anh đồng ý.
 
+Riêng Ludy Engage (đăng bài, hộp thư, quảng cáo) so với Hootsuite, Publer, Buffer, Sprout Social, Meta Business Suite, HubSpot, Pancake, Intercom và Crisp: xem [competitors-engage.vi.md](competitors-engage.vi.md).
+
 ## Năm đối thủ là ai
 
 - **MISA AMIS:** dẫn đầu thị trường phần mềm kế toán Việt Nam, bán thành bộ hơn 25 phân hệ: kế toán (cả hộ kinh doanh và hợp tác xã), hóa đơn điện tử, thuế, ngân hàng, CRM, nhân sự và tiền lương, văn phòng số, mua hàng, kho, sản xuất. Mạnh nhất ở luật Việt Nam. Không mã nguồn mở. Bảng giá chia ba gói theo quy mô, trả tối thiểu 12 tháng.
