@@ -14,9 +14,10 @@ import { Input } from '@crove/ui/components/input';
 import { Label } from '@crove/ui/components/label';
 import { NativeSelect, NativeSelectOption } from '@crove/ui/components/native-select';
 import { TableCell, TableRow } from '@crove/ui/components/table';
+import { StepUpPrompt } from '../components/two-factor.tsx';
 import { DataTable, Empty, ErrorText, PageHeader, TableSkeleton } from '../components/ui.tsx';
 import { useFormat } from '../i18n/provider.tsx';
-import { client, errorMessage, orpc, queryClient } from '../lib/api.ts';
+import { client, errorMessage, isStepUpRequired, orpc, queryClient } from '../lib/api.ts';
 
 const refresh = () => queryClient.invalidateQueries({ queryKey: orpc.hr.key() });
 // A sensitive read leaves an audit row each time: the screen reads once and again only after its own change.
@@ -134,7 +135,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
   const [terms, setTerms] = useState(blankTerms);
   const [dep, setDep] = useState<{ name: string; relation: HrRelation; registeredOn: string }>({ name: '', relation: 'child', registeredOn: vietnamToday() });
   const [endedOn, setEndedOn] = useState(vietnamToday());
-  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string } | null>(null);
+  const [edit, setEdit] = useState<{ name: string; address: string; identity: string; account: string; clear: { address: boolean; identity: boolean; account: boolean } } | null>(null);
   const [confirmErase, setConfirmErase] = useState(false);
   const run = <V,>(fn: (v: V) => Promise<unknown>, after?: () => void) => ({
     mutationFn: fn,
@@ -158,9 +159,10 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
         client.hr.payroll.employees.edit({
           employeeId,
           ...(edit && edit.name.trim() ? { displayName: edit.name.trim() } : {}),
-          ...(edit && edit.address.trim() ? { address: edit.address.trim() } : {}),
-          ...(edit && edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {}),
-          ...(edit && edit.account.trim() ? { accountNumber: edit.account.trim() } : {}),
+          // A field left empty is not changed; a ticked "clear" sends null, which removes the stored value.
+          ...(edit && (edit.clear.address ? { address: null } : edit.address.trim() ? { address: edit.address.trim() } : {})),
+          ...(edit && (edit.clear.identity ? { identityNumber: null } : edit.identity.trim() ? { identityNumber: edit.identity.trim() } : {})),
+          ...(edit && (edit.clear.account ? { accountNumber: null } : edit.account.trim() ? { accountNumber: edit.account.trim() } : {})),
         }),
       () => setEdit(null),
     ),
@@ -209,7 +211,7 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
       {active && (
         <div className="mt-3">
           {edit === null ? (
-            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '' })}>
+            <Button variant="ghost" size="sm" onClick={() => setEdit({ name: '', address: '', identity: '', account: '', clear: { address: false, identity: false, account: false } })}>
               {t('edit')}
             </Button>
           ) : (
@@ -220,19 +222,41 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-address">{t('address')}</Label>
-                <Input id="hr-edit-address" value={edit.address} maxLength={500} onChange={(ev) => setEdit({ ...edit, address: ev.target.value })} />
+                <Input id="hr-edit-address" value={edit.address} maxLength={500} disabled={edit.clear.address} onChange={(ev) => setEdit({ ...edit, address: ev.target.value })} />
+                {e.address !== null && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.address} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, address: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-identity">{t('identityNumber')}</Label>
-                <Input id="hr-edit-identity" value={edit.identity} maxLength={30} autoComplete="off" onChange={(ev) => setEdit({ ...edit, identity: ev.target.value })} />
+                <Input id="hr-edit-identity" value={edit.identity} maxLength={30} autoComplete="off" disabled={edit.clear.identity} onChange={(ev) => setEdit({ ...edit, identity: ev.target.value })} />
+                {e.hasIdentityNumber && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.identity} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, identity: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
               </div>
               <div className="space-y-1">
                 <Label htmlFor="hr-edit-account">{t('accountNumber')}</Label>
-                <Input id="hr-edit-account" value={edit.account} maxLength={34} autoComplete="off" onChange={(ev) => setEdit({ ...edit, account: ev.target.value })} />
+                <Input id="hr-edit-account" value={edit.account} maxLength={34} autoComplete="off" disabled={edit.clear.account} onChange={(ev) => setEdit({ ...edit, account: ev.target.value })} />
+                {e.hasAccountNumber && (
+                  <label className="flex items-center gap-1 text-xs text-subtle-foreground">
+                    <input type="checkbox" checked={edit.clear.account} onChange={(ev) => setEdit({ ...edit, clear: { ...edit.clear, account: ev.target.checked } })} />
+                    {t('clearStored')}
+                  </label>
+                )}
               </div>
               <p className="text-xs text-subtle-foreground sm:col-span-2">{t('editHint')}</p>
               <div className="flex gap-2 sm:col-span-2">
-                <Button loading={saveEdit.isPending} disabled={!(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim())} onClick={() => saveEdit.mutate()}>
+                <Button
+                  loading={saveEdit.isPending}
+                  disabled={!(edit.name.trim() || edit.address.trim() || edit.identity.trim() || edit.account.trim() || edit.clear.address || edit.clear.identity || edit.clear.account)}
+                  onClick={() => saveEdit.mutate()}
+                >
                   {t('save')}
                 </Button>
                 <Button variant="ghost" onClick={() => setEdit(null)}>
@@ -356,7 +380,15 @@ function Detail({ employeeId, owner, onClose }: { employeeId: string; owner: boo
               {t('erase')}
             </Button>
           )}
-          {erase.error && <ErrorText>{errorMessage(erase.error)}</ErrorText>}
+          {erase.error &&
+            (isStepUpRequired(erase.error) ? (
+              // The erasure cannot be undone, so it asks for a fresh second factor; once verified, the same request is repeated.
+              <div className="mt-3">
+                <StepUpPrompt action={t('eraseConfirm')} onVerified={() => erase.mutate()} onCancel={() => erase.reset()} />
+              </div>
+            ) : (
+              <ErrorText>{errorMessage(erase.error)}</ErrorText>
+            ))}
         </div>
       )}
     </Card>

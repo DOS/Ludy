@@ -271,16 +271,17 @@ export const employeeEnd = defineCommand({
   handler: async (ctx, input): Promise<HrWritten> => {
     const employee = await loadEmployee(ctx, input.employeeId);
     requireActive(employee);
-    const newest = await ctx.trx
+    // The last day of work cannot come before the first day of the first terms. A raise already scheduled after it stays as it is: its row cannot be changed.
+    const first = await ctx.trx
       .selectFrom('crove_hr.payroll_employment')
       .select('effective_from')
       .where('org_id', '=', ctx.orgId)
       .where('employee_id', '=', input.employeeId)
-      .orderBy('effective_from', 'desc')
+      .orderBy('effective_from', 'asc')
       .limit(1)
       .executeTakeFirst();
-    if (newest && input.endedOn < iso(newest.effective_from)) {
-      throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày hiệu lực của dòng hợp đồng gần nhất');
+    if (first && input.endedOn < iso(first.effective_from)) {
+      throw new DomainError('HR_END_BEFORE_START', 422, 'Ngày nghỉ việc không thể trước ngày bắt đầu làm việc');
     }
     await ctx.trx
       .updateTable('crove_hr.payroll_employee')

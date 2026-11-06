@@ -259,6 +259,8 @@ suite('HR payroll people on PostgreSQL (#2530)', () => {
     await o.exec(o.admin, 'hr.payroll.dependent.end', { dependentId: dep.dependentId, endedOn: '2026-06-30' });
     await expect(o.exec(o.admin, 'hr.payroll.dependent.end', { dependentId: dep.dependentId, endedOn: '2026-07-01' })).rejects.toMatchObject({ code: 'HR_DEPENDENT_ENDED' });
     await expect(o.exec(o.admin, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2025-12-31' })).rejects.toMatchObject({ code: 'HR_END_BEFORE_START' });
+    // A raise already scheduled after the last day of work does not stop the employee from leaving before it.
+    await o.exec(o.admin, 'hr.payroll.employment.add', { employeeId: created.employeeId, effectiveFrom: '2026-09-01', contractType: 'indefinite', region: 'I', baseWage: '16000000' });
     await o.exec(o.admin, 'hr.payroll.employee.end', { employeeId: created.employeeId, endedOn: '2026-08-31' });
     // An ended employee takes no new terms or dependents, and drops out of the default list.
     await expect(o.exec(o.admin, 'hr.payroll.employment.add', { employeeId: created.employeeId, effectiveFrom: '2026-09-01', contractType: 'none', region: 'I', baseWage: '1000000' })).rejects.toMatchObject({ code: 'HR_EMPLOYEE_ENDED' });
