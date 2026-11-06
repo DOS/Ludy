@@ -132,8 +132,9 @@ export async function postJournalVoucher(ctx: CommandContext, payload: JournalVo
       description: payload.description,
       proposal_id: ctx.proposalId,
       closing_year: closingYear,
-      stock_closing_month: stockClosingMonth === null ? null : `${stockClosingMonth}-01`,
-      stock_count_id: stockCountId,
+      // The columns of a close and of a count are written only for one, so a database before their migrations (the tests that start there) takes any other voucher.
+      ...(stockClosingMonth === null ? {} : { stock_closing_month: `${stockClosingMonth}-01` }),
+      ...(stockCountId === null ? {} : { stock_count_id: stockCountId }),
       created_by: ctx.actor.type === 'user' ? ctx.actor.userId : null,
     })
     .returning(['id', 'number'])
