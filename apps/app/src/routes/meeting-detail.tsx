@@ -43,6 +43,9 @@ export function MeetingDetailPage() {
     }),
   );
 
+  const orgQuery = useQuery(orpc.org.get.queryOptions());
+  const isOwner = orgQuery.data?.role === 'owner';
+
   const meeting = meetingQuery.data;
 
   useEffect(() => {
@@ -113,6 +116,18 @@ export function MeetingDetailPage() {
     },
   });
 
+  const ownerDeleteMutation = useMutation({
+    mutationFn: () => orpc.meetings.ownerDelete.call({ meetingId: id }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: orpc.meetings.key() });
+      toast('Đã thực hiện xóa tuân thủ và tiêu hủy khóa giải mã vĩnh viễn', 'success');
+      void navigate({ to: '/o/$slug/meetings', params: { slug } });
+    },
+    onError: (err) => {
+      toast(errorMessage(err), 'error');
+    },
+  });
+
   const addReaderMutation = useMutation({
     mutationFn: (userId: string) =>
       orpc.meetings.readers.add.call({ meetingId: id, userId }),
@@ -166,9 +181,15 @@ export function MeetingDetailPage() {
         <Link to="/o/$slug/meetings" params={{ slug }} className="text-sm text-link underline">
           &larr; {t('detail.back')}
         </Link>
-        <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
-          {t('detail.delete')}
-        </Button>
+        {meeting.isRecorder ? (
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
+            {t('detail.delete')}
+          </Button>
+        ) : isOwner ? (
+          <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)}>
+            Xóa tuân thủ (Owner)
+          </Button>
+        ) : null}
       </div>
 
       <PageHeader
@@ -307,11 +328,21 @@ export function MeetingDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        title={t('detail.deleteConfirmTitle')}
-        description={t('detail.deleteConfirmBody')}
-        confirm={t('detail.deleteButton')}
+        title={meeting.isRecorder ? t('detail.deleteConfirmTitle') : 'Xóa tuân thủ cuộc họp (Chủ sở hữu)?'}
+        description={
+          meeting.isRecorder
+            ? t('detail.deleteConfirmBody')
+            : 'Với tư cách là chủ sở hữu tổ chức, bạn sẽ xóa hoàn toàn cuộc họp này và tiêu hủy vĩnh viễn khóa giải mã. Toàn bộ bản ghi âm và video sẽ không thể khôi phục lại được.'
+        }
+        confirm={meeting.isRecorder ? t('detail.deleteButton') : 'Tiêu hủy và xóa tuân thủ'}
         destructive
-        onConfirm={() => deleteMutation.mutate()}
+        onConfirm={() => {
+          if (meeting.isRecorder) {
+            deleteMutation.mutate();
+          } else if (isOwner) {
+            ownerDeleteMutation.mutate();
+          }
+        }}
       />
     </div>
   );

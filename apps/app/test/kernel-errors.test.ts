@@ -83,7 +83,9 @@ const NOT_SHOWN: Record<string, string> = {
   VIDEO_NOT_FOUND: 'meetings',
   MEDIA_KEY_SHREDDED: 'meetings',
   MEDIA_KEY_UNAVAILABLE: 'meetings',
-  CORRUPT_MEDIA: 'meetings',
+  INVALID_MEDIA_CONTAINER: 'meetings',
+  INVALID_PURPOSE: 'meetings',
+  INVALID_READER: 'meetings',
   STAGED_UPLOAD_REQUIRED: 'meetings',
   VIDEO_NOT_ENABLED: 'meetings',
 };

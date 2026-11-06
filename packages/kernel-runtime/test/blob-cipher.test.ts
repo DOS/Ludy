@@ -3,10 +3,15 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import {
   BLOB_CHUNK_SIZE,
+  blobChunkAad,
   decryptBlobBuffer,
+  decryptBlobChunks,
   deriveMediaWrapKey,
   encryptBlobBuffer,
   generateMediaDataKey,
+  mapPlaintextRangeToChunks,
+  mediaKeyAad,
+  plaintextLengthFromCiphertextLength,
   unwrapMediaKey,
   wrapMediaKey,
   type BlobMediaBinding,
@@ -126,5 +131,48 @@ describe('blob-cipher buffer encryption and decryption', () => {
     const dataKey = generateMediaDataKey();
     const truncatedHeader = Buffer.from([0x01, 0x00, 0x01, 0x00, 0x00]);
     expect(() => decryptBlobBuffer(truncatedHeader, dataKey, BLOB_BINDING)).toThrow();
+  });
+
+  it('validates AAD non-empty and NUL byte assertions', () => {
+    expect(() => mediaKeyAad({ ...BINDING, orgId: '' })).toThrow();
+    expect(() => mediaKeyAad({ ...BINDING, meetingId: 'bad\u0000id' })).toThrow();
+    expect(() => blobChunkAad({ ...BLOB_BINDING, orgId: '' }, 0, false)).toThrow();
+    expect(() => blobChunkAad({ ...BLOB_BINDING, kind: 'audio\u0000' as any }, 0, false)).toThrow();
+    expect(() => blobChunkAad(BLOB_BINDING, -1, false)).toThrow();
+  });
+
+  it('calculates plaintext length from ciphertext length in O(1)', () => {
+    const dataKey = generateMediaDataKey();
+    for (const size of [0, 10, 1000, BLOB_CHUNK_SIZE, BLOB_CHUNK_SIZE + 500, BLOB_CHUNK_SIZE * 3 + 42]) {
+      const payload = randomBytes(size);
+      const encrypted = encryptBlobBuffer(payload, dataKey, BLOB_BINDING);
+      expect(plaintextLengthFromCiphertextLength(encrypted.length)).toBe(size);
+    }
+  });
+
+  it('decrypts bounded chunk ranges without full payload in memory', () => {
+    const dataKey = generateMediaDataKey();
+    const size = BLOB_CHUNK_SIZE * 3 + 12345;
+    const payload = randomBytes(size);
+    const encrypted = encryptBlobBuffer(payload, dataKey, BLOB_BINDING);
+
+    // Test a range spanning chunk 1 to chunk 2
+    const start = BLOB_CHUNK_SIZE + 100;
+    const end = BLOB_CHUNK_SIZE * 2 + 500;
+    const range = mapPlaintextRangeToChunks(start, end, encrypted.length);
+    expect(range.firstChunk).toBe(1);
+    expect(range.lastChunk).toBe(2);
+
+    const ciphertextSlice = encrypted.subarray(range.ctStart, range.ctEnd + 1);
+    const decryptedChunks = decryptBlobChunks(
+      ciphertextSlice,
+      dataKey,
+      BLOB_BINDING,
+      range.firstChunk,
+      range.lastChunk,
+      range.totalChunks,
+    );
+    const slice = decryptedChunks.subarray(range.offsetInFirstChunk, range.offsetInFirstChunk + range.requestedLength);
+    expect(slice.equals(payload.subarray(start, end + 1))).toBe(true);
   });
 });

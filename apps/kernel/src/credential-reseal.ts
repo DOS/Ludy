@@ -165,7 +165,7 @@ export function unopenableKeysLog(keys: readonly UnopenableKey[]): Array<{ level
       line:
         `[credential-reseal] ERROR sealed under a key this worker cannot open: ${parts.join('; ')}. The key was lost, or CREDENTIAL_KEY_PREVIOUS ` +
         'removed before they were resealed: set that key again as CREDENTIAL_KEY_PREVIOUS on the API and the worker, or reconnect those ' +
-        'channels and save those team chats again (docs/runbooks/credential-key.md)',
+        'channels, save those team chats again, or meetings audio and video will be unplayable (docs/runbooks/credential-key.md)',
     });
   }
   const waiting = keys.filter((k) => k.active === 0);
@@ -289,22 +289,36 @@ async function resealOneMediaKey(
     ? deps.broker.deriveKey(row.key_id, 'crove.meetings.v1|wrap')
     : deps.broker.derive?.('crove.meetings.v1|wrap');
   if (!oldSubkey) return false;
-  const dataKey = unwrapMediaKeyWithSubkey(row.wrapped_key, binding, oldSubkey);
 
-  const newBinding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: current };
-  const newSubkey = deps.broker.derive ? deps.broker.derive('crove.meetings.v1|wrap') : null;
-  if (!newSubkey) return false;
-  const newWrapped = wrapMediaKeyWithSubkey(dataKey, newBinding, newSubkey);
+  let dataKey: Buffer | null = null;
+  let newSubkey: Buffer | null = null;
+  try {
+    dataKey = unwrapMediaKeyWithSubkey(row.wrapped_key, binding, oldSubkey);
 
-  const { rows } = await sql<{ resealed: boolean }>`
-    SELECT crove_meetings.media_key_reseal(
-      ${row.org_id}::uuid,
-      ${row.id}::uuid,
-      ${row.key_id},
-      ${current},
-      ${newWrapped}
-    ) AS resealed
-  `.execute(db);
+    const newBinding = { orgId: row.org_id, meetingId: row.meeting_id, kind: row.kind, keyId: current };
+    newSubkey = deps.broker.deriveKey
+      ? deps.broker.deriveKey(current, 'crove.meetings.v1|wrap')
+      : deps.broker.derive
+        ? deps.broker.derive('crove.meetings.v1|wrap')
+        : null;
+    if (!newSubkey) return false;
+    const newWrapped = wrapMediaKeyWithSubkey(dataKey, newBinding, newSubkey);
 
-  return rows[0]?.resealed === true;
+    const { rows } = await sql<{ resealed: boolean }>`
+      SELECT crove_meetings.media_key_reseal(
+        ${row.org_id}::uuid,
+        ${row.id}::uuid,
+        ${row.key_id},
+        ${current},
+        ${row.wrapped_key},
+        ${newWrapped}
+      ) AS resealed
+    `.execute(db);
+
+    return rows[0]?.resealed === true;
+  } finally {
+    dataKey?.fill(0);
+    oldSubkey?.fill(0);
+    newSubkey?.fill(0);
+  }
 }

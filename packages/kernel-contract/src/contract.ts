@@ -656,6 +656,7 @@ export const contract = {
     create: oc.input(zMeetingCreate).output(zMeetingCreated),
     claimMedia: oc.input(zMeetingClaimMedia).output(zMeetingClaimed),
     delete: oc.input(zMeetingRef).output(zMeetingDeleted),
+    ownerDelete: oc.input(zMeetingRef).output(zMeetingDeleted),
     readers: {
       add: oc.input(zMeetingReaderAdd).output(zMeetingReaderResult),
       remove: oc.input(zMeetingReaderRemove).output(zMeetingReaderResult),

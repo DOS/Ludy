@@ -298,9 +298,9 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     ['/o/acme/crm/contacts/import', '/o/acme/contacts/import'],
   ]);
 
-  it('sends every screen of crm, social, notes and ads to the inbox through the router, and opens the others', async () => {
+  it('sends every screen of crm, social, notes, ads and meetings to the inbox through the router, and opens the others', async () => {
     session.modules = ['kernel', 'finance'];
-    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads')]) {
+    for (const path of [...addresses('crm'), ...addresses('social'), ...addresses('notes'), ...addresses('ads'), ...addresses('meetings')]) {
       expect(screenInstalled(session.modules, path), path).toBe(false);
       expect(await landing(path), path).toBe('/o/acme/inbox');
     }
@@ -309,7 +309,7 @@ describe('a module turned off (ADR-0031 §3, #1652)', () => {
     for (const path of ['/o/acme/Bookings', '/o/acme/SOCIAL/new', '/o/acme/Print/Social-Plan']) expect(await landing(path), path).toBe('/o/acme/inbox');
     session.modules = ['kernel'];
     for (const path of [...addresses('finance'), '/o/acme/JOURNAL']) expect(await landing(path), path).toBe('/o/acme/inbox');
-    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads'];
+    session.modules = ['kernel', 'finance', 'social', 'crm', 'notes', 'ads', 'meetings'];
     for (const [module] of MODULES) {
       for (const path of addresses(module as keyof typeof MODULE_SCREENS)) {
         expect(screenInstalled(session.modules, path), path).toBe(true);

@@ -84,6 +84,8 @@ function decrypt(key: Buffer, iv: Buffer, tag: Buffer, ciphertext: Buffer, addit
 // worker open them. crove-local is this vault; a Crove Cloud broker can keep the same shape.
 export interface CredentialBroker {
   readonly id: string;
+  readonly keyId?: string;
+  readonly keyIds?: readonly string[];
   seal(secret: string, binding: CredentialBinding): SealedCredential;
   open(sealed: SealedCredential, binding: CredentialBinding): string;
   // A key for another purpose, derived from the broker's current key (HKDF-SHA256, `info` names the purpose), so the

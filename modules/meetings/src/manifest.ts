@@ -6,6 +6,20 @@ export const meetingsManifest = defineModule({
   dependsOn: ['kernel'],
   tables: {
     crove_meetings: {
+      audio_segment: columns([
+        'org_id',
+        'id',
+        'meeting_id',
+        'file_id',
+        'segment_order',
+        'start_offset_seconds',
+        'length_seconds',
+        'created_at',
+      ]),
+      media_key: columns(
+        ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
+        { wrapped_key: 'sensitive' },
+      ),
       meeting: columns(
         [
           'org_id',
@@ -30,16 +44,6 @@ export const meetingsManifest = defineModule({
         { title: 'pii' },
       ),
       meeting_reader: columns(['org_id', 'id', 'meeting_id', 'user_id', 'created_at']),
-      audio_segment: columns([
-        'org_id',
-        'id',
-        'meeting_id',
-        'file_id',
-        'segment_order',
-        'start_offset_seconds',
-        'length_seconds',
-        'created_at',
-      ]),
       meeting_video: columns([
         'org_id',
         'id',
@@ -49,10 +53,6 @@ export const meetingsManifest = defineModule({
         'video_retention_date',
         'created_at',
       ]),
-      media_key: columns(
-        ['org_id', 'id', 'meeting_id', 'key_id', 'kind', 'created_at'],
-        { wrapped_key: 'sensitive' },
-      ),
     },
   },
   permissions: [],

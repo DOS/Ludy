@@ -1127,6 +1127,7 @@ export const vi = {
       consentNotice: 'Trước khi bắt đầu, người chủ trì phải thông báo cho tất cả người tham gia rằng cuộc họp được ghi âm và xử lý theo chính sách quyền riêng tư.',
       consentSpokenSentence: 'Câu thông báo mẫu: "Cuộc họp này được ghi lại để phục vụ lưu trữ và tóm tắt công việc. Nếu có ý kiến, vui lòng trao đổi trước khi tiếp tục."',
       consentMethod: 'Hình thức thông báo',
+      selectConsentMethod: 'Chọn hình thức thông báo...',
       toldAtStart: 'Đã thông báo bằng lời nói lúc bắt đầu cuộc họp',
       inInvite: 'Đã ghi rõ trong thư mời cuộc họp',
       inWriting: 'Đã gửi thông báo văn bản trước cuộc họp',
@@ -8960,6 +8961,24 @@ export const vi = {
       },
       user: {
         status_note: 'Ghi nhận khóa hoặc mở khóa tài khoản',
+      },
+    },
+    meetings: {
+      media: {
+        claim: 'Gắn tệp ghi âm hoặc ghi hình vào cuộc họp',
+      },
+      meeting: {
+        audio_read: 'Nghe ghi âm cuộc họp',
+        create: 'Tạo cuộc họp',
+        delete: 'Xóa cuộc họp',
+        get: 'Xem thông tin cuộc họp',
+        list: 'Xem danh sách cuộc họp',
+        owner_delete: 'Xóa cuộc họp theo yêu cầu tuân thủ',
+        video_read: 'Xem video cuộc họp',
+      },
+      reader: {
+        add: 'Thêm người đọc cuộc họp',
+        remove: 'Xóa người đọc cuộc họp',
       },
     },
     notes: {

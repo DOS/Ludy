@@ -2181,19 +2181,6 @@ export interface KernelUsageDeferralTable {
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
-/** crove_notes.link */
-export interface NotesLinkTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  note_id: ColumnType<string, string, NotGranted>;
-  target_type: ColumnType<string, string, NotGranted>;
-  target_id: ColumnType<string, string, NotGranted>;
-  party_id: ColumnType<string | null, string | null, NotGranted>;
-  file_id: ColumnType<string | null, string | null, NotGranted>;
-  created_by: ColumnType<string, string, NotGranted>;
-  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
-}
-
 /** crove_meetings.audio_segment */
 export interface MeetingsAudioSegmentTable {
   org_id: ColumnType<string, string, NotGranted>;
@@ -2203,6 +2190,15 @@ export interface MeetingsAudioSegmentTable {
   segment_order: ColumnType<number, number, NotGranted>;
   start_offset_seconds: ColumnType<number, number | undefined, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_meetings.meeting_reader */
+export interface MeetingsMeetingReaderTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  meeting_id: ColumnType<string, string, NotGranted>;
+  user_id: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
@@ -2217,25 +2213,16 @@ export interface MeetingsMeetingTable {
   status: Generated<string>;
   started_at: ColumnType<Date | null, Date | string | null, NotGranted>;
   ended_at: ColumnType<Date | null, Date | string | null, Date | string | null>;
-  length_seconds: ColumnType<number | null, number | null, number | null>;
+  length_seconds: number | null;
   keep_video: Generated<boolean>;
   consent_method: ColumnType<string, string, NotGranted>;
   consent_confirmed_by: ColumnType<string, string, NotGranted>;
   consent_confirmed_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   consent_notice_version: ColumnType<string, string | undefined, NotGranted>;
-  audio_retention_date: ColumnType<string, string, string>;
-  text_retention_date: ColumnType<string, string, string>;
+  audio_retention_date: string;
+  text_retention_date: string;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
   updated_at: ColumnType<Date, Date | string | undefined, Date | string>;
-}
-
-/** crove_meetings.meeting_reader */
-export interface MeetingsMeetingReaderTable {
-  org_id: ColumnType<string, string, NotGranted>;
-  id: ColumnType<string, string | undefined, NotGranted>;
-  meeting_id: ColumnType<string, string, NotGranted>;
-  user_id: ColumnType<string, string, NotGranted>;
-  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 
 /** crove_meetings.meeting_video */
@@ -2246,6 +2233,19 @@ export interface MeetingsMeetingVideoTable {
   file_id: ColumnType<string, string, NotGranted>;
   length_seconds: ColumnType<number, number, NotGranted>;
   video_retention_date: ColumnType<string, string, NotGranted>;
+  created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
+}
+
+/** crove_notes.link */
+export interface NotesLinkTable {
+  org_id: ColumnType<string, string, NotGranted>;
+  id: ColumnType<string, string | undefined, NotGranted>;
+  note_id: ColumnType<string, string, NotGranted>;
+  target_type: ColumnType<string, string, NotGranted>;
+  target_id: ColumnType<string, string, NotGranted>;
+  party_id: ColumnType<string | null, string | null, NotGranted>;
+  file_id: ColumnType<string | null, string | null, NotGranted>;
+  created_by: ColumnType<string, string, NotGranted>;
   created_at: ColumnType<Date, Date | string | undefined, NotGranted>;
 }
 

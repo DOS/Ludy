@@ -5,6 +5,8 @@ const IV_LENGTH = 12; // 96-bit nonce
 const TAG_LENGTH = 16; // 128-bit GCM auth tag
 const KEY_LENGTH = 32; // 256-bit key
 export const BLOB_CHUNK_SIZE = 64 * 1024; // 64 KiB chunks
+export const CHUNK_OVERHEAD = IV_LENGTH + TAG_LENGTH; // 28 bytes
+export const CIPHER_CHUNK_FULL_SIZE = BLOB_CHUNK_SIZE + CHUNK_OVERHEAD; // 65564 bytes
 const VERSION = 0x01;
 const HEADER_LENGTH = 5; // 1 byte version + 4 bytes chunkSize
 
@@ -18,6 +20,17 @@ export interface MediaKeyBinding {
 export type BlobMediaBinding = Omit<MediaKeyBinding, 'keyId'>;
 
 export function mediaKeyAad(binding: MediaKeyBinding): Buffer {
+  if (!binding.orgId || !binding.meetingId || !binding.kind || !binding.keyId) {
+    throw new Error('mediaKeyAad binding fields must be non-empty');
+  }
+  if (
+    binding.orgId.includes('\u0000') ||
+    binding.meetingId.includes('\u0000') ||
+    binding.kind.includes('\u0000') ||
+    binding.keyId.includes('\u0000')
+  ) {
+    throw new Error('mediaKeyAad binding fields must not contain NUL bytes');
+  }
   return Buffer.from(
     ['crove.meeting_media.v1', binding.orgId, binding.meetingId, binding.kind, binding.keyId].join('\u0000'),
     'utf8',
@@ -25,6 +38,19 @@ export function mediaKeyAad(binding: MediaKeyBinding): Buffer {
 }
 
 export function blobChunkAad(binding: BlobMediaBinding, chunkIndex: number, isLast: boolean): Buffer {
+  if (!binding.orgId || !binding.meetingId || !binding.kind) {
+    throw new Error('blobChunkAad binding fields must be non-empty');
+  }
+  if (
+    binding.orgId.includes('\u0000') ||
+    binding.meetingId.includes('\u0000') ||
+    binding.kind.includes('\u0000')
+  ) {
+    throw new Error('blobChunkAad binding fields must not contain NUL bytes');
+  }
+  if (!Number.isInteger(chunkIndex) || chunkIndex < 0) {
+    throw new Error('blobChunkAad chunkIndex must be a non-negative integer');
+  }
   return Buffer.from(
     ['crove.meeting_media.blob.v1', binding.orgId, binding.meetingId, binding.kind, String(chunkIndex), isLast ? '1' : '0'].join('\u0000'),
     'utf8',
@@ -76,6 +102,111 @@ export function wrapMediaKey(dataKey: Buffer, binding: MediaKeyBinding, rootKey:
 
 export function unwrapMediaKey(wrapped: Buffer, binding: MediaKeyBinding, rootKey: Buffer): Buffer {
   return unwrapMediaKeyWithSubkey(wrapped, binding, deriveMediaWrapKey(rootKey));
+}
+
+export function plaintextLengthFromCiphertextLength(ciphertextLength: number): number {
+  const minLength = HEADER_LENGTH + CHUNK_OVERHEAD;
+  if (ciphertextLength < minLength) {
+    throw new Error('Invalid blob ciphertext: too short');
+  }
+  const payload = ciphertextLength - HEADER_LENGTH;
+  if (payload === CHUNK_OVERHEAD) {
+    return 0; // Empty file
+  }
+  const fullChunks = Math.floor(payload / CIPHER_CHUNK_FULL_SIZE);
+  const remainder = payload % CIPHER_CHUNK_FULL_SIZE;
+  if (remainder === 0) {
+    return fullChunks * BLOB_CHUNK_SIZE;
+  }
+  if (remainder < CHUNK_OVERHEAD) {
+    throw new Error('Invalid blob ciphertext: corrupt chunk size');
+  }
+  return fullChunks * BLOB_CHUNK_SIZE + (remainder - CHUNK_OVERHEAD);
+}
+
+export interface ChunkRangeMap {
+  firstChunk: number;
+  lastChunk: number;
+  totalChunks: number;
+  ctStart: number;
+  ctEnd: number;
+  offsetInFirstChunk: number;
+  requestedLength: number;
+}
+
+export function mapPlaintextRangeToChunks(
+  start: number,
+  end: number,
+  ciphertextLength: number,
+): ChunkRangeMap {
+  const totalPlaintextLength = plaintextLengthFromCiphertextLength(ciphertextLength);
+  if (totalPlaintextLength === 0 || start < 0 || end < start || start >= totalPlaintextLength) {
+    throw new RangeError('Requested range is not satisfiable');
+  }
+  const clampedEnd = Math.min(end, totalPlaintextLength - 1);
+  const requestedLength = clampedEnd - start + 1;
+  const totalChunks = totalPlaintextLength === 0 ? 1 : Math.ceil(totalPlaintextLength / BLOB_CHUNK_SIZE);
+
+  const firstChunk = Math.floor(start / BLOB_CHUNK_SIZE);
+  const lastChunk = Math.floor(clampedEnd / BLOB_CHUNK_SIZE);
+
+  const ctStart = HEADER_LENGTH + firstChunk * CIPHER_CHUNK_FULL_SIZE;
+  const isLastChunkInFile = lastChunk === totalChunks - 1;
+  const ctEnd = isLastChunkInFile
+    ? ciphertextLength - 1
+    : HEADER_LENGTH + (lastChunk + 1) * CIPHER_CHUNK_FULL_SIZE - 1;
+
+  const offsetInFirstChunk = start % BLOB_CHUNK_SIZE;
+
+  return {
+    firstChunk,
+    lastChunk,
+    totalChunks,
+    ctStart,
+    ctEnd,
+    offsetInFirstChunk,
+    requestedLength,
+  };
+}
+
+export function decryptBlobChunks(
+  ciphertextSlice: Buffer,
+  dataKey: Buffer,
+  binding: BlobMediaBinding,
+  firstChunkIndex: number,
+  lastChunkIndex: number,
+  totalChunks: number,
+): Buffer {
+  if (dataKey.length !== KEY_LENGTH) {
+    throw new Error('Data key must be 32 bytes');
+  }
+  const plainChunks: Buffer[] = [];
+  let offset = 0;
+  for (let chunkIndex = firstChunkIndex; chunkIndex <= lastChunkIndex; chunkIndex += 1) {
+    const isLast = chunkIndex === totalChunks - 1;
+    if (offset + CHUNK_OVERHEAD > ciphertextSlice.length) {
+      throw new Error('Truncated blob chunk in slice');
+    }
+    const iv = ciphertextSlice.subarray(offset, offset + IV_LENGTH);
+    const tag = ciphertextSlice.subarray(offset + IV_LENGTH, offset + CHUNK_OVERHEAD);
+    offset += CHUNK_OVERHEAD;
+
+    let ctLength: number;
+    if (chunkIndex === lastChunkIndex && offset < ciphertextSlice.length && (ciphertextSlice.length - offset) < BLOB_CHUNK_SIZE) {
+      ctLength = ciphertextSlice.length - offset;
+    } else {
+      ctLength = Math.min(BLOB_CHUNK_SIZE, ciphertextSlice.length - offset);
+    }
+    const ct = ciphertextSlice.subarray(offset, offset + ctLength);
+    offset += ctLength;
+
+    const decipher = createDecipheriv('aes-256-gcm', dataKey, iv, { authTagLength: TAG_LENGTH });
+    decipher.setAAD(blobChunkAad(binding, chunkIndex, isLast));
+    decipher.setAuthTag(tag);
+    const pt = Buffer.concat([decipher.update(ct), decipher.final()]);
+    plainChunks.push(pt);
+  }
+  return Buffer.concat(plainChunks);
 }
 
 export function encryptBlobBuffer(plaintext: Buffer, dataKey: Buffer, binding: BlobMediaBinding): Buffer {

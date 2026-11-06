@@ -38,7 +38,7 @@ export function MeetingsPage() {
   const [language, setLanguage] = useState<MeetingLanguage>('vi');
   const [visibility, setVisibility] = useState<MeetingVisibility>('attendees');
   const [keepVideo, setKeepVideo] = useState(false);
-  const [consentMethod, setConsentMethod] = useState<ConsentMethod>('told_at_start');
+  const [consentMethod, setConsentMethod] = useState<ConsentMethod | ''>('');
   const [consentAgreed, setConsentAgreed] = useState(false);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -57,7 +57,7 @@ export function MeetingsPage() {
     setLanguage('vi');
     setVisibility('attendees');
     setKeepVideo(false);
-    setConsentMethod('told_at_start');
+    setConsentMethod('');
     setConsentAgreed(false);
     setAudioFile(null);
     setVideoFile(null);
@@ -73,6 +73,10 @@ export function MeetingsPage() {
       setFormError('Vui lòng nhập tên cuộc họp');
       return;
     }
+    if (!consentMethod) {
+      setFormError('Vui lòng chọn phương thức ghi nhận đồng thuận');
+      return;
+    }
     if (!consentAgreed) {
       setFormError('Bạn bắt buộc phải xác nhận sự đồng thuận của người tham gia');
       return;
@@ -80,27 +84,16 @@ export function MeetingsPage() {
 
     try {
       setSubmitting(true);
-      let audioUploadId: string | undefined;
-      let videoUploadId: string | undefined;
-
-      if (audioFile) {
-        audioUploadId = await stageMediaUpload(audioFile, 'meeting_audio');
-      }
-      if (keepVideo && videoFile) {
-        videoUploadId = await stageMediaUpload(videoFile, 'meeting_video');
-      }
-
       const created = await orpc.meetings.create.call({
         title: title.trim(),
         language,
         visibility,
         keepVideo,
         consentMethod,
-        audioUploadId,
-        videoUploadId,
       });
 
-      if (audioUploadId) {
+      if (audioFile) {
+        const audioUploadId = await stageMediaUpload(audioFile, 'meeting_audio');
         await orpc.meetings.claimMedia.call({
           meetingId: created.meetingId,
           kind: 'audio',
@@ -108,7 +101,8 @@ export function MeetingsPage() {
         });
       }
 
-      if (videoUploadId) {
+      if (keepVideo && videoFile) {
+        const videoUploadId = await stageMediaUpload(videoFile, 'meeting_video');
         await orpc.meetings.claimMedia.call({
           meetingId: created.meetingId,
           kind: 'video',
@@ -299,7 +293,9 @@ export function MeetingsPage() {
                   id="consent-method"
                   value={consentMethod}
                   onChange={(e) => setConsentMethod(e.target.value as ConsentMethod)}
+                  required
                 >
+                  <NativeSelectOption value="" disabled>{t('form.selectConsentMethod')}</NativeSelectOption>
                   <NativeSelectOption value="told_at_start">{t('form.toldAtStart')}</NativeSelectOption>
                   <NativeSelectOption value="in_invite">{t('form.inInvite')}</NativeSelectOption>
                   <NativeSelectOption value="in_writing">{t('form.inWriting')}</NativeSelectOption>
@@ -322,7 +318,7 @@ export function MeetingsPage() {
               <DialogClose render={<Button type="button" variant="outline" disabled={submitting} />}>
                 {t('form.cancel')}
               </DialogClose>
-              <Button type="submit" disabled={!consentAgreed || submitting} loading={submitting}>
+              <Button type="submit" disabled={!consentAgreed || !consentMethod || submitting} loading={submitting}>
                 {submitting ? t('form.submitting') : t('form.submit')}
               </Button>
             </DialogFooter>

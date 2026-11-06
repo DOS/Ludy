@@ -3,16 +3,18 @@
 -- audio and video, consent records, and reader-gated access. Idempotent; applied files stay untouched.
 --
 -- crove_meetings.meeting         a recorded meeting: title, language, duration, visibility (attendees or org), consent confirmation,
---                                and retention dates. Written by its recorder; updated by recorder or org owner/admin; deleted by recorder.
+--                                and retention dates. Written by its recorder; updated by recorder; deleted by recorder.
 -- crove_meetings.meeting_reader  explicit attendee readers for an attendees-only meeting. Managed by the meeting recorder.
 -- crove_meetings.audio_segment   normalized audio chunks of a meeting, backed by ciphertext files in crove_kernel.file.
 -- crove_meetings.meeting_video   optional kept video of a meeting, backed by ciphertext file in crove_kernel.file.
 -- crove_meetings.media_key       wrapped AES-256-GCM data keys for meeting audio and video. Definer-only (MACHINERY), zero grants to login roles.
 SET LOCAL lock_timeout = '2s';
 
--- Expand file source check for meeting media
 ALTER TABLE crove_kernel.file DROP CONSTRAINT IF EXISTS file_source_check;
 ALTER TABLE crove_kernel.file ADD CONSTRAINT file_source_check CHECK (source IN ('upload', 'email', 'social', 'import', 'meeting_audio', 'meeting_video'));
+
+ALTER TABLE crove_kernel.file_upload DROP CONSTRAINT IF EXISTS file_upload_max_bytes;
+ALTER TABLE crove_kernel.file_upload ADD CONSTRAINT file_upload_max_bytes CHECK (max_bytes BETWEEN 1 AND 2147483648);
 
 CREATE SCHEMA IF NOT EXISTS crove_meetings;
 GRANT USAGE ON SCHEMA crove_meetings TO crove_tenant;
@@ -134,37 +136,136 @@ CREATE TABLE IF NOT EXISTS crove_meetings.media_key (
 );
 CREATE INDEX IF NOT EXISTS media_key_meeting_idx ON crove_meetings.media_key (org_id, meeting_id);
 
-SELECT crove_kernel.apply_tenant_rls('crove_meetings.media_key');
-REVOKE ALL ON crove_meetings.media_key FROM PUBLIC, crove_tenant, crove_app, crove_worker;
-CREATE POLICY media_key_machinery ON crove_meetings.media_key AS RESTRICTIVE FOR ALL TO crove_tenant USING (false) WITH CHECK (false);
+ALTER TABLE crove_meetings.media_key ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crove_meetings.media_key FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON crove_meetings.media_key;
+DROP POLICY IF EXISTS media_key_machinery ON crove_meetings.media_key;
+REVOKE ALL ON crove_meetings.media_key FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+DO $$
+DECLARE
+  r text;
+BEGIN
+  FOR r IN SELECT rolname FROM pg_roles WHERE rolname IN ('supabase_etl_admin', 'supabase_read_only_user') LOOP
+    EXECUTE format('REVOKE ALL ON crove_meetings.media_key FROM %I', r);
+  END LOOP;
+END $$;
+SELECT crove_kernel.agent_write_guard_install('crove_meetings.media_key');
 
 -- ---------------------------------------------------------------------------
--- 6. Restrictive RLS policies
+-- 6. Helper definer functions to break mutual RLS recursion (P0-1)
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION crove_meetings.is_meeting_recorder(
+  p_org_id uuid,
+  p_meeting_id uuid
+) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RETURN false;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN false;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin', 'member')
+  ) THEN
+    RETURN false;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1 FROM crove_meetings.meeting m
+    WHERE m.org_id = v_org AND m.id = p_meeting_id AND m.recorder_user_id = v_user
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.is_meeting_recorder(uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crove_meetings.is_meeting_recorder(uuid, uuid) TO crove_tenant;
+
+CREATE OR REPLACE FUNCTION crove_meetings.is_meeting_reader(
+  p_org_id uuid,
+  p_meeting_id uuid,
+  p_user_id uuid DEFAULT NULL
+) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
+  v_vis text;
+  v_recorder uuid;
+BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RETURN false;
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RETURN false;
+  END IF;
+  IF p_user_id IS NOT NULL AND p_user_id IS DISTINCT FROM v_user THEN
+    RETURN false;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin', 'member')
+  ) THEN
+    RETURN false;
+  END IF;
+  SELECT visibility, recorder_user_id INTO v_vis, v_recorder
+  FROM crove_meetings.meeting
+  WHERE org_id = v_org AND id = p_meeting_id;
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+  IF v_recorder = v_user THEN
+    RETURN true;
+  END IF;
+  IF v_vis = 'org' THEN
+    IF '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) THEN
+      RETURN true;
+    END IF;
+  END IF;
+  RETURN EXISTS (
+    SELECT 1 FROM crove_meetings.meeting_reader r
+    WHERE r.org_id = v_org AND r.meeting_id = p_meeting_id AND r.user_id = v_user
+  );
+END;
+$$;
+REVOKE ALL ON FUNCTION crove_meetings.is_meeting_reader(uuid, uuid, uuid) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION crove_meetings.is_meeting_reader(uuid, uuid, uuid) TO crove_tenant;
+
+-- ---------------------------------------------------------------------------
+-- 7. Restrictive RLS policies
 -- ---------------------------------------------------------------------------
 
 -- Meeting policies
 DROP POLICY IF EXISTS meeting_read ON crove_meetings.meeting;
 CREATE POLICY meeting_read ON crove_meetings.meeting AS RESTRICTIVE FOR SELECT TO crove_tenant
   USING (
-    recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    OR (
-      visibility = 'org'
-      AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-      AND EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
-        WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')
-      )
+    crove_kernel.ctx_actor_type() = 'user'
+    AND EXISTS (
+      SELECT 1 FROM crove_kernel.tenant_member m
+      WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')
     )
-    OR EXISTS (
-      SELECT 1 FROM crove_meetings.meeting_reader r
-      WHERE r.org_id = meeting.org_id AND r.meeting_id = meeting.id AND r.user_id = (SELECT crove_kernel.ctx_user_id())
+    AND (
+      recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+      OR (
+        visibility = 'org'
+        AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+      )
+      OR EXISTS (
+        SELECT 1 FROM crove_meetings.meeting_reader r
+        WHERE r.org_id = meeting.org_id AND r.meeting_id = meeting.id AND r.user_id = (SELECT crove_kernel.ctx_user_id())
+      )
     )
   );
 
 DROP POLICY IF EXISTS meeting_insert ON crove_meetings.meeting;
 CREATE POLICY meeting_insert ON crove_meetings.meeting AS RESTRICTIVE FOR INSERT TO crove_tenant
   WITH CHECK (
-    recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+    crove_kernel.ctx_actor_type() = 'user'
+    AND recorder_user_id = (SELECT crove_kernel.ctx_user_id())
     AND consent_confirmed_by = (SELECT crove_kernel.ctx_user_id())
     AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
     AND EXISTS (
@@ -176,149 +277,81 @@ CREATE POLICY meeting_insert ON crove_meetings.meeting AS RESTRICTIVE FOR INSERT
 DROP POLICY IF EXISTS meeting_update ON crove_meetings.meeting;
 CREATE POLICY meeting_update ON crove_meetings.meeting AS RESTRICTIVE FOR UPDATE TO crove_tenant
   USING (
-    recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    OR (
-      visibility = 'org'
-      AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-      AND EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
-        WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')
-      )
+    crove_kernel.ctx_actor_type() = 'user'
+    AND recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+    AND EXISTS (
+      SELECT 1 FROM crove_kernel.tenant_member m
+      WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')
     )
   )
   WITH CHECK (
-    recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    OR (
-      visibility = 'org'
-      AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
-      AND EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m
-        WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')
-      )
+    crove_kernel.ctx_actor_type() = 'user'
+    AND recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+    AND EXISTS (
+      SELECT 1 FROM crove_kernel.tenant_member m
+      WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')
     )
   );
 
 DROP POLICY IF EXISTS meeting_delete ON crove_meetings.meeting;
 CREATE POLICY meeting_delete ON crove_meetings.meeting AS RESTRICTIVE FOR DELETE TO crove_tenant
-  USING (recorder_user_id = (SELECT crove_kernel.ctx_user_id()));
+  USING (
+    crove_kernel.ctx_actor_type() = 'user'
+    AND recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+    AND EXISTS (
+      SELECT 1 FROM crove_kernel.tenant_member m
+      WHERE m.org_id = meeting.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')
+    )
+  );
 
 -- Meeting reader policies
 DROP POLICY IF EXISTS meeting_reader_read ON crove_meetings.meeting_reader;
 CREATE POLICY meeting_reader_read ON crove_meetings.meeting_reader AS RESTRICTIVE FOR SELECT TO crove_tenant
-  USING (
-    user_id = (SELECT crove_kernel.ctx_user_id())
-    OR EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = meeting_reader.org_id AND m.id = meeting_reader.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  USING (crove_meetings.is_meeting_reader(org_id, meeting_id));
 
 DROP POLICY IF EXISTS meeting_reader_insert ON crove_meetings.meeting_reader;
 CREATE POLICY meeting_reader_insert ON crove_meetings.meeting_reader AS RESTRICTIVE FOR INSERT TO crove_tenant
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = meeting_reader.org_id AND m.id = meeting_reader.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
+    crove_meetings.is_meeting_recorder(org_id, meeting_id)
+    AND EXISTS (
+      SELECT 1 FROM crove_kernel.tenant_member m
+      WHERE m.org_id = meeting_reader.org_id AND m.user_id = meeting_reader.user_id AND m.role IN ('owner', 'admin', 'member')
     )
   );
 
 DROP POLICY IF EXISTS meeting_reader_delete ON crove_meetings.meeting_reader;
 CREATE POLICY meeting_reader_delete ON crove_meetings.meeting_reader AS RESTRICTIVE FOR DELETE TO crove_tenant
-  USING (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = meeting_reader.org_id AND m.id = meeting_reader.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  USING (crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 -- Audio segment policies
 DROP POLICY IF EXISTS audio_segment_read ON crove_meetings.audio_segment;
 CREATE POLICY audio_segment_read ON crove_meetings.audio_segment AS RESTRICTIVE FOR SELECT TO crove_tenant
-  USING (EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = audio_segment.org_id AND m.id = audio_segment.meeting_id));
+  USING (crove_meetings.is_meeting_reader(org_id, meeting_id));
 
 DROP POLICY IF EXISTS audio_segment_insert ON crove_meetings.audio_segment;
 CREATE POLICY audio_segment_insert ON crove_meetings.audio_segment AS RESTRICTIVE FOR INSERT TO crove_tenant
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = audio_segment.org_id AND m.id = audio_segment.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  WITH CHECK (crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 DROP POLICY IF EXISTS audio_segment_delete ON crove_meetings.audio_segment;
 CREATE POLICY audio_segment_delete ON crove_meetings.audio_segment AS RESTRICTIVE FOR DELETE TO crove_tenant
-  USING (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = audio_segment.org_id AND m.id = audio_segment.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  USING (crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 -- Meeting video policies
 DROP POLICY IF EXISTS meeting_video_read ON crove_meetings.meeting_video;
 CREATE POLICY meeting_video_read ON crove_meetings.meeting_video AS RESTRICTIVE FOR SELECT TO crove_tenant
-  USING (EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = meeting_video.org_id AND m.id = meeting_video.meeting_id));
+  USING (crove_meetings.is_meeting_reader(org_id, meeting_id));
 
 DROP POLICY IF EXISTS meeting_video_insert ON crove_meetings.meeting_video;
 CREATE POLICY meeting_video_insert ON crove_meetings.meeting_video AS RESTRICTIVE FOR INSERT TO crove_tenant
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = meeting_video.org_id AND m.id = meeting_video.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  WITH CHECK (crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 DROP POLICY IF EXISTS meeting_video_delete ON crove_meetings.meeting_video;
 CREATE POLICY meeting_video_delete ON crove_meetings.meeting_video AS RESTRICTIVE FOR DELETE TO crove_tenant
-  USING (
-    EXISTS (
-      SELECT 1 FROM crove_meetings.meeting m
-      WHERE m.org_id = meeting_video.org_id AND m.id = meeting_video.meeting_id AND m.recorder_user_id = (SELECT crove_kernel.ctx_user_id())
-    )
-  );
+  USING (crove_meetings.is_meeting_recorder(org_id, meeting_id));
 
 -- ---------------------------------------------------------------------------
--- 7. Security Definer functions (search_path = pg_catalog, pg_temp, no public exec)
+-- 8. Definer functions for media keys & compliance (P0-3, P1-2)
 -- ---------------------------------------------------------------------------
-
--- Check if user is a reader of a meeting
-CREATE OR REPLACE FUNCTION crove_meetings.is_meeting_reader(
-  p_org_id uuid,
-  p_meeting_id uuid,
-  p_user_id uuid
-) RETURNS boolean LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
-DECLARE
-  v_vis text;
-  v_recorder uuid;
-BEGIN
-  IF p_user_id IS NULL OR p_meeting_id IS NULL OR p_org_id IS NULL THEN
-    RETURN false;
-  END IF;
-  SELECT visibility, recorder_user_id INTO v_vis, v_recorder
-  FROM crove_meetings.meeting
-  WHERE org_id = p_org_id AND id = p_meeting_id;
-  IF NOT FOUND THEN
-    RETURN false;
-  END IF;
-  IF v_recorder = p_user_id THEN
-    RETURN true;
-  END IF;
-  IF v_vis = 'org' THEN
-    IF '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
-      WHERE m.org_id = p_org_id AND m.user_id = p_user_id AND m.role IN ('owner', 'admin', 'member')
-    ) THEN
-      RETURN true;
-    END IF;
-  END IF;
-  RETURN EXISTS (
-    SELECT 1 FROM crove_meetings.meeting_reader r
-    WHERE r.org_id = p_org_id AND r.meeting_id = p_meeting_id AND r.user_id = p_user_id
-  );
-END;
-$$;
-REVOKE ALL ON FUNCTION crove_meetings.is_meeting_reader(uuid, uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.is_meeting_reader(uuid, uuid, uuid) TO crove_tenant;
 
 -- Seal media key
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_seal(
@@ -329,18 +362,46 @@ CREATE OR REPLACE FUNCTION crove_meetings.media_key_seal(
   p_wrapped_key bytea
 ) RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
   v_id uuid;
 BEGIN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_app', 'MEMBER') THEN
+    RAISE EXCEPTION 'MEETINGS_APP_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+  IF NOT ('*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])) THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_kernel.tenant_member m
+    WHERE m.org_id = v_org AND m.user_id = v_user AND m.role IN ('owner', 'admin', 'member')
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM crove_meetings.meeting m
+    WHERE m.org_id = v_org AND m.id = p_meeting_id AND m.recorder_user_id = v_user
+  ) THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_RECORDER' USING ERRCODE = '42501';
+  END IF;
+
   INSERT INTO crove_meetings.media_key (org_id, id, meeting_id, key_id, kind, wrapped_key)
-  VALUES (p_org_id, crove_kernel.uuid_v7(), p_meeting_id, p_key_id, p_kind, p_wrapped_key)
+  VALUES (v_org, crove_kernel.uuid_v7(), p_meeting_id, p_key_id, p_kind, p_wrapped_key)
   ON CONFLICT (org_id, meeting_id, kind)
   DO UPDATE SET key_id = EXCLUDED.key_id, wrapped_key = EXCLUDED.wrapped_key
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_seal(uuid, uuid, text, text, bytea) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.media_key_seal(uuid, uuid, text, text, bytea) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_seal(uuid, uuid, text, text, bytea) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_seal(uuid, uuid, text, text, bytea) TO crove_app;
 
 -- Read media key (readers only)
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_read(
@@ -349,55 +410,81 @@ CREATE OR REPLACE FUNCTION crove_meetings.media_key_read(
   p_kind text
 ) RETURNS TABLE (key_id text, wrapped_key bytea)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
 BEGIN
-  IF NOT (
-    crove_meetings.is_meeting_reader(p_org_id, p_meeting_id, crove_kernel.ctx_user_id())
-    OR (crove_kernel.ctx_actor_type() = 'system' AND pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
-  ) THEN
+  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_app', 'MEMBER') THEN
+    RAISE EXCEPTION 'MEETINGS_APP_ONLY' USING ERRCODE = '42501';
+  END IF;
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+  IF v_actor IS DISTINCT FROM 'user' OR v_user IS NULL THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
+  END IF;
+  IF NOT crove_meetings.is_meeting_reader(v_org, p_meeting_id, v_user) THEN
     RAISE EXCEPTION 'MEETINGS_NOT_READER' USING ERRCODE = '42501';
   END IF;
 
   RETURN QUERY
   SELECT k.key_id, k.wrapped_key
   FROM crove_meetings.media_key k
-  WHERE k.org_id = p_org_id AND k.meeting_id = p_meeting_id AND k.kind = p_kind;
+  WHERE k.org_id = v_org AND k.meeting_id = p_meeting_id AND k.kind = p_kind;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_read(uuid, uuid, text) TO crove_app;
 
--- Shred media key (crypto-shredding)
+-- Shred media key (crypto-shredding: recorder, org owner, or retention worker)
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_shred(
   p_org_id uuid,
   p_meeting_id uuid,
   p_kind text DEFAULT NULL
 ) RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
   v_count integer;
 BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+
   IF NOT (
-    EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = p_org_id AND m.id = p_meeting_id AND m.recorder_user_id = crove_kernel.ctx_user_id())
-    OR (
-      '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) AND EXISTS (
-        SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = p_org_id AND m.user_id = crove_kernel.ctx_user_id() AND m.role IN ('owner', 'admin')
+    (
+      v_actor = 'user' AND v_user IS NOT NULL
+      AND (
+        EXISTS (SELECT 1 FROM crove_meetings.meeting m WHERE m.org_id = v_org AND m.id = p_meeting_id AND m.recorder_user_id = v_user)
+        OR (
+          '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+          AND EXISTS (
+            SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = v_org AND m.user_id = v_user AND m.role = 'owner'
+          )
+        )
       )
     )
-    OR (crove_kernel.ctx_actor_type() = 'system' AND pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
+    OR (
+      v_actor = 'system'
+      AND pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
+    )
   ) THEN
     RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
   END IF;
 
   DELETE FROM crove_meetings.media_key
-  WHERE org_id = p_org_id AND meeting_id = p_meeting_id
+  WHERE org_id = v_org AND meeting_id = p_meeting_id
     AND (p_kind IS NULL OR kind = p_kind);
   GET DIAGNOSTICS v_count = ROW_COUNT;
   RETURN v_count;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_shred(uuid, uuid, text) TO crove_tenant, crove_worker;
 
--- Reseal pass: scan media keys under older key id
+-- Reseal pass: scan media keys under older key id (worker only)
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_reseal_due(
   p_current_key_id text,
   p_limit integer,
@@ -407,7 +494,8 @@ CREATE OR REPLACE FUNCTION crove_meetings.media_key_reseal_due(
 RETURNS TABLE (org_id uuid, id uuid, meeting_id uuid, key_id text, kind text, wrapped_key bytea, created_at timestamptz)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+  IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
+     OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
     RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
 
@@ -423,39 +511,42 @@ BEGIN
   LIMIT LEAST(GREATEST(p_limit, 1), 1000);
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_reseal_due(text, integer, timestamptz, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_reseal_due(text, integer, timestamptz, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.media_key_reseal_due(text, integer, timestamptz, uuid) TO crove_worker;
 
--- Reseal pass: update single media key with new envelope
+-- Reseal pass: update single media key with new envelope and CAS check (P2-2)
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_reseal(
   p_org_id uuid,
   p_id uuid,
   p_from_key_id text,
   p_to_key_id text,
+  p_from_wrapped_key bytea,
   p_wrapped_key bytea
 )
 RETURNS boolean LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+  IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
+     OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
     RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
 
   UPDATE crove_meetings.media_key
   SET key_id = p_to_key_id,
       wrapped_key = p_wrapped_key
-  WHERE org_id = p_org_id AND id = p_id AND key_id = p_from_key_id;
+  WHERE org_id = p_org_id AND id = p_id AND key_id = p_from_key_id AND wrapped_key = p_from_wrapped_key;
   RETURN FOUND;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_reseal(uuid, uuid, text, text, bytea) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.media_key_reseal(uuid, uuid, text, text, bytea) TO crove_worker;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_reseal(uuid, uuid, text, text, bytea, bytea) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.media_key_reseal(uuid, uuid, text, text, bytea, bytea) TO crove_worker;
 
 -- Reseal pass: counts by key_id
 CREATE OR REPLACE FUNCTION crove_meetings.media_key_counts()
 RETURNS TABLE (key_id text, active bigint, inactive bigint)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
 BEGIN
-  IF NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER') THEN
+  IF (NOT pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER'))
+     OR crove_kernel.ctx_actor_type() IS NOT NULL THEN
     RAISE EXCEPTION 'MEETINGS_WORKER_ONLY' USING ERRCODE = '42501';
   END IF;
 
@@ -467,7 +558,7 @@ BEGIN
   GROUP BY k.key_id;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.media_key_counts() FROM PUBLIC;
+REVOKE ALL ON FUNCTION crove_meetings.media_key_counts() FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.media_key_counts() TO crove_worker;
 
 -- Owner compliance list (metadata only, no meeting text)
@@ -486,11 +577,21 @@ RETURNS TABLE (
   text_retention_date date
 )
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
 BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+
   IF NOT (
-    '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) AND EXISTS (
+    v_actor = 'user' AND v_user IS NOT NULL
+    AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+    AND EXISTS (
       SELECT 1 FROM crove_kernel.tenant_member m
-      WHERE m.org_id = p_org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')
+      WHERE m.org_id = v_org AND m.user_id = v_user AND m.role = 'owner'
     )
   ) THEN
     RAISE EXCEPTION 'MEETINGS_OWNER_ONLY' USING ERRCODE = '42501';
@@ -499,7 +600,7 @@ BEGIN
   RETURN QUERY
   SELECT m.id, m.started_at, m.length_seconds, m.recorder_user_id, m.audio_retention_date, m.text_retention_date
   FROM crove_meetings.meeting m
-  WHERE m.org_id = p_org_id
+  WHERE m.org_id = v_org
     AND (
       p_after_started IS NULL
       OR (m.started_at, m.id) < (p_after_started, p_after_id)
@@ -508,29 +609,45 @@ BEGIN
   LIMIT LEAST(GREATEST(p_limit, 1), 200);
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.meeting_owner_list(uuid, integer, timestamptz, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION crove_meetings.meeting_owner_list(uuid, integer, timestamptz, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
 GRANT EXECUTE ON FUNCTION crove_meetings.meeting_owner_list(uuid, integer, timestamptz, uuid) TO crove_tenant;
 
--- Owner personal data deletion (without reading meeting text)
+-- Owner personal data deletion (without reading meeting text: owner only, or retention worker)
 CREATE OR REPLACE FUNCTION crove_meetings.meeting_owner_delete(
   p_org_id uuid,
   p_meeting_id uuid
 )
 RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_org uuid := crove_kernel.ctx_org_id();
+  v_user uuid := crove_kernel.ctx_user_id();
+  v_actor text := crove_kernel.ctx_actor_type();
 BEGIN
+  IF v_org IS NULL OR p_org_id IS DISTINCT FROM v_org THEN
+    RAISE EXCEPTION 'MEETINGS_NOT_ALLOWED' USING ERRCODE = '42501';
+  END IF;
+
   IF NOT (
-    '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[]) AND EXISTS (
-      SELECT 1 FROM crove_kernel.tenant_member m
-      WHERE m.org_id = p_org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin')
+    (
+      v_actor = 'user' AND v_user IS NOT NULL
+      AND '*' = ANY ((SELECT crove_kernel.ctx_le_scope())::text[])
+      AND EXISTS (
+        SELECT 1 FROM crove_kernel.tenant_member m
+        WHERE m.org_id = v_org AND m.user_id = v_user AND m.role = 'owner'
+      )
+    )
+    OR (
+      v_actor = 'system'
+      AND pg_catalog.pg_has_role(SESSION_USER, 'crove_worker', 'MEMBER')
     )
   ) THEN
     RAISE EXCEPTION 'MEETINGS_OWNER_ONLY' USING ERRCODE = '42501';
   END IF;
 
-  DELETE FROM crove_meetings.meeting WHERE org_id = p_org_id AND id = p_meeting_id;
+  DELETE FROM crove_meetings.meeting WHERE org_id = v_org AND id = p_meeting_id;
   RETURN FOUND;
 END;
 $$;
-REVOKE ALL ON FUNCTION crove_meetings.meeting_owner_delete(uuid, uuid) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION crove_meetings.meeting_owner_delete(uuid, uuid) TO crove_tenant;
+REVOKE ALL ON FUNCTION crove_meetings.meeting_owner_delete(uuid, uuid) FROM PUBLIC, crove_tenant, crove_app, crove_worker, crove_definer_tenant;
+GRANT EXECUTE ON FUNCTION crove_meetings.meeting_owner_delete(uuid, uuid) TO crove_tenant, crove_worker;

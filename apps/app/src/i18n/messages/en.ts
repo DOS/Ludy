@@ -1129,6 +1129,7 @@ export const en = {
       consentNotice: 'Before starting, the organizer must notify all participants that the meeting is recorded and processed according to privacy policy.',
       consentSpokenSentence: 'Sample notice: "This meeting is being recorded for record keeping and summary. Please let us know if you have any questions before proceeding."',
       consentMethod: 'Consent method',
+      selectConsentMethod: 'Select consent method...',
       toldAtStart: 'Announced verbally at the start of the meeting',
       inInvite: 'Stated in the meeting invitation',
       inWriting: 'Notified in writing prior to the meeting',
@@ -8963,6 +8964,24 @@ export const en = {
       },
       user: {
         status_note: 'Note an account blocked or unblocked',
+      },
+    },
+    meetings: {
+      media: {
+        claim: 'Claim meeting audio or video file',
+      },
+      meeting: {
+        audio_read: 'Listen to meeting audio',
+        create: 'Create meeting',
+        delete: 'Delete meeting',
+        get: 'Get meeting details',
+        list: 'List meetings',
+        owner_delete: 'Compliance delete meeting',
+        video_read: 'Watch meeting video',
+      },
+      reader: {
+        add: 'Add meeting reader',
+        remove: 'Remove meeting reader',
       },
     },
     notes: {

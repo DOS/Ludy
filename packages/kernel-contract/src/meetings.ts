@@ -68,8 +68,6 @@ export const zMeetingCreate = z.strictObject({
   keepVideo: z.boolean().default(false),
   consentMethod: zConsentMethod,
   readerUserIds: z.array(zId).optional(),
-  audioUploadId: zId.optional(),
-  videoUploadId: zId.optional(),
   lengthSeconds: z.number().int().nonnegative().optional(),
 });
 export type MeetingCreate = z.infer<typeof zMeetingCreate>;

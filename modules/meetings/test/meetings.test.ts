@@ -68,6 +68,7 @@ describe('meetings commands and queries construction', () => {
       'meetings.meeting.create',
       'meetings.media.claim',
       'meetings.meeting.delete',
+      'meetings.meeting.owner_delete',
       'meetings.reader.add',
       'meetings.reader.remove',
     ]);

@@ -532,7 +532,7 @@ const schema = z.object({
   PRIVACY_URL: optional.pipe(z.url({ protocol: /^https$/ }).optional()),
   // The prober's last result for the public status page PUBLIC_URL/status (#678, status-page.ts): the file the
   // prober writes as PROBER_STATUS_FILE, on a volume both share. Unset: no /status page and no link to it in the app.
-  STATUS_FILE: optional.pipe(z.string().startsWith('/', 'STATUS_FILE is an absolute path').optional()),
+  STATUS_FILE: optional.pipe(z.string().refine((p) => p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p), 'STATUS_FILE is an absolute path').optional()),
   // Stock photos from Pexels in the Social media library and the composer (#1106): the API key of a Pexels account
   // (https://www.pexels.com/api/). Unset: nothing is offered and Crove never calls Pexels. The key stays on the server;
   // searches and image downloads go through the API, so browsers never reach Pexels.
