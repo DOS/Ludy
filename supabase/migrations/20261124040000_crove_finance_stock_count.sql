@@ -144,12 +144,15 @@ CREATE POLICY stock_count_line_update ON crove_finance.stock_count_line AS RESTR
   WITH CHECK ((SELECT crove_kernel.ctx_actor_type()) = 'system'
     OR EXISTS (SELECT 1 FROM crove_kernel.tenant_member m WHERE m.org_id = stock_count_line.org_id AND m.user_id = (SELECT crove_kernel.ctx_user_id()) AND m.role IN ('owner', 'admin', 'member')));
 
--- A line is entered and changed only while its count is a draft; the count is held while the line is read so it cannot be confirmed in between.
+-- A line is entered and changed only while its count is a draft; the count is held while the line is read so it cannot be confirmed in between. A count the writer cannot see or
+-- lock (another org's or entity's, or one that is not there) is left to row security and the foreign key, which refuse the row with their own errors.
 CREATE OR REPLACE FUNCTION crove_finance.stock_count_line_guard() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+  v_status text;
 BEGIN
-  PERFORM 1 FROM crove_finance.stock_count c WHERE c.org_id = NEW.org_id AND c.id = NEW.count_id AND c.status = 'draft' FOR SHARE;
-  IF NOT FOUND THEN
+  SELECT c.status INTO v_status FROM crove_finance.stock_count c WHERE c.org_id = NEW.org_id AND c.id = NEW.count_id FOR SHARE;
+  IF FOUND AND v_status <> 'draft' THEN
     RAISE EXCEPTION 'STOCK_COUNT_FROZEN' USING ERRCODE = '23514';
   END IF;
   RETURN NEW;
@@ -246,6 +249,8 @@ BEGIN
        FROM crove_finance.journal_voucher v
        JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id AND e.reverses_entry_id IS NULL AND e.entry_date = v.voucher_date
        WHERE v.org_id = NEW.org_id AND v.id = NEW.voucher_id AND v.legal_entity_id = NEW.legal_entity_id AND v.stock_count_id = NEW.id AND v.voucher_date = NEW.count_date
+         -- Every line on 632, 1381, 3381 or 156 or a sub-account of it (goods): the entry that posts a count and nothing else.
+         AND NOT EXISTS (SELECT 1 FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id AND l.account_code NOT IN ('632', '1381', '3381') AND l.account_code NOT LIKE '156%')
          AND (SELECT coalesce(pg_catalog.sum(l.debit), 0) FROM crove_finance.journal_line l WHERE l.org_id = e.org_id AND l.entry_id = e.id) = v_worth) THEN
     RAISE EXCEPTION 'STOCK_COUNT_VOUCHER' USING ERRCODE = '23514';
   END IF;
@@ -295,7 +300,18 @@ BEGIN
       SELECT 1 FROM crove_finance.cash_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.cash_voucher' AND e.source_id = v.id
       WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
-    WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record', 'finance.stock.close_period', 'finance.stock.count_confirm') THEN EXISTS (
+    -- The close's effect is its voucher and the month it closed, and the count's its voucher and the count it confirmed, stored in this transaction: an untagged voucher is not the effect.
+    WHEN p_command = 'finance.stock.close_period' THEN EXISTS (
+      SELECT 1 FROM crove_finance.journal_voucher v
+      JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+      JOIN crove_finance.stock_period p ON p.org_id = v.org_id AND p.voucher_id = v.id
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND v.stock_closing_month IS NOT NULL AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command = 'finance.stock.count_confirm' THEN EXISTS (
+      SELECT 1 FROM crove_finance.journal_voucher v
+      JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
+      JOIN crove_finance.stock_count c ON c.org_id = v.org_id AND c.voucher_id = v.id AND c.status = 'confirmed'
+      WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND v.stock_count_id IS NOT NULL AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
+    WHEN p_command IN ('finance.journal_voucher.record', 'finance.closing.record', 'finance.depreciation.record') THEN EXISTS (
       SELECT 1 FROM crove_finance.journal_voucher v
       JOIN crove_finance.journal_entry e ON e.org_id = v.org_id AND e.source_type = 'finance.journal_voucher' AND e.source_id = v.id
       WHERE v.org_id = p_org AND v.proposal_id = p_proposal AND e.created_xact_id = v_xact AND e.created_xact_start = pg_catalog.now())
