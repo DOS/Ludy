@@ -6,8 +6,9 @@
 --
 -- channel_order_line.attempt   the live attempt, 1 at first; a tenant role may raise it by one, and only while the live attempt has a shipment (a line that names no item has nothing to
 --                              unassign). A constraint that is checked at commit refuses a raise that leaves a move of an older attempt without its reversal.
--- stock_move.order_attempt     the attempt of a shipment or a return of an order line, which must be the line's live one; 1 for every other move. A shipment and a return are unique per
---                              line, kind and attempt.
+-- stock_move.order_attempt     the attempt of a shipment or a return of an order line, which must be the line's live one: the line row is held FOR SHARE while it is read, so a raise
+--                              of the attempt that is not committed yet makes the insert wait, and the insert fails once the raise commits. 1 for every other move (a CHECK). A
+--                              shipment and a return are unique per line, kind and attempt.
 -- A reversal of a move of an order line is admitted only for an attempt the line has left behind, so no statement reverses the live stock of a line by itself.
 SET LOCAL lock_timeout = '2s';
 
@@ -18,6 +19,17 @@ ALTER TABLE crove_finance.stock_move ADD COLUMN IF NOT EXISTS order_attempt int 
 -- One shipment and one return per order line and attempt: a re-uploaded report never moves the stock twice, and a new attempt can move it again. The index doubles as the foreign key's.
 DROP INDEX IF EXISTS crove_finance.stock_move_order_uq;
 CREATE UNIQUE INDEX IF NOT EXISTS stock_move_order_attempt_uq ON crove_finance.stock_move (org_id, order_line_id, order_move, order_attempt) WHERE order_line_id IS NOT NULL;
+
+-- Each source names what it comes from and nothing else (20261123100000), and now the attempt as well: only a move of an order line carries one above 1, every other move is at 1.
+ALTER TABLE crove_finance.stock_move DROP CONSTRAINT IF EXISTS stock_move_source_ck;
+ALTER TABLE crove_finance.stock_move ADD CONSTRAINT stock_move_source_ck CHECK (
+  CASE source_type
+    WHEN 'document_line' THEN document_id IS NOT NULL AND line_no IS NOT NULL AND line_attempt IS NOT NULL AND order_line_id IS NULL AND order_move IS NULL AND order_attempt = 1
+    WHEN 'order_line' THEN order_line_id IS NOT NULL AND order_move IS NOT NULL AND document_id IS NULL AND line_no IS NULL AND line_attempt IS NULL
+                           AND ((order_move = 'ship' AND quantity < 0) OR (order_move = 'return' AND quantity > 0))
+    ELSE document_id IS NULL AND line_no IS NULL AND line_attempt IS NULL AND order_line_id IS NULL AND order_move IS NULL AND order_attempt = 1
+  END
+);
 
 -- The line's guard, as it was plus the attempt: it goes up by one and only while the live attempt has a shipment.
 CREATE OR REPLACE FUNCTION crove_finance.channel_order_line_guard() RETURNS trigger
@@ -80,10 +92,16 @@ BEGIN
            OR (NEW.order_move = 'return' AND l.stage IN ('returned', 'cancelled')))) THEN
     RAISE EXCEPTION 'STOCK_ORDER_STAGE' USING ERRCODE = '23514';
   END IF;
-  IF NEW.source_type = 'order_line' AND NOT EXISTS (
-       SELECT 1 FROM crove_finance.channel_order_line l
-       WHERE l.org_id = NEW.org_id AND l.id = NEW.order_line_id AND l.attempt = NEW.order_attempt) THEN
-    RAISE EXCEPTION 'STOCK_ORDER_ATTEMPT' USING ERRCODE = '23514';
+  IF NEW.source_type = 'order_line' THEN
+    -- The line row is held FOR SHARE while its attempt is read. The raise of the attempt (an UPDATE, FOR NO KEY UPDATE) does not conflict with the foreign key's FOR KEY SHARE, so a
+    -- plain read could pass a move of the attempt that a transaction not committed yet is leaving, and both would commit with a return the reversal did not know. Held, the insert
+    -- waits for that transaction and re-reads the line after it: a raise that committed fails the insert, and a raise that waits for this insert is refused at its commit.
+    PERFORM 1 FROM crove_finance.channel_order_line l
+    WHERE l.org_id = NEW.org_id AND l.id = NEW.order_line_id AND l.attempt = NEW.order_attempt
+    FOR SHARE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'STOCK_ORDER_ATTEMPT' USING ERRCODE = '23514';
+    END IF;
   END IF;
   IF NEW.source_type = 'reversal' THEN
     SELECT s.order_line_id, s.order_attempt INTO v_line, v_attempt

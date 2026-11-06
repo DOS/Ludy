@@ -392,6 +392,53 @@ suite('marketplace order reports (#2515)', () => {
     // A move at an attempt the line is not at, and a second shipment at the live one.
     await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, '2026-11-01', -1, 'order_line', $3, 'ship', 2)", [o.orgId, item, waiting])).rejects.toThrow(/STOCK_ORDER_ATTEMPT/);
     await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, '2026-11-01', -3, 'order_line', $3, 'ship', 1)", [o.orgId, item, assigned])).rejects.toThrow(/stock_move_order_attempt_uq/);
+    // Only a move of an order line carries an attempt above 1.
+    await expect(rows("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_attempt) VALUES ($1, $2, '2026-11-01', 1, 'manual', 2)", [o.orgId, item])).rejects.toThrow(/stock_move_source_ck/);
+  });
+
+  it('reads the attempt of a line with its row held: a return at the attempt an uncommitted raise is leaving waits, then fails, and no stock is left over', async () => {
+    const o = await org();
+    const item = await makeItem(o, 'QC-RACE');
+    await confirm(o, (await read(o, report(row('R1', 'Đang giao', 'MA-RACE', 3)))).fileId);
+    const [line] = await rows<{ id: string }>('SELECT id FROM crove_finance.channel_order_line WHERE org_id = $1', [o.orgId]);
+    await execute(o, 'finance.marketplace.assign', { lineId: line?.id, itemId: item }, o.member);
+    const [ship] = await rows<{ id: string; back: string }>("SELECT id, (-quantity)::text AS back FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'ship'", [o.orgId, line?.id]);
+    // The line came back and its return is not stored yet.
+    await rows("UPDATE crove_finance.channel_order_line SET stage = 'returned' WHERE org_id = $1 AND id = $2", [o.orgId, line?.id]);
+    const connect = async () => {
+      const c = new pg.Client({ connectionString: adminUrl });
+      await c.connect();
+      return c;
+    };
+    const t1 = await connect();
+    const t2 = await connect();
+    try {
+      // T1 raises the attempt and reverses the shipment, and does not commit yet.
+      await t1.query('BEGIN');
+      await t1.query('UPDATE crove_finance.channel_order_line SET attempt = 2 WHERE org_id = $1 AND id = $2', [o.orgId, line?.id]);
+      await t1.query("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, reverses_move_id) VALUES ($1, $2, '2026-11-01', $3, 'reversal', $4)", [o.orgId, item, ship?.back, ship?.id]);
+      // T2 stores the return at the old attempt: it must wait for T1.
+      await t2.query('BEGIN');
+      const pid = (await t2.query<{ pid: number }>('SELECT pg_backend_pid() AS pid')).rows[0]?.pid;
+      const late = t2
+        .query("INSERT INTO crove_finance.stock_move (org_id, item_id, move_date, quantity, source_type, order_line_id, order_move, order_attempt) VALUES ($1, $2, '2026-11-02', $3, 'order_line', $4, 'return', 1)", [o.orgId, item, ship?.back, line?.id])
+        .then(() => null, (e: Error) => e);
+      let waiting = false;
+      for (let i = 0; i < 50 && !waiting; i++) {
+        waiting = (await rows<{ n: string }>("SELECT count(*)::text AS n FROM pg_stat_activity WHERE pid = $1 AND wait_event_type = 'Lock'", [pid]))[0]?.n === '1';
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(waiting).toBe(true);
+      await t1.query('COMMIT');
+      expect((await late)?.message).toMatch(/STOCK_ORDER_ATTEMPT/);
+      await t2.query('ROLLBACK');
+    } finally {
+      await t1.end();
+      await t2.end();
+    }
+    // The shipment and its reversal cancel out: no return of the attempt that was left.
+    expect((await rows<{ zero: boolean }>('SELECT COALESCE(sum(quantity), 0) = 0 AS zero FROM crove_finance.stock_move WHERE org_id = $1 AND item_id = $2', [o.orgId, item]))[0]?.zero).toBe(true);
+    expect((await rows<{ n: string }>("SELECT count(*)::text AS n FROM crove_finance.stock_move WHERE org_id = $1 AND order_line_id = $2 AND order_move = 'return'", [o.orgId, line?.id]))[0]?.n).toBe('0');
   });
 
   it('lists the confirmed orders for every role, and the shipped lines that name no item, and assigns one: the shipment, the return, the SKU taught for the platform', async () => {
