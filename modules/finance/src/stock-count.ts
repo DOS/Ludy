@@ -156,7 +156,7 @@ async function bookFigures(ctx: Ctx, legalEntityId: string, countDate: string): 
 
 interface Built {
   head: CountHead;
-  result: CountResult;
+  worked: CountResult;
   // SHA-256 of the canonical figures of every line, in item order: what makes a proposal stale when one changed.
   hash: string;
 }
@@ -186,7 +186,7 @@ async function buildCount(ctx: Ctx, head: CountHead, lines: readonly LineRow[], 
     };
   });
   const result = countDifferences(inputs, head.loss_norm_percent);
-  return { head, result, hash: fingerprint(result) };
+  return { head, worked: result, hash: fingerprint(result) };
 }
 
 async function assertLedgerOpen(ctx: QueryContext, countDate: string, legalEntityId: string) {
@@ -198,7 +198,7 @@ async function assertLedgerOpen(ctx: QueryContext, countDate: string, legalEntit
 
 // The entry is checked the way a voucher entered by hand is, when it is asked for and again when it is posted.
 async function assertPostable(ctx: QueryContext, built: Built) {
-  const lines = built.result.entry.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
+  const lines = built.worked.entry.map((l) => ({ account: l.account, partyId: null, debit: l.debit, credit: l.credit }));
   const problems = journalVoucherProblems(lines);
   if (problems.length > 0) throw new DomainError('STOCK_COUNT_UNSUPPORTED', 422, 'Không lập được bút toán chênh lệch kiểm kê: bút toán không hợp lệ', { problems });
   await assertUsableAccounts(ctx, lines.map((l) => l.account));
@@ -208,10 +208,10 @@ function proposalOf(built: Built): StockCountProposal {
   const payload = {
     date: built.head.count_date,
     description: countDescription(built.head.count_date),
-    lines: built.result.entry.map((l) => ({ account: l.account, party: null, debit: l.debit, credit: l.credit })),
-    total: built.result.total,
+    lines: built.worked.entry.map((l) => ({ account: l.account, party: null, debit: l.debit, credit: l.credit })),
+    total: built.worked.total,
     countId: built.head.id,
-    lineCount: built.result.lines.length,
+    lineCount: built.worked.lines.length,
     figuresHash: built.hash,
     legalEntityId: built.head.legal_entity_id,
   };
@@ -310,7 +310,7 @@ export const confirmEmptyStockCount = defineCommand({
     await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
     await lockEntityMoves(ctx, head.legal_entity_id);
     const built = await buildCount(ctx, head, lines);
-    if (built.result.lines.some((l) => !money(l.difference).isZero())) {
+    if (built.worked.lines.some((l) => !money(l.difference).isZero())) {
       throw new DomainError('STOCK_COUNT_HAS_DIFFERENCE', 409, 'Lần kiểm kê này có chênh lệch so với sổ; hãy gửi đề xuất xác nhận để chủ sở hữu hoặc quản trị viên duyệt');
     }
     await ctx.trx
@@ -335,16 +335,16 @@ export const prepareStockCount = defineCommand({
     requireDraft(head);
     await assertOpenDate(ctx, head.legal_entity_id, head.count_date);
     const built = await buildCount(ctx, head, lines);
-    if (built.result.unpriced.length > 0) {
-      const named = built.result.unpriced.slice(0, 5).map((u) => u.code).join(', ');
+    if (built.worked.unpriced.length > 0) {
+      const named = built.worked.unpriced.slice(0, 5).map((u) => u.code).join(', ');
       throw new DomainError(
         'STOCK_COUNT_UNPRICED',
         422,
-        `Mặt hàng ${named}${built.result.unpriced.length > 5 ? '…' : ''} có chênh lệch nhưng chưa có giá vốn để tính giá trị; hãy hủy lần kiểm kê nháp này và kiểm kê lại, nhập đơn giá vốn cho mặt hàng`,
-        { items: built.result.unpriced.slice(0, 50).map((u) => ({ itemId: u.itemId, code: u.code })), count: built.result.unpriced.length },
+        `Mặt hàng ${named}${built.worked.unpriced.length > 5 ? '…' : ''} có chênh lệch nhưng chưa có giá vốn để tính giá trị; hãy hủy lần kiểm kê nháp này và kiểm kê lại, nhập đơn giá vốn cho mặt hàng`,
+        { items: built.worked.unpriced.slice(0, 50).map((u) => ({ itemId: u.itemId, code: u.code })), count: built.worked.unpriced.length },
       );
     }
-    if (built.result.entry.length === 0) {
+    if (built.worked.entry.length === 0) {
       throw new DomainError('STOCK_COUNT_NO_DIFFERENCE', 422, 'Lần kiểm kê này không chênh lệch so với sổ nên không có bút toán để duyệt; hãy xác nhận trực tiếp');
     }
     await assertLedgerOpen(ctx, head.count_date, head.legal_entity_id);
@@ -374,7 +374,7 @@ export const confirmStockCount = defineCommand({
     await assertPostable(ctx, built);
     // The differences are worked out again from the books as they read now; a move written since the proposal was made changes them, and the proposal is refused rather than adjusting
     // stock by a difference that is no longer there.
-    if (built.result.unpriced.length > 0 || built.result.entry.length === 0 || !sameProposal(proposalOf(built), payload)) {
+    if (built.worked.unpriced.length > 0 || built.worked.entry.length === 0 || !sameProposal(proposalOf(built), payload)) {
       throw new DomainError('STOCK_COUNT_STALE', 409, `Số liệu kho đã thay đổi từ khi lập đề xuất xác nhận kiểm kê ngày ${dateLabel(head.count_date)}; hãy từ chối đề xuất này và lập lại`);
     }
     const posted = await postJournalVoucher(ctx, { ...payload, legalEntityId }, null, null, head.id);
@@ -386,12 +386,12 @@ export const confirmStockCount = defineCommand({
       .execute();
     const lineOf = new Map(lines.map((l) => [l.item_id, l.id]));
     let adjusted = 0;
-    for (const line of built.result.lines) {
+    for (const line of built.worked.lines) {
       if (money(line.difference).isZero()) continue;
       await writeStockMove(ctx, { itemId: line.itemId, date: head.count_date, quantity: line.difference, source: { type: 'count', countLineId: lineOf.get(line.itemId) as string, amount: line.value } });
       adjusted += 1;
     }
-    ctx.audit({ count_id: head.id, lines: lines.length, adjusted, total: built.result.total, legal_entity_id: legalEntityId });
+    ctx.audit({ count_id: head.id, lines: lines.length, adjusted, total: built.worked.total, legal_entity_id: legalEntityId });
     return { ...posted, countId: head.id };
   },
 });
@@ -456,7 +456,7 @@ export const listStockCounts = defineQuery({
           figures = await bookFigures(ctx, head.legal_entity_id, head.count_date);
           books.set(key, figures);
         }
-        shown = (await buildCount(ctx, head, lines, figures)).result.lines;
+        shown = (await buildCount(ctx, head, lines, figures)).worked.lines;
       } else {
         shown = lines.map((line) => {
           const item = items.get(line.item_id);
