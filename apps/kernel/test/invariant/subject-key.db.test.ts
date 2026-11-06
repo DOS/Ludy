@@ -127,6 +127,7 @@ suite('per-subject keys on PostgreSQL (#2640)', () => {
       rt.execute<{ sealed: string }>('t2640.seal', { ref, value, ...(place ? { place } : {}) }, { actor: user(actor), orgId, idempotencyKey: randomUUID() });
     const refOf = async (sealed: string) => {
       const subject = sealed.split(':')[2] ?? '';
+      if (!/^[0-9a-f-]{36}$/.test(subject)) return 'employee:none';
       const rows = await withAdmin(async (c) => (await c.query<{ ref: string }>('SELECT ref FROM crove_kernel.subject_key WHERE id = $1::uuid', [subject])).rows);
       // A subject with no key row (shredded, or another org's): any well-formed ref, the answer is erased whatever it is.
       return rows[0]?.ref ?? 'employee:none';
