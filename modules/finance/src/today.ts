@@ -17,13 +17,14 @@
 import { sql } from 'kysely';
 import { z } from 'zod';
 import { ORIGINAL_FLAGGED, taxDuesOf } from '@crove/kernel';
-import type { TodayItem, VatFilingPeriod } from '@crove/kernel-contract';
+import { STOCK_LEAD_DAYS_DEFAULT, type TodayItem, type VatFilingPeriod } from '@crove/kernel-contract';
 import type { MemberRole } from '@crove/db';
 import { defineQuery, sha256Hex, type QueryContext } from '@crove/kernel-runtime';
 import { closingPeriod } from './notifications.ts';
 import { readCollectionSetting } from './collection-settings.ts';
 import { databaseToday } from './period-lock.ts';
 import { remindersToSendThisWeek } from './payment-reminders.ts';
+import { lowStockItems } from './stock-low.ts';
 
 const ALL: readonly MemberRole[] = ['owner', 'admin', 'member', 'viewer'];
 const ACTORS: readonly MemberRole[] = ['owner', 'admin', 'member'];
@@ -74,6 +75,7 @@ export const financeToday = defineQuery({
       items.push(...(await originalItems(ctx)));
       items.push(...(await bankItems(ctx, entities, to)));
       items.push(...(await reminderItems(ctx, entities, today, to)));
+      items.push(...(await lowStockToday(ctx, to)));
     }
     items.push(...(await deadlines(ctx, today, to, entities)));
     return items;
@@ -241,6 +243,17 @@ async function reminderItems(ctx: QueryContext, entities: readonly string[], tod
     if (count > 0) items.push({ kind: 'message', app: 'finance', id: `payment-reminders:${entity}:${monday}`, title: { key: 'financeRemindersDue', params: { count } }, count, href: to('/payment-reminders', entity) });
   }
   return items;
+}
+
+// The items running low (#2514), one count per legal entity: the same list as the Hàng hóa screen's "Hàng sắp hết" (finance.stock.low, the default lead days). It counts and links to the
+// screen; it orders and sends nothing, and it clears itself as stock is bought in or the pace of sales falls.
+async function lowStockToday(ctx: QueryContext, to: Link): Promise<TodayItem[]> {
+  const low = await lowStockItems(ctx, { leadDays: STOCK_LEAD_DAYS_DEFAULT, limit: 200 });
+  const byEntity = new Map<string, number>();
+  for (const item of low) byEntity.set(item.legalEntityId, (byEntity.get(item.legalEntityId) ?? 0) + 1);
+  return [...byEntity]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([entity, count]) => ({ kind: 'flag', app: 'finance', id: `stock-low:${entity}`, title: { key: 'financeStockLow', params: { count } }, count, severity: 'info', href: to('/stock', entity) }) satisfies TodayItem);
 }
 
 // End of the due day in Vietnam, as the instant a deadline is due.

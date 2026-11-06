@@ -219,6 +219,7 @@ export const en = {
       financeStatementsStaged: '{count, plural, one {# bank statement is} other {# bank statements are}} waiting for you to confirm',
       financeRemindersDue: '{count, plural, one {# overdue customer has} other {# overdue customers have}} not been reminded this week',
       financeBankLinesOpen: '{count, plural, one {# statement line has} other {# statement lines have}} no voucher',
+      financeStockLow: '{count, plural, one {# item is} other {# items are}} running low and worth reordering',
       financeVatDue: 'VAT return for {period}: due on {date}',
       financePeriodClose: 'Lock the books of {period} before {date}',
     },

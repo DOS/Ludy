@@ -217,6 +217,7 @@ export const vi = {
       financeStatementsStaged: '{count, plural, other {# sao kê ngân hàng}} chờ bạn xác nhận',
       financeRemindersDue: '{count, plural, other {# khách hàng}} quá hạn thanh toán chưa được nhắc tuần này',
       financeBankLinesOpen: '{count, plural, other {# dòng sao kê}} chưa có chứng từ',
+      financeStockLow: '{count, plural, other {# mặt hàng}} sắp hết, nên đặt thêm',
       financeVatDue: 'Tờ khai thuế GTGT kỳ {period}: hạn nộp {date}',
       financePeriodClose: 'Khóa sổ kỳ {period} trước ngày {date}',
     },
