@@ -6,7 +6,7 @@
 //   nothing. The month must be over, not closed, and the months before it closed (or empty); no item may be below zero at its end. A month with no cost has no entry to approve.
 // - finance.stock.close_period (R3, proposal): runs only through kernel.proposal.approve (P10 four-eyes, P11 fresh MFA, P12 eligible approvers). It builds the figures again from the
 //   moves and refuses a proposal they no longer match, posts the voucher like any NVK (journal-voucher.ts, stock_closing_month set) and stores the month and its items in the same
-//   transaction. The database keeps a month from existing without its voucher (20261123140000) and from taking a move dated in it.
+//   transaction. The database keeps a month from existing without its voucher (20261124020000) and from taking a move dated in it.
 // - finance.stock.close_empty (R3, owners and admins): the same close for a month whose cost is zero (nothing left the stock, or the cost of what left nets to nothing): no entry, no approval.
 // One close of an entity at a time, and no move is written while one runs (the same advisory lock, taken shared by writeStockMove), so the figures are those of every move that
 // committed before it. A closed month is never reopened here: a correction is a move of the open month. Money is decimal.js and decimal strings throughout.

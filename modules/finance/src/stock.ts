@@ -41,7 +41,7 @@ export interface StockMoveWrite {
     | { type: 'order_line'; orderLineId: string; move: 'ship' | 'return'; attempt: number };
 }
 
-// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261123140000), so a move whose own date falls in one is written on today, in the
+// The date a move is written with. A month the entity has closed takes no move (the database refuses one, 20261124020000), so a move whose own date falls in one is written on today, in the
 // open month, whatever its source: a correction is a move of the open month, never back-dated, and the two halves of a replacement (the reversal of the old document's moves and the moves of
 // the new one) land on the same day. The entity's lock is taken shared first, so this read cannot miss a close that is running: it waits for it and then sees the month closed.
 async function openMoveDate(ctx: CommandContext, itemId: string, date: string): Promise<string> {
