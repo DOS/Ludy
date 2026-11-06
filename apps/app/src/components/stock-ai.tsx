@@ -5,7 +5,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
 import { useLocale, useTranslations } from 'use-intl';
-import { STOCK_REORDER_HINT_MAX, STOCK_SUGGEST_LINES_MAX, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
+import { STOCK_REORDER_HINT_MAX, STOCK_REORDER_ITEMS_MAX, STOCK_SUGGEST_LINES_MAX, type StockAiState, type StockItem, type StockLowItem, type StockUnassignedLine } from '@crove/kernel-contract';
 import { Badge } from '@crove/ui/components/badge';
 import { Button } from '@crove/ui/components/button';
 import { Card } from '@crove/ui/components/card';
@@ -39,28 +39,30 @@ export function useLineSuggestions(lines: readonly StockUnassignedLine[]) {
   const todo = lines.filter((l) => !asked.has(lineKey(l)));
   const first = todo[0];
   const next = first ? todo.filter((l) => l.legalEntityId === first.legalEntityId).slice(0, STOCK_SUGGEST_LINES_MAX) : [];
+  // The lines asked about travel with the call, so what is marked as asked is exactly what was sent.
   const ask = useMutation({
-    mutationFn: () => client.stock.suggest({ legalEntityId: first?.legalEntityId as string, lines: next.map((l) => ({ documentId: l.documentId, lineNo: l.lineNo })), lang }),
-    onSuccess: (answer) => {
+    mutationFn: (asking: readonly StockUnassignedLine[]) =>
+      client.stock.suggest({ legalEntityId: asking[0]?.legalEntityId as string, lines: asking.map((l) => ({ documentId: l.documentId, lineNo: l.lineNo })), lang }),
+    onSuccess: (answer, asking) => {
       if (answer.ai !== 'used') {
         setState(answer.ai);
         return;
       }
-      setAsked((was) => new Set([...was, ...next.map(lineKey)]));
+      setAsked((was) => new Set([...was, ...asking.map(lineKey)]));
       setFound((was) => new Map([...was, ...answer.suggestions.map((s): [string, Suggestion] => [lineKey(s), { itemId: s.itemId, reason: s.reason }])]));
       setState(answer.suggestions.length > 0 ? 'usedSome' : 'usedNone');
     },
   });
-  return { found, asked, state, ask, canAsk: next.length > 0, remaining: todo.length };
+  return { found, asked, state, pending: ask.isPending, error: ask.error, send: () => ask.mutate(next), canAsk: next.length > 0, remaining: todo.length };
 }
 
 export function SuggestBar({ suggestions }: { suggestions: ReturnType<typeof useLineSuggestions> }) {
   const t = useTranslations('stock.suggest');
-  const { ask, state, canAsk, remaining } = suggestions;
+  const { pending, error, send, state, canAsk, remaining } = suggestions;
   return (
     <div className="mb-3 space-y-1" data-testid="stock-suggest-bar">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" loading={ask.isPending} disabled={!canAsk || ask.isPending} onClick={() => ask.mutate()} data-testid="stock-suggest">
+        <Button variant="outline" size="sm" loading={pending} disabled={!canAsk || pending} onClick={send} data-testid="stock-suggest">
           {t('button')}
         </Button>
         {remaining > 0 && <span className="text-xs text-subtle-foreground">{t('remaining', { count: remaining })}</span>}
@@ -70,7 +72,7 @@ export function SuggestBar({ suggestions }: { suggestions: ReturnType<typeof use
           {t(`state.${state}`)}
         </p>
       )}
-      {ask.error && <ErrorText>{errorMessage(ask.error)}</ErrorText>}
+      {error && <ErrorText>{errorMessage(error)}</ErrorText>}
     </div>
   );
 }
@@ -109,16 +111,24 @@ interface Group {
   items: StockLowItem[];
 }
 
-// One group per entity and supplier: a message is for one supplier and one entity's books.
+// One group per entity and supplier: a message is for one supplier and one entity's books. A supplier with more items than one message may name (STOCK_REORDER_ITEMS_MAX) gets
+// a group for each batch, so every group can be drafted.
 function groupsOf(items: readonly StockLowItem[]): Group[] {
-  const groups = new Map<string, Group>();
+  const byParty = new Map<string, StockLowItem[]>();
   for (const item of items) {
     const key = `${item.legalEntityId}:${item.supplier?.partyId ?? ''}`;
-    const group = groups.get(key);
-    if (group) group.items.push(item);
-    else groups.set(key, { key, legalEntityId: item.legalEntityId, supplier: item.supplier, items: [item] });
+    const bucket = byParty.get(key);
+    if (bucket) bucket.push(item);
+    else byParty.set(key, [item]);
   }
-  return [...groups.values()];
+  const groups: Group[] = [];
+  for (const [party, bucket] of byParty) {
+    for (let from = 0; from < bucket.length; from += STOCK_REORDER_ITEMS_MAX) {
+      const first = bucket[from] as StockLowItem;
+      groups.push({ key: `${party}:${from}`, legalEntityId: first.legalEntityId, supplier: first.supplier, items: bucket.slice(from, from + STOCK_REORDER_ITEMS_MAX) });
+    }
+  }
+  return groups;
 }
 
 function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) {
@@ -187,7 +197,8 @@ function ReorderGroup({ group, canWrite }: { group: Group; canWrite: boolean }) 
                 className="ml-auto w-24 text-right"
                 value={typed[i.itemId] ?? i.suggestedQuantity}
                 inputMode="decimal"
-                disabled={!canWrite}
+                // Locked while a draft is being written, so the message that comes back is always the one for the quantities on screen.
+                disabled={!canWrite || draft.isPending}
                 aria-invalid={!QUANTITY.test(quantityOf(i))}
                 onChange={(e) => {
                   setTyped((was) => ({ ...was, [i.itemId]: e.target.value }));
