@@ -73,6 +73,14 @@ test('an imported report waits for its shipped line to be assigned, then takes t
     for (const value of Object.values(BUYER)) await expect(page.getByText(value, { exact: false })).toHaveCount(0);
   });
 
+  await test.step('taking the line back from its item puts the stock back and the line in the waiting list again', async () => {
+    await page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' }).getByTestId('marketplace-unassign').click();
+    await page.getByTestId('marketplace-unassign-confirm').click();
+    await expect(page.getByTestId('marketplace-unassigned-line')).toHaveCount(1);
+    await expect(page.getByTestId('stock-item')).not.toContainText('-3');
+    await expect(page.getByTestId('marketplace-order').filter({ hasText: 'E2E-U1' })).not.toContainText('AO01');
+  });
+
   await test.step('the month of the order cannot be closed while an item is below zero: the screen says so and nothing is closed (#2513)', async () => {
     await page.locator('#stock-month').fill('2026-10');
     await expect(page.getByTestId('stock-report-state')).toContainText('Tạm tính');
